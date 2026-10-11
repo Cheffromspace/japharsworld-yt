@@ -112,7 +112,7 @@ if [ -z "$on443" ] || [[ "$on443" == *caddy* ]]; then
     # Caddy's own apt repo (cloudsmith) started answering 402; Ubuntu ships Caddy in universe.
     rm -f /etc/apt/sources.list.d/caddy-stable.list
     apt-get update -qq
-    apt-get install -y -qq caddy >/dev/null || { warn "Could not install Caddy from apt."; exit 1; }
+    apt-get install -y -qq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confnew caddy >/dev/null || { warn "Could not install Caddy from apt."; exit 1; }
   fi
   caddy version
   mkdir -p /etc/caddy/sites

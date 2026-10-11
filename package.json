@@ -1,0 +1,19 @@
+{
+  "name": "japharsworld-yt",
+  "version": "1.0.0",
+  "private": true,
+  "description": "YouTube search, captions and ticket pools for the VRChat world Everything is OK",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "sharp": "0.35.5",
+    "youtubei.js": "18.1.0"
+  },
+  "license": "MIT"
+}

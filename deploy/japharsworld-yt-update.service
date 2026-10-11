@@ -1,0 +1,6 @@
+[Unit]
+Description=Deploy japharsworld-yt from GitHub main; update yt-dlp daily
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/japharsworld-yt/deploy/update.sh

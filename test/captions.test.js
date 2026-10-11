@@ -1,0 +1,45 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { chooseTrack, parseJson3, originalLanguage } from '../src/captions.js';
+
+const info = {
+  language: 'en',
+  subtitles: { 'en-US': [{}], ja: [{}], live_chat: [{}] },
+  automatic_captions: { 'en-orig': [{}], en: [{}], fr: [{}], he: [{}], iw: [{}], 'zh-Hans': [{}] },
+};
+
+test('prefers manual subtitles in the visitor language', () => {
+  assert.deepEqual(chooseTrack(info, 'ja'), { key: 'ja', auto: false, source: 'manual' });
+  assert.deepEqual(chooseTrack(info, 'en'), { key: 'en-US', auto: false, source: 'manual' });
+});
+
+test('falls back to YouTube translation', () => {
+  assert.deepEqual(chooseTrack(info, 'fr'), { key: 'fr', auto: true, source: 'translated' });
+  assert.deepEqual(chooseTrack(info, 'he'), { key: 'iw', auto: true, source: 'translated' });
+  assert.deepEqual(chooseTrack(info, 'zh-CN'), { key: 'zh-Hans', auto: true, source: 'translated' });
+  assert.equal(chooseTrack(info, 'th'), null);
+});
+
+test('auto captions when the video is spoken in that language', () => {
+  const i = { subtitles: {}, automatic_captions: { 'ja-orig': [{}], ja: [{}], en: [{}] } };
+  assert.equal(originalLanguage(i), 'ja');
+  assert.deepEqual(chooseTrack(i, 'ja'), { key: 'ja-orig', auto: true, source: 'auto' });
+  assert.deepEqual(chooseTrack(i, 'native'), { key: 'ja-orig', auto: true, source: 'auto' });
+  assert.deepEqual(chooseTrack(i, 'en'), { key: 'en', auto: true, source: 'translated' });
+});
+
+test('native prefers manual in the original language', () => {
+  assert.deepEqual(chooseTrack(info, 'native'), { key: 'en-US', auto: false, source: 'manual' });
+  assert.equal(chooseTrack({ subtitles: {}, automatic_captions: {} }, 'native'), null);
+});
+
+test('parses json3', () => {
+  const lines = parseJson3({ events: [
+    { tStartMs: 0, dDurationMs: 1500, segs: [{ utf8: 'Hello ' }, { utf8: 'there' }] },
+    { tStartMs: 1500, dDurationMs: 10, aAppend: 1, segs: [{ utf8: '\n' }] },
+    { tStartMs: 2000, dDurationMs: 1234, segs: [{ utf8: '  \n ' }] },
+    { tStartMs: 3456, dDurationMs: 2000, segs: [{ utf8: 'line one\nline two' }] },
+    { tStartMs: 9000 },
+  ] });
+  assert.deepEqual(lines, [[0, 1.5, 'Hello there'], [3.46, 2, 'line one\nline two']]);
+});

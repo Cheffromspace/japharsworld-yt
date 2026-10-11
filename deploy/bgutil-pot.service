@@ -1,0 +1,18 @@
+[Unit]
+Description=bgutil PO-token provider for yt-dlp (localhost only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=jyt
+Group=jyt
+WorkingDirectory=/opt/bgutil-pot/server
+ExecStart=/usr/bin/node build/main.js --port 4416
+Restart=always
+RestartSec=5
+MemoryMax=400M
+NoNewPrivileges=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

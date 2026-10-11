@@ -1,0 +1,22 @@
+[Unit]
+Description=japharsworld-yt (YouTube search for the VRChat world Everything is OK)
+After=network-online.target bgutil-pot.service
+Wants=network-online.target
+
+[Service]
+User=jyt
+Group=jyt
+WorkingDirectory=/var/lib/japharsworld-yt
+EnvironmentFile=/etc/japharsworld-yt.env
+ExecStart=/usr/bin/node /opt/japharsworld-yt/src/server.js
+Restart=always
+RestartSec=3
+MemoryMax=400M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/japharsworld-yt
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

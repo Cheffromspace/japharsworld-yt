@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process';
 import { mkdir, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { LANGS } from './query.js';
+import { randomBytes } from 'node:crypto';
 
 const INFO_MAX_AGE_MS = 60 * 60_000; // signed caption URLs inside the info JSON expire after a few hours
 const MAX_LINES = 6000;
@@ -19,6 +20,31 @@ export const DEFAULT_ATTEMPTS = [
   ['--force-ipv6'],
   ['--extractor-args', 'youtube:player_client=tv_simply,android_vr,mweb'],
 ];
+
+// YouTube's refusal of an address it does not trust (datacenter ranges, mostly).
+export function isBotWall(err) {
+  return /Sign in to confirm/i.test(String(err?.stderr ?? '') + String(err?.message ?? ''));
+}
+
+// The line worth logging: yt-dlp's ERROR line, not the cookie help text that follows it.
+export function errorLine(err) {
+  const text = String(err?.stderr || err?.message || err);
+  const line = text.split('\n').find((l) => l.startsWith('ERROR')) ?? text.trim().split('\n').pop() ?? '';
+  return line.slice(0, 200);
+}
+
+// A random address inside a routed /64 such as 2600:3c06:e001:35e::/64.
+export function randomAddress(prefix, bytes = randomBytes(8)) {
+  const [addr, len = '64'] = prefix.trim().split('/');
+  if (len !== '64') throw new Error('SOURCE_IPV6_PREFIX must be a /64');
+  const [head, tail = ''] = addr.split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail ? tail.split(':') : [];
+  const groups = addr.includes('::') ? [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t] : h;
+  if (groups.length !== 8) throw new Error('SOURCE_IPV6_PREFIX is not an IPv6 prefix');
+  const host = [0, 2, 4, 6].map((i) => bytes.readUInt16BE(i).toString(16));
+  return [...groups.slice(0, 4), ...host].join(':');
+}
 
 export function run(cmd, args, timeoutMs = 90_000) {
   return new Promise((resolve, reject) => {
@@ -87,7 +113,8 @@ export function parseJson3(raw) {
 }
 
 export class Captions {
-  constructor({ store, ytdlp, extraArgs = [], attempts = DEFAULT_ATTEMPTS, dataDir = 'data', cacheDays = 7, runner = run }) {
+  constructor({ store, ytdlp, extraArgs = [], attempts = DEFAULT_ATTEMPTS, dataDir = 'data', cacheDays = 7, runner = run,
+    sourcePrefix = '', blockedMinutes = 10, now = () => Date.now() }) {
     // YouTube answers "Sign in to confirm you're not a bot" to some requests from datacenter IPv4.
     // Each attempt adds its own arguments to extraArgs; the one that last worked is tried first.
     this.attempts = attempts.length ? attempts : [[]];
@@ -101,28 +128,56 @@ export class Captions {
     this.run = runner;
     this.inflight = new Map();
     this.recentMisses = new Map();
+    // With a routed IPv6 range, every lookup goes out from a random address in it. The signed caption URLs
+    // YouTube hands back are tied to the asking address, so each video remembers which one fetched its info.
+    this.sourcePrefix = sourcePrefix;
+    this.addresses = new Map();
+    // After a bot-wall refusal on every attempt, stop asking YouTube for a while: more refused requests
+    // only make the block last longer, and each visitor would wait for the same answer.
+    this.blockedMs = blockedMinutes * 60_000;
+    this.blockedUntil = 0;
+    this.now = now;
+  }
+
+  attemptArgs(i, address) {
+    if (!address) return this.attempts[i];
+    return ['--source-address', address, ...this.attempts[i].filter((a) => a !== '--force-ipv6')];
+  }
+
+  blockedAnswer(videoId, lang) {
+    return { id: videoId, lang, available: false, reason: 'temporarily_unavailable' };
   }
 
   async info(videoId) {
     await mkdir(this.infoDir, { recursive: true });
     const file = join(this.infoDir, `${videoId}.json`);
-    try {
-      const s = await stat(file);
-      if (Date.now() - s.mtimeMs < INFO_MAX_AGE_MS) return { file, info: JSON.parse(await readFile(file, 'utf8')) };
-    } catch { /* not cached */ }
+    if (!this.sourcePrefix || this.addresses.has(videoId)) {
+      try {
+        const s = await stat(file);
+        if (Date.now() - s.mtimeMs < INFO_MAX_AGE_MS) return { file, info: JSON.parse(await readFile(file, 'utf8')) };
+      } catch { /* not cached */ }
+    }
     const order = this.attempts.map((_, i) => (i + this.preferred) % this.attempts.length);
     let lastError;
     for (const i of order) {
+      const address = this.sourcePrefix ? randomAddress(this.sourcePrefix) : null;
       try {
-        await this.run(this.ytdlp, [...this.extraArgs, ...this.attempts[i], '--skip-download', '--no-playlist', '--no-warnings',
+        await this.run(this.ytdlp, [...this.extraArgs, ...this.attemptArgs(i, address), '--skip-download', '--no-playlist', '--no-warnings',
           '--write-info-json', '--no-write-comments', '-o', join(this.infoDir, '%(id)s'),
           '--', `https://www.youtube.com/watch?v=${videoId}`]);
         this.preferred = i;
+        if (address) {
+          if (this.addresses.size > 5000) this.addresses.clear();
+          this.addresses.set(videoId, address);
+        }
         lastError = null;
         break;
       } catch (err) { lastError = err; }
     }
-    if (lastError) throw lastError;
+    if (lastError) {
+      if (isBotWall(lastError)) { this.blockedUntil = this.now() + this.blockedMs; lastError.blocked = true; }
+      throw lastError;
+    }
     // yt-dlp writes <id>.info.json; keep a stable name.
     const written = join(this.infoDir, `${videoId}.info.json`);
     const info = JSON.parse(await readFile(written, 'utf8'));
@@ -133,7 +188,7 @@ export class Captions {
 
   async download(videoId, infoFile, track) {
     await mkdir(this.subsDir, { recursive: true });
-    await this.run(this.ytdlp, [...this.extraArgs, ...this.attempts[this.preferred], '--load-info-json', infoFile, '--skip-download', '--no-warnings',
+    await this.run(this.ytdlp, [...this.extraArgs, ...this.attemptArgs(this.preferred, this.addresses.get(videoId) ?? null), '--load-info-json', infoFile, '--skip-download', '--no-warnings',
       track.auto ? '--write-auto-subs' : '--write-subs', '--sub-langs', `^${escapeRe(track.key)}$`,
       '--sub-format', 'json3', '-o', join(this.subsDir, '%(id)s')]);
     const name = (await readdir(this.subsDir)).find((f) => f.startsWith(`${videoId}.`) && f.endsWith(`.${track.key}.json3`))
@@ -159,11 +214,18 @@ export class Captions {
     const miss = this.recentMisses.get(`${videoId}|${lang}`);
     if (miss && Date.now() - miss.at < 3600_000) return miss.answer;
     if (this.recentMisses.size > 5000) this.recentMisses.clear();
+    if (this.now() < this.blockedUntil) return this.blockedAnswer(videoId, lang);
     return this.#ytdlp(videoId, lang);
   }
 
   async #ytdlp(videoId, lang) {
-    const { file, info } = await this.info(videoId);
+    let file, info;
+    try {
+      ({ file, info } = await this.info(videoId));
+    } catch (err) {
+      if (err.blocked) return this.blockedAnswer(videoId, lang); // not cached: try again after the pause
+      throw err;
+    }
     const track = chooseTrack(info, lang);
     let result;
     if (!track) {
@@ -175,6 +237,7 @@ export class Captions {
       } catch (err) {
         // YouTube throttles machine-translated tracks first. Say "not available" instead of failing,
         // and remember it for an hour so each visitor doesn't wait for the same refusal.
+        if (isBotWall(err)) { this.blockedUntil = this.now() + this.blockedMs; return this.blockedAnswer(videoId, lang); }
         if (track.source !== 'translated') throw err;
         const answer = { id: videoId, lang, available: false, reason: 'translation_unavailable', original: originalLanguage(info) };
         this.recentMisses.set(`${videoId}|${lang}`, { at: Date.now(), answer });

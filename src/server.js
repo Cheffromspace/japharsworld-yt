@@ -10,13 +10,14 @@ import { Store } from './store.js';
 import { parseQuery, youtubeIdFrom, normalizeLang, LANGS } from './query.js';
 import { youtube as defaultYoutube } from './youtube.js';
 import { cachedSheet } from './sheet.js';
-import { Captions } from './captions.js';
+import { Captions, errorLine } from './captions.js';
 
 const API = 1;
 
 export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, sheetOpts, log = console.log } = {}) {
   store ??= new Store({ path: config.dbPath, shards: config.shards, pool: config.pool, pinHours: config.pinHours });
-  captions ??= new Captions({ store, ytdlp: config.ytdlp, extraArgs: config.ytdlpExtraArgs, cacheDays: config.captionCacheDays });
+  captions ??= new Captions({ store, ytdlp: config.ytdlp, extraArgs: config.ytdlpExtraArgs, cacheDays: config.captionCacheDays,
+    sourcePrefix: config.sourcePrefix, blockedMinutes: config.blockedMinutes });
   const continuations = new Map(); // `${shard}:${n}` → () => Promise<page>
   const MAX_CONTINUATIONS = 2000;
   const hits = new Map(); // ip → timestamps of recent searches
@@ -122,7 +123,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const c = await captions.get(last.videoId, lang);
       return json(res, 200, { v: API, shard, t: last.n, ...c });
     } catch (err) {
-      log(JSON.stringify({ at: new Date().toISOString(), event: 'captions_error', id: last.videoId, lang, message: String(err?.stderr || err?.message || err).slice(-300) }));
+      log(JSON.stringify({ at: new Date().toISOString(), event: 'captions_error', id: last.videoId, lang, message: errorLine(err) }));
       return fail(res, 502, 'captions_failed', 'Captions are not available right now.');
     }
   }

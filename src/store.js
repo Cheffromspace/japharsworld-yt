@@ -3,15 +3,15 @@
 // thumbnail sheet and next page. Tickets are handed out round-robin, so the oldest unplayed ones
 // are reused first. A video ticket that has been played is pinned (skipped) for pinHours so that
 // late joiners who load the synced ticket still get the same video.
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 export class Store {
   constructor({ path, shards, pool, pinHours, now = () => Date.now() }) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-    this.db = new Database(path);
-    this.db.pragma('journal_mode = WAL');
+    this.db = new DatabaseSync(path);
+    this.db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 2000;');
     this.shards = shards;
     this.pool = pool;
     this.pinMs = pinHours * 3600_000;
@@ -45,14 +45,23 @@ export class Store {
         ON CONFLICT(video_id, key) DO UPDATE SET json = excluded.json, fetched = excluded.fetched`),
       capPrune: this.db.prepare('DELETE FROM captions WHERE fetched < ?'),
     };
-    this.allocateTx = this.db.transaction((shard, items) => this.#allocate(shard, items));
   }
 
   validShard(shard) { return Number.isInteger(shard) && shard >= 0 && shard < this.shards; }
   validTicket(n) { return Number.isInteger(n) && n >= 0 && n < this.pool; }
 
   // items: [{ kind, data }] → ticket numbers, in order.
-  allocate(shard, items) { return this.allocateTx(shard, items); }
+  allocate(shard, items) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const out = this.#allocate(shard, items);
+      this.db.exec('COMMIT');
+      return out;
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
 
   #allocate(shard, items) {
     const now = this.now();

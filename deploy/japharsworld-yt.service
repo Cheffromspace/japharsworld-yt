@@ -8,7 +8,7 @@ User=jyt
 Group=jyt
 WorkingDirectory=/var/lib/japharsworld-yt
 EnvironmentFile=/etc/japharsworld-yt.env
-ExecStart=/usr/bin/node /opt/japharsworld-yt/src/server.js
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning /opt/japharsworld-yt/src/server.js
 Restart=always
 RestartSec=3
 MemoryMax=400M

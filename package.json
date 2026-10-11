@@ -5,13 +5,12 @@
   "description": "YouTube search, captions and ticket pools for the VRChat world Everything is OK",
   "type": "module",
   "main": "src/server.js",
-  "engines": { "node": ">=22" },
+  "engines": { "node": ">=22.13" },
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
-    "better-sqlite3": "13.0.3",
     "sharp": "0.35.5",
     "youtubei.js": "18.1.0"
   },

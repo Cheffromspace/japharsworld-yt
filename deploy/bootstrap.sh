@@ -35,6 +35,7 @@ fi
 
 say "Packages"
 export DEBIAN_FRONTEND=noninteractive
+rm -f /etc/apt/sources.list.d/caddy-stable.list  # left by an earlier run; that repo now answers 402
 apt-get update -qq
 apt-get install -y -qq git curl ca-certificates python3 python3-venv build-essential >/dev/null
 if ! command -v node >/dev/null || ! node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=13)?0:1)'; then
@@ -108,11 +109,12 @@ site_block="$DOMAIN {
 }"
 if [ -z "$on443" ] || [[ "$on443" == *caddy* ]]; then
   if ! command -v caddy >/dev/null; then
-    apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https gnupg >/dev/null
-    curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-    curl -fsSL 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
-    apt-get update -qq && apt-get install -y -qq caddy >/dev/null
+    # Caddy's own apt repo (cloudsmith) started answering 402; Ubuntu ships Caddy in universe.
+    rm -f /etc/apt/sources.list.d/caddy-stable.list
+    apt-get update -qq
+    apt-get install -y -qq caddy >/dev/null || { warn "Could not install Caddy from apt."; exit 1; }
   fi
+  caddy version
   mkdir -p /etc/caddy/sites
   echo "$site_block" > /etc/caddy/sites/japharsworld-yt.caddy
   grep -q 'import sites/\*' /etc/caddy/Caddyfile 2>/dev/null || {

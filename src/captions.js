@@ -15,6 +15,10 @@ import { LANGS } from './query.js';
 
 const INFO_MAX_AGE_MS = 60 * 60_000; // signed caption URLs inside the info JSON expire after a few hours
 const MAX_LINES = 6000;
+export const DEFAULT_ATTEMPTS = [
+  ['--force-ipv6'],
+  ['--extractor-args', 'youtube:player_client=tv_simply,android_vr,mweb'],
+];
 
 export function run(cmd, args, timeoutMs = 90_000) {
   return new Promise((resolve, reject) => {
@@ -83,7 +87,11 @@ export function parseJson3(raw) {
 }
 
 export class Captions {
-  constructor({ store, ytdlp, extraArgs = [], dataDir = 'data', cacheDays = 7, runner = run }) {
+  constructor({ store, ytdlp, extraArgs = [], attempts = DEFAULT_ATTEMPTS, dataDir = 'data', cacheDays = 7, runner = run }) {
+    // YouTube answers "Sign in to confirm you're not a bot" to some requests from datacenter IPv4.
+    // Each attempt adds its own arguments to extraArgs; the one that last worked is tried first.
+    this.attempts = attempts.length ? attempts : [[]];
+    this.preferred = 0;
     this.store = store;
     this.ytdlp = ytdlp;
     this.extraArgs = extraArgs;
@@ -101,9 +109,19 @@ export class Captions {
       const s = await stat(file);
       if (Date.now() - s.mtimeMs < INFO_MAX_AGE_MS) return { file, info: JSON.parse(await readFile(file, 'utf8')) };
     } catch { /* not cached */ }
-    await this.run(this.ytdlp, [...this.extraArgs, '--skip-download', '--no-playlist', '--no-warnings',
-      '--write-info-json', '--no-write-comments', '-o', join(this.infoDir, '%(id)s'),
-      '--', `https://www.youtube.com/watch?v=${videoId}`]);
+    const order = this.attempts.map((_, i) => (i + this.preferred) % this.attempts.length);
+    let lastError;
+    for (const i of order) {
+      try {
+        await this.run(this.ytdlp, [...this.extraArgs, ...this.attempts[i], '--skip-download', '--no-playlist', '--no-warnings',
+          '--write-info-json', '--no-write-comments', '-o', join(this.infoDir, '%(id)s'),
+          '--', `https://www.youtube.com/watch?v=${videoId}`]);
+        this.preferred = i;
+        lastError = null;
+        break;
+      } catch (err) { lastError = err; }
+    }
+    if (lastError) throw lastError;
     // yt-dlp writes <id>.info.json; keep a stable name.
     const written = join(this.infoDir, `${videoId}.info.json`);
     const info = JSON.parse(await readFile(written, 'utf8'));
@@ -114,7 +132,7 @@ export class Captions {
 
   async download(videoId, infoFile, track) {
     await mkdir(this.subsDir, { recursive: true });
-    await this.run(this.ytdlp, [...this.extraArgs, '--load-info-json', infoFile, '--skip-download', '--no-warnings',
+    await this.run(this.ytdlp, [...this.extraArgs, ...this.attempts[this.preferred], '--load-info-json', infoFile, '--skip-download', '--no-warnings',
       track.auto ? '--write-auto-subs' : '--write-subs', '--sub-langs', `^${escapeRe(track.key)}$`,
       '--sub-format', 'json3', '-o', join(this.subsDir, '%(id)s')]);
     const name = (await readdir(this.subsDir)).find((f) => f.startsWith(`${videoId}.`) && f.endsWith(`.${track.key}.json3`))
@@ -137,6 +155,10 @@ export class Captions {
   async #get(videoId, lang) {
     const cached = this.store.captionGet(videoId, lang, this.maxAgeMs);
     if (cached) return cached;
+    return this.#ytdlp(videoId, lang);
+  }
+
+  async #ytdlp(videoId, lang) {
     const { file, info } = await this.info(videoId);
     const track = chooseTrack(info, lang);
     let result;

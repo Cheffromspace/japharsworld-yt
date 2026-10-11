@@ -43,3 +43,35 @@ test('parses json3', () => {
   ] });
   assert.deepEqual(lines, [[0, 1.5, 'Hello there'], [3.46, 2, 'line one\nline two']]);
 });
+
+import { Captions } from '../src/captions.js';
+import { Store } from '../src/store.js';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+test('falls back to the next yt-dlp attempt and remembers the winner', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jyt-'));
+  const store = new Store({ path: ':memory:', shards: 1, pool: 10, pinHours: 1 });
+  const seen = [];
+  const runner = async (cmd, args) => {
+    const attempt = args.includes('--force-ipv6') ? 'v6' : 'alt';
+    if (args.includes('--write-info-json')) {
+      seen.push(attempt);
+      if (attempt === 'v6') throw new Error("Sign in to confirm you're not a bot");
+      const id = args.at(-1).split('v=')[1];
+      await writeFile(join(dataDir, 'info', `${id}.info.json`), JSON.stringify({ language: 'en', subtitles: { en: [{}] }, automatic_captions: {} }));
+    } else {
+      const id = args[args.indexOf('--load-info-json') + 1].split(/[\\/]/).pop().replace('.json', '');
+      seen.push('subs:' + attempt);
+      await writeFile(join(dataDir, 'subs', `${id}.en.json3`), JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'hi' }] }] }));
+    }
+    return '';
+  };
+  const c = new Captions({ store, ytdlp: 'yt-dlp', dataDir, runner });
+  const r = await c.get('vid11chars1', 'en');
+  assert.equal(r.available, true);
+  assert.deepEqual(r.lines, [[0, 1, 'hi']]);
+  await c.get('vid11chars2', 'en');
+  assert.deepEqual(seen, ['v6', 'alt', 'subs:alt', 'alt', 'subs:alt']);
+});

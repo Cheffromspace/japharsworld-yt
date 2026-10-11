@@ -100,6 +100,7 @@ export class Captions {
     this.maxAgeMs = cacheDays * 86400_000;
     this.run = runner;
     this.inflight = new Map();
+    this.recentMisses = new Map();
   }
 
   async info(videoId) {
@@ -155,6 +156,9 @@ export class Captions {
   async #get(videoId, lang) {
     const cached = this.store.captionGet(videoId, lang, this.maxAgeMs);
     if (cached) return cached;
+    const miss = this.recentMisses.get(`${videoId}|${lang}`);
+    if (miss && Date.now() - miss.at < 3600_000) return miss.answer;
+    if (this.recentMisses.size > 5000) this.recentMisses.clear();
     return this.#ytdlp(videoId, lang);
   }
 
@@ -165,7 +169,17 @@ export class Captions {
     if (!track) {
       result = { id: videoId, lang, available: false, original: originalLanguage(info) };
     } else {
-      const lines = await this.download(videoId, file, track);
+      let lines;
+      try {
+        lines = await this.download(videoId, file, track);
+      } catch (err) {
+        // YouTube throttles machine-translated tracks first. Say "not available" instead of failing,
+        // and remember it for an hour so each visitor doesn't wait for the same refusal.
+        if (track.source !== 'translated') throw err;
+        const answer = { id: videoId, lang, available: false, reason: 'translation_unavailable', original: originalLanguage(info) };
+        this.recentMisses.set(`${videoId}|${lang}`, { at: Date.now(), answer });
+        return answer;
+      }
       result = { id: videoId, lang, available: lines.length > 0, source: track.source, key: track.key,
         original: originalLanguage(info), lines };
     }

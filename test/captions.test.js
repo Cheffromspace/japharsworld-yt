@@ -75,3 +75,24 @@ test('falls back to the next yt-dlp attempt and remembers the winner', async () 
   await c.get('vid11chars2', 'en');
   assert.deepEqual(seen, ['v6', 'alt', 'subs:alt', 'alt', 'subs:alt']);
 });
+
+test('a refused machine translation is "not available", not an error', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jyt-'));
+  const store = new Store({ path: ':memory:', shards: 1, pool: 10, pinHours: 1 });
+  let subsCalls = 0;
+  const runner = async (cmd, args) => {
+    if (args.includes('--write-info-json')) {
+      const id = args.at(-1).split('v=')[1];
+      await writeFile(join(dataDir, 'info', `${id}.info.json`), JSON.stringify({ subtitles: { en: [{}] }, automatic_captions: { 'en-orig': [{}], fr: [{}] } }));
+      return '';
+    }
+    subsCalls++;
+    throw new Error('HTTP Error 429: Too Many Requests');
+  };
+  const c = new Captions({ store, ytdlp: 'yt-dlp', dataDir, runner });
+  const r = await c.get('vidtranslat', 'fr');
+  assert.equal(r.available, false);
+  assert.equal(r.reason, 'translation_unavailable');
+  await c.get('vidtranslat', 'fr');
+  assert.equal(subsCalls, 1);
+});

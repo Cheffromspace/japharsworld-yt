@@ -1,0 +1,21 @@
+[Unit]
+Description=Channels link monitor pass (VRChat world Everything is OK)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jyt
+Group=jyt
+EnvironmentFile=/etc/japharsworld-yt-monitor.env
+Environment=HOME=/var/lib/japharsworld-yt-monitor
+WorkingDirectory=/opt/japharsworld-yt/monitor
+ExecStart=/opt/japharsworld-yt-monitor-venv/bin/python -m slotmon run
+TimeoutStartSec=25min
+Nice=10
+MemoryMax=300M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/japharsworld-yt-monitor
+PrivateTmp=true

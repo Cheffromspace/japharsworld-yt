@@ -1,0 +1,4119 @@
+{
+ "made": "2026-10-18T01:35:40.916421+00:00",
+ "flash": [
+  {
+   "video_id": "VAlMDl00mYY",
+   "slot_key": "lofi-sleep",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0269,
+   "title": "Sleep lofi radio",
+   "channel": "Lofi Girl",
+   "file": "results.json"
+  },
+  {
+   "video_id": "JD-kMIpDfnY",
+   "slot_key": "lofi-sleep-chill",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.079,
+   "title": "Lofi hip hop radio: beats to sleep and chill to",
+   "channel": "Lofi Girl",
+   "file": "results.json"
+  },
+  {
+   "video_id": "nI725iVsyoQ",
+   "slot_key": "lofi-deep-sleep",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0553,
+   "title": "Deep sleep music: calm ambient",
+   "channel": "Lofi Girl",
+   "file": "results.json"
+  },
+  {
+   "video_id": "xORCbIptqcc",
+   "slot_key": "lofi-sleep-ambient",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0864,
+   "title": "Sleep ambient music",
+   "channel": "Lofi Girl",
+   "file": "results.json"
+  },
+  {
+   "video_id": "GSfT7H87zq4",
+   "slot_key": "lofi-synth-ambient",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0306,
+   "title": "Synth ambient radio: deep space",
+   "channel": "Lofi Girl",
+   "file": "results.json"
+  },
+  {
+   "video_id": "S_MOd40zlYU",
+   "slot_key": "lofi-dark-ambient",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0866,
+   "title": "Dark ambient radio",
+   "channel": "Lofi Girl",
+   "file": "results.json"
+  },
+  {
+   "video_id": "N0snMcR6aaA",
+   "slot_key": "lofi-piano",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.2582,
+   "title": "Relaxing piano radio",
+   "channel": "Lofi Girl",
+   "file": "results.json"
+  },
+  {
+   "video_id": "jXAEIWcGXwE",
+   "slot_key": "lofi-classical",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.2758,
+   "title": "Classical music radio",
+   "channel": "Lofi Girl",
+   "file": "results.json"
+  },
+  {
+   "video_id": "A8jDx9TLMQc",
+   "slot_key": "lofi-jazz",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0631,
+   "title": "Relaxing jazz",
+   "channel": "Lofi Girl",
+   "file": "results.json"
+  },
+  {
+   "video_id": "E_XmwjgRLz8",
+   "slot_key": "lofi-guitar",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.2303,
+   "title": "Chill guitar radio",
+   "channel": "Lofi Girl",
+   "file": "results.json"
+  },
+  {
+   "video_id": "MLjP00bGcLg",
+   "slot_key": "roelf-deep-space",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0012,
+   "title": "Deep Space Transmission",
+   "channel": "Roelf Staal",
+   "file": "results.json"
+  },
+  {
+   "video_id": "AXvnFk38sDQ",
+   "slot_key": "roelf-cosmic",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.018,
+   "title": "Cosmic Ambient Transmission",
+   "channel": "Roelf Staal",
+   "file": "results.json"
+  },
+  {
+   "video_id": "Cu-LznLglyE",
+   "slot_key": "ybc-soft-sleep",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.1775,
+   "title": "Soft sleep music",
+   "channel": "Yellow Brick Cinema",
+   "file": "results.json"
+  },
+  {
+   "video_id": "-OekvEFm1lo",
+   "slot_key": "lofi-rain",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0357,
+   "title": "Gentle rain ambience",
+   "channel": "Lofi Girl",
+   "file": "results.json"
+  },
+  {
+   "video_id": "q_4KI-ChIIs",
+   "slot_key": "lofi-fireplace",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.1703,
+   "title": "Fireplace ambience",
+   "channel": "Lofi Girl",
+   "file": "results.json"
+  },
+  {
+   "video_id": "R_qT0-KoCm8",
+   "slot_key": "rain-thunder-black",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0,
+   "title": "Rain and distant thunder, black screen",
+   "channel": "Pure Relaxing Vibes",
+   "file": "results.json"
+  },
+  {
+   "video_id": "JYcytCsYK5Q",
+   "slot_key": "rain-forest-park",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.095,
+   "title": "Rain in a forest park",
+   "channel": "Healing Rain Sounds",
+   "file": "results.json"
+  },
+  {
+   "video_id": "kp-r-Xv9XUc",
+   "slot_key": "ocean-thunderstorm",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0016,
+   "title": "Ocean thunderstorm",
+   "channel": "Pure Sleeping Vibes",
+   "file": "results.json"
+  },
+  {
+   "video_id": "WsrK19k6Xz4",
+   "slot_key": "cozy-fireplace",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0207,
+   "title": "Cozy crackling fireplace",
+   "channel": "Leo's Fireplace",
+   "file": "results.json"
+  },
+  {
+   "video_id": "Z0dSSux0Nk0",
+   "slot_key": "tin-roof-rain",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0907,
+   "title": "Heavy rain on a tin roof",
+   "channel": "Midnight Roof Rain",
+   "file": "results.json"
+  },
+  {
+   "video_id": "AT_rjlKyfUY",
+   "slot_key": "rain-thunder-dark",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0,
+   "title": "Rain and thunder, dark screen",
+   "channel": "Pure Relaxing Vibes",
+   "file": "results.json"
+  },
+  {
+   "video_id": "bz4VtbRjbb4",
+   "slot_key": "fan-noise-black",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0023,
+   "title": "Fan noise, black screen",
+   "channel": "Quiet Fan Nights",
+   "file": "results.json"
+  },
+  {
+   "video_id": "zL68biE6wAs",
+   "slot_key": "mba-moon-jelly",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0496,
+   "title": "Moon jellies",
+   "channel": "Monterey Bay Aquarium",
+   "file": "results.json"
+  },
+  {
+   "video_id": "eQ_foBERmzA",
+   "slot_key": "mba-jelly",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0975,
+   "title": "Sea nettle jellies",
+   "channel": "Monterey Bay Aquarium",
+   "file": "results.json"
+  },
+  {
+   "video_id": "n_GpVsz4nHU",
+   "slot_key": "mba-open-sea",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0224,
+   "title": "Open sea",
+   "channel": "Monterey Bay Aquarium",
+   "file": "results.json"
+  },
+  {
+   "video_id": "w3LjpFhySTg",
+   "slot_key": "mba-kelp",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0682,
+   "title": "Kelp forest",
+   "channel": "Monterey Bay Aquarium",
+   "file": "results.json"
+  },
+  {
+   "video_id": "fVa6-zCBR7A",
+   "slot_key": "mba-bay",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.1778,
+   "title": "Monterey Bay",
+   "channel": "Monterey Bay Aquarium",
+   "file": "results.json"
+  },
+  {
+   "video_id": "Fz6sl9YJZE0",
+   "slot_key": "explore-manatee",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.3303,
+   "title": "Manatees, Homosassa Springs",
+   "channel": "explore.org",
+   "file": "results.json"
+  },
+  {
+   "video_id": "DHUnz4dyb54",
+   "slot_key": "explore-reef",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.1461,
+   "title": "Tropical reef",
+   "channel": "explore.org",
+   "file": "results.json"
+  },
+  {
+   "video_id": "5e4lsEe4Vew",
+   "slot_key": "explore-wolves",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.1903,
+   "title": "Wolves, International Wolf Center",
+   "channel": "explore.org",
+   "file": "results.json"
+  },
+  {
+   "video_id": "1HAknmr2uS4",
+   "slot_key": "life-at-the-poles",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0687,
+   "title": "Life at the poles",
+   "channel": "Unseen Planet DC",
+   "file": "results.json"
+  },
+  {
+   "video_id": "ejil46ZeY2o",
+   "slot_key": "borneo-jungle-night",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.009,
+   "title": "Jungle night sounds from a stilt hut, Borneo",
+   "channel": "BackCountryAmbient",
+   "file": "results.json"
+  },
+  {
+   "video_id": "awQzjn72bI0",
+   "slot_key": "nasa-iss-hd",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.1012,
+   "title": "Earth from the ISS, HD views",
+   "channel": "NASA",
+   "file": "results.json"
+  },
+  {
+   "video_id": "M3HKLzjvKPc",
+   "slot_key": "nasa-iss",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.114,
+   "title": "ISS live, with crew audio",
+   "channel": "NASA",
+   "file": "results.json"
+  },
+  {
+   "video_id": "QrUisSNNwrA",
+   "slot_key": "iss-earth",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.2333,
+   "title": "Planet Earth from the ISS",
+   "channel": "Dream Trips",
+   "file": "results.json"
+  },
+  {
+   "video_id": "I3sa2kiEpkA",
+   "slot_key": "iss-aurora",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0494,
+   "title": "Aurora over Earth, from the ISS",
+   "channel": "Dream Trips",
+   "file": "results.json"
+  },
+  {
+   "video_id": "MsWRmFmsquI",
+   "slot_key": "milky-way",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0006,
+   "title": "The Milky Way",
+   "channel": "WN Space",
+   "file": "results.json"
+  },
+  {
+   "video_id": "MYeOK93smBw",
+   "slot_key": "northumberland-aurora",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0415,
+   "title": "Aurora cam, Northumberland coast",
+   "channel": "Northumberland Astro",
+   "file": "results.json"
+  },
+  {
+   "video_id": "2-xLII_BZac",
+   "slot_key": "jack-stardew",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0562,
+   "title": "Fall asleep while I play Stardew Valley, with rain",
+   "channel": "Call Me Jack",
+   "file": "results.json"
+  },
+  {
+   "video_id": "Bo4GSsfTlaM",
+   "slot_key": "jack-pokemon",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 1,
+   "regions": [
+    0,
+    1,
+    1,
+    1,
+    1
+   ],
+   "frames": 450,
+   "mean_luminance": 0.4436,
+   "title": "Fall asleep while I play Pokémon games",
+   "channel": "Call Me Jack",
+   "file": "results.json"
+  },
+  {
+   "video_id": "MRJAuwpZJoQ",
+   "slot_key": "jack-donkey-kong",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0313,
+   "title": "Fall asleep while I play Donkey Kong, with rain",
+   "channel": "Call Me Jack",
+   "file": "results.json"
+  },
+  {
+   "video_id": "2f5CjnKt6oI",
+   "slot_key": "jack-oblivion",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 2,
+   "regions": [
+    2,
+    2,
+    1,
+    2,
+    1
+   ],
+   "frames": 450,
+   "mean_luminance": 0.1746,
+   "title": "Fall asleep while I play Oblivion Remastered",
+   "channel": "Call Me Jack",
+   "file": "results.json"
+  },
+  {
+   "video_id": "7CRQnWJ5rGw",
+   "slot_key": "jack-retro",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 2,
+   "regions": [
+    2,
+    2,
+    2,
+    2,
+    2
+   ],
+   "frames": 450,
+   "mean_luminance": 0.3743,
+   "title": "Fall asleep while I review retro games",
+   "channel": "Call Me Jack",
+   "file": "results.json"
+  },
+  {
+   "video_id": "lHa4PnLnFEI",
+   "slot_key": "retroworld-ps1",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0164,
+   "title": "PlayStation 1 longplays, no commentary",
+   "channel": "RetroWorld",
+   "file": "results.json"
+  },
+  {
+   "video_id": "DMR2tBpcUmM",
+   "slot_key": "baker-wow",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0159,
+   "title": "World of Warcraft, chill music, no commentary",
+   "channel": "TheBakerTV",
+   "file": "results.json"
+  },
+  {
+   "video_id": "V3PuLHTd8bQ",
+   "slot_key": "mochi-minecraft",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0242,
+   "title": "Minecraft music and ambience",
+   "channel": "Mochi's World",
+   "file": "results.json"
+  },
+  {
+   "video_id": "DeqRrffyVE8",
+   "slot_key": "zelda-radio",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.2558,
+   "title": "Zelda music radio",
+   "channel": "Hero's Journey",
+   "file": "results.json"
+  },
+  {
+   "video_id": "lAVvhpGkovk",
+   "slot_key": "vgm-lofi",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.1787,
+   "title": "Video game lofi and chill radio",
+   "channel": "Melodies Zone",
+   "file": "results.json"
+  },
+  {
+   "video_id": "kkcbiCVghxc",
+   "slot_key": "osaka-loop-line",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.072,
+   "title": "Osaka Loop Line live camera",
+   "channel": "Osaka Loop Line Live Camera",
+   "file": "results.json"
+  },
+  {
+   "video_id": "76KqHKyYtmU",
+   "slot_key": "finse-station",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.2688,
+   "title": "Finse station, Bergen Line, Norway",
+   "channel": "Ståle Ualand",
+   "file": "results.json"
+  },
+  {
+   "video_id": "3EqvCFB4teE",
+   "slot_key": "nagoya-station",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.1007,
+   "title": "Nagoya Station live camera",
+   "channel": "Life along the railroad line",
+   "file": "results.json"
+  },
+  {
+   "video_id": "4ZiucC7cvw8",
+   "slot_key": "tokyo-rainbow-bridge",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0595,
+   "title": "Tokyo at night, Rainbow Bridge, with jazz",
+   "channel": "TOKYO LIVE CAMERA",
+   "file": "results.json"
+  },
+  {
+   "video_id": "FEif5M7mrRU",
+   "slot_key": "shinjuku-fm",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0431,
+   "title": "Shinjuku FM: soft lofi and smooth jazz",
+   "channel": "TOKYO TONES",
+   "file": "results.json"
+  },
+  {
+   "video_id": "pQaz70OJHBc",
+   "slot_key": "tokyo-night-drive",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0209,
+   "title": "Tokyo night drive",
+   "channel": "TOKYO TONES",
+   "file": "results.json"
+  },
+  {
+   "video_id": "6h4IGR61eUo",
+   "slot_key": "yokohama-cam",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.1292,
+   "title": "Yokohama Kishamichi live camera",
+   "channel": "Live Cam Yokohama Japan",
+   "file": "results.json"
+  },
+  {
+   "video_id": "2WB7nCKjijg",
+   "slot_key": "kyoto-arashiyama",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.1851,
+   "title": "Kyoto Arashiyama, Togetsukyo Bridge",
+   "channel": "Kyoto City Tourism Association",
+   "file": "results.json"
+  },
+  {
+   "video_id": "CwPCy1GLS38",
+   "slot_key": "lofi-rainy-day",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0631,
+   "title": "Sad lofi radio for rainy days",
+   "channel": "Lofi Girl",
+   "file": "results.json"
+  },
+  {
+   "video_id": "rFZHOHl-L8A",
+   "slot_key": "lofi-study",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0702,
+   "title": "Lofi hip hop radio: beats to relax and study to",
+   "channel": "Lofi Girl",
+   "file": "results.json"
+  },
+  {
+   "video_id": "E2vONfzoyRI",
+   "slot_key": "lofi-jazz-beats",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.086,
+   "title": "Jazz lofi radio",
+   "channel": "Lofi Girl",
+   "file": "results.json"
+  },
+  {
+   "video_id": "FtO1lxJ-RXM",
+   "slot_key": "ybc-sleep",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 1,
+   "regions": [
+    0,
+    0,
+    0,
+    1,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.1541,
+   "title": "Sleep music",
+   "channel": "Yellow Brick Cinema",
+   "file": "results.json"
+  },
+  {
+   "video_id": "-j1NezqTx3s",
+   "slot_key": "roelf-starship",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.4123,
+   "title": "Atmospheric Starship Quarters",
+   "channel": "Roelf Staal",
+   "file": "results.json"
+  },
+  {
+   "video_id": "0cn-Y3Mfx3g",
+   "slot_key": "critter-cam",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.2122,
+   "title": "Rural wildlife cam",
+   "channel": "CritterVision",
+   "file": "results.json"
+  },
+  {
+   "video_id": "J7ZrIDvqlic",
+   "slot_key": "explore-brooks",
+   "ts": 1792268558.6121643,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.273,
+   "title": "Brooks Falls bears",
+   "channel": "explore.org",
+   "file": "results.json"
+  },
+  {
+   "video_id": "WdmK6ui7-C4",
+   "slot_key": null,
+   "ts": 1792270794.4018104,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0,
+   "title": "WdmK6ui7-C4",
+   "channel": "?",
+   "file": "new7-result.json"
+  },
+  {
+   "video_id": "s5P2P9WLACg",
+   "slot_key": null,
+   "ts": 1792270794.4018104,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0,
+   "title": "s5P2P9WLACg",
+   "channel": "?",
+   "file": "new7-result.json"
+  },
+  {
+   "video_id": "ImxavyCRA7w",
+   "slot_key": null,
+   "ts": 1792270794.4018104,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0,
+   "title": "ImxavyCRA7w",
+   "channel": "?",
+   "file": "new7-result.json"
+  },
+  {
+   "video_id": "QhahoVG0BfI",
+   "slot_key": null,
+   "ts": 1792270794.4018104,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0618,
+   "title": "QhahoVG0BfI",
+   "channel": "?",
+   "file": "new7-result.json"
+  },
+  {
+   "video_id": "J0q_Q1IbD74",
+   "slot_key": null,
+   "ts": 1792270794.4018104,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.1633,
+   "title": "J0q_Q1IbD74",
+   "channel": "?",
+   "file": "new7-result.json"
+  },
+  {
+   "video_id": "AMwnj-pSbLo",
+   "slot_key": null,
+   "ts": 1792270794.4018104,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.1125,
+   "title": "AMwnj-pSbLo",
+   "channel": "?",
+   "file": "new7-result.json"
+  },
+  {
+   "video_id": "x2MGw5anYUM",
+   "slot_key": null,
+   "ts": 1792270794.4018104,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.1675,
+   "title": "x2MGw5anYUM",
+   "channel": "?",
+   "file": "new7-result.json"
+  },
+  {
+   "video_id": "snlA7rFR0iQ",
+   "slot_key": null,
+   "ts": 1792273278.6030095,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0,
+   "title": "snlA7rFR0iQ",
+   "channel": "DJ Grossman",
+   "file": "noise3-result.json"
+  },
+  {
+   "video_id": "2wgg7KtzTrU",
+   "slot_key": null,
+   "ts": 1792273278.6030095,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0,
+   "title": "2wgg7KtzTrU",
+   "channel": "DJ Grossman",
+   "file": "noise3-result.json"
+  },
+  {
+   "video_id": "42Y1eD-7it0",
+   "slot_key": null,
+   "ts": 1792273278.6030095,
+   "verdict": "pass",
+   "max_fps": 0,
+   "regions": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0,
+   "title": "42Y1eD-7it0",
+   "channel": "DJ Grossman",
+   "file": "noise3-result.json"
+  },
+  {
+   "video_id": "SbjZKmnZYao",
+   "slot_key": "fan-sounds-known-strobe",
+   "ts": 1792268790.753276,
+   "verdict": "fail",
+   "max_fps": 9,
+   "regions": [
+    8,
+    0,
+    8,
+    3,
+    9
+   ],
+   "frames": 450,
+   "mean_luminance": 0.0632,
+   "title": "Fan sounds (owner saw strobing)",
+   "channel": "Rainy Night Shelter ASMR",
+   "file": "known-strobe-result.json"
+  }
+ ],
+ "observations": [
+  {
+   "video_id": "2-xLII_BZac",
+   "started_at": 1791458884,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Call Me Jack",
+   "title": "Fall Asleep While I Play Stardew Valley with Rain",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "7CRQnWJ5rGw",
+   "started_at": 1791479984,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Call Me Jack",
+   "title": "Fall Asleep While I Review Retro Games",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "9qH3Q5_cU1o",
+   "started_at": 1792150869,
+   "status": "live",
+   "viewers": 4,
+   "channel": "Nikomi Healing",
+   "title": "🔴24/7 Minecraft Music & Relaxing Nature Sounds 🌙｜リラックスできる環境音とマイクラBGM☕作業・睡眠用🌿 Study, Sleep & Relax...",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "CYdFjZLjd2g",
+   "started_at": 1792224152,
+   "status": "live",
+   "viewers": 4,
+   "channel": "Aosato",
+   "title": "どうぶつの森 シリーズ 24時間LIVE  作業用BGM [E+ ・とび森 ] 稀にゲームプレイ要素有 2026.10.17 [182]",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "ydn8Ik4x0t8",
+   "started_at": 1792216676,
+   "status": "live",
+   "viewers": 1,
+   "channel": "GameGrooves",
+   "title": "🔴 Live – 24 Hour Video Game Music Radio 🎮 – GameGrooves 💿 – NO AI 🚫 #videogames #vgm #gaming",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "nseVb0pdTLU",
+   "started_at": 1792245957,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Soothing Rain Piano",
+   "title": "Chill Beats",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "lXOEVh5X75o",
+   "started_at": 1792227169,
+   "status": "live",
+   "viewers": 7,
+   "channel": "Kodama life / Shinkansen Live Broadcast",
+   "title": "🔴Live東海道新幹線小田原駅ライブカメラ/Shinkansen Odawara Station Live Camera/Bullet train",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "ZDTgDG-r-Aw",
+   "started_at": 1792246088,
+   "status": "live",
+   "viewers": 1433,
+   "channel": "TOKYO Live Camera TV",
+   "title": "【LIVE】深夜の散歩配信　渋谷スクランブル交差点ライブカメラ Shibuya Scramble Crossing Live Camera 2026/10/17",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "3EqvCFB4teE",
+   "started_at": 1791973726,
+   "status": "live",
+   "viewers": 19,
+   "channel": "Life along the railroad line",
+   "title": "名古屋駅 ライブカメラ 愛知 鉄道 新幹線 天気 夜景 【】 Japan Nagoya Live Camera",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "3vfBtlxR9tA",
+   "started_at": 1792245750,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Midnight Convenience",
+   "title": "After Midnight in Tokyo 💤 Lo-fi Nostalgia for Inner Peace",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "RQwPOFUazwM",
+   "started_at": 1792202406,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Ambience Rain",
+   "title": "🔴LIVE Walking under rain in beautiful Indonesian hilly Village, for sleeping and relaxing",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "DEb-RcUMaZo",
+   "started_at": 1792238555,
+   "status": "live",
+   "viewers": 25,
+   "channel": "SHOWME Caribbean",
+   "title": "🌊 24/7 Caribbean Beach Cams: Aruba • St Maarten • Curacao • Bonaire",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "1cudDL4LDgw",
+   "started_at": 1792179037,
+   "status": "live",
+   "viewers": 31,
+   "channel": "Pure Relaxing Vibes",
+   "title": "Deep Sleep Sounds - Live",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "SbjZKmnZYao",
+   "started_at": 1792114469,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Rainy Night Shelter ASMR",
+   "title": "10 Hours Sleep Ambience",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "1kGYcXmYCnM",
+   "started_at": 1792255778,
+   "status": "live",
+   "viewers": 1,
+   "channel": "MoonMug Tavern",
+   "title": "Calm Medieval Ambience for Deep Sleep, Meditation & Stress Relief",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "wYxv-IIo6P4",
+   "started_at": 1792155609,
+   "status": "live",
+   "viewers": 159,
+   "channel": "The Waters of Heaven",
+   "title": "As Everything Grows Quiet, Let Yourself Sleep 🌌 Soft Piano Music for Restful Nights",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "QrUisSNNwrA",
+   "started_at": 1791586025,
+   "status": "live",
+   "viewers": 22,
+   "channel": "Dream Trips",
+   "title": "Planet Earth from the ISS 🌍 LIVE 24/7",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "G9IRk68XzUs",
+   "started_at": 1792187678,
+   "status": "live",
+   "viewers": 3,
+   "channel": "Space Videos",
+   "title": "Deep Sky Desk",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "faB16Aj1toE",
+   "started_at": 1792261442,
+   "status": "live",
+   "viewers": 1,
+   "channel": "CosmHush",
+   "title": "LIVE Space Documentary",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "1HAknmr2uS4",
+   "started_at": 1791804647,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Unseen Planet DC",
+   "title": "How Animals Survive Earth's Most Brutal Cold",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\age0.txt"
+  },
+  {
+   "video_id": "Bo4GSsfTlaM",
+   "started_at": 1791477940,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Call Me Jack",
+   "title": "Fall Asleep While I Play Pokemon Games",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "JhUSCGXMlb0",
+   "started_at": 1792139051,
+   "status": "live",
+   "viewers": 1,
+   "channel": "SamuelPS",
+   "title": "Red Dead Redemption 2 🤠",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "Hm5aUfKgUOQ",
+   "started_at": 1792131789,
+   "status": "live",
+   "viewers": 2,
+   "channel": "Nikomi Healing",
+   "title": "Rest Easy...(24/7 Minecraft Sleep Music & Rain)｜安眠・リラックス🌧️雨の夜と穏やかなマイクラBGM🌸 Relaxing Ambience",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "FEGtml4fxu4",
+   "started_at": 1792188570,
+   "status": "live",
+   "viewers": 21,
+   "channel": "Nerd Odyssey",
+   "title": "24/7",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "Q-dgbSeTeHI",
+   "started_at": 1792101350,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Nature and Relaxation",
+   "title": "Orient Express - Cozy Train Cabin Ambience with Rain and Train Sounds for Sleep and Relaxation",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "5F9sC3TDqyc",
+   "started_at": 1792242354,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Soothing Rain Piano",
+   "title": "Chill Beats & Rain",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "Mbr6qdr2XPM",
+   "started_at": 1792190507,
+   "status": "live",
+   "viewers": 2,
+   "channel": "Tokyo Akabane Live Camera",
+   "title": "🚅[LIVE]鉄道ライブカメラ(東京 赤羽駅周辺) Tokyo Japan Train Live Camera",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "4ZiucC7cvw8",
+   "started_at": 1790951601,
+   "status": "live",
+   "viewers": 10,
+   "channel": "TOKYO LIVE CAMERA",
+   "title": "【10月のJAZZ】Tokyo Night Healing｜レインボーブリッジの夜景ライブ｜｜ Tokyo Live Camera Mt.Fuji & Rainbow Bridge",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "jhN0F0SdGqM",
+   "started_at": 1792202189,
+   "status": "live",
+   "viewers": 66,
+   "channel": "Hokkaido Kurashi no Yomimono",
+   "title": "札幌市中央区交差点",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "FEif5M7mrRU",
+   "started_at": 1791743025,
+   "status": "live",
+   "viewers": 10,
+   "channel": "TOKYO TONES",
+   "title": "🌃 shinjuku fm ✨ soft lofi / smooth jazz [LIVE 24 /7] 東京都 新宿 ローファイ ライブ【BGMあり】",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "yZjwRaUvZ5U",
+   "started_at": 1792242007,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Blue Rain Lofi",
+   "title": "Rainy Suburban Walk 🌧️",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "RytregtOHBM",
+   "started_at": 1792234401,
+   "status": "live",
+   "viewers": 945,
+   "channel": "Syrpentina",
+   "title": "🔴LIVE Peaceful Fall Cottage Bird Feeder: Song Birds, Cardinals, Nature Sounds, Sleep, Cat TV",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "R5gLtaQx3To",
+   "started_at": 1792231215,
+   "status": "live",
+   "viewers": 548,
+   "channel": "Enjoy Relaxation",
+   "title": "FLYING OVER SIARGAO (4K UHD) – Soothing Music Along With Beautiful Nature Video - 4K Video UHD #5",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "WsrK19k6Xz4",
+   "started_at": 1791475252,
+   "status": "live",
+   "viewers": 731,
+   "channel": "Leo’s Fireplace",
+   "title": "🔴 Cozy Fireplace LIVE 🔥 Crackling Fire Sounds for Sleep, Relax & Study",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "Z0dSSux0Nk0",
+   "started_at": 1792112668,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Midnight Roof Rain",
+   "title": "Fall Asleep Fast, Sleep All Night",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "uWzSqdcfPZw",
+   "started_at": 1792223918,
+   "status": "live",
+   "viewers": 367,
+   "channel": "STEEZYASFUCK",
+   "title": "lofi hip hop radio – beats to sleep/study/relax to ☕",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "ovXN8tVYM2s",
+   "started_at": 1791775777,
+   "status": "live",
+   "viewers": 2350,
+   "channel": "Bamboo Piano Escape",
+   "title": "Relaxation Music: Bamboo Water Fountain + Healing Piano 🌿 Sleep Music, Meditation and Nature Sounds",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "I3sa2kiEpkA",
+   "started_at": 1792082619,
+   "status": "live",
+   "viewers": 18,
+   "channel": "Dream Trips",
+   "title": "LIVE 24/7",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "MsWRmFmsquI",
+   "started_at": 1791913593,
+   "status": "live",
+   "viewers": 1,
+   "channel": "WN Space ",
+   "title": "LIVE! View of the Milky Way Galaxy 🌌",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "jMZVhjI6ziA",
+   "started_at": 1792254608,
+   "status": "live",
+   "viewers": 1,
+   "channel": "The Quiet Historian",
+   "title": "Boring History For Sleep",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "HP9YteoiOYM",
+   "started_at": 1792238915,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Hidden Ocean 4K",
+   "title": "4K Documentary",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\age1.txt"
+  },
+  {
+   "video_id": "MRJAuwpZJoQ",
+   "started_at": 1791477989,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Call Me Jack",
+   "title": "Fall Asleep While I Play Donkey Kong Games with Rain",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "DMR2tBpcUmM",
+   "started_at": 1792087117,
+   "status": "live",
+   "viewers": 1,
+   "channel": "TheBakerTV",
+   "title": "📼24/7 WoW Forever Gameplay, Chill Music & No Commentary. Vibes to sleep, chill & study to",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "lAVvhpGkovk",
+   "started_at": 1790824526,
+   "status": "live",
+   "viewers": 3,
+   "channel": "Melodies Zone",
+   "title": "NO AI",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "lHa4PnLnFEI",
+   "started_at": 1782777291,
+   "status": "live",
+   "viewers": 11,
+   "channel": "RetroWorld",
+   "title": "Longplay No Commentary 1080p",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "rX16Jo1chLI",
+   "started_at": 1791840976,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Nature and Relaxation",
+   "title": "Cozy Train Cabin Ambience with Blizzard and Train Sounds",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "kkcbiCVghxc",
+   "started_at": 1792051233,
+   "status": "live",
+   "viewers": 5,
+   "channel": "Osaka Loop Line Live Camera",
+   "title": "Train Camera",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "76KqHKyYtmU",
+   "started_at": 1792080278,
+   "status": "live",
+   "viewers": 15,
+   "channel": "Ståle Ualand",
+   "title": "Finse station - Live",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "6h4IGR61eUo",
+   "started_at": 1791800153,
+   "status": "live",
+   "viewers": 49,
+   "channel": "Live Cam Yokohama Japan",
+   "title": "🔴Live Cam Yokohama Japan :横浜汽車道ライブカメラ",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "PdC6a16J7WI",
+   "started_at": 1791480637,
+   "status": "live",
+   "viewers": 454,
+   "channel": "After-Hours 45",
+   "title": "rainy new york skyline and soft records to unwind",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "pQaz70OJHBc",
+   "started_at": 1791846402,
+   "status": "live",
+   "viewers": 7,
+   "channel": "TOKYO TONES",
+   "title": "tokyo night drive",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "cRBBEtKUaX0",
+   "started_at": 1792206757,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Rain Pathway",
+   "title": "Relaxing Rain Sounds & Cozy Street Ambience",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "QBmU5YKCAXU",
+   "started_at": 1792199093,
+   "status": "live",
+   "viewers": 92,
+   "channel": "Soothing Waves",
+   "title": "Anxiety And Depressive Conditions, Ocean Wave Noise",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "W9Xgw3jK-Vc",
+   "started_at": 1792194894,
+   "status": "live",
+   "viewers": 479,
+   "channel": "The Relaxed Guy",
+   "title": "🔴 Rain Sounds for Sleeping - BLACK SCREEN - Sleep FAST with Heavy Rain (NO AI)",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "UbPCQ9GDs6U",
+   "started_at": 1792144108,
+   "status": "live",
+   "viewers": 138,
+   "channel": "Antony White Noise",
+   "title": "White Noise Black Screen 💤12 Hours of Continuous Relaxation for Sleep and Focus",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "s56h5rv1NJs",
+   "started_at": 1792231862,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Sleep In 5 Minutes 🔴 No Ads",
+   "title": "Fall Asleep Fast, Sleep Sounds",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "xfngQIcthjM",
+   "started_at": 1792195207,
+   "status": "live",
+   "viewers": 101,
+   "channel": "Retro Lofi Dreams",
+   "title": "90's Rainy Night Lofi Hip Hop Radio ☔ Beats to Relax and Sleep",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "hETfhc0-bYs",
+   "started_at": 1792202809,
+   "status": "live",
+   "viewers": 208,
+   "channel": "Poponwave",
+   "title": "Cafe · Work · Study",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "ZQrGv1mRL1w",
+   "started_at": 1792234483,
+   "status": "live",
+   "viewers": 63,
+   "channel": "Ambient Outpost",
+   "title": "Calm Ambient Music",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "bJKMg6qyzUc",
+   "started_at": 1792225942,
+   "status": "live",
+   "viewers": 1,
+   "channel": "VICENTE AGEMATSU　(JAPAN)",
+   "title": "＃ふたご座β流星群極大日【星空と東京ライブカメラ】TOKYO STARRY SKY LIVE CAMERA 東京ライブカメラ 　＃オリオン座流星群 #orionidmeteorshower",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "M-Wk599PWvg",
+   "started_at": 1792256529,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Sleepy History Stories",
+   "title": "Boring History For Sleep",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\age2.txt"
+  },
+  {
+   "video_id": "2f5CjnKt6oI",
+   "started_at": 1791459198,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Call Me Jack",
+   "title": "Fall Asleep While I Play Oblivion Remastered",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "V3PuLHTd8bQ",
+   "started_at": 1791917385,
+   "status": "live",
+   "viewers": 4,
+   "channel": "Mochi's World",
+   "title": "24/7 Minecraft Music & Ambience for Relaxation and Sleep 🔴LIVE",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "DeqRrffyVE8",
+   "started_at": 1791549436,
+   "status": "live",
+   "viewers": 17,
+   "channel": "Hero's Journey",
+   "title": "Link's Never Ending Journey 🧝 Zelda Music Radio 24/7⭐",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "I_0_lioWPl0",
+   "started_at": 1792047241,
+   "status": "live",
+   "viewers": 3,
+   "channel": "Fenom",
+   "title": "#StarCitizen #TheRift",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "xfnDRb5UrKY",
+   "started_at": 1792235453,
+   "status": "live",
+   "viewers": 2,
+   "channel": "Rainy Neon Lofi",
+   "title": "Calm 90's Lofi Ambience for Quiet Nights",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "SQUTH1ogNe4",
+   "started_at": 1792043950,
+   "status": "live",
+   "viewers": 4,
+   "channel": "Osaka Loop Line Live Camera",
+   "title": "Train Camera",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "Hc_MVqTyLK4",
+   "started_at": 1792241813,
+   "status": "live",
+   "viewers": 45,
+   "channel": "Mount Washington Cog Railway",
+   "title": "Mount Washington Cog Railway Live Webcam",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "2WB7nCKjijg",
+   "started_at": 1791425110,
+   "status": "live",
+   "viewers": 3,
+   "channel": "京都市観光協会_Live配信",
+   "title": "【LIVE】京都 嵯峨嵐山 渡月橋北詰ライブ中継カメラ（京都市観光協会公式）／Saga Arashiyama, Kyoto Live camera",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "BqWHbrCM9v4",
+   "started_at": 1792067710,
+   "status": "live",
+   "viewers": 16,
+   "channel": "Ambient Cyberpunk",
+   "title": "4k",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "KT1w50eIWVE",
+   "started_at": 1785374672,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Relaxing Rain",
+   "title": "🌧️ Peaceful Rain on Glass Above the City 🌃 Cozy Bedroom Night for Better Sleep",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "LREsr2bEIDQ",
+   "started_at": 1792256309,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Tokyo Rainy Lofi",
+   "title": "Calm Lofi Music for Deep Focus",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "kp-r-Xv9XUc",
+   "started_at": 1792095976,
+   "status": "live",
+   "viewers": 61,
+   "channel": "Pure Sleeping Vibes",
+   "title": "Sleep to Ocean Thunderstorm Sounds to Wake Up Refreshed and Relaxed",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "AT_rjlKyfUY",
+   "started_at": 1791922326,
+   "status": "live",
+   "viewers": 38,
+   "channel": "Pure Relaxing Vibes",
+   "title": "Thunderstorm for Sleeping - Pure Relaxing Vibes",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "s5P2P9WLACg",
+   "started_at": 1792209626,
+   "status": "live",
+   "viewers": 2,
+   "channel": "Moonstream Nights",
+   "title": "Black Screen No Ads",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "i5wW5oRX2jM",
+   "started_at": 1792262628,
+   "status": "live",
+   "viewers": 1,
+   "channel": "𓋼𓍊 Ⲟⲁⲕⳑⲩⲛⲛ'⳽ Ⲥⲟⲅⲛⲉⲅ 𓍊𓋼",
+   "title": "Open 24/7",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "0Hihz2emZgo",
+   "started_at": 1792248323,
+   "status": "live",
+   "viewers": 255,
+   "channel": "The Japanese Town",
+   "title": "1980s & 90s Vibes 🪭 Lofi Hip Hop Beats & Retro Japanese Town Ambience 🪞 Nostalgic Lofi Rain Playlist",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "jNuiJc1JupI",
+   "started_at": 1790344508,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Majesty Music",
+   "title": "Lofi Chillout Radio 🔴 Daylight Mix / Focus & Work (Relaxed) — Majesty Music Live 24/7",
+   "ts": 1792264920.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "d2D2wPsjPqY",
+   "started_at": 1792072269,
+   "status": "live",
+   "viewers": 21,
+   "channel": "Ambient Outpost",
+   "title": "Rainy Ambient Music",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "T4u3Hqg7uac",
+   "started_at": 1792259069,
+   "status": "live",
+   "viewers": 1,
+   "channel": "CosmHush",
+   "title": "Space Documentaries for Sleep & Relaxation",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "KWXiWvupSho",
+   "started_at": 1792098744,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Evening Stories",
+   "title": "🔴 Ancient Civilizations & Fallen Empires for Sleep 24/7 — Calm History Radio (No Loud Sounds)",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\age3.txt"
+  },
+  {
+   "video_id": "XQ9-oYQccXM",
+   "started_at": 1792209696,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Moonstream Nights",
+   "title": "Cozy Bedroom Breeze",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "WdmK6ui7-C4",
+   "started_at": 1792209684,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Moonstream Nights",
+   "title": "Black Screen No Ads",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "EltKNDB9lGc",
+   "started_at": 1792265835,
+   "status": "live",
+   "viewers": 1,
+   "channel": "BECALM.",
+   "title": "Live 24/7",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "YD7qFD9wH7M",
+   "started_at": 1792197010,
+   "status": "live",
+   "viewers": 136,
+   "channel": "The Relaxed Night",
+   "title": "Black Screen - 24 Hours",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "9mUPjBULoLA",
+   "started_at": 1792249805,
+   "status": "live",
+   "viewers": 79,
+   "channel": "Amakandu",
+   "title": "Marble Run Race ASMR 1000 Marbles Mega Whirlpool ASMR Amakandu 3",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "O9sifxfDu5A",
+   "started_at": 1792265622,
+   "status": "live",
+   "viewers": 11,
+   "channel": "Kinetic sand world",
+   "title": "Relaxing Sand Cutting & Crunchy Sounds 😍",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "quz1fbfjCI4",
+   "started_at": 1792226364,
+   "status": "live",
+   "viewers": 89,
+   "channel": "東北エプソンアクアリウムかもすい(加茂水族館)公式チャンネル",
+   "title": "深夜のクラゲライブ｜オールナイトカモスイ　 カブトクラゲ",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "DzbI-2wCYJE",
+   "started_at": 1792242093,
+   "status": "ended",
+   "viewers": null,
+   "channel": "Fish Tank Life",
+   "title": "4K",
+   "ts": 1792266898.4573174,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "zcYK0qb55w8",
+   "started_at": 1791508277,
+   "status": "live",
+   "viewers": 2,
+   "channel": "Bubbles HeyHo",
+   "title": "Parkour POV",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "ImxavyCRA7w",
+   "started_at": 1792260506,
+   "status": "live",
+   "viewers": 1,
+   "channel": "SleepyDuck",
+   "title": "Pitch Black Screen Sleep Sounds",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "U_UJB4xkD6E",
+   "started_at": 1792243192,
+   "status": "live",
+   "viewers": 1,
+   "channel": "BECALM.",
+   "title": "Live 24/7",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "g2AAEy4KnIM",
+   "started_at": 1791911304,
+   "status": "live",
+   "viewers": 1,
+   "channel": "ASMR Tingles Guaranteed!💜",
+   "title": "24/7 LIVE NO TALKING ASMR Guaranteed",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "1DDJNwxmHAk",
+   "started_at": 1791681353,
+   "status": "live",
+   "viewers": 325,
+   "channel": "Fireside Fall ",
+   "title": "[NO ADS] Fall Asleep Instantly😴Heavy Rain & Thunderstorm by the Window ⛈️Fireplace Sounds🔥Deep Sleep",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "wP_0zxQtLN8",
+   "started_at": 1792226228,
+   "status": "live",
+   "viewers": 17,
+   "channel": "Amakandu",
+   "title": "HABA Marble Run: Mesmerizing Wooden Marbles Racing Through Air ASMR",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "DpA4aingTJk",
+   "started_at": 1792264184,
+   "status": "live",
+   "viewers": 805,
+   "channel": "ChocoSonic Bites ",
+   "title": "No Talking",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "ItSFRT0_ktQ",
+   "started_at": 1792014352,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Queen Meerab",
+   "title": "Deep Sea, Jellyfish, Turtles & Coral Reef",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "MYeOK93smBw",
+   "started_at": 1791874510,
+   "status": "live",
+   "viewers": 4,
+   "channel": "Northumberland Astro",
+   "title": "Northumberland Aurora Cam LIVE Stream (Cresswell, UK)",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "3Gef2oDpLEA",
+   "started_at": 1792184931,
+   "status": "live",
+   "viewers": 1,
+   "channel": "M39ko",
+   "title": "Minecraft Timelapse while im gone",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "bz4VtbRjbb4",
+   "started_at": 1792026666,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Quiet Fan Nights",
+   "title": "10 Hours",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "U1o7RakomQQ",
+   "started_at": 1792248714,
+   "status": "live",
+   "viewers": 1,
+   "channel": "BECALM.",
+   "title": "Live 24/7",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "zJdpMOLKHWw",
+   "started_at": 1790520721,
+   "status": "live",
+   "viewers": 19,
+   "channel": "masayoshi's ASMR Lipstick CHANNEL ",
+   "title": "Deep Sleep & Brain Melting Tingles (No Talking / Relaxing Sounds) 🔴２４時間生放送ASMR",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "ejil46ZeY2o",
+   "started_at": 1792044448,
+   "status": "live",
+   "viewers": 1,
+   "channel": "BackCountryAmbient",
+   "title": "🔴 Borneo Jungle Stilt Hut · LIVE 24/7 · Jungle Night Sounds for Relaxation & Deep Thought 🌿",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "UOFunnzaiCw",
+   "started_at": 1792232145,
+   "status": "live",
+   "viewers": 29,
+   "channel": "Marble Run Sound Japan",
+   "title": "Marble Run Race ☆ HABA Slope + Cuboro + Bornelund Quadrilla + Transparent pipe",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "FPTQPChgP1c",
+   "started_at": 1792228622,
+   "status": "live",
+   "viewers": 1,
+   "channel": "RelaXperiments",
+   "title": "Relaxing Soap Cutting and Carving ASMR. Satisfying videos. LIVE-2198",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "n4VVTowaraE",
+   "started_at": 1792236609,
+   "status": "live",
+   "viewers": 1,
+   "channel": "AquaDream Relaxation",
+   "title": "The Best 4K Aquarium – Soothing Jellyfish & Reef Fish with Sleep Music for Deep Relaxation",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "YjL7Zb2_i40",
+   "started_at": 1792266329,
+   "status": "live",
+   "viewers": 2,
+   "channel": "Kolforsen Aurora",
+   "title": "Live 4K Aurora from central Sweden",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "19UVk1fbVu4",
+   "started_at": 1792236154,
+   "status": "ended",
+   "viewers": null,
+   "channel": "Block ASMR ",
+   "title": "Chill Block Blast Gameplay 🎧 Satisfying ASMR Live Stream",
+   "ts": 1792266897.63989,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "yuSl_vfrv3w",
+   "started_at": 1792265983,
+   "status": "live",
+   "viewers": 1,
+   "channel": "BECALM.",
+   "title": "Live 24/7",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "1TirvYrTknM",
+   "started_at": 1792198162,
+   "status": "live",
+   "viewers": 9,
+   "channel": "Airplane Cabin Ambience",
+   "title": "Airplane Cabin Ambience for Sleep",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "ipJth2_845U",
+   "started_at": 1792261682,
+   "status": "live",
+   "viewers": 68,
+   "channel": "Malik Brother",
+   "title": "Sleep & Stress Relief",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "LE-wVg93e9A",
+   "started_at": 1792249213,
+   "status": "live",
+   "viewers": 2,
+   "channel": "Tropical Canopy Rain",
+   "title": "Heavy Rain on Forest Leaves Along a Lush Forest Trail, Nonstop Rain for Meditation",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "sojtgwOQD9w",
+   "started_at": 1792227941,
+   "status": "live",
+   "viewers": 20,
+   "channel": "Marble gumi",
+   "title": "Welcome to Marble Run Live ☆ Handmade wooden rain gutter slope & colorful balls ASMR",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "4goi9Iqc-rs",
+   "started_at": 1792257957,
+   "status": "live",
+   "viewers": 174,
+   "channel": "SAND Writing ASMR : Kinetic Sandtagious ",
+   "title": "LIVE NAME SAND Writing ASMR !!",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "uT6qXk9TJq8",
+   "started_at": 1792187554,
+   "status": "live",
+   "viewers": 4,
+   "channel": "WorldCam",
+   "title": "Relaxing Music",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "OUmUFc62e-E",
+   "started_at": 1792158875,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Bestz Clips",
+   "title": "Subway Surfers Live!!",
+   "ts": 1792266840.0,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "VAlMDl00mYY",
+   "started_at": 1782919127,
+   "status": "live",
+   "viewers": 410,
+   "channel": "Lofi Girl",
+   "title": "sleep lofi radio 🌌 relaxing music to sleep/dream to",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage0.txt"
+  },
+  {
+   "video_id": "GSfT7H87zq4",
+   "started_at": 1780491392,
+   "status": "live",
+   "viewers": 77,
+   "channel": "Lofi Girl",
+   "title": "synth ambient radio 🌌 deep space music to sleep to",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage0.txt"
+  },
+  {
+   "video_id": "A8jDx9TLMQc",
+   "started_at": 1764262921,
+   "status": "live",
+   "viewers": 90,
+   "channel": "Lofi Girl",
+   "title": "relaxing jazz music 🌹 cozy radio to study/chill to",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage0.txt"
+  },
+  {
+   "video_id": "Cu-LznLglyE",
+   "started_at": 1792076420,
+   "status": "live",
+   "viewers": 53,
+   "channel": "Yellow Brick Cinema - Relaxing Music",
+   "title": "🔴 Soft Sleep Music 24/7: Deep Sleep Music, Peaceful Music, Sleep Relaxation, Sleep Meditation Music",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage0.txt"
+  },
+  {
+   "video_id": "JYcytCsYK5Q",
+   "started_at": 1780477751,
+   "status": "live",
+   "viewers": 5,
+   "channel": "Healing Rain Sounds – ASMR",
+   "title": "🔴 Rain Sounds in a Peaceful Forest Park 🌧️ Deep Sleep, Relaxation & Stress Relief Live 24/7",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage0.txt"
+  },
+  {
+   "video_id": "w3LjpFhySTg",
+   "started_at": 1718663284,
+   "status": "live",
+   "viewers": 230,
+   "channel": "Monterey Bay Aquarium",
+   "title": "Monterey Bay Aquarium",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage0.txt"
+  },
+  {
+   "video_id": "5e4lsEe4Vew",
+   "started_at": 1674669332,
+   "status": "live",
+   "viewers": 23,
+   "channel": "Explore Live Nature Cams",
+   "title": "International Wolf Center North Camera powered by EXPLORE.org",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage0.txt"
+  },
+  {
+   "video_id": "rFZHOHl-L8A",
+   "started_at": 1787125423,
+   "status": "live",
+   "viewers": 9068,
+   "channel": "Lofi Girl",
+   "title": "lofi hip hop radio 📚 beats to relax/study to",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage0.txt"
+  },
+  {
+   "video_id": "0cn-Y3Mfx3g",
+   "started_at": 1783877634,
+   "status": "live",
+   "viewers": 295,
+   "channel": "CritterVision",
+   "title": "CritterVision 24/7 Live Wildlife Critter Cam",
+   "ts": 1792265040.0,
+   "file": "sleep-streams\\expand\\oage0.txt"
+  },
+  {
+   "video_id": "JD-kMIpDfnY",
+   "started_at": 1779378356,
+   "status": "live",
+   "viewers": 1362,
+   "channel": "Lofi Girl",
+   "title": "lofi hip hop radio 💤 beats to sleep/chill to",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage1.txt"
+  },
+  {
+   "video_id": "S_MOd40zlYU",
+   "started_at": 1712065977,
+   "status": "live",
+   "viewers": 136,
+   "channel": "Lofi Girl",
+   "title": "dark ambient radio 🌃 music to escape/dream to",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage1.txt"
+  },
+  {
+   "video_id": "E_XmwjgRLz8",
+   "started_at": 1755882867,
+   "status": "live",
+   "viewers": 38,
+   "channel": "Lofi Girl",
+   "title": "chill guitar radio 🎸 music to study/relax to",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage1.txt"
+  },
+  {
+   "video_id": "-OekvEFm1lo",
+   "started_at": 1728576026,
+   "status": "live",
+   "viewers": 108,
+   "channel": "Lofi Girl",
+   "title": "gentle rain ambience 🌧 cozy sound to chill to",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage1.txt"
+  },
+  {
+   "video_id": "zL68biE6wAs",
+   "started_at": 1784407546,
+   "status": "live",
+   "viewers": 101,
+   "channel": "Monterey Bay Aquarium",
+   "title": "Monterey Bay Aquarium",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage1.txt"
+  },
+  {
+   "video_id": "fVa6-zCBR7A",
+   "started_at": 1750904256,
+   "status": "live",
+   "viewers": 102,
+   "channel": "Monterey Bay Aquarium",
+   "title": "Monterey Bay Aquarium",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage1.txt"
+  },
+  {
+   "video_id": "awQzjn72bI0",
+   "started_at": 1782825129,
+   "status": "live",
+   "viewers": 92,
+   "channel": "NASA",
+   "title": "Live High-Definition Views from the International Space Station (Official NASA Stream)",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage1.txt"
+  },
+  {
+   "video_id": "E2vONfzoyRI",
+   "started_at": 1779458112,
+   "status": "live",
+   "viewers": 1146,
+   "channel": "Lofi Girl",
+   "title": "jazz lofi radio 🎷 beats to chill/study to",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage1.txt"
+  },
+  {
+   "video_id": "J7ZrIDvqlic",
+   "started_at": 1782159237,
+   "status": "live",
+   "viewers": 899,
+   "channel": "Explore Live Nature Cams",
+   "title": "explore.org",
+   "ts": 1792265040.0,
+   "file": "sleep-streams\\expand\\oage1.txt"
+  },
+  {
+   "video_id": "nI725iVsyoQ",
+   "started_at": 1790182071,
+   "status": "live",
+   "viewers": 410,
+   "channel": "Lofi Girl",
+   "title": "24/7 deep sleep music 🌌 calm ambient to sleep & dream to",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage2.txt"
+  },
+  {
+   "video_id": "N0snMcR6aaA",
+   "started_at": 1776183557,
+   "status": "live",
+   "viewers": 198,
+   "channel": "Lofi Girl",
+   "title": "relaxing piano radio 🎹 calm music to focus to",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage2.txt"
+  },
+  {
+   "video_id": "MLjP00bGcLg",
+   "started_at": 1779022168,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Roelf Staal • Ambient Music Voyages",
+   "title": "Deep Sleep, Meditation & Inner Stillness 🌌",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage2.txt"
+  },
+  {
+   "video_id": "q_4KI-ChIIs",
+   "started_at": 1760712222,
+   "status": "live",
+   "viewers": 38,
+   "channel": "Lofi Girl",
+   "title": "fireplace ambience 🔥 cozy sound to chill to",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage2.txt"
+  },
+  {
+   "video_id": "eQ_foBERmzA",
+   "started_at": 1784407366,
+   "status": "live",
+   "viewers": 362,
+   "channel": "Monterey Bay Aquarium",
+   "title": "Monterey Bay Aquarium",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage2.txt"
+  },
+  {
+   "video_id": "Fz6sl9YJZE0",
+   "started_at": 1763065106,
+   "status": "live",
+   "viewers": 12,
+   "channel": "Explore Live Nature Cams",
+   "title": "explore.org",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage2.txt"
+  },
+  {
+   "video_id": "M3HKLzjvKPc",
+   "started_at": 1785417281,
+   "status": "live",
+   "viewers": 104,
+   "channel": "NASA",
+   "title": "Live Video from the International Space Station (Official NASA Stream)",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage2.txt"
+  },
+  {
+   "video_id": "FtO1lxJ-RXM",
+   "started_at": 1721536212,
+   "status": "live",
+   "viewers": 65,
+   "channel": "Yellow Brick Cinema - Relaxing Music",
+   "title": "🔴 Sleep Music 24/7, Deep Sleep Music, Peaceful Music, Relaxing, Sleep Relaxation, Sleep Meditation",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage2.txt"
+  },
+  {
+   "video_id": "xORCbIptqcc",
+   "started_at": 1749046671,
+   "status": "live",
+   "viewers": 251,
+   "channel": "Lofi Girl",
+   "title": "sleep ambient music 💤 relaxing radio to fall asleep to",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage3.txt"
+  },
+  {
+   "video_id": "jXAEIWcGXwE",
+   "started_at": 1764781227,
+   "status": "live",
+   "viewers": 44,
+   "channel": "Lofi Girl",
+   "title": "classical music radio 🎻 relaxing songs to read/study to",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage3.txt"
+  },
+  {
+   "video_id": "AXvnFk38sDQ",
+   "started_at": 1766181208,
+   "status": "live",
+   "viewers": 9,
+   "channel": "Roelf Staal • Ambient Music Voyages",
+   "title": "Space Music for Study, Focus & Relaxation 🌌",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage3.txt"
+  },
+  {
+   "video_id": "R_qT0-KoCm8",
+   "started_at": 1719701714,
+   "status": "live",
+   "viewers": 190,
+   "channel": "Pure Relaxing Vibes",
+   "title": "Black Screen",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage3.txt"
+  },
+  {
+   "video_id": "n_GpVsz4nHU",
+   "started_at": 1783460076,
+   "status": "live",
+   "viewers": 33,
+   "channel": "Monterey Bay Aquarium",
+   "title": "Monterey Bay Aquarium",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage3.txt"
+  },
+  {
+   "video_id": "DHUnz4dyb54",
+   "started_at": 1673020143,
+   "status": "live",
+   "viewers": 116,
+   "channel": "Explore Live Nature Cams",
+   "title": "Tropical Reef Camera powered by EXPLORE.org",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage3.txt"
+  },
+  {
+   "video_id": "CwPCy1GLS38",
+   "started_at": 1779886706,
+   "status": "live",
+   "viewers": 111,
+   "channel": "Lofi Girl",
+   "title": "sad lofi radio ☔ beats for rainy days",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage3.txt"
+  },
+  {
+   "video_id": "-j1NezqTx3s",
+   "started_at": 1792020323,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Roelf Staal • Ambient Music Voyages",
+   "title": "Warm Ambient Music for Study, Focus & Cozy Evenings 🌌",
+   "ts": 1792264980.0,
+   "file": "sleep-streams\\expand\\oage3.txt"
+  },
+  {
+   "video_id": "WdmK6ui7-C4",
+   "started_at": 1792209684,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Moonstream Nights",
+   "title": "Black Screen No Ads",
+   "ts": 1792270620.0,
+   "file": "sleep-streams\\new6\\out.txt"
+  },
+  {
+   "video_id": "s5P2P9WLACg",
+   "started_at": 1792209626,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Moonstream Nights",
+   "title": "Black Screen No Ads",
+   "ts": 1792270680.0,
+   "file": "sleep-streams\\new6\\out.txt"
+  },
+  {
+   "video_id": "ImxavyCRA7w",
+   "started_at": 1792260506,
+   "status": "live",
+   "viewers": 1,
+   "channel": "SleepyDuck",
+   "title": "Pitch Black Screen Sleep Sounds",
+   "ts": 1792270680.0,
+   "file": "sleep-streams\\new6\\out.txt"
+  },
+  {
+   "video_id": "QhahoVG0BfI",
+   "started_at": 1772743446,
+   "status": "live",
+   "viewers": 9,
+   "channel": "Love Nature",
+   "title": "Love Nature",
+   "ts": 1792270680.0,
+   "file": "sleep-streams\\new6\\out.txt"
+  },
+  {
+   "video_id": "J0q_Q1IbD74",
+   "started_at": 1792260881,
+   "status": "live",
+   "viewers": 1,
+   "channel": "Oslo Walks 🇳🇴",
+   "title": "🔴 SUPER Snow Storm City Walk 24/7 ❄️🌨️ Winter in OSLO, Norway 🔴 SLOW TV CITY SOUND PRE-RECORDED",
+   "ts": 1792270680.0,
+   "file": "sleep-streams\\new6\\out.txt"
+  },
+  {
+   "video_id": "AMwnj-pSbLo",
+   "started_at": 1791765324,
+   "status": "live",
+   "viewers": 3,
+   "channel": "Wondersgta Gaming",
+   "title": "Grand Theft Auto Vice City Full Gameplay",
+   "ts": 1792270680.0,
+   "file": "sleep-streams\\new6\\out.txt"
+  },
+  {
+   "video_id": "x2MGw5anYUM",
+   "started_at": 1792237207,
+   "status": "live",
+   "viewers": 1,
+   "channel": "this_endless_grace",
+   "title": "Brown Bears at the Falls · Relaxing Nature Sounds",
+   "ts": 1792270680.0,
+   "file": "sleep-streams\\new6\\out.txt"
+  }
+ ],
+ "heights": [
+  {
+   "video_id": "XQ9-oYQccXM",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792266898.4573174,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "WdmK6ui7-C4",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792266898.4573174,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "EltKNDB9lGc",
+   "format_id": "95",
+   "height": 720,
+   "ts": 1792266898.4573174,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "YD7qFD9wH7M",
+   "format_id": "95",
+   "height": 720,
+   "ts": 1792266898.4573174,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "9mUPjBULoLA",
+   "format_id": "301",
+   "height": 1080,
+   "ts": 1792266898.4573174,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "O9sifxfDu5A",
+   "format_id": "94",
+   "height": 854,
+   "ts": 1792266898.4573174,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "quz1fbfjCI4",
+   "format_id": "301",
+   "height": 1080,
+   "ts": 1792266898.4573174,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "zcYK0qb55w8",
+   "format_id": "301",
+   "height": 1080,
+   "ts": 1792266898.4573174,
+   "file": "sleep-streams\\expand\\c7_0.txt"
+  },
+  {
+   "video_id": "ImxavyCRA7w",
+   "format_id": "93",
+   "height": 360,
+   "ts": 1792266898.098605,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "U_UJB4xkD6E",
+   "format_id": "95",
+   "height": 720,
+   "ts": 1792266898.098605,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "g2AAEy4KnIM",
+   "format_id": "301",
+   "height": 1080,
+   "ts": 1792266898.098605,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "1DDJNwxmHAk",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792266898.098605,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "wP_0zxQtLN8",
+   "format_id": "301",
+   "height": 1080,
+   "ts": 1792266898.098605,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "DpA4aingTJk",
+   "format_id": "94",
+   "height": 854,
+   "ts": 1792266898.098605,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "ItSFRT0_ktQ",
+   "format_id": "94",
+   "height": 854,
+   "ts": 1792266898.098605,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "MYeOK93smBw",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792266898.098605,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "3Gef2oDpLEA",
+   "format_id": "95",
+   "height": 720,
+   "ts": 1792266898.098605,
+   "file": "sleep-streams\\expand\\c7_1.txt"
+  },
+  {
+   "video_id": "bz4VtbRjbb4",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792266897.63989,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "U1o7RakomQQ",
+   "format_id": "95",
+   "height": 720,
+   "ts": 1792266897.63989,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "zJdpMOLKHWw",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792266897.63989,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "ejil46ZeY2o",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792266897.63989,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "UOFunnzaiCw",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792266897.63989,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "FPTQPChgP1c",
+   "format_id": "301",
+   "height": 1080,
+   "ts": 1792266897.63989,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "n4VVTowaraE",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792266897.63989,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "YjL7Zb2_i40",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792266897.63989,
+   "file": "sleep-streams\\expand\\c7_2.txt"
+  },
+  {
+   "video_id": "yuSl_vfrv3w",
+   "format_id": "95",
+   "height": 720,
+   "ts": 1792266896.0636594,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "1TirvYrTknM",
+   "format_id": "95",
+   "height": 720,
+   "ts": 1792266896.0636594,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "ipJth2_845U",
+   "format_id": "94",
+   "height": 854,
+   "ts": 1792266896.0636594,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "LE-wVg93e9A",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792266896.0636594,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "sojtgwOQD9w",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792266896.0636594,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "4goi9Iqc-rs",
+   "format_id": "94",
+   "height": 854,
+   "ts": 1792266896.0636594,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "uT6qXk9TJq8",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792266896.0636594,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "OUmUFc62e-E",
+   "format_id": "94",
+   "height": 854,
+   "ts": 1792266896.0636594,
+   "file": "sleep-streams\\expand\\c7_3.txt"
+  },
+  {
+   "video_id": "2-xLII_BZac",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "2f5CjnKt6oI",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "Hm5aUfKgUOQ",
+   "format_id": "301",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "FEGtml4fxu4",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "Q-dgbSeTeHI",
+   "format_id": "95",
+   "height": 720,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "5F9sC3TDqyc",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "Mbr6qdr2XPM",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "4ZiucC7cvw8",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "jhN0F0SdGqM",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "FEif5M7mrRU",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "yZjwRaUvZ5U",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "RytregtOHBM",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "R5gLtaQx3To",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "WsrK19k6Xz4",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "Z0dSSux0Nk0",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "uWzSqdcfPZw",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "QrUisSNNwrA",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "G9IRk68XzUs",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "faB16Aj1toE",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "KWXiWvupSho",
+   "format_id": "95",
+   "height": 720,
+   "ts": 1792264413.3489542,
+   "file": "sleep-streams\\expand\\verify0.txt"
+  },
+  {
+   "video_id": "Bo4GSsfTlaM",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "7CRQnWJ5rGw",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "DMR2tBpcUmM",
+   "format_id": "301",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "lAVvhpGkovk",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "lHa4PnLnFEI",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "rX16Jo1chLI",
+   "format_id": "95",
+   "height": 720,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "kkcbiCVghxc",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "76KqHKyYtmU",
+   "format_id": "301",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "6h4IGR61eUo",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "PdC6a16J7WI",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "pQaz70OJHBc",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "cRBBEtKUaX0",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "QBmU5YKCAXU",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "W9Xgw3jK-Vc",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "UbPCQ9GDs6U",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "s56h5rv1NJs",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "xfngQIcthjM",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "ovXN8tVYM2s",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "I3sa2kiEpkA",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "MsWRmFmsquI",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "1HAknmr2uS4",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264414.552602,
+   "file": "sleep-streams\\expand\\verify1.txt"
+  },
+  {
+   "video_id": "OJf7ckywM_s",
+   "format_id": "18",
+   "height": 360,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "V3PuLHTd8bQ",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "DeqRrffyVE8",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "I_0_lioWPl0",
+   "format_id": "300",
+   "height": 720,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "xfnDRb5UrKY",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "SQUTH1ogNe4",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "Hc_MVqTyLK4",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "2WB7nCKjijg",
+   "format_id": "95",
+   "height": 720,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "BqWHbrCM9v4",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "KT1w50eIWVE",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "LREsr2bEIDQ",
+   "format_id": "96",
+   "height": 1078,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "kp-r-Xv9XUc",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "AT_rjlKyfUY",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "s5P2P9WLACg",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "i5wW5oRX2jM",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "0Hihz2emZgo",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "hETfhc0-bYs",
+   "format_id": "95",
+   "height": 720,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "ZQrGv1mRL1w",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "bJKMg6qyzUc",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "jMZVhjI6ziA",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "HP9YteoiOYM",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264415.1387746,
+   "file": "sleep-streams\\expand\\verify2.txt"
+  },
+  {
+   "video_id": "MRJAuwpZJoQ",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "JhUSCGXMlb0",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "9qH3Q5_cU1o",
+   "format_id": "301",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "CYdFjZLjd2g",
+   "format_id": "301",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "ydn8Ik4x0t8",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "nseVb0pdTLU",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "lXOEVh5X75o",
+   "format_id": "301",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "ZDTgDG-r-Aw",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "3EqvCFB4teE",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "XzZAkL8hCJQ",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "3vfBtlxR9tA",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "RQwPOFUazwM",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "DEb-RcUMaZo",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "1cudDL4LDgw",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "SbjZKmnZYao",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "1kGYcXmYCnM",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "wYxv-IIo6P4",
+   "format_id": "301",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "jNuiJc1JupI",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "d2D2wPsjPqY",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "T4u3Hqg7uac",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "M-Wk599PWvg",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792264410.5890474,
+   "file": "sleep-streams\\expand\\verify3.txt"
+  },
+  {
+   "video_id": "WdmK6ui7-C4",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792270708.6930318,
+   "file": "sleep-streams\\new6\\out.txt"
+  },
+  {
+   "video_id": "s5P2P9WLACg",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792270708.6930318,
+   "file": "sleep-streams\\new6\\out.txt"
+  },
+  {
+   "video_id": "ImxavyCRA7w",
+   "format_id": "93",
+   "height": 360,
+   "ts": 1792270708.6930318,
+   "file": "sleep-streams\\new6\\out.txt"
+  },
+  {
+   "video_id": "QhahoVG0BfI",
+   "format_id": "95",
+   "height": 720,
+   "ts": 1792270708.6930318,
+   "file": "sleep-streams\\new6\\out.txt"
+  },
+  {
+   "video_id": "J0q_Q1IbD74",
+   "format_id": "301",
+   "height": 1080,
+   "ts": 1792270708.6930318,
+   "file": "sleep-streams\\new6\\out.txt"
+  },
+  {
+   "video_id": "AMwnj-pSbLo",
+   "format_id": "301",
+   "height": 1080,
+   "ts": 1792270708.6930318,
+   "file": "sleep-streams\\new6\\out.txt"
+  },
+  {
+   "video_id": "x2MGw5anYUM",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792270708.6930318,
+   "file": "sleep-streams\\new6\\out.txt"
+  },
+  {
+   "video_id": "R_qT0-KoCm8",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260473.0398595,
+   "file": "sleep-streams\\vrc.txt"
+  },
+  {
+   "video_id": "JYcytCsYK5Q",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260473.0398595,
+   "file": "sleep-streams\\vrc.txt"
+  },
+  {
+   "video_id": "wo5dCR_A9Io",
+   "format_id": "18",
+   "height": 360,
+   "ts": 1792260473.0398595,
+   "file": "sleep-streams\\vrc.txt"
+  },
+  {
+   "video_id": "UHjiRgPsnJE",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260473.0398595,
+   "file": "sleep-streams\\vrc.txt"
+  },
+  {
+   "video_id": "jpQ0R5rip2s",
+   "format_id": "18",
+   "height": 360,
+   "ts": 1792260473.0398595,
+   "file": "sleep-streams\\vrc.txt"
+  },
+  {
+   "video_id": "uDaRRUr05-A",
+   "format_id": "18",
+   "height": 360,
+   "ts": 1792260473.0398595,
+   "file": "sleep-streams\\vrc.txt"
+  },
+  {
+   "video_id": "xORCbIptqcc",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260473.0398595,
+   "file": "sleep-streams\\vrc.txt"
+  },
+  {
+   "video_id": "26rXhroO_R8",
+   "format_id": "18",
+   "height": 360,
+   "ts": 1792260473.0398595,
+   "file": "sleep-streams\\vrc.txt"
+  },
+  {
+   "video_id": "AXvnFk38sDQ",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260473.0398595,
+   "file": "sleep-streams\\vrc.txt"
+  },
+  {
+   "video_id": "0cn-Y3Mfx3g",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260473.0398595,
+   "file": "sleep-streams\\vrc.txt"
+  },
+  {
+   "video_id": "nI725iVsyoQ",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "VAlMDl00mYY",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "GSfT7H87zq4",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "JD-kMIpDfnY",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "N0snMcR6aaA",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "jXAEIWcGXwE",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "q_4KI-ChIIs",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "-OekvEFm1lo",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "S_MOd40zlYU",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "CwPCy1GLS38",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "E2vONfzoyRI",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "A8jDx9TLMQc",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "E_XmwjgRLz8",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "rFZHOHl-L8A",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "Cu-LznLglyE",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "FtO1lxJ-RXM",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "zL68biE6wAs",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "eQ_foBERmzA",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "n_GpVsz4nHU",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "fVa6-zCBR7A",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "w3LjpFhySTg",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "Fz6sl9YJZE0",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "DHUnz4dyb54",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "5e4lsEe4Vew",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "J7ZrIDvqlic",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "M3HKLzjvKPc",
+   "format_id": "300",
+   "height": 720,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "awQzjn72bI0",
+   "format_id": "300",
+   "height": 720,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "MLjP00bGcLg",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  },
+  {
+   "video_id": "-j1NezqTx3s",
+   "format_id": "96",
+   "height": 1080,
+   "ts": 1792260498.9885674,
+   "file": "sleep-streams\\vrc2.txt"
+  }
+ ]
+}

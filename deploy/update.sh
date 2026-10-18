@@ -2,7 +2,10 @@
 # Run by japharsworld-yt-update.timer every 5 minutes (as root).
 # Deploys origin/main if it moved; rolls back if the new version fails its health check.
 # Once a day also updates yt-dlp, the usual fix when YouTube changes something.
+# Commits that only touch docs/ or the link monitor (the monitor publishes docs/ itself) don't restart the search service.
 set -euo pipefail
+# Wrapped in main() so bash has read the whole script before git reset can rewrite this file.
+main() {
 APP=/opt/japharsworld-yt
 VENV=/opt/japharsworld-yt-venv
 PORT=$(sed -n 's/^PORT=//p' /etc/japharsworld-yt.env 2>/dev/null || echo 8790)
@@ -20,11 +23,22 @@ fi
 cd "$APP"
 git fetch -q origin main
 current=$(git rev-parse HEAD); target=$(git rev-parse origin/main)
-[ "$current" = "$target" ] && exit 0
+if [ "$current" = "$target" ]; then
+  [ -x /opt/japharsworld-yt-monitor-venv/bin/python ] || bash deploy/monitor-setup.sh
+  exit 0
+fi
 
 echo "deploying $(git log -1 --format='%h %s' "$target")"
-lock_changed=$(git diff --name-only "$current" "$target" -- package-lock.json)
+changed=$(git diff --name-only "$current" "$target")
+lock_changed=$(echo "$changed" | grep -x 'package-lock.json' || true)
+service_changed=$(echo "$changed" | grep -v -E '^(docs/|monitor/|deploy/monitor-setup\.sh$|deploy/slotmon$|deploy/japharsworld-yt-monitor\.)' || true)
+monitor_setup_changed=$(echo "$changed" | grep -E '^(monitor/requirements\.txt|monitor/seed/|deploy/monitor-setup\.sh|deploy/slotmon|deploy/japharsworld-yt-monitor\.)' || true)
 git reset -q --hard "$target"
+if [ -n "$monitor_setup_changed" ] || [ ! -x /opt/japharsworld-yt-monitor-venv/bin/python ]; then
+  bash deploy/monitor-setup.sh || echo "monitor setup failed"
+fi
+if [ -z "$service_changed" ]; then echo "now on $(git rev-parse --short HEAD) (docs/monitor only; search service not restarted)"; exit 0; fi
+
 [ -z "$lock_changed" ] || npm ci --omit=dev --no-audit --no-fund --loglevel=error
 for unit in japharsworld-yt.service bgutil-pot.service japharsworld-yt-update.service japharsworld-yt-update.timer; do
   cmp -s "deploy/$unit" "/etc/systemd/system/$unit" || { install -m 644 "deploy/$unit" /etc/systemd/system/; systemctl daemon-reload; }
@@ -38,3 +52,5 @@ git reset -q --hard "$current"
 systemctl restart japharsworld-yt.service
 healthy && echo "rolled back" || echo "STILL DOWN after rollback"
 exit 1
+}
+main "$@"

@@ -41,6 +41,13 @@ Changing `SHARDS` or `POOL` changes the baked URLs: the world must be re-uploade
 even without "Allow Untrusted URLs". Set `"search": false` and a `message` to hide search in the world
 during an outage.
 
+## Channels link monitor
+
+`monitor/` is a separate small Python service (systemd timer every 15 minutes) that keeps the world's Channels tab
+working: it checks every slot's 24/7 stream, swaps restarted streams into the slot playlists, runs the flash check
+(through a worker on the owner's PC), and publishes `docs/sleep-list.json` and `docs/sleep-thumbs.jpg`.
+See [monitor/README.md](monitor/README.md).
+
 ## Server
 
 One-time setup on a Debian/Ubuntu box, as root (safe to re-run; leaves MediaMTX and other services alone):

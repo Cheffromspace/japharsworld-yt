@@ -1,0 +1,8 @@
+#!/bin/bash
+# /usr/local/bin/slotmon: run the monitor CLI with its settings, as the service user. The PC worker calls this over SSH.
+set -a; . /etc/japharsworld-yt-monitor.env; set +a
+export HOME=/var/lib/japharsworld-yt-monitor
+cd /opt/japharsworld-yt/monitor
+PY=/opt/japharsworld-yt-monitor-venv/bin/python
+[ "$(id -u)" = 0 ] && exec runuser -u jyt -- env HOME="$HOME" "$PY" -m slotmon "$@"
+exec "$PY" -m slotmon "$@"

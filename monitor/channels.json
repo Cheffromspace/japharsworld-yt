@@ -1,0 +1,610 @@
+{
+  "about": "Everything is OK - Channels tab source list. The builder bakes every slot's URL into the world (Everything is OK > Tablet > Add the Channels tab). Keys are stable: the remote status file and the link monitor refer to slots by key. hidden = baked as a spare that the status file can switch on. Kept to streams at 720p or better (black-screen sound videos may be ordinary 12-hour uploads, which play at 360p) that had been live for at least 40 hours when checked (a stream that restarts gets a new ID and breaks the baked link). Categories: music, sounds, nature, space, games, trains, cities, docs. Thumbnails: Everything is OK > Tablet > Bake channel thumbnails (sheet cell i = slot i).",
+  "statusUrl": "https://cheffromspace.github.io/japharsworld-yt/sleep-list.json",
+  "slots": [
+    {
+      "key": "playlist-test",
+      "url": "https://www.youtube.com/playlist?list=PL6NdkXsPL07Il2hEQGcLI4dg_LTg7xA2L",
+      "title": "TEST: playlist link (Lofi Girl radios)",
+      "channel": "Lofi Girl - remove after the test",
+      "category": "music",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "lofi-sleep",
+      "url": "https://www.youtube.com/watch?v=VAlMDl00mYY",
+      "title": "Sleep lofi radio",
+      "channel": "Lofi Girl",
+      "category": "music",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "lofi-sleep-chill",
+      "url": "https://www.youtube.com/watch?v=JD-kMIpDfnY",
+      "title": "Lofi hip hop radio: beats to sleep and chill to",
+      "channel": "Lofi Girl",
+      "category": "music",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "lofi-deep-sleep",
+      "url": "https://www.youtube.com/watch?v=nI725iVsyoQ",
+      "title": "Deep sleep music: calm ambient",
+      "channel": "Lofi Girl",
+      "category": "music",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "lofi-sleep-ambient",
+      "url": "https://www.youtube.com/watch?v=xORCbIptqcc",
+      "title": "Sleep ambient music",
+      "channel": "Lofi Girl",
+      "category": "music",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "lofi-synth-ambient",
+      "url": "https://www.youtube.com/watch?v=GSfT7H87zq4",
+      "title": "Synth ambient radio: deep space",
+      "channel": "Lofi Girl",
+      "category": "music",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "lofi-dark-ambient",
+      "url": "https://www.youtube.com/watch?v=S_MOd40zlYU",
+      "title": "Dark ambient radio",
+      "channel": "Lofi Girl",
+      "category": "music",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "lofi-piano",
+      "url": "https://www.youtube.com/watch?v=N0snMcR6aaA",
+      "title": "Relaxing piano radio",
+      "channel": "Lofi Girl",
+      "category": "music",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "lofi-classical",
+      "url": "https://www.youtube.com/watch?v=jXAEIWcGXwE",
+      "title": "Classical music radio",
+      "channel": "Lofi Girl",
+      "category": "music",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "lofi-jazz",
+      "url": "https://www.youtube.com/watch?v=A8jDx9TLMQc",
+      "title": "Relaxing jazz",
+      "channel": "Lofi Girl",
+      "category": "music",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "lofi-guitar",
+      "url": "https://www.youtube.com/watch?v=E_XmwjgRLz8",
+      "title": "Chill guitar radio",
+      "channel": "Lofi Girl",
+      "category": "music",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "roelf-deep-space",
+      "url": "https://www.youtube.com/watch?v=MLjP00bGcLg",
+      "title": "Deep Space Transmission",
+      "channel": "Roelf Staal",
+      "category": "music",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "roelf-cosmic",
+      "url": "https://www.youtube.com/watch?v=AXvnFk38sDQ",
+      "title": "Cosmic Ambient Transmission",
+      "channel": "Roelf Staal",
+      "category": "music",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "lofi-rain",
+      "url": "https://www.youtube.com/watch?v=-OekvEFm1lo",
+      "title": "Gentle rain ambience",
+      "channel": "Lofi Girl",
+      "category": "sounds",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "lofi-fireplace",
+      "url": "https://www.youtube.com/watch?v=q_4KI-ChIIs",
+      "title": "Fireplace ambience",
+      "channel": "Lofi Girl",
+      "category": "sounds",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "rain-thunder-black",
+      "url": "https://www.youtube.com/watch?v=R_qT0-KoCm8",
+      "title": "Rain and distant thunder, black screen",
+      "channel": "Pure Relaxing Vibes",
+      "category": "sounds",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "rain-forest-park",
+      "url": "https://www.youtube.com/watch?v=JYcytCsYK5Q",
+      "title": "Rain in a forest park",
+      "channel": "Healing Rain Sounds",
+      "category": "sounds",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "ocean-thunderstorm",
+      "url": "https://www.youtube.com/watch?v=kp-r-Xv9XUc",
+      "title": "Ocean thunderstorm",
+      "channel": "Pure Sleeping Vibes",
+      "category": "sounds",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "cozy-fireplace",
+      "url": "https://www.youtube.com/watch?v=WsrK19k6Xz4",
+      "title": "Cozy crackling fireplace",
+      "channel": "Leo's Fireplace",
+      "category": "sounds",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "tin-roof-rain",
+      "url": "https://www.youtube.com/watch?v=Z0dSSux0Nk0",
+      "title": "Heavy rain on a tin roof",
+      "channel": "Midnight Roof Rain",
+      "category": "sounds",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "rain-thunder-dark",
+      "url": "https://www.youtube.com/watch?v=AT_rjlKyfUY",
+      "title": "Rain and thunder, dark screen",
+      "channel": "Pure Relaxing Vibes",
+      "category": "sounds",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "fan-noise-black",
+      "url": "https://www.youtube.com/watch?v=bz4VtbRjbb4",
+      "title": "Fan noise, black screen",
+      "channel": "Quiet Fan Nights",
+      "category": "sounds",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "pink-noise-black",
+      "url": "https://www.youtube.com/watch?v=2wgg7KtzTrU",
+      "title": "Pink noise, black screen (12 hours)",
+      "channel": "DJ Grossman",
+      "category": "sounds",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "brown-noise-black",
+      "url": "https://www.youtube.com/watch?v=snlA7rFR0iQ",
+      "title": "Brown noise, black screen (12 hours)",
+      "channel": "DJ Grossman",
+      "category": "sounds",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "box-fan-black",
+      "url": "https://www.youtube.com/watch?v=42Y1eD-7it0",
+      "title": "Box fan, black screen (12 hours)",
+      "channel": "DJ Grossman",
+      "category": "sounds",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "mba-moon-jelly",
+      "url": "https://www.youtube.com/watch?v=zL68biE6wAs",
+      "title": "Moon jellies",
+      "channel": "Monterey Bay Aquarium",
+      "category": "nature",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "mba-jelly",
+      "url": "https://www.youtube.com/watch?v=eQ_foBERmzA",
+      "title": "Sea nettle jellies",
+      "channel": "Monterey Bay Aquarium",
+      "category": "nature",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "mba-open-sea",
+      "url": "https://www.youtube.com/watch?v=n_GpVsz4nHU",
+      "title": "Open sea",
+      "channel": "Monterey Bay Aquarium",
+      "category": "nature",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "mba-kelp",
+      "url": "https://www.youtube.com/watch?v=w3LjpFhySTg",
+      "title": "Kelp forest",
+      "channel": "Monterey Bay Aquarium",
+      "category": "nature",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "mba-bay",
+      "url": "https://www.youtube.com/watch?v=fVa6-zCBR7A",
+      "title": "Monterey Bay",
+      "channel": "Monterey Bay Aquarium",
+      "category": "nature",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "explore-manatee",
+      "url": "https://www.youtube.com/watch?v=Fz6sl9YJZE0",
+      "title": "Manatees, Homosassa Springs",
+      "channel": "explore.org",
+      "category": "nature",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "explore-reef",
+      "url": "https://www.youtube.com/watch?v=DHUnz4dyb54",
+      "title": "Tropical reef",
+      "channel": "explore.org",
+      "category": "nature",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "explore-wolves",
+      "url": "https://www.youtube.com/watch?v=5e4lsEe4Vew",
+      "title": "Wolves, International Wolf Center",
+      "channel": "explore.org",
+      "category": "nature",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "life-at-the-poles",
+      "url": "https://www.youtube.com/watch?v=1HAknmr2uS4",
+      "title": "Life at the poles",
+      "channel": "Unseen Planet DC",
+      "category": "nature",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "borneo-jungle-night",
+      "url": "https://www.youtube.com/watch?v=ejil46ZeY2o",
+      "title": "Jungle night sounds from a stilt hut, Borneo",
+      "channel": "BackCountryAmbient",
+      "category": "nature",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "orangutan-jungle-school",
+      "url": "https://www.youtube.com/watch?v=QhahoVG0BfI",
+      "title": "Orangutan Jungle School",
+      "channel": "Love Nature",
+      "category": "nature",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "nasa-iss-hd",
+      "url": "https://www.youtube.com/watch?v=awQzjn72bI0",
+      "title": "Earth from the ISS, HD views",
+      "channel": "NASA",
+      "category": "space",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "nasa-iss",
+      "url": "https://www.youtube.com/watch?v=M3HKLzjvKPc",
+      "title": "ISS live, with crew audio",
+      "channel": "NASA",
+      "category": "space",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "iss-earth",
+      "url": "https://www.youtube.com/watch?v=QrUisSNNwrA",
+      "title": "Planet Earth from the ISS",
+      "channel": "Dream Trips",
+      "category": "space",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "iss-aurora",
+      "url": "https://www.youtube.com/watch?v=I3sa2kiEpkA",
+      "title": "Aurora over Earth, from the ISS",
+      "channel": "Dream Trips",
+      "category": "space",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "milky-way",
+      "url": "https://www.youtube.com/watch?v=MsWRmFmsquI",
+      "title": "The Milky Way",
+      "channel": "WN Space",
+      "category": "space",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "northumberland-aurora",
+      "url": "https://www.youtube.com/watch?v=MYeOK93smBw",
+      "title": "Aurora cam, Northumberland coast",
+      "channel": "Northumberland Astro",
+      "category": "space",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "jack-stardew",
+      "url": "https://www.youtube.com/watch?v=2-xLII_BZac",
+      "title": "Fall asleep while I play Stardew Valley, with rain",
+      "channel": "Call Me Jack",
+      "category": "games",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "jack-pokemon",
+      "url": "https://www.youtube.com/watch?v=Bo4GSsfTlaM",
+      "title": "Fall asleep while I play Pokémon games",
+      "channel": "Call Me Jack",
+      "category": "games",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "jack-donkey-kong",
+      "url": "https://www.youtube.com/watch?v=MRJAuwpZJoQ",
+      "title": "Fall asleep while I play Donkey Kong, with rain",
+      "channel": "Call Me Jack",
+      "category": "games",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "jack-oblivion",
+      "url": "https://www.youtube.com/watch?v=2f5CjnKt6oI",
+      "title": "Fall asleep while I play Oblivion Remastered",
+      "channel": "Call Me Jack",
+      "category": "games",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "jack-retro",
+      "url": "https://www.youtube.com/watch?v=7CRQnWJ5rGw",
+      "title": "Fall asleep while I review retro games",
+      "channel": "Call Me Jack",
+      "category": "games",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "retroworld-ps1",
+      "url": "https://www.youtube.com/watch?v=lHa4PnLnFEI",
+      "title": "PlayStation 1 longplays, no commentary",
+      "channel": "RetroWorld",
+      "category": "games",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "baker-wow",
+      "url": "https://www.youtube.com/watch?v=DMR2tBpcUmM",
+      "title": "World of Warcraft, chill music, no commentary",
+      "channel": "TheBakerTV",
+      "category": "games",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "mochi-minecraft",
+      "url": "https://www.youtube.com/watch?v=V3PuLHTd8bQ",
+      "title": "Minecraft music and ambience",
+      "channel": "Mochi's World",
+      "category": "games",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "zelda-radio",
+      "url": "https://www.youtube.com/watch?v=DeqRrffyVE8",
+      "title": "Zelda music radio",
+      "channel": "Hero's Journey",
+      "category": "games",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "vgm-lofi",
+      "url": "https://www.youtube.com/watch?v=lAVvhpGkovk",
+      "title": "Video game lofi and chill radio",
+      "channel": "Melodies Zone",
+      "category": "games",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "gta-vice-city",
+      "url": "https://www.youtube.com/watch?v=AMwnj-pSbLo",
+      "title": "GTA Vice City, full gameplay",
+      "channel": "Wondersgta Gaming",
+      "category": "games",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "osaka-loop-line",
+      "url": "https://www.youtube.com/watch?v=kkcbiCVghxc",
+      "title": "Osaka Loop Line live camera",
+      "channel": "Osaka Loop Line Live Camera",
+      "category": "trains",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "finse-station",
+      "url": "https://www.youtube.com/watch?v=76KqHKyYtmU",
+      "title": "Finse station, Bergen Line, Norway",
+      "channel": "Ståle Ualand",
+      "category": "trains",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "nagoya-station",
+      "url": "https://www.youtube.com/watch?v=3EqvCFB4teE",
+      "title": "Nagoya Station live camera",
+      "channel": "Life along the railroad line",
+      "category": "trains",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "tokyo-rainbow-bridge",
+      "url": "https://www.youtube.com/watch?v=4ZiucC7cvw8",
+      "title": "Tokyo at night, Rainbow Bridge, with jazz",
+      "channel": "TOKYO LIVE CAMERA",
+      "category": "cities",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "shinjuku-fm",
+      "url": "https://www.youtube.com/watch?v=FEif5M7mrRU",
+      "title": "Shinjuku FM: soft lofi and smooth jazz",
+      "channel": "TOKYO TONES",
+      "category": "cities",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "tokyo-night-drive",
+      "url": "https://www.youtube.com/watch?v=pQaz70OJHBc",
+      "title": "Tokyo night drive",
+      "channel": "TOKYO TONES",
+      "category": "cities",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "yokohama-cam",
+      "url": "https://www.youtube.com/watch?v=6h4IGR61eUo",
+      "title": "Yokohama Kishamichi live camera",
+      "channel": "Live Cam Yokohama Japan",
+      "category": "cities",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "kyoto-arashiyama",
+      "url": "https://www.youtube.com/watch?v=2WB7nCKjijg",
+      "title": "Kyoto Arashiyama, Togetsukyo Bridge",
+      "channel": "Kyoto City Tourism Association",
+      "category": "cities",
+      "hidden": false,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "lofi-rainy-day",
+      "url": "https://www.youtube.com/watch?v=CwPCy1GLS38",
+      "title": "Sad lofi radio for rainy days",
+      "channel": "Lofi Girl",
+      "category": "music",
+      "hidden": true,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "lofi-study",
+      "url": "https://www.youtube.com/watch?v=rFZHOHl-L8A",
+      "title": "Lofi hip hop radio: beats to relax and study to",
+      "channel": "Lofi Girl",
+      "category": "music",
+      "hidden": true,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "lofi-jazz-beats",
+      "url": "https://www.youtube.com/watch?v=E2vONfzoyRI",
+      "title": "Jazz lofi radio",
+      "channel": "Lofi Girl",
+      "category": "music",
+      "hidden": true,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "roelf-starship",
+      "url": "https://www.youtube.com/watch?v=-j1NezqTx3s",
+      "title": "Atmospheric Starship Quarters",
+      "channel": "Roelf Staal",
+      "category": "music",
+      "hidden": true,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "critter-cam",
+      "url": "https://www.youtube.com/watch?v=0cn-Y3Mfx3g",
+      "title": "Rural wildlife cam",
+      "channel": "CritterVision",
+      "category": "nature",
+      "hidden": true,
+      "checked": "2026-10-17"
+    },
+    {
+      "key": "explore-brooks",
+      "url": "https://www.youtube.com/watch?v=J7ZrIDvqlic",
+      "title": "Brooks Falls bears",
+      "channel": "explore.org",
+      "category": "nature",
+      "hidden": true,
+      "checked": "2026-10-17"
+    }
+  ],
+  "thumbnailSheetUrl": "https://cheffromspace.github.io/japharsworld-yt/sleep-thumbs.jpg"
+}

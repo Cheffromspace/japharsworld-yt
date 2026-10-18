@@ -1,0 +1,10 @@
+{
+  "about": "Owner edits for sleep-list.json, merged with the monitor's automatic hides. notice: one line shown in amber (empty for none). slots.<key>: hidden / title / channel / order / category (one of music, sounds, nature, space, games, trains, cities, sensory, docs) as the world reads them; kind: 'video' for ordinary uploads that only need to stay available (no live check, no flash re-check), 'unmanaged' to skip a slot.",
+  "notice": "",
+  "slots": {
+    "pink-noise-black": { "kind": "video" },
+    "brown-noise-black": { "kind": "video" },
+    "box-fan-black": { "kind": "video" },
+    "playlist-test": { "kind": "unmanaged" }
+  }
+}

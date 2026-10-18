@@ -1,4 +1,8 @@
 {
  "notice": "",
- "slots": {}
+ "slots": {
+  "baker-wow": {
+   "hidden": true
+  }
+ }
 }

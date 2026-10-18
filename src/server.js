@@ -3,7 +3,9 @@
 //   GET /v1/<shard>/<n>                                ticket: 302 to YouTube (video), JPEG (thumbnail sheet), JSON (next page)
 //   GET /v1/<shard>/cc/<lang>                          captions for the video last played in this shard (lang: VRChat code or "native")
 //   GET /healthz
+//   GET /, /privacy, /logo.png                         home page and privacy policy (public/)
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { config as defaults } from './config.js';
 import { Store } from './store.js';
@@ -13,6 +15,16 @@ import { cachedSheet } from './sheet.js';
 import { Captions, errorLine } from './captions.js';
 
 const API = 1;
+const PAGES = {
+  '/': ['index.html', 'text/html; charset=utf-8'],
+  '/privacy': ['privacy.html', 'text/html; charset=utf-8'],
+  '/logo.png': ['logo.png', 'image/png'],
+};
+const pageCache = new Map();
+function page(path) {
+  if (!pageCache.has(path)) pageCache.set(path, readFileSync(new URL('../public/' + PAGES[path][0], import.meta.url)));
+  return pageCache.get(path);
+}
 
 export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, sheetOpts, log = console.log } = {}) {
   store ??= new Store({ path: config.dbPath, shards: config.shards, pool: config.pool, pinHours: config.pinHours });
@@ -136,6 +148,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
       const url = new URL(req.url, 'http://local');
       if (url.pathname === '/healthz') { route = 'health'; return json(res, 200, { ok: true, v: API }); }
+      const pagePath = url.pathname === '/privacy.html' ? '/privacy' : url.pathname;
+      if (PAGES[pagePath]) {
+        route = 'page';
+        const buf = page(pagePath);
+        res.writeHead(200, { 'content-type': PAGES[pagePath][1], 'content-length': buf.length, 'cache-control': 'public, max-age=3600' });
+        return res.end(req.method === 'HEAD' ? undefined : buf);
+      }
       const m = url.pathname.match(/^\/v1\/(\d+)\/(s|cc\/[A-Za-z-]+|\d+)\/?$/);
       if (!m) return fail(res, 404, 'not_found', 'Unknown path.');
       const shard = Number(m[1]);

@@ -115,3 +115,16 @@ test('rate limits searches per IP', async (t) => {
   for (let i = 0; i < 5; i++) assert.equal((await s.get('/v1/0/s?q=a' + i)).status, 200);
   assert.equal((await s.get('/v1/0/s?q=again')).body.error, 'rate_limited');
 });
+
+test('serves the home page, privacy policy and logo', async (t) => {
+  const s = await start();
+  t.after(() => s.server.close());
+  for (const [path, type, text] of [['/', 'text/html', 'Everything is OK'], ['/privacy', 'text/html', 'YouTube API Services'], ['/privacy.html', 'text/html', 'Privacy policy']]) {
+    const res = await fetch(`http://127.0.0.1:${s.server.address().port}${path}`);
+    assert.equal(res.status, 200, path);
+    assert.ok(res.headers.get('content-type').startsWith(type), path);
+    assert.ok((await res.text()).includes(text), path);
+  }
+  const logo = await fetch(`http://127.0.0.1:${s.server.address().port}/logo.png`);
+  assert.equal(logo.headers.get('content-type'), 'image/png');
+});

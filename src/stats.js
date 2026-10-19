@@ -201,7 +201,7 @@ const fmt = (n) => (n == null ? '–' : Number.isFinite(n) ? Math.round(n).toLoc
 
 // One series of daily bars (null = no data). Native <title> tooltips per bar.
 export function barChart(title, points, { unit = '' } = {}) {
-  const W = 640, H = 160, pad = { l: 44, r: 8, t: 8, b: 22 };
+  const W = 420, H = 150, pad = { l: 40, r: 6, t: 8, b: 20 };
   const vals = points.map((p) => p[1]).filter((v) => v != null);
   const max = Math.max(1, ...vals);
   const n = points.length || 1;
@@ -233,11 +233,11 @@ export function renderHtml(d) {
 :root{--bg:#1a1b26;--panel:#24283b;--line:#414868;--ink:#c0caf5;--muted:#a9b1d6;--dim:#787c99;--accent:#7aa2f7}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,sans-serif;padding:16px}
 main{max-width:980px;margin:0 auto}h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 8px;color:var(--muted)}
-.meta{color:var(--dim);font-size:13px}.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin-top:14px}
+.meta{color:var(--dim);font-size:13px}.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(160px,100%),1fr));gap:10px;margin-top:14px}
 .tile{background:var(--panel);border-radius:8px;padding:10px 12px}.label{color:var(--dim);font-size:12px}.value{font-size:22px;font-variant-numeric:tabular-nums}.sub{color:var(--muted);font-size:12px}
-.charts{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}figure{margin:0;background:var(--panel);border-radius:8px;padding:10px}
+.charts{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:12px}figure{margin:0;background:var(--panel);border-radius:8px;padding:10px}
 figcaption{font-size:13px;color:var(--muted);margin-bottom:4px}svg{width:100%;height:auto;display:block}.bar{fill:var(--accent)}g:hover .bar{opacity:.75}
-.grid{stroke:var(--line);stroke-width:1}.tick{fill:var(--dim);font-size:11px}table{border-collapse:collapse;width:100%;font-size:13px}
+.grid{stroke:var(--line);stroke-width:1}.tick{fill:var(--dim);font-size:12px}table{border-collapse:collapse;width:100%;font-size:13px}
 td,th{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line)}th{color:var(--dim);font-weight:normal}p{margin:6px 0}a{color:var(--accent)}
 .down{color:#f7768e}
 </style></head><body><main>

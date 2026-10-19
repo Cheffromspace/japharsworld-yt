@@ -2,7 +2,7 @@
 # Run by japharsworld-yt-update.timer every 5 minutes (as root).
 # Deploys origin/main if it moved; rolls back if the new version fails its health check.
 # Once a day also updates yt-dlp, the usual fix when YouTube changes something.
-# Commits that only touch docs/ or the link monitor (the monitor publishes docs/ itself) don't restart the search service.
+# Commits that only touch docs/, the link monitor or the search relay worker (the monitor publishes docs/ itself) don't restart the search service.
 set -euo pipefail
 # Wrapped in main() so bash has read the whole script before git reset can rewrite this file.
 main() {
@@ -31,7 +31,7 @@ fi
 echo "deploying $(git log -1 --format='%h %s' "$target")"
 changed=$(git diff --name-only "$current" "$target")
 lock_changed=$(echo "$changed" | grep -x 'package-lock.json' || true)
-service_changed=$(echo "$changed" | grep -v -E '^(docs/|monitor/|deploy/monitor-setup\.sh$|deploy/slotmon$|deploy/japharsworld-yt-monitor\.)' || true)
+service_changed=$(echo "$changed" | grep -v -E '^(docs/|monitor/|relay/|deploy/monitor-setup\.sh$|deploy/slotmon$|deploy/japharsworld-yt-monitor\.|deploy/relay-|deploy/japharsworld-yt-relay)' || true)
 monitor_setup_changed=$(echo "$changed" | grep -E '^(monitor/requirements\.txt|monitor/seed/|deploy/monitor-setup\.sh|deploy/slotmon|deploy/japharsworld-yt-monitor\.)' || true)
 git reset -q --hard "$target"
 if [ -n "$monitor_setup_changed" ] || [ ! -x /opt/japharsworld-yt-monitor-venv/bin/python ]; then

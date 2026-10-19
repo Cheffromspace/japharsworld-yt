@@ -37,7 +37,7 @@ This service works within that rule:
 | `GET /v1/<shard>/<n>` | video: 302 to a Tunelio link or YouTube · sheet: JPEG, cell *i* = result *i*, row-major · page: JSON like a search |
 | `GET /v1/<shard>/cc/<lang>` | JSON: `t`, `id`, `available`, `source` (`manual`/`auto`/`translated`), `lines` = `[[start, dur, text], …]`, `tracks` = `[{i, code, name, auto}]`, `track` (index shown, `-1` = none), `reason` when unavailable |
 | `GET /v1/<shard>/cc/<i>?l=<lang>` | the same for track *i* (Tunelio captions only) |
-| `GET /healthz` | `{"ok": true, "tunelio": bool, "credits": n}` (credits as last reported by Tunelio) |
+| `GET /healthz` | `{"ok": true, "tunelio": bool, "credits": n, "workers": n, "lastSearchVia": "worker"/"local"/"api", "apiUnitsToday": n}` (credits as last reported by Tunelio) |
 
 Errors are JSON `{ "error": code, "message": … }` with codes `empty_query`, `rate_limited`, `youtube_failed`,
 `unknown_ticket`, `expired`, `bad_shard`, `nothing_playing`, `captions_failed`; the world shows its own
@@ -51,6 +51,39 @@ Changing `SHARDS` or `POOL` changes the baked URLs: the world must be re-uploade
 (`https://cheffromspace.github.io/japharsworld-yt/status.json`), a trusted domain every visitor can read
 even without "Allow Untrusted URLs". Set `"search": false` and a `message` to hide search in the world
 during an outage.
+
+## Search relay
+
+YouTube answers many InnerTube searches from the Linode (a datacenter IP) with `403`. Each search therefore tries, in order:
+
+1. **A relay worker at home** (the owner's Optiplex, residential IP): `relay/worker.js`, waited for up to `RELAY_WAIT_MS` (8 s).
+2. **The Linode itself**, as before, retrying once with a fresh InnerTube session after a 403.
+3. **The YouTube Data API**, only when `YOUTUBE_API_KEY` is set: `search.list` + one `videos.list`, 101 of 10,000 quota
+   units a day (resets at midnight Pacific), mapped to the same result fields.
+4. Otherwise `502 youtube_failed`, as before.
+
+**Nothing at home accepts connections.** The worker only makes outbound HTTPS requests to this server. It holds 3 long
+polls open on `GET /relay/next?worker=<name>&version=<sha>` (answered `204` after 25 s, or `200 {"job": …}`), runs the
+job and posts `{id, ok, page: {videos, cont}, error}` to `POST /relay/done`. Both routes need
+`Authorization: Bearer $RELAY_TOKEN` (`401` otherwise); without `RELAY_TOKEN` the relay is off. Jobs are
+`{id, kind: "search", query, limit}` and `{id, kind: "more", cont}`. A worker counts as online when it polled in the
+last 30 s. "More results" for a worker's page goes to the same worker, which keeps continuations for 30 minutes
+(at most 2000); if that worker is gone, the ticket answers `410 expired`.
+
+Every search logs `{"event": "search", "via": "worker"|"local"|"api", "ms": …}`; each failed step logs `youtube_error`
+with its `via`. Alerts (`ALERT_WEBHOOK`): no search worker for 10 minutes and search fell back to the Data API (each at
+most hourly), Data API quota above 80 % (daily).
+
+Worker setup on the Optiplex (Debian/Ubuntu, as root; safe to re-run; the token is the one in `/etc/japharsworld-yt.env`):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Cheffromspace/japharsworld-yt/main/deploy/relay-setup.sh | sudo RELAY_TOKEN=... bash
+```
+
+It runs `japharsworld-yt-relay.service` as user `jytrelay` from `/opt/japharsworld-yt-relay` (settings in
+`/etc/japharsworld-yt-relay.env`: `RELAY_URL`, `RELAY_TOKEN`, `WORKER_NAME`), and `japharsworld-yt-relay-update.timer`
+pulls `main` every 5 minutes and restarts the worker when `relay/`, `src/` or the packages changed. Logs:
+`journalctl -u japharsworld-yt-relay -f`. Commits that only touch `relay/` don't restart the Linode service.
 
 ## Channels link monitor
 

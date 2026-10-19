@@ -35,6 +35,14 @@ export const config = {
   captionScripts: (process.env.CAPTION_SCRIPTS ?? 'Latn,Cyrl,Hans,Hant,Jpan,Kore,Thai,Hebr').split(',').map((s) => s.trim()).filter(Boolean),
   // Discord webhook for alerts (Tunelio out of credits, failing, running low).
   alertWebhook: process.env.ALERT_WEBHOOK ?? '',
+  // Search relay: workers (the owner's Optiplex) long-poll /relay/next with this bearer token. Empty = relay off.
+  relayToken: process.env.RELAY_TOKEN ?? '',
+  relayWaitMs: int('RELAY_WAIT_MS', 8000),
+  // Minutes without any worker before the "no search worker" alert.
+  relayIdleAlertMinutes: int('RELAY_IDLE_ALERT_MINUTES', 10),
+  // YouTube Data API v3: last fallback for search. Empty = never used.
+  youtubeApiKey: process.env.YOUTUBE_API_KEY ?? '',
+  youtubeApiDailyUnits: int('YOUTUBE_API_DAILY_UNITS', 10000),
   // Thumbnail sheet: one cell per result, row-major.
   sheet: { cols: 4, rows: 5, cellW: 256, cellH: 144, background: '#24283b' },
 };

@@ -1,0 +1,65 @@
+{
+  "search": {
+    "kind": "youtube#searchListResponse",
+    "nextPageToken": "CBQQAA",
+    "regionCode": "US",
+    "pageInfo": { "totalResults": 1000000, "resultsPerPage": 3 },
+    "items": [
+      {
+        "kind": "youtube#searchResult",
+        "id": { "kind": "youtube#video", "videoId": "vkBC2msYpDY" },
+        "snippet": {
+          "publishedAt": "2026-09-14T18:00:00Z",
+          "channelId": "UCxxxxxxxxxxxxxxxxxxxxxx",
+          "title": "An Incremental Game About Upgrading Shapes &amp; Things",
+          "channelTitle": "DangerouslyFunny",
+          "liveBroadcastContent": "none"
+        }
+      },
+      {
+        "kind": "youtube#searchResult",
+        "id": { "kind": "youtube#video", "videoId": "jfKfPfyJRdk" },
+        "snippet": {
+          "publishedAt": "2022-07-12T12:00:00Z",
+          "title": "lofi hip hop radio 📚 beats to relax/study to",
+          "channelTitle": "Lofi Girl",
+          "liveBroadcastContent": "live"
+        }
+      },
+      {
+        "kind": "youtube#searchResult",
+        "id": { "kind": "youtube#video", "videoId": "dQw4w9WgXcQ" },
+        "snippet": {
+          "publishedAt": "2009-10-25T06:57:33Z",
+          "title": "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)",
+          "channelTitle": "Rick Astley",
+          "liveBroadcastContent": "none"
+        }
+      }
+    ]
+  },
+  "videos": {
+    "kind": "youtube#videoListResponse",
+    "items": [
+      {
+        "id": "vkBC2msYpDY",
+        "snippet": { "publishedAt": "2026-09-14T18:00:00Z", "title": "An Incremental Game About Upgrading Shapes & Things", "channelTitle": "DangerouslyFunny", "liveBroadcastContent": "none" },
+        "contentDetails": { "duration": "PT1H14M9S", "caption": "false" },
+        "statistics": { "viewCount": "251873" }
+      },
+      {
+        "id": "jfKfPfyJRdk",
+        "snippet": { "publishedAt": "2022-07-12T12:00:00Z", "title": "lofi hip hop radio 📚 beats to relax/study to", "channelTitle": "Lofi Girl", "liveBroadcastContent": "live" },
+        "contentDetails": { "duration": "P0D", "caption": "false" },
+        "statistics": { "viewCount": "98000000" },
+        "liveStreamingDetails": { "actualStartTime": "2022-07-12T12:00:00Z", "concurrentViewers": "15234" }
+      },
+      {
+        "id": "dQw4w9WgXcQ",
+        "snippet": { "publishedAt": "2009-10-25T06:57:33Z", "title": "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)", "channelTitle": "Rick Astley", "liveBroadcastContent": "none" },
+        "contentDetails": { "duration": "PT3M34S", "caption": "true" },
+        "statistics": { "viewCount": "1712345678" }
+      }
+    ]
+  }
+}

@@ -6,6 +6,7 @@
 //                                                      "native"), with the list of the video's caption tracks (names in <lang>)
 //   GET /v1/<shard>/cc/<i>[?l=<lang>]                  track i of that list (the tablet's caption picker; Tunelio captions only)
 //   GET /healthz
+//   GET /relay/next, POST /relay/done                  search relay workers only (bearer RELAY_TOKEN; see relay.js)
 //   GET /, /privacy, /logo.png                         home page and privacy policy (public/)
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
@@ -20,6 +21,9 @@ import { Tunelio } from './tunelio.js';
 import { Playback, progressiveChecker } from './playback.js';
 import { TunelioCaptions } from './transcripts.js';
 import { makeAlert } from './alert.js';
+import { Relay, RelayError } from './relay.js';
+import { DataApi } from './dataapi.js';
+import { makeSearch } from './search.js';
 
 const API = 1;
 const PAGES = {
@@ -33,7 +37,7 @@ function page(path) {
   return pageCache.get(path);
 }
 
-export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, sheetOpts, log = console.log } = {}) {
+export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, log = console.log } = {}) {
   store ??= new Store({ path: config.dbPath, shards: config.shards, pool: config.pool, pinHours: config.pinHours });
   const logJson = (o) => log(JSON.stringify({ at: new Date().toISOString(), ...o }));
   alert ??= makeAlert({ webhook: config.alertWebhook, log: logJson });
@@ -46,7 +50,18 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const warmCaptions = !tunelio.enabled; // yt-dlp captions are free to warm; Tunelio's cost credits, so only on demand
   captions ??= new Captions({ store, ytdlp: config.ytdlp, extraArgs: config.ytdlpExtraArgs, cacheDays: config.captionCacheDays,
     sourcePrefix: config.sourcePrefix, blockedMinutes: config.blockedMinutes });
-  const continuations = new Map(); // `${shard}:${n}` → () => Promise<page>
+  relay ??= new Relay({ token: config.relayToken, log: logJson });
+  api ??= new DataApi({ key: config.youtubeApiKey, dailyUnits: config.youtubeApiDailyUnits, alert, log: logJson });
+  const searcher = makeSearch({ relay, youtube, api, alert, log: logJson, workerTimeoutMs: config.relayWaitMs });
+  function checkWorkers() {
+    if (relay.enabled && relay.idleMs() >= config.relayIdleAlertMinutes * 60_000) {
+      alert('no_worker', `No search worker for ${config.relayIdleAlertMinutes} minutes: YouTube search runs from the Linode, which YouTube often blocks.`);
+    }
+  }
+  setInterval(checkWorkers, 60_000).unref();
+  // `${shard}:${n}` → () => Promise<page>. For worker pages the function carries { via: "worker", worker, cont }
+  // and is answered 410 expired once that worker is gone.
+  const continuations = new Map();
   const MAX_CONTINUATIONS = 2000;
   const hits = new Map(); // ip → timestamps of recent searches
 
@@ -102,9 +117,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     let page;
     const pasted = youtubeIdFrom(query);
     try {
-      page = await youtube.search(pasted ?? query, config.resultsPerPage);
-    } catch (err) {
-      log(JSON.stringify({ at: new Date().toISOString(), event: 'youtube_error', message: String(err?.message ?? err).slice(0, 300) }));
+      page = await searcher.search(pasted ?? query, config.resultsPerPage);
+    } catch {
       return fail(res, 502, 'youtube_failed', 'YouTube search is not answering right now.');
     }
     if (pasted) {
@@ -137,7 +151,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (!more) return fail(res, 410, 'expired', 'These results expired. Search again.');
       continuations.delete(`${shard}:${n}`);
       let page;
-      try { page = await more(); } catch {
+      try { page = await more(); } catch (err) {
+        logJson({ event: 'youtube_error', route: 'more', via: more.via, message: String(err?.message ?? err).slice(0, 300) });
+        if (err instanceof RelayError && err.code === 'expired') return fail(res, 410, 'expired', 'These results expired. Search again.');
         return fail(res, 502, 'youtube_failed', 'YouTube search is not answering right now.');
       }
       return json(res, 200, publish(shard, page, { page: (t.data.page ?? 1) + 1 }));
@@ -160,14 +176,52 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }
   }
 
-  return async function handler(req, res) {
+  async function readJson(req, max = 1 << 20) {
+    let size = 0;
+    const chunks = [];
+    for await (const c of req) {
+      size += c.length;
+      if (size > max) throw new Error('body too large');
+      chunks.push(c);
+    }
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  }
+
+  async function relayRoute(req, res, url) {
+    if (!relay.authorized(req.headers.authorization)) return fail(res, 401, 'unauthorized', 'Bad relay token.');
+    if (url.pathname === '/relay/next' && req.method === 'GET') {
+      const name = (url.searchParams.get('worker') ?? '').slice(0, 64) || 'worker';
+      const version = (url.searchParams.get('version') ?? '').slice(0, 64);
+      const gone = new AbortController();
+      res.on('close', () => gone.abort());
+      const job = await relay.next(name, version, gone.signal);
+      if (!job) { res.writeHead(204, { 'cache-control': 'no-store' }); return res.end(); }
+      return json(res, 200, { job });
+    }
+    if (url.pathname === '/relay/done' && req.method === 'POST') {
+      let body;
+      try { body = await readJson(req); } catch { return fail(res, 400, 'bad_body', 'Expected JSON.'); }
+      return json(res, 200, { ok: true, accepted: relay.done(body) });
+    }
+    return fail(res, 404, 'not_found', 'Unknown path.');
+  }
+
+  async function handler(req, res) {
     const started = Date.now();
     let route = 'other';
-    res.on('finish', () => log(JSON.stringify({ at: new Date().toISOString(), route, status: res.statusCode, ms: Date.now() - started })));
+    res.on('finish', () => {
+      if (route === 'relay' && res.statusCode === 204) return; // idle long polls, several a minute
+      log(JSON.stringify({ at: new Date().toISOString(), route, status: res.statusCode, ms: Date.now() - started }));
+    });
     try {
-      if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
       const url = new URL(req.url, 'http://local');
-      if (url.pathname === '/healthz') { route = 'health'; return json(res, 200, { ok: true, v: API, tunelio: tunelio.enabled, credits: tunelio.credits }); }
+      if (url.pathname.startsWith('/relay/')) { route = 'relay'; return await relayRoute(req, res, url); }
+      if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
+      if (url.pathname === '/healthz') {
+        route = 'health';
+        return json(res, 200, { ok: true, v: API, tunelio: tunelio.enabled, credits: tunelio.credits,
+          workers: relay.online().length, lastSearchVia: searcher.state.lastVia, apiUnitsToday: api.unitsToday });
+      }
       const pagePath = url.pathname === '/privacy.html' ? '/privacy' : url.pathname;
       if (PAGES[pagePath]) {
         route = 'page';
@@ -190,7 +244,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (!res.headersSent) fail(res, 500, 'server_error', 'Something went wrong.');
       else res.end();
     }
-  };
+  }
+  return Object.assign(handler, { relay, checkWorkers });
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

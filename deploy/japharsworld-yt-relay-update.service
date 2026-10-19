@@ -1,0 +1,6 @@
+[Unit]
+Description=Update the japharsworld-yt search relay worker from GitHub main
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/japharsworld-yt-relay/deploy/relay-update.sh

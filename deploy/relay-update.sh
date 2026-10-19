@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Run by japharsworld-yt-relay-update.timer on the Optiplex every 5 minutes (as root).
+# Pulls origin/main; restarts the worker when something it runs changed (relay/, src/, packages, its units).
+set -euo pipefail
+# Wrapped in main() so bash has read the whole script before git reset can rewrite this file.
+main() {
+APP=/opt/japharsworld-yt-relay
+cd "$APP"
+git fetch -q origin main
+current=$(git rev-parse HEAD); target=$(git rev-parse origin/main)
+[ "$current" != "$target" ] || exit 0
+changed=$(git diff --name-only "$current" "$target")
+git reset -q --hard "$target"
+chown -R jytrelay:jytrelay "$APP"
+if echo "$changed" | grep -qx 'package-lock.json'; then sudo -u jytrelay npm ci --omit=dev --no-audit --no-fund --loglevel=error; fi
+for unit in japharsworld-yt-relay.service japharsworld-yt-relay-update.service japharsworld-yt-relay-update.timer; do
+  cmp -s "deploy/$unit" "/etc/systemd/system/$unit" || { install -m 644 "deploy/$unit" /etc/systemd/system/; systemctl daemon-reload; }
+done
+if echo "$changed" | grep -qE '^(relay/|src/|package(-lock)?\.json$|deploy/japharsworld-yt-relay)'; then
+  systemctl restart japharsworld-yt-relay.service
+  echo "worker restarted on $(git log -1 --format='%h %s')"
+else
+  echo "now on $(git rev-parse --short HEAD) (nothing the worker runs changed)"
+fi
+}
+main "$@"

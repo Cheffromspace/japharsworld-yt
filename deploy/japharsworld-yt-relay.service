@@ -1,0 +1,28 @@
+[Unit]
+Description=japharsworld-yt search relay worker (outbound only: long-polls yt.japharsworld.com, never listens)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=jytrelay
+Group=jytrelay
+WorkingDirectory=/opt/japharsworld-yt-relay
+EnvironmentFile=/etc/japharsworld-yt-relay.env
+ExecStart=/usr/bin/node /opt/japharsworld-yt-relay/relay/worker.js
+Restart=always
+RestartSec=5
+MemoryMax=300M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

@@ -3,22 +3,14 @@
   "statusUrl": "https://cheffromspace.github.io/japharsworld-yt/sleep-list.json",
   "slots": [
     {
-      "key": "playlist-test",
-      "url": "https://www.youtube.com/playlist?list=PL6NdkXsPL07Il2hEQGcLI4dg_LTg7xA2L",
-      "title": "TEST: playlist link (Lofi Girl radios)",
-      "channel": "Lofi Girl - remove after the test",
-      "category": "music",
-      "hidden": false,
-      "checked": "2026-10-17"
-    },
-    {
       "key": "lofi-sleep",
       "url": "https://www.youtube.com/watch?v=VAlMDl00mYY",
       "title": "Sleep lofi radio",
       "channel": "Lofi Girl",
       "category": "music",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLQhXot1YVbq8"
     },
     {
       "key": "lofi-sleep-chill",
@@ -27,7 +19,8 @@
       "channel": "Lofi Girl",
       "category": "music",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLMZCE9tsa5aQ"
     },
     {
       "key": "lofi-deep-sleep",
@@ -36,7 +29,8 @@
       "channel": "Lofi Girl",
       "category": "music",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLByAtN63XIwo"
     },
     {
       "key": "lofi-sleep-ambient",
@@ -45,7 +39,8 @@
       "channel": "Lofi Girl",
       "category": "music",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLXkn5ql8lmFs"
     },
     {
       "key": "lofi-synth-ambient",
@@ -54,7 +49,8 @@
       "channel": "Lofi Girl",
       "category": "music",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLadqB454g0fg"
     },
     {
       "key": "lofi-dark-ambient",
@@ -63,7 +59,8 @@
       "channel": "Lofi Girl",
       "category": "music",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLQZwRDt63sVQ"
     },
     {
       "key": "lofi-piano",
@@ -72,7 +69,8 @@
       "channel": "Lofi Girl",
       "category": "music",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLL0URE0PM-Y4"
     },
     {
       "key": "lofi-classical",
@@ -81,7 +79,8 @@
       "channel": "Lofi Girl",
       "category": "music",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLCj1CZ9Qx3Vo"
     },
     {
       "key": "lofi-jazz",
@@ -90,7 +89,8 @@
       "channel": "Lofi Girl",
       "category": "music",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLWJIOWqj6xkM"
     },
     {
       "key": "lofi-guitar",
@@ -99,7 +99,8 @@
       "channel": "Lofi Girl",
       "category": "music",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLd7Suk_GFCgM"
     },
     {
       "key": "roelf-deep-space",
@@ -108,7 +109,8 @@
       "channel": "Roelf Staal",
       "category": "music",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLJdmCUdGMQLw"
     },
     {
       "key": "roelf-cosmic",
@@ -117,7 +119,8 @@
       "channel": "Roelf Staal",
       "category": "music",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLKR_jTm66m50"
     },
     {
       "key": "lofi-rain",
@@ -126,7 +129,8 @@
       "channel": "Lofi Girl",
       "category": "sounds",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLQbpg-OkVk-Y"
     },
     {
       "key": "lofi-fireplace",
@@ -135,7 +139,8 @@
       "channel": "Lofi Girl",
       "category": "sounds",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLBaMVs3KG2lQ"
     },
     {
       "key": "rain-thunder-black",
@@ -144,7 +149,8 @@
       "channel": "Pure Relaxing Vibes",
       "category": "sounds",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLTKgb4PoEZWw"
     },
     {
       "key": "rain-forest-park",
@@ -153,7 +159,8 @@
       "channel": "Healing Rain Sounds",
       "category": "sounds",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLUFmePRBc-dg"
     },
     {
       "key": "ocean-thunderstorm",
@@ -162,7 +169,8 @@
       "channel": "Pure Sleeping Vibes",
       "category": "sounds",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLZs3m6uYUPGI"
     },
     {
       "key": "cozy-fireplace",
@@ -171,7 +179,8 @@
       "channel": "Leo's Fireplace",
       "category": "sounds",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLJtzvX8yRcKw"
     },
     {
       "key": "tin-roof-rain",
@@ -180,7 +189,8 @@
       "channel": "Midnight Roof Rain",
       "category": "sounds",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLA-JiDznVXi4"
     },
     {
       "key": "rain-thunder-dark",
@@ -189,7 +199,8 @@
       "channel": "Pure Relaxing Vibes",
       "category": "sounds",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLVGWROaKEV7o"
     },
     {
       "key": "fan-noise-black",
@@ -198,7 +209,8 @@
       "channel": "Quiet Fan Nights",
       "category": "sounds",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLJOGNrBLCrGM"
     },
     {
       "key": "pink-noise-black",
@@ -207,7 +219,8 @@
       "channel": "DJ Grossman",
       "category": "sounds",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLLbEPYtNrvoY"
     },
     {
       "key": "brown-noise-black",
@@ -216,7 +229,8 @@
       "channel": "DJ Grossman",
       "category": "sounds",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLZ3BHbDTKWuw"
     },
     {
       "key": "box-fan-black",
@@ -225,7 +239,8 @@
       "channel": "DJ Grossman",
       "category": "sounds",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLK1Hwsd-iSRQ"
     },
     {
       "key": "mba-moon-jelly",
@@ -234,7 +249,8 @@
       "channel": "Monterey Bay Aquarium",
       "category": "nature",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLbjtByd2a-4w"
     },
     {
       "key": "mba-jelly",
@@ -243,7 +259,8 @@
       "channel": "Monterey Bay Aquarium",
       "category": "nature",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLVKjZ-FbmDJg"
     },
     {
       "key": "mba-open-sea",
@@ -252,7 +269,8 @@
       "channel": "Monterey Bay Aquarium",
       "category": "nature",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLTLPNl4OjJIM"
     },
     {
       "key": "mba-kelp",
@@ -261,7 +279,8 @@
       "channel": "Monterey Bay Aquarium",
       "category": "nature",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLDenMh5HWwc4"
     },
     {
       "key": "mba-bay",
@@ -270,7 +289,8 @@
       "channel": "Monterey Bay Aquarium",
       "category": "nature",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLCWSo9Yjd5nU"
     },
     {
       "key": "explore-manatee",
@@ -279,7 +299,8 @@
       "channel": "explore.org",
       "category": "nature",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLIBvkjw2EXP4"
     },
     {
       "key": "explore-reef",
@@ -288,7 +309,8 @@
       "channel": "explore.org",
       "category": "nature",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLOfS12CHJdlA"
     },
     {
       "key": "explore-wolves",
@@ -297,7 +319,8 @@
       "channel": "explore.org",
       "category": "nature",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLbN8Xk4CoFUs"
     },
     {
       "key": "life-at-the-poles",
@@ -306,7 +329,8 @@
       "channel": "Unseen Planet DC",
       "category": "nature",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLAZrqMxc95V8"
     },
     {
       "key": "borneo-jungle-night",
@@ -315,7 +339,8 @@
       "channel": "BackCountryAmbient",
       "category": "nature",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLOxfb2mWj0TM"
     },
     {
       "key": "orangutan-jungle-school",
@@ -324,7 +349,8 @@
       "channel": "Love Nature",
       "category": "nature",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLM18wifpuNg8"
     },
     {
       "key": "nasa-iss-hd",
@@ -333,7 +359,8 @@
       "channel": "NASA",
       "category": "space",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLSl0Zg9axsgI"
     },
     {
       "key": "nasa-iss",
@@ -342,7 +369,8 @@
       "channel": "NASA",
       "category": "space",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLSZYN4pW1NBc"
     },
     {
       "key": "iss-earth",
@@ -351,7 +379,8 @@
       "channel": "Dream Trips",
       "category": "space",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLNnte8tyYdHI"
     },
     {
       "key": "iss-aurora",
@@ -360,7 +389,8 @@
       "channel": "Dream Trips",
       "category": "space",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLIAGj58_TLLw"
     },
     {
       "key": "milky-way",
@@ -369,7 +399,8 @@
       "channel": "WN Space",
       "category": "space",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLfa-Oj9oX4KM"
     },
     {
       "key": "northumberland-aurora",
@@ -378,7 +409,8 @@
       "channel": "Northumberland Astro",
       "category": "space",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLT7YkFpw1rqM"
     },
     {
       "key": "jack-stardew",
@@ -387,7 +419,8 @@
       "channel": "Call Me Jack",
       "category": "games",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLdI9PwdRc5bk"
     },
     {
       "key": "jack-pokemon",
@@ -396,7 +429,8 @@
       "channel": "Call Me Jack",
       "category": "games",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLVpYYAL9mNiA"
     },
     {
       "key": "jack-donkey-kong",
@@ -405,7 +439,8 @@
       "channel": "Call Me Jack",
       "category": "games",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLEhj-cocdV3c"
     },
     {
       "key": "jack-oblivion",
@@ -414,7 +449,8 @@
       "channel": "Call Me Jack",
       "category": "games",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLRwntaPgVOTs"
     },
     {
       "key": "jack-retro",
@@ -423,7 +459,8 @@
       "channel": "Call Me Jack",
       "category": "games",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLIY7ulaEcJCI"
     },
     {
       "key": "retroworld-ps1",
@@ -432,16 +469,18 @@
       "channel": "RetroWorld",
       "category": "games",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLcZgo--v9VvM"
     },
     {
       "key": "baker-wow",
-      "url": "https://www.youtube.com/watch?v=DMR2tBpcUmM",
+      "url": "https://www.youtube.com/watch?v=glDnyqlfUUI",
       "title": "World of Warcraft, chill music, no commentary",
       "channel": "TheBakerTV",
       "category": "games",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-19",
+      "playlist": "PLJeYeK3dZ3Gw"
     },
     {
       "key": "mochi-minecraft",
@@ -450,7 +489,8 @@
       "channel": "Mochi's World",
       "category": "games",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLa_X_KMJDfek"
     },
     {
       "key": "zelda-radio",
@@ -459,7 +499,8 @@
       "channel": "Hero's Journey",
       "category": "games",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLVYdBdkmkd_U"
     },
     {
       "key": "vgm-lofi",
@@ -468,7 +509,8 @@
       "channel": "Melodies Zone",
       "category": "games",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLMBxPcAnPuoE"
     },
     {
       "key": "gta-vice-city",
@@ -477,7 +519,8 @@
       "channel": "Wondersgta Gaming",
       "category": "games",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLCjADKS8DWI8"
     },
     {
       "key": "osaka-loop-line",
@@ -486,7 +529,8 @@
       "channel": "Osaka Loop Line Live Camera",
       "category": "trains",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLSe9OVvO7XUo"
     },
     {
       "key": "finse-station",
@@ -495,7 +539,8 @@
       "channel": "Ståle Ualand",
       "category": "trains",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLe91u-XS8ikc"
     },
     {
       "key": "nagoya-station",
@@ -504,7 +549,8 @@
       "channel": "Life along the railroad line",
       "category": "trains",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLAv-O1SnvRak"
     },
     {
       "key": "tokyo-rainbow-bridge",
@@ -513,7 +559,8 @@
       "channel": "TOKYO LIVE CAMERA",
       "category": "cities",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLFCmsHuKzKL4"
     },
     {
       "key": "shinjuku-fm",
@@ -522,7 +569,8 @@
       "channel": "TOKYO TONES",
       "category": "cities",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLS7eUiw5Npz0"
     },
     {
       "key": "tokyo-night-drive",
@@ -531,7 +579,8 @@
       "channel": "TOKYO TONES",
       "category": "cities",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLWb-EFlpHAOo"
     },
     {
       "key": "yokohama-cam",
@@ -540,7 +589,8 @@
       "channel": "Live Cam Yokohama Japan",
       "category": "cities",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLO0R-mC6x0GU"
     },
     {
       "key": "kyoto-arashiyama",
@@ -549,7 +599,8 @@
       "channel": "Kyoto City Tourism Association",
       "category": "cities",
       "hidden": false,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLIdWZguSkeOE"
     },
     {
       "key": "lofi-rainy-day",
@@ -558,7 +609,8 @@
       "channel": "Lofi Girl",
       "category": "music",
       "hidden": true,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLZCZq2r4c2JM"
     },
     {
       "key": "lofi-study",
@@ -567,7 +619,8 @@
       "channel": "Lofi Girl",
       "category": "music",
       "hidden": true,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLOUP4_bkJVvs"
     },
     {
       "key": "lofi-jazz-beats",
@@ -576,7 +629,8 @@
       "channel": "Lofi Girl",
       "category": "music",
       "hidden": true,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLO0giprSQLEc"
     },
     {
       "key": "roelf-starship",
@@ -585,7 +639,8 @@
       "channel": "Roelf Staal",
       "category": "music",
       "hidden": true,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLYOyvlRDmETQ"
     },
     {
       "key": "critter-cam",
@@ -594,7 +649,8 @@
       "channel": "CritterVision",
       "category": "nature",
       "hidden": true,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLFu4-s_tgH-Y"
     },
     {
       "key": "explore-brooks",
@@ -603,7 +659,88 @@
       "channel": "explore.org",
       "category": "nature",
       "hidden": true,
-      "checked": "2026-10-17"
+      "checked": "2026-10-17",
+      "playlist": "PLdQUC3iXiA5c"
+    },
+    {
+      "key": "spare-08",
+      "url": "",
+      "title": "Spare",
+      "channel": "",
+      "category": "music",
+      "hidden": true,
+      "checked": "2026-10-19",
+      "playlist": "PLEVsUS0kecWs"
+    },
+    {
+      "key": "spare-07",
+      "url": "",
+      "title": "Spare",
+      "channel": "",
+      "category": "music",
+      "hidden": true,
+      "checked": "2026-10-19",
+      "playlist": "PLElhOD_DJ0mw"
+    },
+    {
+      "key": "spare-06",
+      "url": "",
+      "title": "Spare",
+      "channel": "",
+      "category": "music",
+      "hidden": true,
+      "checked": "2026-10-19",
+      "playlist": "PLI4O7dFx6EZg"
+    },
+    {
+      "key": "spare-05",
+      "url": "",
+      "title": "Spare",
+      "channel": "",
+      "category": "music",
+      "hidden": true,
+      "checked": "2026-10-19",
+      "playlist": "PLO4BB8GbkzS0"
+    },
+    {
+      "key": "spare-04",
+      "url": "",
+      "title": "Spare",
+      "channel": "",
+      "category": "music",
+      "hidden": true,
+      "checked": "2026-10-19",
+      "playlist": "PLa47WmgezJjE"
+    },
+    {
+      "key": "spare-03",
+      "url": "",
+      "title": "Spare",
+      "channel": "",
+      "category": "music",
+      "hidden": true,
+      "checked": "2026-10-19",
+      "playlist": "PLE0S3gUgB_2o"
+    },
+    {
+      "key": "spare-02",
+      "url": "",
+      "title": "Spare",
+      "channel": "",
+      "category": "music",
+      "hidden": true,
+      "checked": "2026-10-19",
+      "playlist": "PLRy_i5GG5zX4"
+    },
+    {
+      "key": "spare-01",
+      "url": "",
+      "title": "Spare",
+      "channel": "",
+      "category": "music",
+      "hidden": true,
+      "checked": "2026-10-19",
+      "playlist": "PLEr9l0J1UNEc"
     }
   ],
   "thumbnailSheetUrl": "https://cheffromspace.github.io/japharsworld-yt/sleep-thumbs.jpg"

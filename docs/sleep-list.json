@@ -1,6 +1,12 @@
 {
  "notice": "",
  "slots": {
+  "jack-donkey-kong": {
+   "hidden": true
+  },
+  "jack-pokemon": {
+   "hidden": true
+  },
   "jack-retro": {
    "hidden": true
   }

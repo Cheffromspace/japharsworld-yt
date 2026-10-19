@@ -92,6 +92,25 @@ working: it checks every slot's 24/7 stream, swaps restarted streams into the sl
 (through a worker on the owner's Optiplex), and publishes `docs/sleep-list.json` and `docs/sleep-thumbs.jpg`.
 See [monitor/README.md](monitor/README.md).
 
+## Metrics
+
+Usage counts for the owner: per day (per hour at most), never per person. No IPs, search text, video IDs, ticket numbers or
+VRChat user/instance IDs are stored. Details, what is deliberately not collected, and how to turn it off:
+[claude/metrics.md](claude/metrics.md).
+
+- **The search service** (`src/metrics.js`) counts searches (by language, source, failures, latency), "more results",
+  plays (by route and length), captions, Tunelio credits spent, join pings (the bare search URL the world loads after join)
+  and active shards per hour. Counts are written to `/var/lib/japharsworld-yt/metrics.db` every minute and at shutdown.
+- **The poller** (`metrics/poll.js`, `japharsworld-yt-metrics.timer`, about every 15 minutes) records the VRChat world
+  (production and TEST) and group numbers, and once a day Tunelio's balance and GitHub stars, downloads and traffic. Its
+  secrets are in `/etc/japharsworld-yt-metrics.env` (root only).
+- **Reports**: a daily Discord summary around 09:00 America/Chicago and a weekly one on Mondays (`ALERT_WEBHOOK`).
+- **`GET /stats`** (HTML with inline SVG charts), `/stats.json` and `/stats/export.csv`, behind `STATS_TOKEN`
+  (`?token=` or `Authorization: Bearer`).
+
+Setup is automatic on deploy (`deploy/metrics-setup.sh`). Tests: `npm test` (`test/metrics.test.js`,
+`test/vrchat.test.js`, `test/report.test.js`).
+
 ## Server
 
 One-time setup on a Debian/Ubuntu box, as root (safe to re-run; leaves MediaMTX and other services alone):

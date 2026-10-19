@@ -1,0 +1,11 @@
+[Unit]
+Description=Metrics poller about every 15 minutes (not on the clock, as VRChat asks)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+RandomizedDelaySec=2min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

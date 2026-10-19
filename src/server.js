@@ -7,6 +7,7 @@
 //   GET /v1/<shard>/cc/<i>[?l=<lang>]                  track i of that list (the tablet's caption picker; Tunelio captions only)
 //   GET /healthz
 //   GET /relay/next, POST /relay/done                  search relay workers only (bearer RELAY_TOKEN; see relay.js)
+//   GET /stats, /stats.json, /stats/export.csv         usage metrics (bearer or ?token= STATS_TOKEN; see stats.js)
 //   GET /, /privacy, /logo.png                         home page and privacy policy (public/)
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
@@ -24,6 +25,8 @@ import { makeAlert } from './alert.js';
 import { Relay, RelayError } from './relay.js';
 import { DataApi } from './dataapi.js';
 import { makeSearch } from './search.js';
+import { Metrics, noMetrics, lengthBucket } from './metrics.js';
+import { statsRoute } from './stats.js';
 
 const API = 1;
 const PAGES = {
@@ -37,12 +40,18 @@ function page(path) {
   return pageCache.get(path);
 }
 
-export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, log = console.log } = {}) {
+export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, log = console.log } = {}) {
   store ??= new Store({ path: config.dbPath, shards: config.shards, pool: config.pool, pinHours: config.pinHours });
   const logJson = (o) => log(JSON.stringify({ at: new Date().toISOString(), ...o }));
+  metrics ??= config.metricsPath ? new Metrics({ path: config.metricsPath, tz: config.metricsTz, log: logJson }).start() : noMetrics;
   alert ??= makeAlert({ webhook: config.alertWebhook, log: logJson });
   tunelio ??= new Tunelio({ key: config.tunelioKey, onCredits: (left) => {
+    metrics.gauge('credits_remaining', '', left);
     if (left < config.lowCredits) alert('credits_low', `Tunelio credits are running low: ${left} left this month.`, 24 * 60);
+  }, onCall: ({ path, ok, ms }) => {
+    if (!ok) return; // failed calls cost nothing
+    if (path === '/create') { metrics.inc('credits', 'playback', 10); metrics.latency('tunelio_create_ms', ms); }
+    if (path === '/transcript') metrics.inc('credits', 'captions', 6);
   } });
   playback ??= new Playback({ tunelio, quality: config.tunelioQuality, progressiveMaxSeconds: config.progressiveMaxSeconds,
     checkProgressive: tunelio.enabled ? progressiveChecker() : null, alert, log: logJson });
@@ -110,17 +119,24 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   }
 
   async function search(req, res, shard, url) {
-    if (rateLimited(clientIp(req))) return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.');
+    if (rateLimited(clientIp(req))) { metrics.inc('search_fail', '429'); return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.'); }
     const lang = normalizeLang(url.searchParams.get('l'));
     const query = parseQuery(url.searchParams.get('q') ?? '');
-    if (!query) return fail(res, 400, 'empty_query', 'Type something after the arrow.');
+    // The world loads the bare search address once after join (visitors who allow untrusted URLs).
+    if (!query) { metrics.inc('join'); metrics.inc('join_lang', lang); return fail(res, 400, 'empty_query', 'Type something after the arrow.'); }
+    metrics.inc('search');
+    metrics.inc('search_lang', lang);
     let page;
     const pasted = youtubeIdFrom(query);
+    const started = Date.now();
     try {
       page = await searcher.search(pasted ?? query, config.resultsPerPage);
     } catch {
+      metrics.inc('search_fail', '502');
       return fail(res, 502, 'youtube_failed', 'YouTube search is not answering right now.');
     }
+    metrics.inc('search_source', page.via);
+    metrics.latency('search_ms', Date.now() - started);
     if (pasted) {
       const exact = page.videos.find((v) => v.id === pasted);
       const rest = page.videos.filter((v) => v.id !== pasted);
@@ -138,6 +154,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (warmCaptions) captions.get(t.data.id, 'native').catch(() => {});
       const where = await playback.location(t.data);
       logJson({ event: 'play', shard, n, id: t.data.id, via: where.via, reason: where.reason });
+      countPlay(t.data, where);
       res.writeHead(302, { location: where.location, 'cache-control': 'no-store' });
       return res.end();
     }
@@ -147,13 +164,15 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       return res.end(buf);
     }
     if (t.kind === 'page') {
+      metrics.inc('more');
       const more = continuations.get(`${shard}:${n}`);
-      if (!more) return fail(res, 410, 'expired', 'These results expired. Search again.');
+      if (!more) { metrics.inc('more_fail', '410'); return fail(res, 410, 'expired', 'These results expired. Search again.'); }
       continuations.delete(`${shard}:${n}`);
       let page;
       try { page = await more(); } catch (err) {
         logJson({ event: 'youtube_error', route: 'more', via: more.via, message: String(err?.message ?? err).slice(0, 300) });
-        if (err instanceof RelayError && err.code === 'expired') return fail(res, 410, 'expired', 'These results expired. Search again.');
+        if (err instanceof RelayError && err.code === 'expired') { metrics.inc('more_fail', '410'); return fail(res, 410, 'expired', 'These results expired. Search again.'); }
+        metrics.inc('more_fail', '502');
         return fail(res, 502, 'youtube_failed', 'YouTube search is not answering right now.');
       }
       return json(res, 200, publish(shard, page, { page: (t.data.page ?? 1) + 1 }));
@@ -163,17 +182,31 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
 
   async function caption(req, res, shard, raw, url) {
     const byTrack = /^\d+$/.test(raw);
-    if (byTrack && typeof captions.track !== 'function') return fail(res, 404, 'no_tracks', 'Caption tracks are not available.');
+    // "Show captions" (the list, in the visitor's language) vs a track picked on the tablet.
+    if (byTrack) metrics.inc('cc_track');
+    else { metrics.inc('cc_list'); metrics.inc('cc_list_lang', raw === 'native' ? 'native' : normalizeLang(raw)); }
+    if (byTrack && typeof captions.track !== 'function') { metrics.inc('cc_unavailable', 'no_tracks'); return fail(res, 404, 'no_tracks', 'Caption tracks are not available.'); }
     const lang = byTrack ? normalizeLang(url.searchParams.get('l')) : raw === 'native' ? 'native' : (LANGS[raw] ? raw : normalizeLang(raw));
     const last = store.lastPlayed(shard);
-    if (!last) return fail(res, 404, 'nothing_playing', 'Nothing from search has played here yet.');
+    if (!last) { metrics.inc('cc_unavailable', 'nothing_playing'); return fail(res, 404, 'nothing_playing', 'Nothing from search has played here yet.'); }
     try {
       const c = byTrack ? await captions.track(last.videoId, Number(raw), lang) : await captions.get(last.videoId, lang);
+      if (!c.available) metrics.inc('cc_unavailable', c.reason ?? 'none');
+      else if (byTrack) metrics.inc('cc_track_lang', String(c.key ?? '').replace(/-orig$/, ''));
       return json(res, 200, { v: API, shard, t: last.n, ...c });
     } catch (err) {
       log(JSON.stringify({ at: new Date().toISOString(), event: 'captions_error', id: last.videoId, lang, message: errorLine(err) }));
+      metrics.inc('cc_unavailable', 'failed');
       return fail(res, 502, 'captions_failed', 'Captions are not available right now.');
     }
+  }
+
+  function countPlay(data, where) {
+    metrics.inc('play');
+    metrics.inc('play_length', lengthBucket(data));
+    if (where.via === 'tunelio') metrics.inc('play_route', /[?&]hls=1/.test(where.location) ? 'tunelio-hls' : 'tunelio-progressive');
+    else if (where.reason === 'live') metrics.inc('play_route', 'youtube-live');
+    else { metrics.inc('play_route', 'youtube-fallback'); metrics.inc('play_fallback', where.reason); }
   }
 
   async function readJson(req, max = 1 << 20) {
@@ -216,6 +249,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     try {
       const url = new URL(req.url, 'http://local');
       if (url.pathname.startsWith('/relay/')) { route = 'relay'; return await relayRoute(req, res, url); }
+      if (url.pathname === '/stats' || url.pathname.startsWith('/stats.') || url.pathname.startsWith('/stats/')) {
+        route = 'stats';
+        return statsRoute(req, res, url, { token: config.statsToken, metricsPath: config.metricsPath, monitorDb: config.monitorDb, tz: config.metricsTz, metrics });
+      }
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
       if (url.pathname === '/healthz') {
         route = 'health';
@@ -233,6 +270,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (!m) return fail(res, 404, 'not_found', 'Unknown path.');
       const shard = Number(m[1]);
       if (!store.validShard(shard)) return fail(res, 404, 'bad_shard', 'Unknown shard.');
+      metrics.shard(shard);
       if (m[2] === 's') { route = 'search'; return await search(req, res, shard, url); }
       if (m[2].startsWith('cc/')) { route = 'captions'; return await caption(req, res, shard, m[2].slice(3), url); }
       const n = Number(m[2]);
@@ -245,11 +283,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       else res.end();
     }
   }
-  return Object.assign(handler, { relay, checkWorkers });
+  return Object.assign(handler, { relay, checkWorkers, metrics });
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const app = createApp();
+  // Write the last minute's counts before systemd stops us (deploys restart the service).
+  for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { app.metrics.close(); process.exit(0); });
   http.createServer(app).listen(defaults.port, defaults.host, () => {
     console.log(`japharsworld-yt listening on ${defaults.host}:${defaults.port} (${defaults.shards} shards × ${defaults.pool} tickets)`);
   });

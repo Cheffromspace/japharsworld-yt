@@ -43,6 +43,13 @@ export const config = {
   // YouTube Data API v3: last fallback for search. Empty = never used.
   youtubeApiKey: process.env.YOUTUBE_API_KEY ?? '',
   youtubeApiDailyUnits: int('YOUTUBE_API_DAILY_UNITS', 10000),
+  // Usage metrics (claude/metrics.md): counts per day in this SQLite file, shared with the poller. Empty = off.
+  metricsPath: process.env.METRICS_DB ?? 'data/metrics.db',
+  metricsTz: process.env.METRICS_TZ ?? 'America/Chicago',
+  // Bearer token for GET /stats, /stats.json and /stats/export.csv. Empty = those routes answer 404.
+  statsToken: process.env.STATS_TOKEN ?? '',
+  // The Channels monitor's database (read only, for /stats).
+  monitorDb: process.env.MONITOR_DB ?? '/var/lib/japharsworld-yt-monitor/monitor.db',
   // Thumbnail sheet: one cell per result, row-major.
   sheet: { cols: 4, rows: 5, cellW: 256, cellH: 144, background: '#24283b' },
 };

@@ -2,7 +2,7 @@
 # Run by japharsworld-yt-update.timer every 5 minutes (as root).
 # Deploys origin/main if it moved; rolls back if the new version fails its health check.
 # Once a day also updates yt-dlp, the usual fix when YouTube changes something.
-# Commits that only touch docs/, the link monitor or the search relay worker (the monitor publishes docs/ itself) don't restart the search service.
+# Commits that only touch docs/, the link monitor, the metrics poller or the search relay worker (the monitor publishes docs/ itself) don't restart the search service.
 set -euo pipefail
 # Wrapped in main() so bash has read the whole script before git reset can rewrite this file.
 main() {
@@ -25,17 +25,23 @@ git fetch -q origin main
 current=$(git rev-parse HEAD); target=$(git rev-parse origin/main)
 if [ "$current" = "$target" ]; then
   [ -x /opt/japharsworld-yt-monitor-venv/bin/python ] || bash deploy/monitor-setup.sh
+  [ -f /etc/systemd/system/japharsworld-yt-metrics.timer ] || bash deploy/metrics-setup.sh
   exit 0
 fi
 
 echo "deploying $(git log -1 --format='%h %s' "$target")"
 changed=$(git diff --name-only "$current" "$target")
 lock_changed=$(echo "$changed" | grep -x 'package-lock.json' || true)
-service_changed=$(echo "$changed" | grep -v -E '^(docs/|monitor/|relay/|deploy/monitor-setup\.sh$|deploy/slotmon(-remote)?$|deploy/japharsworld-yt-monitor\.|deploy/relay-|deploy/slotworker-|deploy/japharsworld-yt-slotworker|deploy/japharsworld-yt-relay)' || true)
+service_changed=$(echo "$changed" | grep -v -E '^(docs/|monitor/|relay/|deploy/monitor-setup\.sh$|deploy/slotmon(-remote)?$|deploy/japharsworld-yt-monitor\.|deploy/relay-|deploy/slotworker-|deploy/japharsworld-yt-slotworker|deploy/japharsworld-yt-relay|metrics/|deploy/metrics-setup\.sh$|deploy/japharsworld-yt-metrics\.)' || true)
 monitor_setup_changed=$(echo "$changed" | grep -E '^(monitor/requirements\.txt|monitor/seed/|deploy/monitor-setup\.sh|deploy/slotmon|deploy/japharsworld-yt-monitor\.)' || true)
+metrics_setup_changed=$(echo "$changed" | grep -E '^(deploy/metrics-setup\.sh|deploy/japharsworld-yt-metrics\.)' || true)
 git reset -q --hard "$target"
 if [ -n "$monitor_setup_changed" ] || [ ! -x /opt/japharsworld-yt-monitor-venv/bin/python ]; then
   bash deploy/monitor-setup.sh || echo "monitor setup failed"
+fi
+# The metrics poller (metrics/) runs from this checkout on its own timer, so its code needs no restart here.
+if [ -n "$metrics_setup_changed" ] || [ ! -f /etc/systemd/system/japharsworld-yt-metrics.timer ]; then
+  bash deploy/metrics-setup.sh || echo "metrics setup failed"
 fi
 if [ -z "$service_changed" ]; then echo "now on $(git rev-parse --short HEAD) (docs/monitor only; search service not restarted)"; exit 0; fi
 

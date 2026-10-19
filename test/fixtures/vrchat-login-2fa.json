@@ -1,0 +1,1 @@
+{ "requiresTwoFactorAuth": ["totp", "otp"] }

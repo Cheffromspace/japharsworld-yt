@@ -15,7 +15,7 @@ MemoryMax=400M
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/japharsworld-yt
+ReadWritePaths=/var/lib/japharsworld-yt -/var/lib/japharsworld-yt-monitor
 PrivateTmp=true
 
 [Install]

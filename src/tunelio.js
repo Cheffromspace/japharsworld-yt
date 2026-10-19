@@ -13,12 +13,13 @@ export class TunelioError extends Error {
 }
 
 export class Tunelio {
-  constructor({ key, base = 'https://tunelio.dev', fetcher = fetch, timeoutMs = 12_000, onCredits = () => {} }) {
+  constructor({ key, base = 'https://tunelio.dev', fetcher = fetch, timeoutMs = 12_000, onCredits = () => {}, onCall = () => {} }) {
     this.key = key;
     this.base = base.replace(/\/$/, '');
     this.fetch = fetcher;
     this.timeoutMs = timeoutMs;
     this.onCredits = onCredits;
+    this.onCall = onCall; // ({ path, ok, status, ms }) after every call (metrics)
     this.credits = null; // last X-Credits-Remaining seen
   }
 
@@ -27,6 +28,8 @@ export class Tunelio {
   async call(path, params) {
     if (!this.key) throw new TunelioError(0, 'no_key', 'Tunelio is not configured');
     const qs = new URLSearchParams(params).toString();
+    const started = Date.now();
+    const done = (ok, status) => { try { this.onCall({ path, ok, status, ms: Date.now() - started }); } catch { /* metrics only */ } };
     let res;
     try {
       res = await this.fetch(`${this.base}${path}?${qs}`, {
@@ -34,6 +37,7 @@ export class Tunelio {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (err) {
+      done(false, 0);
       throw new TunelioError(0, err?.name === 'TimeoutError' ? 'timeout' : 'network', String(err?.message ?? err));
     }
     const left = Number.parseInt(res.headers.get('x-credits-remaining') ?? '', 10);
@@ -41,8 +45,10 @@ export class Tunelio {
     let body = null;
     try { body = await res.json(); } catch { /* not JSON */ }
     if (!res.ok || !body || (body.status && body.status !== 'ok')) {
+      done(false, res.status);
       throw new TunelioError(res.status, body?.error ?? body?.status ?? 'bad_response', body?.message);
     }
+    done(true, res.status);
     return body;
   }
 

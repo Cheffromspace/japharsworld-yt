@@ -1,0 +1,22 @@
+[Unit]
+Description=Metrics poller: VRChat, Tunelio, GitHub, daily report (VRChat world Everything is OK)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Starts as root only to read/refresh the VRChat session in the root-only secrets file, then drops to jyt.
+EnvironmentFile=/etc/japharsworld-yt.env
+EnvironmentFile=-/etc/japharsworld-yt-metrics.env
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning /opt/japharsworld-yt/metrics/poll.js
+StateDirectory=japharsworld-yt-metrics
+StateDirectoryMode=0700
+TimeoutStartSec=5min
+Nice=10
+MemoryMax=200M
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/japharsworld-yt -/var/lib/japharsworld-yt-monitor -/etc/japharsworld-yt-metrics.env
+PrivateTmp=true

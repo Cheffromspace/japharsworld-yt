@@ -1,0 +1,32 @@
+{
+  "authorId": "usr_00000000-0000-0000-0000-000000000000",
+  "authorName": "sample",
+  "capacity": 6,
+  "recommendedCapacity": 6,
+  "created_at": "2026-09-20T03:11:42.000Z",
+  "description": "A calm night-time bedroom for sleeping in VR.",
+  "favorites": 412,
+  "featured": false,
+  "heat": 3,
+  "id": "wrld_63bed747-6c3d-428c-b2f4-1a904afa7df8",
+  "imageUrl": "https://api.vrchat.cloud/api/1/file/file_00000000-0000-0000-0000-000000000000/1/file",
+  "instances": [
+    ["12345~region(us)", 2],
+    ["67890~hidden(usr_00000000-0000-0000-0000-000000000001)~region(us)", 3],
+    ["11111~group(grp_00000000-0000-0000-0000-000000000002)~groupAccessType(public)~region(eu)", 1]
+  ],
+  "labsPublicationDate": "2026-09-21T00:00:00.000Z",
+  "name": "Everything is OK",
+  "occupants": 9,
+  "organization": "vrchat",
+  "popularity": 5,
+  "privateOccupants": 3,
+  "publicOccupants": 6,
+  "publicationDate": "2026-09-28T00:00:00.000Z",
+  "releaseStatus": "public",
+  "tags": ["system_approved"],
+  "unityPackages": [{ "platform": "standalonewindows", "unityVersion": "2022.3.22f1" }],
+  "updated_at": "2026-10-18T22:04:10.000Z",
+  "version": 41,
+  "visits": 12345
+}

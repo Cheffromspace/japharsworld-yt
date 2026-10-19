@@ -1,0 +1,14 @@
+#!/bin/bash
+# /usr/local/bin/slotmon-remote: forced command for the Optiplex flash-check worker's SSH key in root's authorized_keys
+#   restrict,command="/usr/local/bin/slotmon-remote" ssh-ed25519 AAAA... slotworker@optiplex
+# That key can only claim jobs and submit results for runner "optiplex"; anything else is refused.
+set -euo pipefail
+cmd="${SSH_ORIGINAL_COMMAND:-}"
+cmd="${cmd#/usr/local/bin/}"
+if [[ "$cmd" =~ ^slotmon\ claim\ --runner\ optiplex\ --max\ ([0-9]{1,3})$ ]]; then
+  exec /usr/local/bin/slotmon claim --runner optiplex --max "${BASH_REMATCH[1]}"
+elif [[ "$cmd" == "slotmon submit --source optiplex" ]]; then
+  exec /usr/local/bin/slotmon submit --source optiplex
+fi
+echo "slotmon-remote: not allowed: $cmd" >&2
+exit 1

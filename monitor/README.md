@@ -13,15 +13,16 @@ Publishes to GitHub Pages (`docs/` on `main`), committing only when something ch
 
 ## Where things run
 
-| | Linode (`slotmon run`, systemd timer) | PC worker (Task Scheduler) |
+| | Linode (`slotmon run`, systemd timer) | Optiplex worker (systemd timer) |
 |---|---|---|
 | Live status, viewers, start time, title, channel | Data API if `YT_API_KEY`/OAuth is set, else the watch page HTML | |
 | Find a replacement (`/channel/<id>/live`, the Live tab) | yes (page HTML, no quota) | |
-| Resolution + flash check | only with `cookies.txt` (YouTube bot-walls the datacenter IP) | yes: VRChat's own yt-dlp + ffmpeg |
+| Resolution + flash check | only with `cookies.txt` (YouTube bot-walls the datacenter IP) | yes: yt-dlp (updated daily) + ffmpeg |
 | Playlist swaps, `sleep-list.json`, thumbnails, Discord | yes | |
 
 Jobs (resolution + flash) are queued for every new stream, for each candidate replacement, and once a day for each slot's stream.
-The PC worker claims them over SSH (`/usr/local/bin/slotmon claim`), runs them and sends the results back (`slotmon submit`).
+The Optiplex worker claims them over SSH (`slotmon claim --runner optiplex`), runs them and sends the results back (`slotmon submit`).
+Its key in the Linode's `/root/.ssh/authorized_keys` is `restrict,command="/usr/local/bin/slotmon-remote"`, so it can do nothing else.
 A flash fail hides the slot at once, empties its playlist so nothing plays, and pings Discord (urgent).
 While no worker is running, replacements wait hidden, and the daily summary says the checks are stalled.
 
@@ -55,7 +56,22 @@ Secrets go in `/etc/japharsworld-yt-monitor.env`:
 
 After editing the env file: `systemctl start japharsworld-yt-monitor` (one pass now) and `slotmon alert-test`.
 
-## PC worker (owner's PC)
+## Optiplex worker (owner's home server)
+
+After `deploy/relay-setup.sh` (the search relay):
+
+```sh
+sudo bash /opt/japharsworld-yt-relay/deploy/slotworker-setup.sh
+```
+
+That installs ffmpeg, yt-dlp (`/opt/japharsworld-yt-slotworker-venv`, updated daily by the relay's update timer) and
+`japharsworld-yt-slotworker.timer` (every 20 minutes, user `jytrelay`, outbound SSH only), creates its SSH key in
+`/var/lib/japharsworld-yt-slotworker/` and prints the restricted line for the Linode's `/root/.ssh/authorized_keys`.
+Log: `journalctl -u japharsworld-yt-slotworker`. Run once now: `systemctl start japharsworld-yt-slotworker`.
+
+## PC worker (owner's PC, retired)
+
+The Windows worker still works (runner `pc`) if the Optiplex is ever unavailable:
 
 ```bat
 monitor\pc-worker-setup.cmd

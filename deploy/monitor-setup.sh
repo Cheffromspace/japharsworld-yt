@@ -47,6 +47,7 @@ if [ ! -f "$DATA/deploy_key" ]; then
 fi
 
 install -m 755 "$APP/deploy/slotmon" /usr/local/bin/slotmon
+install -m 755 "$APP/deploy/slotmon-remote" /usr/local/bin/slotmon-remote
 for unit in japharsworld-yt-monitor.service japharsworld-yt-monitor.timer; do
   install -m 644 "$APP/deploy/$unit" /etc/systemd/system/
 done

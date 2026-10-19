@@ -1,0 +1,34 @@
+[Unit]
+Description=Channels flash-check worker (claims resolution + flash jobs from the Linode over SSH, never listens)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jytrelay
+Group=jytrelay
+WorkingDirectory=/opt/japharsworld-yt-relay/monitor
+StateDirectory=japharsworld-yt-slotworker
+StateDirectoryMode=0700
+Environment=HOME=/var/lib/japharsworld-yt-slotworker
+Environment=XDG_CACHE_HOME=/var/lib/japharsworld-yt-slotworker/cache
+Environment=SLOTMON_RUNNER=optiplex
+Environment=SLOTMON_LOG=-
+Environment=SLOTMON_HOST=root@172.239.34.136
+Environment=SLOTMON_KEY=/var/lib/japharsworld-yt-slotworker/id_ed25519
+Environment=YTDLP=/opt/japharsworld-yt-slotworker-venv/bin/yt-dlp
+Environment="YTDLP_ARGS=--js-runtimes node"
+Environment=FFMPEG=/usr/bin/ffmpeg
+ExecStart=/usr/bin/python3 -m slotmon.worker
+TimeoutStartSec=50min
+Nice=10
+MemoryMax=1G
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX

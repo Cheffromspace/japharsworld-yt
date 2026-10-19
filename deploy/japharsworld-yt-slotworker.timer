@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Channels flash-check worker every 20 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=20min
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

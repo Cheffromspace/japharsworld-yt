@@ -444,7 +444,7 @@ def summary(con, api, overrides, queued):
     lines.append("API quota today: %d of %d." % (api.used_today(), config.QUOTA_LIMIT))
     discord.send(con, "Daily summary", "\n".join(lines), "info")
     if pending["c"] and now() - pending["c"] > config.WORKER_STALE_HOURS * 3600:
-        discord.send(con, "Flash checks are stalled", "Jobs have waited %.0f h. Is the PC worker running (or the Linode cookies set)?"
+        discord.send(con, "Flash checks are stalled", "Jobs have waited %.0f h. Is the Optiplex worker running (or the Linode cookies set)?"
                      % ((now() - pending["c"]) / 3600), "warn", dedupe="stalled", every_hours=24)
 
 

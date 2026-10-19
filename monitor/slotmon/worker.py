@@ -26,6 +26,8 @@ def log(msg):
 
 def remote(args, stdin=None):
     cmd = ["ssh", "-i", KEY, "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", "-o", "StrictHostKeyChecking=accept-new", HOST, "/usr/local/bin/slotmon " + args]
+    if os.environ.get("SLOTMON_KNOWN_HOSTS"):  # ssh ignores $HOME; the Optiplex service user's home is read-only
+        cmd[1:1] = ["-o", "UserKnownHostsFile=" + os.environ["SLOTMON_KNOWN_HOSTS"]]
     r = subprocess.run(cmd, input=stdin, capture_output=True, text=True, encoding="utf-8", timeout=600, **probe.QUIET)
     if r.returncode != 0:
         raise RuntimeError("ssh slotmon %s: %s" % (args, (r.stderr or r.stdout).strip()[-400:]))

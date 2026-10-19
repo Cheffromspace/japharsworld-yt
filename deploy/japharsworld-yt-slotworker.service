@@ -16,6 +16,7 @@ Environment=SLOTMON_RUNNER=optiplex
 Environment=SLOTMON_LOG=-
 Environment=SLOTMON_HOST=root@172.239.34.136
 Environment=SLOTMON_KEY=/var/lib/japharsworld-yt-slotworker/id_ed25519
+Environment=SLOTMON_KNOWN_HOSTS=/var/lib/japharsworld-yt-slotworker/.ssh/known_hosts
 Environment=YTDLP=/opt/japharsworld-yt-slotworker-venv/bin/yt-dlp
 Environment="YTDLP_ARGS=--js-runtimes node"
 Environment=FFMPEG=/usr/bin/ffmpeg

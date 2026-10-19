@@ -162,6 +162,10 @@ def run_job(job, runner):
             return out
         fmts = info.get("formats") or []
         f = vrchat_format(fmts)
+        if f is None and fmts:
+            # Full yt-dlp lists a live stream's HLS formats without audio codecs, so ask it with VRChat's own selector.
+            m = re.match(r"(\S+) - (\d+)x(\d+)", _simple(["-f", VRCHAT_SELECTOR, "--get-format", url]))
+            f = m and {"format_id": m.group(1), "height": int(m.group(3))}
         out.update(live_status=info.get("live_status"), height=f and f.get("height"), format_id=f and f.get("format_id"),
                    title=info.get("title"), channel=info.get("channel"), channel_id=info.get("channel_id"),
                    started_at=info.get("release_timestamp"), viewers=info.get("concurrent_view_count"))

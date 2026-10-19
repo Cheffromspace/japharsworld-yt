@@ -69,6 +69,11 @@ That installs ffmpeg, yt-dlp (`/opt/japharsworld-yt-slotworker-venv`, updated da
 `/var/lib/japharsworld-yt-slotworker/` and prints the restricted line for the Linode's `/root/.ssh/authorized_keys`.
 Log: `journalctl -u japharsworld-yt-slotworker`. Run once now: `systemctl start japharsworld-yt-slotworker`.
 
+Heights come from the full yt-dlp with VRChat's format selector. For **live streams** they match VRChat's own yt-dlp
+(1080p, checked 2026-10-19); for ordinary uploads they can differ (YouTube serves different clients different
+formats: VRChat got 360p for the pink-noise upload, the Optiplex 1080p). The 720p rule only applies to live slots,
+so `video` heights in `slotmon status` are informational.
+
 ## PC worker (owner's PC, retired)
 
 The Windows worker still works (runner `pc`) if the Optiplex is ever unavailable:

@@ -3,6 +3,12 @@
  "slots": {
   "baker-wow": {
    "hidden": true
+  },
+  "jack-donkey-kong": {
+   "hidden": true
+  },
+  "jack-retro": {
+   "hidden": true
   }
  }
 }

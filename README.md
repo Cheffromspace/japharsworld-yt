@@ -9,24 +9,35 @@ This service works within that rule:
   and the visitor types after the arrow. Everything up to the last arrow is ignored.
 - **Tickets.** The world bakes `https://yt.japharsworld.com/v1/<shard>/<n>` for every shard and `n < POOL`.
   A search binds the next free tickets to its videos, its thumbnail sheet and its next page, and answers with
-  ticket numbers. Loading a video ticket is a 302 to `youtube.com/watch?v=…`; each visitor's VRChat resolves
-  the video itself, so no video passes through this server.
+  ticket numbers. Loading a video ticket is a 302 to the video; no video passes through this server.
+- **HD playback (Tunelio).** With `TUNELIO_API_KEY` set, an ordinary video's ticket redirects to a
+  [Tunelio](https://tunelio.dev) tunnel link (720p/1080p): a progressive mp4 (full seeking) up to
+  `TUNELIO_PROGRESSIVE_MAX_MINUTES`, Tunelio's HLS playlist for longer videos or when the mp4 is too large to build.
+  One link per video is cached until 20 minutes before it expires (about 6 h), so a room, its late joiners and
+  replays share one paid call (10 credits). Live streams always go to `youtube.com` (VRChat gets 1080p for live
+  itself), and so does everything when Tunelio fails, is out of credits (paused for 10 minutes) or has no key:
+  360p, but it plays. Alerts (out of credits, failing, running low) go to `ALERT_WEBHOOK`.
 - **Shards.** Each instance picks a shard at random (synced), so instances rarely share tickets.
 - **Pinning.** A video ticket that has been played is pinned for `PIN_HOURS` and skipped when tickets are
   handed out, so late joiners loading the synced ticket get the same video.
 - **Captions.** `GET /v1/<shard>/cc/<lang>` returns captions for the video last played in that shard, in the
-  visitor's language: the uploader's subtitles, else the original auto captions, else YouTube's translation.
+  visitor's language, plus `tracks`: every caption track the video has (uploader tracks first, then auto
+  captions), named in `<lang>`. `GET /v1/<shard>/cc/<i>` returns track *i* of that list (the tablet's picker).
   `lang` is a VRChat client language or `native`. The response carries the ticket `t` so the world can check
-  it matches what's on the screen.
+  it matches what's on the screen. With Tunelio, captions come from its `/transcript` (6 credits per track,
+  cached 7 days, fetched only when someone asks): YouTube's machine translations are not offered, tracks in
+  scripts the world cannot draw (`CAPTION_SCRIPTS`) are left out, and Tunelio's silent English substitute for a
+  missing language is detected and answered as unavailable. Without a key, yt-dlp is used as before.
 
 ## API
 
 | Path | Returns |
 |---|---|
 | `GET /v1/<shard>/s?l=<lang>&q=<…> → <query>` | JSON: `results[]` (`t`, `id`, `title`, `channel`, `length`, `seconds`, `views`, `age`, `live`, `cc`), `sheet`, `sheetCols`, `sheetRows`, `cellW`, `cellH`, `next` (`-1` = none) |
-| `GET /v1/<shard>/<n>` | video: 302 to YouTube · sheet: JPEG, cell *i* = result *i*, row-major · page: JSON like a search |
-| `GET /v1/<shard>/cc/<lang>` | JSON: `t`, `id`, `available`, `source` (`manual`/`auto`/`translated`), `lines` = `[[start, dur, text], …]` |
-| `GET /healthz` | `{"ok": true}` |
+| `GET /v1/<shard>/<n>` | video: 302 to a Tunelio link or YouTube · sheet: JPEG, cell *i* = result *i*, row-major · page: JSON like a search |
+| `GET /v1/<shard>/cc/<lang>` | JSON: `t`, `id`, `available`, `source` (`manual`/`auto`/`translated`), `lines` = `[[start, dur, text], …]`, `tracks` = `[{i, code, name, auto}]`, `track` (index shown, `-1` = none), `reason` when unavailable |
+| `GET /v1/<shard>/cc/<i>?l=<lang>` | the same for track *i* (Tunelio captions only) |
+| `GET /healthz` | `{"ok": true, "tunelio": bool, "credits": n}` (credits as last reported by Tunelio) |
 
 Errors are JSON `{ "error": code, "message": … }` with codes `empty_query`, `rate_limited`, `youtube_failed`,
 `unknown_ticket`, `expired`, `bad_shard`, `nothing_playing`, `captions_failed`; the world shows its own

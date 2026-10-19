@@ -24,6 +24,17 @@ export const config = {
   // After YouTube refuses every attempt ("Sign in to confirm you're not a bot"), captions answer
   // "not available" for this long without asking again.
   blockedMinutes: int('BLOCKED_MINUTES', 10),
+  // Tunelio (hosted YouTube media API) for HD playback of ordinary videos and for captions. Without a key, played
+  // tickets go to youtube.com (360p in VRChat) and captions use yt-dlp.
+  tunelioKey: process.env.TUNELIO_API_KEY ?? '',
+  tunelioQuality: process.env.TUNELIO_QUALITY ?? '1080p',
+  // Longer videos get Tunelio's HLS playlist instead of a progressive mp4 (which is built whole on their side first).
+  progressiveMaxSeconds: int('TUNELIO_PROGRESSIVE_MAX_MINUTES', 180) * 60,
+  lowCredits: int('TUNELIO_LOW_CREDITS', 5000),
+  // Comma-separated ISO 15924 scripts the world can draw captions in.
+  captionScripts: (process.env.CAPTION_SCRIPTS ?? 'Latn,Cyrl,Hans,Hant,Jpan,Kore,Thai,Hebr').split(',').map((s) => s.trim()).filter(Boolean),
+  // Discord webhook for alerts (Tunelio out of credits, failing, running low).
+  alertWebhook: process.env.ALERT_WEBHOOK ?? '',
   // Thumbnail sheet: one cell per result, row-major.
   sheet: { cols: 4, rows: 5, cellW: 256, cellH: 144, background: '#24283b' },
 };

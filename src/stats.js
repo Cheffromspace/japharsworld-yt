@@ -55,23 +55,61 @@ export function gauge(db, metric, key = '') {
   return db.prepare('SELECT value, day, at FROM gauges WHERE metric = ? AND key = ? ORDER BY day DESC, at DESC LIMIT 1').get(metric, key) ?? null;
 }
 
-// When this month's credits run out at the month's average daily spend so far.
-export function forecast({ remaining, monthSpent, today, now = Date.now(), tz = 'America/Chicago' }) {
+// The Tunelio plan period that holds `today`: it renews (and the credits refresh) on day `renewDay` of each month,
+// clamped to the month's last day. → { start, renews } (renews = the next renewal date).
+export function billingPeriod(today, renewDay = 1) {
+  const on = (y, m) => { // renewal date in month m (0-based) of year y
+    const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+    return new Date(Date.UTC(y, m, Math.min(renewDay, last))).toISOString().slice(0, 10);
+  };
+  const y = Number(today.slice(0, 4)), m = Number(today.slice(5, 7)) - 1;
+  const thisMonth = on(y, m);
+  return today >= thisMonth ? { start: thisMonth, renews: on(y, m + 1) } : { start: on(y, m - 1), renews: thisMonth };
+}
+
+// When the credits run out at this plan period's average daily spend so far.
+export function forecast({ remaining, spent, today, renewDay = 1, now = Date.now(), tz = 'America/Chicago' }) {
   if (remaining == null) return null;
-  const monthStart = today.slice(0, 8) + '01';
-  const nextMonth = addDays(monthStart, 32).slice(0, 8) + '01';
-  const monthEnd = addDays(nextMonth, -1);
+  const { start, renews } = billingPeriod(today, renewDay);
   // Days elapsed, counting today as the part of it that has passed.
   const hourNow = Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', hourCycle: 'h23' }).format(now));
-  const elapsed = daysBetween(monthStart, today) + Math.max(hourNow, 1) / 24;
-  const perDay = monthSpent / elapsed;
-  if (perDay <= 0) return { perDay: 0, runsOut: null, lastsMonth: true, monthEnd };
+  const elapsed = daysBetween(start, today) + Math.max(hourNow, 1) / 24;
+  const perDay = spent / elapsed;
+  if (perDay <= 0) return { perDay: 0, runsOut: null, lastsPeriod: true, renews };
   const runsOut = addDays(today, Math.floor(remaining / perDay));
-  return { perDay: Math.round(perDay), runsOut, lastsMonth: runsOut > monthEnd, monthEnd };
+  return { perDay: Math.round(perDay), runsOut, lastsPeriod: runsOut >= renews, renews };
+}
+
+// Latest balance: the search service's last X-Credits-Remaining or the poller's /credits, whichever is newer.
+export function latestCredits(db) {
+  const g = db.prepare(`SELECT value, at FROM gauges WHERE metric = 'credits_remaining' AND key = '' ORDER BY at DESC LIMIT 1`).get();
+  const p = db.prepare(`SELECT value, ts AS at FROM polls WHERE source = 'tunelio' AND metric = 'credits' ORDER BY ts DESC LIMIT 1`).get()
+    ?? db.prepare(`SELECT last AS value, 0 AS at FROM poll_daily WHERE source = 'tunelio' AND metric = 'credits' ORDER BY day DESC LIMIT 1`).get();
+  if (!g && !p) return null;
+  return (!p || (g && g.at >= p.at)) ? g.value : p.value;
+}
+
+// World versions and GitHub release tags as they were first seen (metrics/poll.js), newest first.
+export function releases(db, sinceMs = 0) {
+  return db.prepare('SELECT source, version, at, detected FROM releases WHERE at >= ? ORDER BY at DESC').all(sinceMs).map((r) => ({ ...r }));
+}
+
+// Visits/day and peak occupants for the 7 days before and after each production release.
+export function releaseImpact(db, rel, tz = 'America/Chicago') {
+  const day = dayOf(rel.at, tz);
+  const span = (from, to) => {
+    const rows = db.prepare(`SELECT day, metric, last, max FROM poll_daily WHERE source = 'world:prod' AND metric IN ('visits', 'occupants')
+      AND day BETWEEN ? AND ? ORDER BY day`).all(from, to);
+    const visits = rows.filter((r) => r.metric === 'visits');
+    const occ = rows.filter((r) => r.metric === 'occupants');
+    const days = visits.length > 1 ? daysBetween(visits[0].day, visits.at(-1).day) : 0;
+    return { visitsPerDay: days ? (visits.at(-1).last - visits[0].last) / days : null, peak: occ.length ? Math.max(...occ.map((r) => r.max)) : null, days };
+  };
+  return { before: span(addDays(day, -7), addDays(day, -1)), after: span(day, addDays(day, 7)) };
 }
 
 // The summary the reports and /stats share, for days [from, to].
-export function summary(db, { from, to, now = Date.now(), tz = 'America/Chicago' }) {
+export function summary(db, { from, to, now = Date.now(), tz = 'America/Chicago', renewDay = 1 }) {
   const c = counts(db, from, to);
   const p = polls(db, from, to);
   const today = dayOf(now, tz);
@@ -90,11 +128,8 @@ export function summary(db, { from, to, now = Date.now(), tz = 'America/Chicago'
   const searches = total(c.search);
   const fails = total(c.search_fail);
   const attempts = searches + (c.search_fail?.['429'] ?? 0);
-  const monthStart = today.slice(0, 8) + '01';
-  const month = counts(db, monthStart, today).credits ?? {};
-  const left = gauge(db, 'credits_remaining');
-  const tun = p.tunelio?.credits;
-  const remaining = left?.value ?? tun?.last ?? null;
+  const period = counts(db, billingPeriod(today, renewDay).start, today).credits ?? {};
+  const remaining = latestCredits(db);
   const shards = db.prepare(`SELECT hour, COUNT(*) n FROM hourly WHERE metric = 'shard' AND hour BETWEEN ? AND ? GROUP BY hour`).all(`${from}T00`, `${to}T23`);
   return {
     from, to,
@@ -110,8 +145,12 @@ export function summary(db, { from, to, now = Date.now(), tz = 'America/Chicago'
     captions: { lists: total(c.cc_list), tracks: total(c.cc_track), trackLang: c.cc_track_lang ?? {}, unavailable: c.cc_unavailable ?? {} },
     credits: {
       playback: c.credits?.playback ?? 0, captions: c.credits?.captions ?? 0, remaining, plan: getMeta(db, 'tunelio_plan'),
-      forecast: forecast({ remaining, monthSpent: total(month), today, now, tz }),
+      forecast: forecast({ remaining, spent: total(period), today, renewDay, now, tz }),
     },
+    releases: releases(db, Date.parse(`${addDays(from, -1)}T00:00:00Z`)).filter((r) => {
+      const d = dayOf(r.at, tz);
+      return d >= from && d <= to;
+    }),
     activeInstancesPeakHour: shards.reduce((m, r) => Math.max(m, r.n), 0),
     github: Object.fromEntries(Object.entries(p).filter(([s]) => s.startsWith('github:')).map(([s, m]) => [s.slice(7),
       { stars: m.stars?.last ?? null, downloads: m.release_downloads?.last ?? null }])),
@@ -164,15 +203,15 @@ function fill(from, to, rows, empty = 0) {
   return out;
 }
 
-export function statsData(db, { days = 30, now = Date.now(), tz = 'America/Chicago', monitorDb } = {}) {
+export function statsData(db, { days = 30, now = Date.now(), tz = 'America/Chicago', monitorDb, renewDay = 1 } = {}) {
   const to = dayOf(now, tz);
   const from = addDays(to, -(days - 1));
   const hours = db.prepare(`SELECT hour, COUNT(*) n FROM hourly WHERE metric = 'shard' AND hour >= ? GROUP BY hour ORDER BY hour`).all(`${addDays(to, -2)}T00`);
   return {
     generated: new Date(now).toISOString(), tz,
-    today: summary(db, { from: to, to, now, tz }),
-    last7: summary(db, { from: addDays(to, -6), to, now, tz }),
-    lastN: summary(db, { from, to, now, tz }),
+    today: summary(db, { from: to, to, now, tz, renewDay }),
+    last7: summary(db, { from: addDays(to, -6), to, now, tz, renewDay }),
+    lastN: summary(db, { from, to, now, tz, renewDay }),
     series: {
       searches: series(db, from, to, 'search'), plays: series(db, from, to, 'play'), joins: series(db, from, to, 'join'),
       credits: series(db, from, to, 'credits'), captions: series(db, from, to, 'cc_list'),
@@ -181,6 +220,7 @@ export function statsData(db, { days = 30, now = Date.now(), tz = 'America/Chica
     },
     activeInstancesByHour: hours.map((h) => [h.hour, h.n]),
     channels: channels(monitorDb, now - DAY),
+    releases: releases(db).slice(0, 20).map((r) => ({ ...r, impact: r.source === 'world:prod' ? releaseImpact(db, r, tz) : null })),
   };
 }
 
@@ -223,6 +263,16 @@ export function barChart(title, points, { unit = '' } = {}) {
 
 const kv = (o) => Object.entries(o ?? {}).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${esc(k)} ${fmt(v)}`).join(' · ') || '–';
 
+const when = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+const LABEL = { 'world:prod': 'VRChat (production)', 'world:test': 'VRChat (TEST)' };
+function releaseTable(list) {
+  if (!list?.length) return '<p>No releases seen yet.</p>';
+  const per = (x) => (x?.visitsPerDay == null ? '–' : fmt(x.visitsPerDay));
+  return `<table><tr><th>When</th><th>Where</th><th>Version</th><th>Visits/day 7 d before → after</th><th>Peak before → after</th></tr>${list.map((r) =>
+    `<tr><td>${esc(when(r.at))}</td><td>${esc(LABEL[r.source] ?? r.source.replace('github:', 'GitHub '))}</td><td>${esc(r.version)}</td>` +
+    `<td>${r.impact ? `${per(r.impact.before)} → ${per(r.impact.after)}` : ''}</td><td>${r.impact ? `${fmt(r.impact.before.peak)} → ${fmt(r.impact.after.peak)}` : ''}</td></tr>`).join('')}</table>`;
+}
+
 export function renderHtml(d) {
   const t = d.today, w = d.last7, prod = w.vrchat.prod ?? {};
   const tile = (label, value, sub = '') => `<div class="tile"><div class="label">${esc(label)}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
@@ -249,7 +299,7 @@ ${tile('Peak occupants (7 d)', fmt(prod.peakOccupants), `public ${fmt(prod.peakP
 ${tile('Searches today', fmt(t.searches), `${fmt(w.searches)} in 7 days`)}
 ${tile('Plays today', fmt(t.plays), `${fmt(w.plays)} in 7 days`)}
 ${tile('Joins today', fmt(t.joins), 'visitors allowing untrusted URLs')}
-${tile('Tunelio credits', fmt(t.credits.remaining), f ? (f.lastsMonth ? `last the month at ${fmt(f.perDay)}/day` : `run out ${esc(f.runsOut)} at ${fmt(f.perDay)}/day`) : '')}
+${tile('Tunelio credits', fmt(t.credits.remaining), f ? (f.lastsPeriod ? `last to renewal ${esc(f.renews)} at ${fmt(f.perDay)}/day` : `run out ${esc(f.runsOut)}, before renewal ${esc(f.renews)}`) : '')}
 ${tile('Busiest hour (today)', fmt(t.activeInstancesPeakHour), 'active instances (lower bound)')}
 </div>
 <h2>Last ${d.series.searches.length} days</h2><div class="charts">
@@ -271,6 +321,8 @@ ${barChart('Active instances per hour (last 3 days)', d.activeInstancesByHour)}
 <p>Search languages: ${kv(w.searchLang)} · join languages: ${kv(w.joinLang)}</p>
 ${w.group ? `<p>Group: ${fmt(w.group.members)} members, up to ${fmt(w.group.online)} online</p>` : ''}
 ${Object.keys(w.github).length ? `<p>GitHub: ${Object.entries(w.github).map(([r, g]) => `${esc(r)} ★${fmt(g.stars)} ⬇${fmt(g.downloads)}`).join(' · ')}</p>` : ''}
+<h2>Releases</h2>
+${releaseTable(d.releases)}
 <h2>Channels (last 24 h)</h2>
 ${ch.length ? `<table><tr><th>Slot</th><th>Uptime</th><th>Restarts</th><th>Flash checks</th><th>Now</th></tr>${ch.map((s) => `<tr><td>${esc(s.slot)}${s.spare ? ' (spare)' : ''}</td><td>${s.uptime == null ? '–' : (s.uptime * 100).toFixed(0) + ' %'}</td><td>${s.restarts}</td><td>${s.flashRuns}${s.flashFails ? `, <span class="down">${s.flashFails} failed</span>` : ''}</td><td>${s.down ? `<span class="down">down (${esc(s.reason ?? '')})</span>` : 'up'}</td></tr>`).join('')}</table>` : '<p>No monitor data.</p>'}
 </main></body></html>`;
@@ -284,7 +336,7 @@ function tokenOk(req, url, token) {
   return timingSafeEqual(h(given), h(token));
 }
 
-export function statsRoute(req, res, url, { token, metricsPath, monitorDb, tz, metrics }) {
+export function statsRoute(req, res, url, { token, metricsPath, monitorDb, tz, renewDay, metrics }) {
   const send = (status, type, body) => {
     const buf = Buffer.from(body);
     res.writeHead(status, { 'content-type': type, 'content-length': buf.length, 'cache-control': 'no-store', 'x-robots-tag': 'noindex', 'referrer-policy': 'no-referrer' });
@@ -302,7 +354,7 @@ export function statsRoute(req, res, url, { token, metricsPath, monitorDb, tz, m
       return send(200, 'text/csv; charset=utf-8', exportCsv(db));
     }
     const days = Math.min(365, Math.max(7, Number.parseInt(url.searchParams.get('days') ?? '30', 10) || 30));
-    const data = statsData(db, { days, tz, monitorDb });
+    const data = statsData(db, { days, tz, monitorDb, renewDay });
     if (p === '/stats.json') return send(200, 'application/json; charset=utf-8', JSON.stringify(data, (k, v) => (v === Infinity ? null : v)));
     if (p === '/stats') {
       // Relative links (stats.json, stats/export.csv) keep the token when it came as ?token=.

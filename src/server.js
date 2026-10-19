@@ -154,7 +154,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (warmCaptions) captions.get(t.data.id, 'native').catch(() => {});
       const where = await playback.location(t.data);
       logJson({ event: 'play', shard, n, id: t.data.id, via: where.via, reason: where.reason });
-      countPlay(t.data, where);
+      countPlay(shard, t.data, where);
       res.writeHead(302, { location: where.location, 'cache-control': 'no-store' });
       return res.end();
     }
@@ -201,7 +201,17 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }
   }
 
-  function countPlay(data, where) {
+  // A play counts once per room: the first time a video loads in a shard, not again for every player in the instance
+  // (or a late joiner, or a replay) until ROOM_PLAY_MS after it was counted. Held in memory only; video IDs never reach the metrics.
+  const ROOM_PLAY_MS = 3 * 3600_000;
+  const roomPlays = new Map(); // "shard:videoId" → when it was last counted (ms)
+  function countPlay(shard, data, where) {
+    const key = `${shard}:${data.id}`;
+    const now = Date.now();
+    const counted = roomPlays.get(key);
+    if (counted && now - counted < ROOM_PLAY_MS) return;
+    roomPlays.set(key, now);
+    if (roomPlays.size > 5000) for (const [k, t] of roomPlays) if (now - t >= ROOM_PLAY_MS) roomPlays.delete(k);
     metrics.inc('play');
     metrics.inc('play_length', lengthBucket(data));
     if (where.via === 'tunelio') metrics.inc('play_route', /[?&]hls=1/.test(where.location) ? 'tunelio-hls' : 'tunelio-progressive');
@@ -251,7 +261,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (url.pathname.startsWith('/relay/')) { route = 'relay'; return await relayRoute(req, res, url); }
       if (url.pathname === '/stats' || url.pathname.startsWith('/stats.') || url.pathname.startsWith('/stats/')) {
         route = 'stats';
-        return statsRoute(req, res, url, { token: config.statsToken, metricsPath: config.metricsPath, monitorDb: config.monitorDb, tz: config.metricsTz, metrics });
+        return statsRoute(req, res, url, { token: config.statsToken, metricsPath: config.metricsPath, monitorDb: config.monitorDb, tz: config.metricsTz, renewDay: config.tunelioRenewsDay, metrics });
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
       if (url.pathname === '/healthz') {

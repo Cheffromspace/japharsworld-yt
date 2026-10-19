@@ -31,6 +31,8 @@ export const config = {
   // Longer videos get Tunelio's HLS playlist instead of a progressive mp4 (which is built whole on their side first).
   progressiveMaxSeconds: int('TUNELIO_PROGRESSIVE_MAX_MINUTES', 180) * 60,
   lowCredits: int('TUNELIO_LOW_CREDITS', 5000),
+  // Day of the month the Tunelio plan renews and its credits refresh (the credits forecast counts from it).
+  tunelioRenewsDay: int('TUNELIO_RENEWS_DAY', 1),
   // Comma-separated ISO 15924 scripts the world can draw captions in.
   captionScripts: (process.env.CAPTION_SCRIPTS ?? 'Latn,Cyrl,Hans,Hant,Jpan,Kore,Thai,Hebr').split(',').map((s) => s.trim()).filter(Boolean),
   // Discord webhook for alerts (Tunelio out of credits, failing, running low).

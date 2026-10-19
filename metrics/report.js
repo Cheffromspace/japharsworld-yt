@@ -25,7 +25,8 @@ function creditsLine(s) {
   const f = c.forecast;
   const spent = c.playback + c.captions;
   let out = `Credits: ${n(spent)} spent (playback ${n(c.playback)}, captions ${n(c.captions)}), ${n(c.remaining)} left`;
-  if (f) out += f.lastsMonth ? `; at ${n(f.perDay)}/day they last the month` : `; at ${n(f.perDay)}/day they run out ${shortDay(f.runsOut)}`;
+  if (f) out += f.lastsPeriod ? `; at ${n(f.perDay)}/day they last to renewal (${shortDay(f.renews)})`
+    : `; at ${n(f.perDay)}/day they run out ${shortDay(f.runsOut)}, before renewal (${shortDay(f.renews)})`;
   return out;
 }
 
@@ -40,7 +41,17 @@ function channelsLine(ch) {
     + `; ${restarts} restarts, ${fails} flash fails in 24 h${low.length ? `; uptime under 90 %: ${low.join(', ')}` : ''}`;
 }
 
-function body(s) {
+const LABEL = { 'world:prod': 'production', 'world:test': 'TEST' };
+const clock = (ms, tz) => new Date(ms).toLocaleString('en-US', { timeZone: tz, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+// "Releases: production v104 uploaded Oct 19, 3:02 PM; GitHub v2026.10.19 Oct 19, 2:40 PM"
+function releasesLine(list, tz) {
+  if (!list?.length) return null;
+  return `Releases: ${[...list].reverse().map((r) => r.source.startsWith('world:')
+    ? `${LABEL[r.source] ?? r.source} v${r.version} uploaded ${clock(r.at, tz)}`
+    : `GitHub ${r.version} ${clock(r.at, tz)}`).join('; ')}`;
+}
+
+function body(s, tz) {
   const lines = [];
   for (const [k, label] of [['prod', 'VRChat'], ['test', 'TEST world']]) {
     const l = worldLine(label, s.vrchat[k]);
@@ -54,19 +65,21 @@ function body(s) {
   lines.push(`Captions: ${n(s.captions.lists)} shown, ${n(s.captions.tracks)} tracks picked${Object.keys(s.captions.unavailable).length ? `, not available: ${top(s.captions.unavailable)}` : ''}`);
   lines.push(creditsLine(s));
   lines.push(`Languages: ${s.languages.join(', ') || 'none'}`);
+  const rel = releasesLine(s.releases, tz);
+  if (rel) lines.push(rel);
   return lines;
 }
 
-export function dailyReport(db, { day, tz = 'America/Chicago', monitorDb, now = Date.now() }) {
-  const s = summary(db, { from: day, to: day, now, tz });
-  return [`**Everything is OK: ${weekday(day)}**`, ...body(s), channelsLine(channels(monitorDb, now - 86400_000))].join('\n');
+export function dailyReport(db, { day, tz = 'America/Chicago', monitorDb, now = Date.now(), renewDay = 1 }) {
+  const s = summary(db, { from: day, to: day, now, tz, renewDay });
+  return [`**Everything is OK: ${weekday(day)}**`, ...body(s, tz), channelsLine(channels(monitorDb, now - 86400_000))].join('\n');
 }
 
 // Week ending `endDay` (inclusive) against the 7 days before it.
-export function weeklyReport(db, { endDay, tz = 'America/Chicago', now = Date.now() }) {
+export function weeklyReport(db, { endDay, tz = 'America/Chicago', now = Date.now(), renewDay = 1 }) {
   const from = addDays(endDay, -6);
-  const s = summary(db, { from, to: endDay, now, tz });
-  const p = summary(db, { from: addDays(from, -7), to: addDays(from, -1), now, tz });
+  const s = summary(db, { from, to: endDay, now, tz, renewDay });
+  const p = summary(db, { from: addDays(from, -7), to: addDays(from, -1), now, tz, renewDay });
   const w = s.vrchat.prod, pw = p.vrchat.prod;
   const lines = [`**Everything is OK: week ${shortDay(from)}–${shortDay(endDay)}** (vs the week before)`];
   if (w) {
@@ -80,6 +93,8 @@ export function weeklyReport(db, { endDay, tz = 'America/Chicago', now = Date.no
   const spent = s.credits.playback + s.credits.captions, before = p.credits.playback + p.credits.captions;
   lines.push(`Credits: ${n(spent)} spent${change(spent, before)}, ${n(s.credits.remaining)} left`);
   lines.push(`Languages: ${s.languages.join(', ') || 'none'}`);
+  const rel = releasesLine(s.releases, tz);
+  if (rel) lines.push(rel);
   const gh = Object.entries(s.github).map(([r, g]) => `${r} ★${n(g.stars)}, ${n(g.downloads)} downloads`);
   if (gh.length) lines.push(`GitHub: ${gh.join('; ')}`);
   return lines.join('\n');

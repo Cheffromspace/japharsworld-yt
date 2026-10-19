@@ -21,6 +21,8 @@ export const SCHEMA = `
   CREATE TABLE IF NOT EXISTS poll_daily (day TEXT NOT NULL, source TEXT NOT NULL, metric TEXT NOT NULL,
     min REAL, max REAL, last REAL, n INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, source, metric));
   CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
+  CREATE TABLE IF NOT EXISTS releases (source TEXT NOT NULL, version TEXT NOT NULL, at INTEGER NOT NULL, detected INTEGER NOT NULL,
+    PRIMARY KEY (source, version));
 `;
 
 export function openMetricsDb(path, { readOnly = false } = {}) {

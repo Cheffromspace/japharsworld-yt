@@ -27,6 +27,9 @@ export async function githubRepo({ repo, token = '', userAgent, fetcher = fetch 
   const info = await get('');
   if (!info) return null;
   const releases = (await get('/releases?per_page=100')) ?? [];
+  // Release tags as the world's release script makes them (vYYYY.MM.DD[.N]), with when they were published.
+  const tags = releases.filter((r) => !r.draft && /^v\d{4}\.\d\d\.\d\d(\.\d+)?$/.test(r.tag_name ?? '') && r.published_at)
+    .map((r) => ({ tag: r.tag_name, at: Date.parse(r.published_at) }));
   const values = {
     stars: info.stargazers_count, forks: info.forks_count, watchers: info.subscribers_count,
     release_downloads: releases.reduce((s, r) => s + (r.assets ?? []).reduce((a, x) => a + (x.download_count ?? 0), 0), 0),
@@ -38,5 +41,5 @@ export async function githubRepo({ repo, token = '', userAgent, fetcher = fetch 
     const clones = await get('/traffic/clones');
     for (const c of clones?.clones ?? []) traffic.push({ day: c.timestamp.slice(0, 10), metric: 'gh_clones', value: c.count }, { day: c.timestamp.slice(0, 10), metric: 'gh_clone_uniques', value: c.uniques });
   }
-  return { repo: repo.split('/')[1], values, traffic };
+  return { repo: repo.split('/')[1], values, traffic, tags };
 }

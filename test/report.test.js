@@ -42,8 +42,8 @@ test('daily report: VRChat deltas and peaks, search, credits with forecast, capt
   assert.equal(lines[4], 'Sources: worker 38, api 2; failures 4.9 % (429 1, 502 1); p50 1,000 ms, p95 3,000 ms');
   assert.equal(lines[5], 'Plays: tunelio-progressive 25, youtube-fallback 5; fallbacks: tunelio_failed 5');
   assert.equal(lines[6], 'Captions: 6 shown, 2 tracks picked, not available: no_captions 1');
-  // October so far: 268 + 150 + 200 = 618 credits over 18 days + 9/24 → 34/day; 4,000 left lasts the month.
-  assert.equal(lines[7], 'Credits: 268 spent (playback 250, captions 18), 4,000 left; at 34/day they last the month');
+  // Plan period from Oct 1 (default): 268 + 150 + 200 = 618 credits over 18 days + 9/24 → 34/day; 4,000 left lasts.
+  assert.equal(lines[7], 'Credits: 268 spent (playback 250, captions 18), 4,000 left; at 34/day they last to renewal (Nov 1)');
   assert.equal(lines[8], 'Languages: en, ja, ko, th');
   assert.equal(lines[9], 'Channels: no monitor data');
   assert.ok(text.length < 2000);
@@ -60,7 +60,25 @@ test('daily report without VRChat data says so', () => {
 test('credits forecast names the day they run out when they will not last', () => {
   const db = seeded();
   db.prepare('UPDATE gauges SET value = 300').run();
-  assert.match(dailyReport(db, { day: '2026-10-18', now: NOW, monitorDb: '' }), /at 34\/day they run out Oct 27/);
+  assert.match(dailyReport(db, { day: '2026-10-18', now: NOW, monitorDb: '' }), /at 34\/day they run out Oct 27, before renewal \(Nov 1\)/);
+});
+
+test('credits forecast counts from the renewal day (TUNELIO_RENEWS_DAY)', () => {
+  const db = seeded();
+  // Period from Oct 17: only Oct 18's 268 credits, over 2 days + 9/24 → 113/day; 4,000 last past Nov 17.
+  assert.match(dailyReport(db, { day: '2026-10-18', now: NOW, monitorDb: '', renewDay: 17 }), /at 113\/day they last to renewal \(Nov 17\)/);
+});
+
+test('releases appear in the daily and weekly reports, in Chicago time', () => {
+  const db = seeded();
+  const put = db.prepare('INSERT INTO releases (source, version, at, detected) VALUES (?, ?, ?, ?)');
+  put.run('world:prod', '104', Date.parse('2026-10-18T20:02:00Z'), NOW);
+  put.run('github:Everything-is-OK', 'v2026.10.18', Date.parse('2026-10-18T19:40:00Z'), NOW);
+  put.run('world:test', '103', Date.parse('2026-10-16T10:00:00Z'), NOW);
+  const daily = dailyReport(db, { day: '2026-10-18', now: NOW, monitorDb: '' });
+  assert.match(daily, /\nReleases: GitHub v2026\.10\.18 Oct 18, 2:40 PM; production v104 uploaded Oct 18, 3:02 PM\n/);
+  const weekly = weeklyReport(db, { endDay: '2026-10-18', now: NOW });
+  assert.match(weekly, /Releases: TEST v103 uploaded Oct 16, 5:00 AM; GitHub v2026\.10\.18 .*; production v104/);
 });
 
 test('weekly report: week over week', () => {

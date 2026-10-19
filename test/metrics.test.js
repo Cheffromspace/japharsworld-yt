@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Metrics, checkedKey, msBucket, lengthBucket, dayOf, hourOf, openMetricsDb, recordPoll } from '../src/metrics.js';
-import { percentile, forecast, exportCsv } from '../src/stats.js';
+import { percentile, forecast, billingPeriod, exportCsv } from '../src/stats.js';
 import { createApp } from '../src/server.js';
 import { Store } from '../src/store.js';
 import { Tunelio } from '../src/tunelio.js';
@@ -82,15 +82,23 @@ test('latency buckets, percentiles and length buckets', () => {
     [{ live: true }, { seconds: 0 }, { seconds: 599 }, { seconds: 600 }, { seconds: 3 * 3600 - 1 }, { seconds: 3 * 3600 }].map(lengthBucket));
 });
 
-test('credits forecast at the month\'s average daily spend', () => {
-  // Oct 19, 09:00 Chicago: 18 days + 9/24 elapsed; 18,375 spent → 1,000 a day.
+test('plan periods renew on the given day of the month (clamped to short months)', () => {
+  assert.deepEqual(billingPeriod('2026-10-19', 17), { start: '2026-10-17', renews: '2026-11-17' });
+  assert.deepEqual(billingPeriod('2026-10-16', 17), { start: '2026-09-17', renews: '2026-10-17' });
+  assert.deepEqual(billingPeriod('2026-10-17', 17), { start: '2026-10-17', renews: '2026-11-17' });
+  assert.deepEqual(billingPeriod('2026-12-20', 17), { start: '2026-12-17', renews: '2027-01-17' });
+  assert.deepEqual(billingPeriod('2026-02-28', 31), { start: '2026-02-28', renews: '2026-03-31' });
+  assert.deepEqual(billingPeriod('2026-10-19'), { start: '2026-10-01', renews: '2026-11-01' });
+});
+
+test('credits forecast at the plan period\'s average daily spend', () => {
+  // Oct 19, 09:00 Chicago, period from Oct 17: 2 days + 9/24 elapsed; 2,375 spent → 1,000 a day.
   const now = Date.parse('2026-10-19T14:00:00Z');
-  const a = forecast({ remaining: 5000, monthSpent: 18_375, today: '2026-10-19', now });
-  assert.deepEqual(a, { perDay: 1000, runsOut: '2026-10-24', lastsMonth: false, monthEnd: '2026-10-31' });
-  const b = forecast({ remaining: 90_000, monthSpent: 18_375, today: '2026-10-19', now });
-  assert.equal(b.lastsMonth, true);
-  assert.equal(forecast({ remaining: 10, monthSpent: 0, today: '2026-10-19', now }).lastsMonth, true);
-  assert.equal(forecast({ remaining: null, monthSpent: 5, today: '2026-10-19', now }), null);
+  const a = forecast({ remaining: 5000, spent: 2375, today: '2026-10-19', renewDay: 17, now });
+  assert.deepEqual(a, { perDay: 1000, runsOut: '2026-10-24', lastsPeriod: false, renews: '2026-11-17' });
+  assert.equal(forecast({ remaining: 90_000, spent: 2375, today: '2026-10-19', renewDay: 17, now }).lastsPeriod, true);
+  assert.equal(forecast({ remaining: 10, spent: 0, today: '2026-10-19', renewDay: 17, now }).lastsPeriod, true);
+  assert.equal(forecast({ remaining: null, spent: 5, today: '2026-10-19', now }), null);
 });
 
 test('Tunelio reports every call (path, ok, ms) for the metrics', async () => {
@@ -166,6 +174,11 @@ test('search service counts searches, joins, plays, captions, failures and shard
   assert.deepEqual(by.search_fail, { 502: 1, 429: 1 });
   assert.deepEqual(by.search_source, { local: 1 });
   assert.equal(by.play[''], 4);
+  // Every player in the room loads the ticket; the room's play counts once.
+  for (let i = 0; i < 5; i++) await s.get(`/v1/1/${r.results[0].t}`);
+  await s.get(`/v1/2/s?l=ja&q=${encodeURIComponent('→ other room')}`, { 'x-forwarded-for': '198.51.100.9' }).then((x) => x.json()).then((r2) => s.get(`/v1/2/${r2.results[0].t}`));
+  s.metrics.flush();
+  assert.equal(db.prepare("SELECT value FROM daily WHERE metric = 'play'").get().value, 5); // + the same video in another room
   assert.deepEqual(by.play_route, { 'tunelio-progressive': 1, 'tunelio-hls': 1, 'youtube-fallback': 1, 'youtube-live': 1 });
   assert.deepEqual(by.play_fallback, { tunelio_failed: 1 });
   assert.deepEqual(by.play_length, { lt10m: 1, lt1h: 1, lt3h: 1, live: 1 });

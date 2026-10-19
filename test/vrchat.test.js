@@ -4,7 +4,9 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { totp, instanceType, worldValues, groupValues, VRChat } from '../metrics/vrchat.js';
-import { pollVRChat, updateEnvFile, settings } from '../metrics/poll.js';
+import { pollVRChat, updateEnvFile, settings, tunelioPass, renewalReminders, recordReleases } from '../metrics/poll.js';
+import { openMetricsDb, getMeta } from '../src/metrics.js';
+import { githubRepo } from '../metrics/sources.js';
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'));
 const WORLD = fixture('vrchat-world.json');
@@ -173,4 +175,62 @@ test('settings: world and group IDs must look like VRChat IDs', () => {
   assert.deepEqual(s.worlds, [['prod', 'wrld_63bed747-6c3d-428c-b2f4-1a904afa7df8']]);
   assert.equal(s.groupId, '');
   assert.match(settings({}).userAgent, /^EverythingIsOK-metrics\/1\.0 \S+$/);
+});
+
+// --- Tunelio balance, plan and renewal; releases ---
+
+const tunelioAnswer = (credits, plan) => async () => new Response(JSON.stringify({ credits, plan }), { headers: { 'content-type': 'application/json' } });
+
+test('Tunelio: balance each pass; a lapsed plan and a refresh alert', async () => {
+  const db = openMetricsDb(':memory:');
+  const c = { ...cfg(), tunelioKey: 'k', tunelioRenewsDay: 17 };
+  const alerts = [];
+  const alert = (kind, text) => alerts.push([kind, text]);
+  const t0 = Date.parse('2026-10-19T15:00:00Z');
+  await tunelioPass(db, c, { now: t0, fetcher: tunelioAnswer(9000, 'pro'), alert });
+  await tunelioPass(db, c, { now: t0 + 900_000, fetcher: tunelioAnswer(8990, 'pro'), alert });
+  assert.equal(alerts.length, 0);
+  await tunelioPass(db, c, { now: t0 + 1800_000, fetcher: tunelioAnswer(8990, 'trial'), alert });
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0][1], /lapsed.*"trial".*was "pro"/);
+  await tunelioPass(db, c, { now: t0 + 2700_000, fetcher: tunelioAnswer(100_000, 'pro'), alert });
+  assert.equal(alerts.length, 3);
+  assert.match(alerts[2][1], /refreshed: 100,000 \(plan pro\)/);
+  assert.equal(getMeta(db, 'tunelio_refreshed'), '2026-10-19');
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM polls WHERE source = 'tunelio'").get().n, 4);
+});
+
+test('Tunelio renewal reminders: 3 days and 1 day before, once each; a missed refresh the day after', () => {
+  const db = openMetricsDb(':memory:');
+  const c = { ...cfg(), tunelioRenewsDay: 17 };
+  assert.deepEqual(renewalReminders(db, c, { today: '2026-11-10' }), []);
+  const r3 = renewalReminders(db, c, { today: '2026-11-14' });
+  assert.equal(r3.length, 1);
+  assert.match(r3[0], /renews in 3 days \(2026-11-17\).*can't read the wallet/);
+  assert.deepEqual(renewalReminders(db, c, { today: '2026-11-14' }), []); // once
+  assert.match(renewalReminders(db, c, { today: '2026-11-16' })[0], /renews tomorrow/);
+  assert.match(renewalReminders(db, c, { today: '2026-11-18' })[0], /due to renew on 2026-11-17, but no credit refresh/);
+  const db2 = openMetricsDb(':memory:');
+  db2.prepare("INSERT INTO meta (k, v) VALUES ('tunelio_refreshed', '2026-11-17')").run();
+  assert.deepEqual(renewalReminders(db2, c, { today: '2026-11-18' }), []);
+});
+
+test('releases: world versions and GitHub tags recorded once, at their own time', async () => {
+  const db = openMetricsDb(':memory:');
+  const t = Date.parse('2026-10-19T15:00:00Z');
+  assert.equal(recordReleases(db, [{ source: 'world:prod', version: 103, at: 1792291130_000 }], t), 1);
+  assert.equal(recordReleases(db, [{ source: 'world:prod', version: 103, at: 1792291130_000 }], t + 900_000), 0);
+  assert.equal(recordReleases(db, [{ source: 'world:prod', version: 104, at: 0 }], t), 0); // no upload time
+  const rows = db.prepare('SELECT * FROM releases').all().map((r) => ({ ...r }));
+  assert.deepEqual(rows, [{ source: 'world:prod', version: '103', at: 1792291130_000, detected: t }]);
+  // GitHub: only the world's vYYYY.MM.DD tags, not drafts.
+  const gh = async (url) => new Response(JSON.stringify(url.includes('/releases') ? [
+    { tag_name: 'v2026.10.17', published_at: '2026-10-17T21:00:00Z', assets: [{ download_count: 3 }] },
+    { tag_name: 'v2026.10.18.2', published_at: '2026-10-18T01:00:00Z', assets: [] },
+    { tag_name: 'nightly', published_at: '2026-10-18T02:00:00Z', assets: [] },
+    { tag_name: 'v2026.10.19', draft: true, published_at: null, assets: [] },
+  ] : { stargazers_count: 2, forks_count: 0, subscribers_count: 1 }));
+  const g = await githubRepo({ repo: 'Cheffromspace/Everything-is-OK', userAgent: UA, fetcher: gh });
+  assert.deepEqual(g.tags, [{ tag: 'v2026.10.17', at: Date.parse('2026-10-17T21:00:00Z') }, { tag: 'v2026.10.18.2', at: Date.parse('2026-10-18T01:00:00Z') }]);
+  assert.equal(g.values.release_downloads, 3);
 });

@@ -17,7 +17,7 @@ Counted in memory and written to SQLite every minute and at shutdown (SIGTERM). 
 | `search_fail` | HTTP status (`429`, `502`) | failed searches |
 | `search_ms` | latency bucket (ms upper bound) | for p50/p95; buckets merge across restarts |
 | `more` / `more_fail` | – / status | "More results" loads |
-| `play` | – | video ticket loads. **Every player in the room loads the ticket**, so six people watching = 6 |
+| `play` | – | videos played, **once per room**: the first load of a video in a shard counts; the other players in the instance, late joiners and replays don't, until 3 hours after it was counted (held in memory only) |
 | `play_route` | `tunelio-progressive` `tunelio-hls` `youtube-live` `youtube-fallback` | |
 | `play_fallback` | `disabled` `paused` `tunelio_failed` | why a video went to YouTube at 360p |
 | `play_length` | `lt10m` `lt1h` `lt3h` `longer` `live` `unknown` | length bucket of the played video |
@@ -43,9 +43,13 @@ About every 15 minutes (`OnUnitActiveSec`, randomized: VRChat asks not to poll o
   and dropped.
 - **VRChat group** `GET /api/1/groups/{id}`: `memberCount`, `onlineMemberCount`, when `VRCHAT_GROUP_ID` is set.
 
+- **Tunelio** `GET /credits` (free): balance and plan, every pass. Tunelio has no API for the wallet funds that
+  auto-renew pays from, so the poller watches what it can (see Reports).
+- **Releases** (`releases` table): each world's `version` the first time it is seen, at VRChat's `updated_at` (the
+  upload time), and once a day the world repo's GitHub release tags (`vYYYY.MM.DD[.N]`) at their publish time.
+
 Once a day:
 
-- **Tunelio** `GET /credits` (free): balance; the plan name goes to `meta`.
 - **GitHub** for `GITHUB_REPOS` (default `Cheffromspace/japharsworld-yt,Cheffromspace/Everything-is-OK`): stars, forks,
   watchers, release download totals; with `GITHUB_TOKEN` also traffic (views, unique visitors, clones, unique cloners)
   per day, since GitHub keeps only 14 days. Without a token the private world repo is skipped.
@@ -94,15 +98,19 @@ and a login happens only when it stops working. A failed login alerts Discord (a
 
 - **Daily**, the first poll after 09:00 America/Chicago (`METRICS_REPORT_HOUR`), to `ALERT_WEBHOOK` via `makeAlert`:
   yesterday's VRChat visits/favorites Δ and peak occupants, searches, plays, joins, source mix and failure rate,
-  latency, play routes, captions, credits spent with the run-out forecast (at this month's average daily spend; Tunelio
-  credits are assumed to renew monthly), languages seen, Channels slots down.
+  latency, play routes, captions, credits spent with the run-out forecast (at the plan period's average daily spend;
+  the period starts on `TUNELIO_RENEWS_DAY`, 17 here), languages seen, releases that day, Channels slots down.
+- **Tunelio plan** (as it happens): a plan that changes to `trial` (lapsed: auto-renew found too little in the wallet),
+  a credit refresh (renewal went through). Around the renewal day: reminders 3 days and 1 day before to check the
+  wallet, and a warning the day after when no refresh was seen.
 - **Weekly**, Mondays: the week to Sunday against the week before.
 - By hand: `sudo node /opt/japharsworld-yt/metrics/poll.js report [--day 2026-10-18] [--weekly] [--send]`.
 
 ## Stats page
 
 `https://yt.japharsworld.com/stats?token=$STATS_TOKEN` (or `Authorization: Bearer`): tiles, inline SVG charts (30 days;
-`?days=` up to 365), the last week's breakdown and the Channels table. No scripts, trackers or CDNs.
+`?days=` up to 365), the last week's breakdown, the releases (with visits/day and peak occupants for the 7 days before
+and after each production upload) and the Channels table. No scripts, trackers or CDNs.
 `/stats.json` is the same data; `/stats/export.csv` exports every daily table (`daily`, `gauges`, `poll_daily`, and
 active instances per hour). Without `STATS_TOKEN` the routes answer 404.
 

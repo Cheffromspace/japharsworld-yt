@@ -19,8 +19,14 @@ say "Packages"
 export DEBIAN_FRONTEND=noninteractive
 need=""; for p in git curl ca-certificates; do dpkg -s "$p" >/dev/null 2>&1 || need="$need $p"; done
 [ -z "$need" ] || { apt-get update -qq; apt-get install -y -qq $need >/dev/null; }
-if ! command -v node >/dev/null || ! node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=13)?0:1)'; then
-  say "Node 22"
+node_ok() { command -v node >/dev/null && command -v npm >/dev/null && node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=13)?0:1)'; }
+# The distro's Node when it is new enough (Ubuntu 26.04 ships 22.22), NodeSource otherwise.
+if ! node_ok && apt-cache policy nodejs | grep -qE 'Candidate: (22\.(1[3-9]|[2-9][0-9])|2[3-9]\.|[3-9][0-9]\.)'; then
+  say "Node (distro)"
+  apt-get install -y -qq nodejs npm >/dev/null
+fi
+if ! node_ok; then
+  say "Node 22 (NodeSource)"
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
   apt-get install -y -qq nodejs >/dev/null
 fi

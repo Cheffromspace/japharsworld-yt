@@ -12,9 +12,18 @@ This service works within that rule:
   ticket numbers. Loading a video ticket is a 302 to the video; no video passes through this server.
 - **HD playback (Tunelio).** With `TUNELIO_API_KEY` set, an ordinary video's ticket redirects to a
   [Tunelio](https://tunelio.dev) tunnel link (720p/1080p): a progressive mp4 (full seeking) up to
-  `TUNELIO_PROGRESSIVE_MAX_MINUTES`, Tunelio's HLS playlist for longer videos or when the mp4 is too large to build.
+  `TUNELIO_PROGRESSIVE_MAX_MINUTES` and `TUNELIO_PROGRESSIVE_MAX_MB`, Tunelio's HLS playlist for longer or larger
+  videos (and when the mp4 build is refused). Tunelio builds a file on its first request at about 60 MB/s, so a
+  1080p file above `TUNELIO_MAX_MB` is made again at `TUNELIO_LOWER_QUALITY` (10 more credits, half the wait).
   One link per video is cached until 20 minutes before it expires (about 6 h), so a room, its late joiners and
-  replays share one paid call (10 credits). Live streams always go to `youtube.com` (VRChat gets 1080p for live
+  replays share one paid call (10 credits).
+- **Start-up latency** (`claude/play-latency.md`). VRChat resolves every URL with its own yt-dlp (20 s socket
+  timeout) before AVPro opens it, so a video ticket answers each client differently, by `User-Agent`: the world's
+  string downloader (`UnityPlayer/…`) gets JSON build status and starts the build (the tablet *warms* a video a
+  second after it is selected); VRChat's resolver (a Chrome-like UA) is held at most `TICKET_RESOLVER_HOLD_SECONDS`
+  and then, if the build is still running, answered with a plain page so VRChat hands the URL to AVPro at once;
+  the player (anything else) is held until the link is ready, up to `TICKET_PLAYER_HOLD_SECONDS`, then sent to
+  youtube.com. `tools/bench-play.mjs` measures all of it. Live streams always go to `youtube.com` (VRChat gets 1080p for live
   itself), and so does everything when Tunelio fails, is out of credits (paused for 10 minutes) or has no key:
   360p, but it plays. Alerts (out of credits, failing, running low) go to `ALERT_WEBHOOK`.
 - **Shards.** Each instance picks a shard at random (synced), so instances rarely share tickets.
@@ -34,7 +43,7 @@ This service works within that rule:
 | Path | Returns |
 |---|---|
 | `GET /v1/<shard>/s?l=<lang>&q=<…> → <query>` | JSON: `results[]` (`t`, `id`, `title`, `channel`, `length`, `seconds`, `views`, `age`, `live`, `cc`), `sheet`, `sheetCols`, `sheetRows`, `cellW`, `cellH`, `next` (`-1` = none) |
-| `GET /v1/<shard>/<n>` | video: 302 to a Tunelio link or YouTube · sheet: JPEG, cell *i* = result *i*, row-major · page: JSON like a search |
+| `GET /v1/<shard>/<n>` | video: 302 to a Tunelio link or YouTube (from a `UnityPlayer` UA: JSON `state` = `building`/`ready`/`failed`/`live`/`youtube`, `format`, `quality`, `mb`, `elapsed`, `eta`, `progress`) · sheet: JPEG, cell *i* = result *i*, row-major · page: JSON like a search |
 | `GET /v1/<shard>/cc/<lang>` | JSON: `t`, `id`, `available`, `source` (`manual`/`auto`/`translated`), `lines` = `[[start, dur, text], …]`, `tracks` = `[{i, code, name, auto}]`, `track` (index shown, `-1` = none), `reason` when unavailable |
 | `GET /v1/<shard>/cc/<i>?l=<lang>` | the same for track *i* (Tunelio captions only) |
 | `GET /healthz` | `{"ok": true, "tunelio": bool, "credits": n, "workers": n, "lastSearchVia": "worker"/"local"/"api", "apiUnitsToday": n}` (credits as last reported by Tunelio) |

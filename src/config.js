@@ -28,9 +28,20 @@ export const config = {
   // tickets go to youtube.com (360p in VRChat) and captions use yt-dlp.
   tunelioKey: process.env.TUNELIO_API_KEY ?? '',
   tunelioQuality: process.env.TUNELIO_QUALITY ?? '1080p',
-  // Longer videos get Tunelio's HLS playlist instead of a progressive mp4 (which is built whole on their side first).
+  // Build time follows file size (~17 ms per MB, 2026-10-19). A 1080p file above TUNELIO_MAX_MB is made again at
+  // TUNELIO_LOWER_QUALITY (10 more credits, about half the wait); a file above TUNELIO_PROGRESSIVE_MAX_MB, or a video
+  // longer than TUNELIO_PROGRESSIVE_MAX_MINUTES, is served as HLS instead of a progressive mp4 (which Tunelio builds
+  // whole first and refuses or times out on when very large).
+  tunelioLowerQuality: process.env.TUNELIO_LOWER_QUALITY ?? '720p',
+  tunelioMaxMb: int('TUNELIO_MAX_MB', 1500),
+  progressiveMaxMb: int('TUNELIO_PROGRESSIVE_MAX_MB', 1800),
   progressiveMaxSeconds: int('TUNELIO_PROGRESSIVE_MAX_MINUTES', 180) * 60,
   lowCredits: int('TUNELIO_LOW_CREDITS', 5000),
+  // How long a played ticket may keep VRChat's resolver (yt-dlp, 20 s socket timeout) waiting for a Tunelio build
+  // before answering it with a quick "not a video" page so VRChat hands the URL to AVPro, which is then held until the
+  // build is ready (up to TICKET_PLAYER_HOLD_SECONDS, then youtube.com). See playback.js.
+  ticketResolverHoldMs: int('TICKET_RESOLVER_HOLD_SECONDS', 12) * 1000,
+  ticketPlayerHoldMs: int('TICKET_PLAYER_HOLD_SECONDS', 90) * 1000,
   // Day of the month the Tunelio plan renews and its credits refresh (the credits forecast counts from it).
   tunelioRenewsDay: int('TUNELIO_RENEWS_DAY', 1),
   // Comma-separated ISO 15924 scripts the world can draw captions in.

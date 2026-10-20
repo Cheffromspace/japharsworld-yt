@@ -3,7 +3,7 @@
 import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { timingSafeEqual, createHash } from 'node:crypto';
-import { openMetricsDb, dayOf, MS_BUCKETS, getMeta } from './metrics.js';
+import { openMetricsDb, dayOf, MS_BUCKETS, S_BUCKETS, getMeta } from './metrics.js';
 
 const DAY = 86400_000;
 
@@ -16,8 +16,8 @@ export function addDays(day, n) {
 export const daysBetween = (a, b) => Math.round((Date.parse(`${b}T12:00:00Z`) - Date.parse(`${a}T12:00:00Z`)) / DAY);
 
 // Upper bound of the bucket that holds the p-th percentile. buckets: { "50": n, "100": n, …, "inf": n }
-export function percentile(buckets, p) {
-  const order = [...MS_BUCKETS.map(String), 'inf'];
+export function percentile(buckets, p, bounds = MS_BUCKETS) {
+  const order = [...bounds.map(String), 'inf'];
   const total = order.reduce((s, b) => s + (buckets[b] ?? 0), 0);
   if (!total) return null;
   let seen = 0;
@@ -142,6 +142,17 @@ export function summary(db, { from, to, now = Date.now(), tz = 'America/Chicago'
     searchMs: { p50: percentile(c.search_ms ?? {}, 0.5), p95: percentile(c.search_ms ?? {}, 0.95) },
     playRoutes: c.play_route ?? {}, fallbacks: c.play_fallback ?? {}, lengths: c.play_length ?? {},
     createMs: { p50: percentile(c.tunelio_create_ms ?? {}, 0.5), p95: percentile(c.tunelio_create_ms ?? {}, 0.95) },
+    // Playback latency (claude/play-latency.md): build times in seconds, who asked for tickets, how the holds went.
+    playback: {
+      buildsOk: c.build?.ok ?? 0, buildsFailed: c.build?.failed ?? 0,
+      buildProgressiveS: { p50: percentile(c.build_s_progressive ?? {}, 0.5, S_BUCKETS), p95: percentile(c.build_s_progressive ?? {}, 0.95, S_BUCKETS) },
+      buildHlsS: { p50: percentile(c.build_s_hls ?? {}, 0.5, S_BUCKETS), p95: percentile(c.build_s_hls ?? {}, 0.95, S_BUCKETS) },
+      buildLengths: c.build_length ?? {},
+      clients: c.ticket_client ?? {},
+      holdMs: { p50: percentile(c.ticket_hold_ms ?? {}, 0.5), p95: percentile(c.ticket_hold_ms ?? {}, 0.95) },
+      fastFails: total(c.ticket_fastfail), timeouts: total(c.ticket_timeout),
+      warmed: total(c.warm), warmedPlayed: total(c.warm_played),
+    },
     captions: { lists: total(c.cc_list), tracks: total(c.cc_track), trackLang: c.cc_track_lang ?? {}, unavailable: c.cc_unavailable ?? {} },
     credits: {
       playback: c.credits?.playback ?? 0, captions: c.credits?.captions ?? 0, remaining, plan: getMeta(db, 'tunelio_plan'),
@@ -316,6 +327,8 @@ ${barChart('Active instances per hour (last 3 days)', d.activeInstancesByHour)}
 <p>Languages: ${esc(w.languages.join(', ') || '–')}</p>
 <p>Search sources: ${kv(w.sources)} · failures: ${kv(w.failures)} (${(w.failureRate * 100).toFixed(1)} %) · p50 ${fmt(w.searchMs.p50)} ms, p95 ${fmt(w.searchMs.p95)} ms</p>
 <p>Play routes: ${kv(w.playRoutes)} · fallbacks: ${kv(w.fallbacks)} · lengths: ${kv(w.lengths)} · Tunelio /create p50 ${fmt(w.createMs.p50)} ms, p95 ${fmt(w.createMs.p95)} ms</p>
+<p>Playback: builds ${fmt(w.playback.buildsOk)} ok, ${fmt(w.playback.buildsFailed)} failed · progressive p50 ${fmt(w.playback.buildProgressiveS.p50)} s, p95 ${fmt(w.playback.buildProgressiveS.p95)} s · HLS p50 ${fmt(w.playback.buildHlsS.p50)} s, p95 ${fmt(w.playback.buildHlsS.p95)} s · by length: ${kv(w.playback.buildLengths)}<br>
+Tickets by client: ${kv(w.playback.clients)} · held p50 ${fmt(w.playback.holdMs.p50)} ms, p95 ${fmt(w.playback.holdMs.p95)} ms · resolver fast-fails ${fmt(w.playback.fastFails)} · player timeouts ${fmt(w.playback.timeouts)} · warmed ${fmt(w.playback.warmed)}, of which played ${fmt(w.playback.warmedPlayed)}</p>
 <p>Captions: ${fmt(w.captions.lists)} shown, ${fmt(w.captions.tracks)} tracks picked (${kv(w.captions.trackLang)}) · not available: ${kv(w.captions.unavailable)}</p>
 <p>Credits spent: playback ${fmt(w.credits.playback)}, captions ${fmt(w.credits.captions)}</p>
 <p>Search languages: ${kv(w.searchLang)} · join languages: ${kv(w.joinLang)}</p>

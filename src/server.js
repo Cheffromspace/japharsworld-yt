@@ -19,13 +19,13 @@ import { youtube as defaultYoutube } from './youtube.js';
 import { cachedSheet } from './sheet.js';
 import { Captions, errorLine } from './captions.js';
 import { Tunelio } from './tunelio.js';
-import { Playback, progressiveChecker } from './playback.js';
+import { Playback, linkProbe, clientKind } from './playback.js';
 import { TunelioCaptions } from './transcripts.js';
 import { makeAlert } from './alert.js';
 import { Relay, RelayError } from './relay.js';
 import { DataApi } from './dataapi.js';
 import { makeSearch } from './search.js';
-import { Metrics, noMetrics, lengthBucket } from './metrics.js';
+import { Metrics, noMetrics, lengthBucket, secondsBucket, sizeBucket } from './metrics.js';
 import { statsRoute } from './stats.js';
 
 const API = 1;
@@ -53,8 +53,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (path === '/create') { metrics.inc('credits', 'playback', 10); metrics.latency('tunelio_create_ms', ms); }
     if (path === '/transcript') metrics.inc('credits', 'captions', 6);
   } });
-  playback ??= new Playback({ tunelio, quality: config.tunelioQuality, progressiveMaxSeconds: config.progressiveMaxSeconds,
-    checkProgressive: tunelio.enabled ? progressiveChecker() : null, alert, log: logJson });
+  playback ??= new Playback({ tunelio, quality: config.tunelioQuality, lowerQuality: config.tunelioLowerQuality, maxMbForQuality: config.tunelioMaxMb,
+    progressiveMaxMb: config.progressiveMaxMb, progressiveMaxSeconds: config.progressiveMaxSeconds,
+    probe: tunelio.enabled ? linkProbe() : null, alert, log: logJson,
+    onBuild: ({ format, quality, seconds, mb, buildMs, ok }) => {
+      metrics.inc('build', ok ? 'ok' : 'failed');
+      if (ok) { metrics.inc(format === 'hls' ? 'build_s_hls' : 'build_s_progressive', secondsBucket(buildMs)); metrics.inc('build_length', lengthBucket({ seconds })); metrics.inc('build_size', sizeBucket(mb)); metrics.inc('build_quality', quality); }
+    } });
   if (!captions && tunelio.enabled) captions = new TunelioCaptions({ store, tunelio, cacheDays: config.captionCacheDays, scripts: config.captionScripts, alert, log: logJson });
   const warmCaptions = !tunelio.enabled; // yt-dlp captions are free to warm; Tunelio's cost credits, so only on demand
   captions ??= new Captions({ store, ytdlp: config.ytdlp, extraArgs: config.ytdlpExtraArgs, cacheDays: config.captionCacheDays,
@@ -73,6 +78,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const continuations = new Map();
   const MAX_CONTINUATIONS = 2000;
   const hits = new Map(); // ip → timestamps of recent searches
+  const warmed = new Set(); // "shard:videoId" warmed by a tablet and not played yet (warm_played metric)
 
   function rateLimited(ip) {
     const now = Date.now();
@@ -149,13 +155,39 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const t = store.get(shard, n);
     if (!t) return fail(res, 404, 'unknown_ticket', 'Nothing here yet. Search again.');
     if (t.kind === 'video') {
+      const kind = clientKind(req.headers['user-agent']);
+      metrics.inc('ticket_client', kind);
+      // The tablet asking (a row selected, or watching a build): start the build, report it, never redirect.
+      if (kind === 'string') {
+        const before = playback.jobs.get(t.data.id)?.state;
+        const st = playback.status(t.data);
+        if (st.state === 'building' && before !== 'building') { metrics.inc('warm'); warmed.add(`${shard}:${t.data.id}`); }
+        return json(res, 200, { v: API, shard, t: n, ...st });
+      }
+      // A player (VRChat's resolver, then AVPro). The resolver gives up after 20 s, so it is held only briefly and
+      // then told "this is not a video" (a plain page), which makes VRChat hand the URL straight to AVPro.
+      const resolver = kind === 'ytdlp';
+      const started = Date.now();
+      const where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs });
+      const held = Date.now() - started;
+      metrics.latency('ticket_hold_ms', held);
+      if (where.ready === false && resolver) {
+        metrics.inc('ticket_fastfail');
+        logJson({ event: 'play_defer', shard, n, id: t.data.id, held, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
+        const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+        return res.end(body);
+      }
       store.markPlayed(shard, n, t.data.id);
       // Warm the original-language captions so the overlay is ready when people look for it.
       if (warmCaptions) captions.get(t.data.id, 'native').catch(() => {});
-      const where = await playback.location(t.data);
-      logJson({ event: 'play', shard, n, id: t.data.id, via: where.via, reason: where.reason });
-      countPlay(shard, t.data, where);
-      res.writeHead(302, { location: where.location, 'cache-control': 'no-store' });
+      let location = where.location;
+      let via = where.via, reason = where.reason;
+      if (where.ready === false) { location = `https://www.youtube.com/watch?v=${t.data.id}`; via = 'youtube'; reason = 'build_timeout'; metrics.inc('ticket_timeout'); }
+      logJson({ event: 'play', shard, n, id: t.data.id, via, reason, client: kind, held, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
+      countPlay(shard, t.data, { via, reason, location });
+      if (warmed.delete(`${shard}:${t.data.id}`)) metrics.inc('warm_played');
+      res.writeHead(302, { location, 'cache-control': 'no-store' });
       return res.end();
     }
     if (t.kind === 'sheet') {

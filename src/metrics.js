@@ -46,6 +46,12 @@ export const hourOf = (ms, tz = 'America/Chicago') => { const p = parts(ms, tz);
 // Latency buckets (upper bounds, ms). Percentiles are read back from these, so they merge across restarts.
 export const MS_BUCKETS = [50, 100, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 5000, 8000, 12000, 20000];
 export const msBucket = (ms) => String(MS_BUCKETS.find((b) => ms <= b) ?? 'inf');
+// Build-time buckets (upper bounds, seconds): Tunelio builds run 5–60 s.
+export const S_BUCKETS = [2, 5, 8, 12, 16, 20, 25, 30, 40, 50, 60, 90, 120];
+export const secondsBucket = (ms) => String(S_BUCKETS.find((b) => ms / 1000 <= b) ?? 'inf');
+// File-size buckets (upper bounds, MB) for Tunelio builds.
+export const MB_BUCKETS = [100, 250, 500, 1000, 1500, 2000, 3000, 5000];
+export const sizeBucket = (mb) => String(MB_BUCKETS.find((b) => mb <= b) ?? 'inf');
 
 export function lengthBucket({ live, seconds }) {
   if (live) return 'live';
@@ -60,6 +66,7 @@ const oneOf = (...xs) => { const s = new Set(xs); return (k) => s.has(k); };
 const isLang = (k) => Object.hasOwn(LANGS, k);
 const isStatus = (k) => /^[1-5]\d\d$/.test(k);
 const isBucket = oneOf(...MS_BUCKETS.map(String), 'inf');
+const isSBucket = oneOf(...S_BUCKETS.map(String), 'inf');
 // Caption track languages as YouTube names them: "en", "pt-BR", "zh-Hans", "es-419".
 const isTrackLang = (k) => /^[a-z]{2,3}(-(?:[A-Z]{2}|[A-Z][a-z]{3}|\d{3}))?$/.test(k);
 const none = (k) => k === '';
@@ -75,9 +82,22 @@ export const METRICS = {
   more_fail: ['daily', isStatus],
   play: ['daily', none],
   play_route: ['daily', oneOf('tunelio-progressive', 'tunelio-hls', 'youtube-live', 'youtube-fallback')],
-  play_fallback: ['daily', oneOf('disabled', 'paused', 'tunelio_failed')],
+  play_fallback: ['daily', oneOf('disabled', 'paused', 'tunelio_failed', 'build_failed', 'build_timeout')],
   play_length: ['daily', oneOf('live', 'unknown', 'lt10m', 'lt1h', 'lt3h', 'longer')],
   tunelio_create_ms: ['daily', isBucket],
+  // Playback latency (claude/play-latency.md): who asks for tickets, how long they were held, Tunelio build times.
+  ticket_client: ['daily', oneOf('string', 'ytdlp', 'avpro', 'other')],
+  ticket_hold_ms: ['daily', isBucket],
+  ticket_fastfail: ['daily', none],   // resolver told "not a video" while the build ran on
+  ticket_timeout: ['daily', none],    // a player waited the whole hold and got youtube.com instead
+  build: ['daily', oneOf('ok', 'failed')],
+  build_s_progressive: ['daily', isSBucket],
+  build_s_hls: ['daily', isSBucket],
+  build_length: ['daily', oneOf('live', 'unknown', 'lt10m', 'lt1h', 'lt3h', 'longer')],
+  build_size: ['daily', oneOf(...MB_BUCKETS.map(String), 'inf')],
+  build_quality: ['daily', (k) => /^\d{3,4}p$/.test(k)],
+  warm: ['daily', none],              // builds started by a tablet before Play (10 credits each)
+  warm_played: ['daily', none],       // …of which a player then asked for the video
   cc_list: ['daily', none],
   cc_list_lang: ['daily', (k) => isLang(k) || k === 'native'],
   cc_track: ['daily', none],

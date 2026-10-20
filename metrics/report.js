@@ -62,6 +62,8 @@ function body(s, tz) {
   lines.push(`Search: ${n(s.searches)} searches, ${n(s.more)} "more results", ${n(s.plays)} plays; ${n(s.joins)} joins (untrusted URLs on)`);
   lines.push(`Sources: ${top(s.sources)}; failures ${pct(s.failureRate)}${Object.keys(s.failures).length ? ` (${top(s.failures)})` : ''}; p50 ${n(s.searchMs.p50)} ms, p95 ${n(s.searchMs.p95)} ms`);
   lines.push(`Plays: ${top(s.playRoutes)}${Object.keys(s.fallbacks).length ? `; fallbacks: ${top(s.fallbacks)}` : ''}`);
+  const pb = s.playback;
+  if (pb && (pb.buildsOk || pb.buildsFailed || pb.warmed)) lines.push(`Start-up: builds p50 ${n(pb.buildProgressiveS.p50)} s / p95 ${n(pb.buildProgressiveS.p95)} s (progressive)${pb.buildHlsS.p50 != null ? `, HLS p50 ${n(pb.buildHlsS.p50)} s` : ''}; ${n(pb.fastFails)} resolver fast-fails, ${n(pb.timeouts)} player timeouts; warmed ${n(pb.warmed)}, played ${n(pb.warmedPlayed)}`);
   lines.push(`Captions: ${n(s.captions.lists)} shown, ${n(s.captions.tracks)} tracks picked${Object.keys(s.captions.unavailable).length ? `, not available: ${top(s.captions.unavailable)}` : ''}`);
   lines.push(creditsLine(s));
   lines.push(`Languages: ${s.languages.join(', ') || 'none'}`);

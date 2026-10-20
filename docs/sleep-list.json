@@ -1,6 +1,9 @@
 {
  "notice": "",
  "slots": {
+  "jack-oblivion": {
+   "hidden": true
+  },
   "jack-retro": {
    "hidden": true
   },

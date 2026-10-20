@@ -1,16 +1,10 @@
 {
  "notice": "",
  "slots": {
-  "jack-pokemon": {
-   "hidden": true
-  },
   "jack-retro": {
    "hidden": true
   },
   "jack-stardew": {
-   "hidden": true
-  },
-  "retroworld-ps1": {
    "hidden": true
   }
  }

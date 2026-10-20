@@ -191,7 +191,7 @@ test('Data API fallback when the worker and the Linode both fail; alert; units',
 
 test('Data API mapping matches mapVideo()', () => {
   const details = new Map(sample.videos.items.map((v) => [v.id, v]));
-  const m = sample.search.items.map((i) => mapApiVideo(i, details.get(i.id.videoId), NOW));
+  const m = sample.search.items.map((i) => mapApiVideo(i, details.get(i.id.videoId), NOW)).map(({ desc, ...v }) => (assert.equal(typeof desc, 'string'), v));
   assert.deepEqual(m[0], { id: 'vkBC2msYpDY', title: 'An Incremental Game About Upgrading Shapes & Things', channel: 'DangerouslyFunny',
     length: '1:14:09', seconds: 4449, views: '251K views', age: '1 month ago', live: false, cc: false });
   assert.deepEqual(m[1], { id: 'jfKfPfyJRdk', title: 'lofi hip hop radio 📚 beats to relax/study to', channel: 'Lofi Girl',

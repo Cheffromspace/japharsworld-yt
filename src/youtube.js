@@ -29,6 +29,8 @@ export function mapVideo(v) {
     age: text(v.published),
     live,
     cc: Boolean(v.has_captions),
+    // The snippet YouTube shows under a result: something to read while the video is prepared (owner, 2026-10-19).
+    desc: text(v.description).replace(/\s+/g, ' ').slice(0, 240),
   };
 }
 

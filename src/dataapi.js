@@ -70,6 +70,7 @@ export function mapApiVideo(item, details, now = Date.now()) {
     age: live ? '' : ageText(sn.publishedAt ?? item.snippet?.publishedAt, now),
     live,
     cc: details?.contentDetails?.caption === 'true',
+    desc: String(sn.description ?? unescapeHtml(item.snippet?.description ?? '')).replace(/\s+/g, ' ').trim().slice(0, 240),
   };
 }
 

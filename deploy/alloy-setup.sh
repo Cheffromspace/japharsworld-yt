@@ -16,6 +16,7 @@ if ! command -v alloy >/dev/null 2>&1; then
   apt-get install -y -qq gpg curl >/dev/null
   mkdir -p /etc/apt/keyrings
   curl -fsSL https://apt.grafana.com/gpg.key | gpg --dearmor --yes -o /etc/apt/keyrings/grafana.gpg
+  chmod 644 /etc/apt/keyrings/grafana.gpg   # apt reads it as _apt
   echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" > /etc/apt/sources.list.d/grafana.list
   apt-get update -qq
   apt-get install -y -qq alloy >/dev/null

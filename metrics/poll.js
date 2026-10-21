@@ -12,7 +12,7 @@ import { makeAlert } from '../src/alert.js';
 import { addDays, billingPeriod, daysBetween } from '../src/stats.js';
 import { VRChat, worldValues, groupValues } from './vrchat.js';
 import { tunelioCredits, githubRepo } from './sources.js';
-import { dailyReport, weeklyReport, chunks } from './report.js';
+import { dailyReport, weeklyReport, testWorld, chunks } from './report.js';
 
 const env = process.env;
 export const settings = (e = env) => ({
@@ -215,6 +215,7 @@ export async function run(cfg = settings(), { now = Date.now() } = {}) {
       const yesterday = addDays(today, -1);
       await send(cfg, 'daily_summary', dailyReport(db, { day: yesterday, tz: cfg.tz, monitorDb: cfg.monitorDb, now, renewDay: cfg.tunelioRenewsDay }))
         .catch((err) => log({ event: 'report_failed', kind: 'daily', message: String(err.message) }));
+      log({ event: 'test_world_daily', ...testWorld(db, { day: yesterday, tz: cfg.tz, now, renewDay: cfg.tunelioRenewsDay }) });
       const weekdayName = new Intl.DateTimeFormat('en-US', { timeZone: cfg.tz, weekday: 'short' }).format(now);
       if (weekdayName === 'Mon' && getMeta(db, 'report_weekly') !== today) {
         setMeta(db, 'report_weekly', today);

@@ -104,6 +104,8 @@ and a login happens only when it stops working. A failed login alerts Discord (a
   a credit refresh (renewal went through). Around the renewal day: reminders 3 days and 1 day before to check the
   wallet, and a warning the day after when no refresh was seen.
 - **Weekly**, Mondays: the week to Sunday against the week before.
+- **TEST world** (stats and TEST uploads) stays out of Discord. It is still polled and stored (and on `/stats`); each
+  daily report also writes a `test_world_daily` line to the poller's journal (`journalctl -u japharsworld-yt-metrics`).
 - By hand: `sudo node /opt/japharsworld-yt/metrics/poll.js report [--day 2026-10-18] [--weekly] [--send]`.
 
 ## Stats page

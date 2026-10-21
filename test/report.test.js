@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openMetricsDb, recordPoll } from '../src/metrics.js';
-import { dailyReport, weeklyReport, chunks } from '../metrics/report.js';
+import { dailyReport, weeklyReport, testWorld, chunks } from '../metrics/report.js';
 
 const NOW = Date.parse('2026-10-19T14:05:00Z'); // Mon 09:05 in Chicago
 const at = (day, h = 18) => Date.parse(`${day}T${String(h).padStart(2, '0')}:00:00Z`);
@@ -78,7 +78,20 @@ test('releases appear in the daily and weekly reports, in Chicago time', () => {
   const daily = dailyReport(db, { day: '2026-10-18', now: NOW, monitorDb: '' });
   assert.match(daily, /\nReleases: GitHub v2026\.10\.18 Oct 18, 2:40 PM; production v104 uploaded Oct 18, 3:02 PM\n/);
   const weekly = weeklyReport(db, { endDay: '2026-10-18', now: NOW });
-  assert.match(weekly, /Releases: TEST v103 uploaded Oct 16, 5:00 AM; GitHub v2026\.10\.18 .*; production v104/);
+  assert.match(weekly, /Releases: GitHub v2026\.10\.18 .*; production v104/);
+  assert.doesNotMatch(weekly, /TEST/);
+});
+
+test('the TEST world stays out of Discord and goes to the log', () => {
+  const db = seeded();
+  recordPoll(db, { ts: at('2026-10-17'), source: 'world:test', values: { visits: 10, favorites: 0, occupants: 1, publicOccupants: 0, privateOccupants: 1 } });
+  recordPoll(db, { ts: at('2026-10-18'), source: 'world:test', values: { visits: 14, favorites: 0, occupants: 2, publicOccupants: 0, privateOccupants: 2 } });
+  db.prepare('INSERT INTO releases (source, version, at, detected) VALUES (?, ?, ?, ?)').run('world:test', '105', Date.parse('2026-10-18T10:00:00Z'), NOW);
+  const daily = dailyReport(db, { day: '2026-10-18', now: NOW, monitorDb: '' });
+  assert.doesNotMatch(daily, /TEST/);
+  const t = testWorld(db, { day: '2026-10-18', now: NOW });
+  assert.equal(t.visits, 14);
+  assert.deepEqual(t.releases, [{ version: '105', at: '2026-10-18T10:00:00.000Z' }]);
 });
 
 test('weekly report: week over week', () => {

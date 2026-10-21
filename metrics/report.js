@@ -44,7 +44,9 @@ function channelsLine(ch) {
 const LABEL = { 'world:prod': 'production', 'world:test': 'TEST' };
 const clock = (ms, tz) => new Date(ms).toLocaleString('en-US', { timeZone: tz, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 // "Releases: production v104 uploaded Oct 19, 3:02 PM; GitHub v2026.10.19 Oct 19, 2:40 PM"
+// TEST uploads stay out of Discord (testWorld() puts them in the poller's log).
 function releasesLine(list, tz) {
+  list = list?.filter((r) => r.source !== 'world:test');
   if (!list?.length) return null;
   return `Releases: ${[...list].reverse().map((r) => r.source.startsWith('world:')
     ? `${LABEL[r.source] ?? r.source} v${r.version} uploaded ${clock(r.at, tz)}`
@@ -53,10 +55,8 @@ function releasesLine(list, tz) {
 
 function body(s, tz) {
   const lines = [];
-  for (const [k, label] of [['prod', 'VRChat'], ['test', 'TEST world']]) {
-    const l = worldLine(label, s.vrchat[k]);
-    if (l) lines.push(l);
-  }
+  const l = worldLine('VRChat', s.vrchat.prod);
+  if (l) lines.push(l);
   if (!s.vrchat.prod) lines.push('VRChat: no data (poller not logged in yet)');
   if (s.group) lines.push(`Group: ${n(s.group.members)} members, up to ${n(s.group.online)} online`);
   lines.push(`Search: ${n(s.searches)} searches, ${n(s.more)} "more results", ${n(s.plays)} plays; ${n(s.joins)} joins (untrusted URLs on)`);
@@ -75,6 +75,13 @@ function body(s, tz) {
 export function dailyReport(db, { day, tz = 'America/Chicago', monitorDb, now = Date.now(), renewDay = 1 }) {
   const s = summary(db, { from: day, to: day, now, tz, renewDay });
   return [`**Everything is OK: ${weekday(day)}**`, ...body(s, tz), channelsLine(channels(monitorDb, now - 86400_000))].join('\n');
+}
+
+// The TEST world's day, for the poller's log only (not Discord).
+export function testWorld(db, { day, tz = 'America/Chicago', now = Date.now(), renewDay = 1 }) {
+  const s = summary(db, { from: day, to: day, now, tz, renewDay });
+  const releases = (s.releases ?? []).filter((r) => r.source === 'world:test').map((r) => ({ version: r.version, at: new Date(r.at).toISOString() }));
+  return { day, ...(s.vrchat.test ?? {}), releases };
 }
 
 // Week ending `endDay` (inclusive) against the 7 days before it.

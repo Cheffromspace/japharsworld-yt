@@ -13,7 +13,7 @@ prometheus.remote_write "cloud" {
 }
 
 prometheus.exporter.unix "host" {
-  disable_collectors = ["ipvs", "btrfs", "infiniband", "xfs", "zfs"]
+  disable_collectors = ["ipvs", "btrfs", "infiniband", "xfs", "zfs", "thermal_zone"]
   enable_collectors  = ["systemd"]
   systemd {
     unit_include = "japharsworld-yt-.*\\.(service|timer)"

@@ -1,4 +1,4 @@
-// Discord report text: daily (yesterday, sent around 09:00 America/Chicago) and weekly (Mondays, week over week).
+// Discord report text: daily (yesterday, sent just after midnight America/Chicago) and weekly (Mondays, week over week).
 import { summary, channels, addDays } from '../src/stats.js';
 
 const n = (x) => (x == null ? '–' : Number.isFinite(x) ? Math.round(x).toLocaleString('en-US') : '∞');

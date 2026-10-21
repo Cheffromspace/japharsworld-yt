@@ -96,7 +96,7 @@ and a login happens only when it stops working. A failed login alerts Discord (a
 
 ## Reports
 
-- **Daily**, the first poll after 09:00 America/Chicago (`METRICS_REPORT_HOUR`), to `ALERT_WEBHOOK` via `makeAlert`:
+- **Daily**, the first poll after midnight America/Chicago (`METRICS_REPORT_HOUR`, 0; the poller runs every ~15 min), to `ALERT_WEBHOOK` via `makeAlert`:
   yesterday's VRChat visits/favorites Δ and peak occupants, searches, plays, joins, source mix and failure rate,
   latency, play routes, captions, credits spent with the run-out forecast (at the plan period's average daily spend;
   the period starts on `TUNELIO_RENEWS_DAY`, 17 here), languages seen, releases that day, Channels slots down.

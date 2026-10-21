@@ -113,7 +113,7 @@ VRChat user/instance IDs are stored. Details, what is deliberately not collected
 - **The poller** (`metrics/poll.js`, `japharsworld-yt-metrics.timer`, about every 15 minutes) records the VRChat world
   (production and TEST) and group numbers, and once a day Tunelio's balance and GitHub stars, downloads and traffic. Its
   secrets are in `/etc/japharsworld-yt-metrics.env` (root only).
-- **Reports**: a daily Discord summary around 09:00 America/Chicago and a weekly one on Mondays (`ALERT_WEBHOOK`).
+- **Reports**: a daily Discord summary just after midnight America/Chicago (the day just ended) and a weekly one on Mondays (`ALERT_WEBHOOK`).
 - **`GET /stats`** (HTML with inline SVG charts), `/stats.json` and `/stats/export.csv`, behind `STATS_TOKEN`
   (`?token=` or `Authorization: Bearer`).
 

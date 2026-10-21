@@ -20,7 +20,9 @@ export const settings = (e = env) => ({
   tz: e.METRICS_TZ ?? 'America/Chicago',
   monitorDb: e.MONITOR_DB ?? '/var/lib/japharsworld-yt-monitor/monitor.db',
   webhook: e.ALERT_WEBHOOK ?? '',
-  reportHour: Number.parseInt(e.METRICS_REPORT_HOUR ?? '9', 10),
+  // The daily report goes out with the first poll after midnight: the day is over, so waiting only delays it
+  // (owner, 2026-10-21: "I expect reports to be timely").
+  reportHour: Number.parseInt(e.METRICS_REPORT_HOUR ?? '0', 10),
   tunelioKey: e.TUNELIO_API_KEY ?? '',
   tunelioRenewsDay: Number.parseInt(e.TUNELIO_RENEWS_DAY ?? '1', 10) || 1,
   vrchat: {

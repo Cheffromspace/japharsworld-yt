@@ -30,8 +30,12 @@ if command -v alloy >/dev/null && echo "$changed" | grep -qE '^deploy/alloy'; th
 if echo "$changed" | grep -qE '^(relay/|src/|package(-lock)?\.json$|deploy/japharsworld-yt-relay)'; then
   systemctl restart japharsworld-yt-relay.service
   echo "worker restarted on $(git log -1 --format='%h %s')"
+  outcome=restarted
 else
+  outcome=no_restart
   echo "now on $(git rev-parse --short HEAD) (nothing the worker runs changed)"
 fi
+# Deploy marker for the dashboard; the monitor's docs/-only status commits are skipped.
+if echo "$changed" | grep -qv '^docs/'; then bash deploy/deploy-record.sh "$outcome" || echo "deploy record failed"; fi
 }
 main "$@"

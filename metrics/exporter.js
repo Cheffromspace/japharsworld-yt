@@ -77,8 +77,10 @@ export function metricsDbSeries(db, o) {
     lastPoll[p.source] = Math.max(lastPoll[p.source] ?? 0, p.ts);
   }
   for (const [source, ts] of Object.entries(lastPoll)) o.add('eiok_poll_timestamp_seconds', 'gauge', 'When the poller last recorded this source.', { source }, ts / 1000);
-  for (const r of db.prepare('SELECT source, MAX(at) at FROM releases GROUP BY source').all()) {
-    o.add('eiok_release_timestamp_seconds', 'gauge', 'Latest release seen per source (world uploads, GitHub tags).', { source: r.source }, r.at / 1000);
+  // One series per release, value = when: the dashboard marks each one at that time, including uploads from before
+  // the exporter existed (the latest 50 are enough).
+  for (const r of db.prepare('SELECT source, version, at FROM releases ORDER BY at DESC LIMIT 50').all()) {
+    o.add('eiok_release_timestamp_seconds', 'gauge', 'Releases seen (world uploads, GitHub tags), the latest 50; value = when.', { source: r.source, version: r.version }, r.at / 1000);
   }
 }
 

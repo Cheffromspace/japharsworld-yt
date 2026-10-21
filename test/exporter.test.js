@@ -63,7 +63,7 @@ test('exporter: usage counters, histograms, polls, slots, flash checks, jobs, he
     has('eiok_search_seconds_count 6');
     has('eiok_credits_remaining 4000');
     has('eiok_poll{source="world:prod",metric="visits"} 1040');
-    has('eiok_release_timestamp_seconds{source="world:prod"} ' + (NOW - 86400_000) / 1000);
+    has('eiok_release_timestamp_seconds{source="world:prod",version="104"} ' + (NOW - 86400_000) / 1000);
     has('eiok_slot_hidden{slot="jack-retro",kind="live",category="games",reason="flash"} 1');
     has('eiok_slot_flash_max{slot="lofi-study",kind="live",category="music"} 1');
     has('eiok_slot_flash_pass{slot="jack-retro",kind="live",category="games"} 0');

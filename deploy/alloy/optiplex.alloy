@@ -14,7 +14,11 @@ prometheus.remote_write "cloud" {
 
 prometheus.exporter.unix "host" {
   disable_collectors = ["ipvs", "btrfs", "infiniband", "xfs", "zfs", "thermal_zone"]
-  enable_collectors  = ["systemd"]
+  enable_collectors  = ["systemd", "textfile"]
+  // deploy/deploy-record.sh writes the deploy markers here.
+  textfile {
+    directory = "/var/lib/japharsworld-yt-deploy"
+  }
   systemd {
     unit_include = "japharsworld-yt-.*\\.(service|timer)"
   }
@@ -27,7 +31,7 @@ prometheus.scrape "host" {
 prometheus.relabel "host" {
   rule {
     source_labels = ["__name__"]
-    regex         = "node_(cpu_seconds_total|load1|load5|memory_MemAvailable_bytes|memory_MemTotal_bytes|filesystem_avail_bytes|filesystem_size_bytes|network_(receive|transmit)_bytes_total|boot_time_seconds|systemd_unit_state|time_seconds|uname_info)"
+    regex         = "node_(cpu_seconds_total|load1|load5|memory_MemAvailable_bytes|memory_MemTotal_bytes|filesystem_avail_bytes|filesystem_size_bytes|network_(receive|transmit)_bytes_total|boot_time_seconds|systemd_unit_state|time_seconds|uname_info)|eiok_deploy_timestamp_seconds"
     action        = "keep"
   }
   forward_to = [prometheus.remote_write.cloud.receiver]

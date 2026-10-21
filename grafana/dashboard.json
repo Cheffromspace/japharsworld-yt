@@ -25,6 +25,67 @@
    }
   ]
  },
+ "annotations": {
+  "list": [
+   {
+    "builtIn": 1,
+    "name": "Annotations & Alerts",
+    "type": "dashboard",
+    "datasource": {
+     "type": "grafana",
+     "uid": "-- Grafana --"
+    },
+    "enable": true,
+    "hide": true,
+    "iconColor": "rgba(0, 211, 255, 1)"
+   },
+   {
+    "name": "World uploads",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "${ds}"
+    },
+    "enable": true,
+    "iconColor": "#bb9af7",
+    "expr": "max by (source, version) (eiok_release_timestamp_seconds{source=~\"world:.*\"}) * 1000",
+    "step": "5m",
+    "useValueForTime": true,
+    "titleFormat": "{{source}} v{{version}}",
+    "textFormat": "",
+    "tagKeys": "source"
+   },
+   {
+    "name": "GitHub releases",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "${ds}"
+    },
+    "enable": true,
+    "iconColor": "#7dcfff",
+    "expr": "max by (source, version) (eiok_release_timestamp_seconds{source!~\"world:.*\"}) * 1000",
+    "step": "5m",
+    "useValueForTime": true,
+    "titleFormat": "{{source}} {{version}}",
+    "textFormat": "",
+    "tagKeys": "source"
+   },
+   {
+    "name": "Deploys",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "${ds}"
+    },
+    "enable": true,
+    "iconColor": "#e0af68",
+    "expr": "max by (host, commit, outcome) (eiok_deploy_timestamp_seconds) * 1000",
+    "step": "5m",
+    "useValueForTime": true,
+    "titleFormat": "{{host}} {{commit}} ({{outcome}})",
+    "textFormat": "",
+    "tagKeys": "host,outcome"
+   }
+  ]
+ },
  "panels": [
   {
    "type": "row",
@@ -537,7 +598,7 @@
   {
    "type": "row",
    "id": 10,
-   "title": "Visitors and search",
+   "title": "Versions and deploys",
    "collapsed": false,
    "gridPos": {
     "x": 0,
@@ -548,9 +609,10 @@
    "panels": []
   },
   {
-   "type": "timeseries",
+   "type": "table",
    "id": 11,
-   "title": "Searches, plays, joins (per hour)",
+   "title": "World uploads and releases",
+   "description": "VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -558,6 +620,165 @@
    "gridPos": {
     "x": 0,
     "y": 6,
+    "w": 12,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max by (source, version) (eiok_release_timestamp_seconds) * 1000",
+     "legendFormat": "",
+     "instant": true,
+     "format": "table"
+    }
+   ],
+   "transformations": [
+    {
+     "id": "organize",
+     "options": {
+      "indexByName": {
+       "source": 0,
+       "version": 1,
+       "Value": 2
+      },
+      "excludeByName": {
+       "Time": true
+      },
+      "renameByName": {
+       "Value": "When"
+      }
+     }
+    }
+   ],
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "displayName": "When",
+      "desc": true
+     }
+    ]
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "When"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "dateTimeAsLocal"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "type": "table",
+   "id": 12,
+   "title": "Deploys of main",
+   "description": "Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 6,
+    "w": 12,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max by (host, commit, outcome) (eiok_deploy_timestamp_seconds) * 1000",
+     "legendFormat": "",
+     "instant": true,
+     "format": "table"
+    }
+   ],
+   "transformations": [
+    {
+     "id": "organize",
+     "options": {
+      "indexByName": {
+       "host": 0,
+       "commit": 1,
+       "outcome": 2,
+       "Value": 3
+      },
+      "excludeByName": {
+       "Time": true
+      },
+      "renameByName": {
+       "Value": "When"
+      }
+     }
+    }
+   ],
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "displayName": "When",
+      "desc": true
+     }
+    ]
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "When"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "dateTimeAsLocal"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "type": "row",
+   "id": 13,
+   "title": "Visitors and search",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 12,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "type": "timeseries",
+   "id": 14,
+   "title": "Searches, plays, joins (per hour)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 13,
     "w": 12,
     "h": 8
    },
@@ -597,7 +818,7 @@
   },
   {
    "type": "timeseries",
-   "id": 12,
+   "id": 15,
    "title": "VRChat (production)",
    "datasource": {
     "type": "prometheus",
@@ -605,7 +826,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 6,
+    "y": 13,
     "w": 12,
     "h": 8
    },
@@ -655,7 +876,7 @@
   },
   {
    "type": "timeseries",
-   "id": 13,
+   "id": 16,
    "title": "Search latency",
    "description": "From the daily buckets, over 3 h windows.",
    "datasource": {
@@ -664,7 +885,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 14,
+    "y": 21,
     "w": 8,
     "h": 8
    },
@@ -713,7 +934,7 @@
   },
   {
    "type": "timeseries",
-   "id": 14,
+   "id": 17,
    "title": "Search failure rate",
    "datasource": {
     "type": "prometheus",
@@ -721,7 +942,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 14,
+    "y": 21,
     "w": 8,
     "h": 8
    },
@@ -762,7 +983,7 @@
   },
   {
    "type": "timeseries",
-   "id": 15,
+   "id": 18,
    "title": "Play routes (per 3 h)",
    "datasource": {
     "type": "prometheus",
@@ -770,7 +991,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 14,
+    "y": 21,
     "w": 8,
     "h": 8
    },
@@ -810,7 +1031,7 @@
   },
   {
    "type": "timeseries",
-   "id": 16,
+   "id": 19,
    "title": "Tunelio credits left",
    "datasource": {
     "type": "prometheus",
@@ -818,8 +1039,8 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 22,
-    "w": 12,
+    "y": 29,
+    "w": 8,
     "h": 8
    },
    "targets": [
@@ -859,16 +1080,17 @@
   },
   {
    "type": "timeseries",
-   "id": 17,
+   "id": 20,
    "title": "Tunelio build time",
+   "description": "From the daily buckets, over 6 h windows. A player is held up to 90 s, the resolver 12 s (claude/play-latency.md).",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 12,
-    "y": 22,
-    "w": 12,
+    "x": 8,
+    "y": 29,
+    "w": 8,
     "h": 8
    },
    "targets": [
@@ -889,6 +1111,33 @@
      },
      "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_build_progressive_seconds_bucket[6h])))",
      "legendFormat": "progressive p95"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "histogram_quantile(0.5, sum by (le) (increase(eiok_build_hls_seconds_bucket[6h])))",
+     "legendFormat": "HLS p50"
+    },
+    {
+     "refId": "D",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_build_hls_seconds_bucket[6h])))",
+     "legendFormat": "HLS p95"
+    },
+    {
+     "refId": "E",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_ticket_hold_seconds_bucket[6h])))",
+     "legendFormat": "ticket hold p95"
     }
    ],
    "options": {
@@ -915,13 +1164,90 @@
    }
   },
   {
+   "type": "timeseries",
+   "id": 21,
+   "title": "Start-up problems (per 3 h)",
+   "description": "Per ticket request, so one slow video retried by the player counts several timeouts; plays count once per room.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 16,
+    "y": 29,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum(increase(eiok_events_total{metric=\"ticket_timeout\"}[3h]))",
+     "legendFormat": "player timeouts (got youtube.com)"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum(increase(eiok_events_total{metric=\"ticket_fastfail\"}[3h]))",
+     "legendFormat": "resolver fast-fails (normal while building)"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum(increase(eiok_events_total{metric=\"build\",key=\"failed\"}[3h]))",
+     "legendFormat": "failed builds"
+    },
+    {
+     "refId": "D",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (key) (increase(eiok_events_total{metric=\"play_fallback\"}[3h]))",
+     "legendFormat": "fallback: {{key}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
    "type": "row",
-   "id": 18,
+   "id": 22,
    "title": "Channels and flash checks",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 30,
+    "y": 37,
     "w": 24,
     "h": 1
    },
@@ -929,7 +1255,7 @@
   },
   {
    "type": "table",
-   "id": 19,
+   "id": 23,
    "title": "Slots",
    "datasource": {
     "type": "prometheus",
@@ -937,7 +1263,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 31,
+    "y": 38,
     "w": 14,
     "h": 12
    },
@@ -1145,7 +1471,7 @@
   },
   {
    "type": "timeseries",
-   "id": 20,
+   "id": 24,
    "title": "Flash checks (per 6 h)",
    "datasource": {
     "type": "prometheus",
@@ -1153,7 +1479,7 @@
    },
    "gridPos": {
     "x": 14,
-    "y": 31,
+    "y": 38,
     "w": 10,
     "h": 6
    },
@@ -1193,7 +1519,7 @@
   },
   {
    "type": "timeseries",
-   "id": 21,
+   "id": 25,
    "title": "Check queue",
    "datasource": {
     "type": "prometheus",
@@ -1201,7 +1527,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 43,
+    "y": 50,
     "w": 10,
     "h": 6
    },
@@ -1251,12 +1577,12 @@
   },
   {
    "type": "row",
-   "id": 22,
+   "id": 26,
    "title": "Hosts",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 49,
+    "y": 56,
     "w": 24,
     "h": 1
    },
@@ -1264,7 +1590,7 @@
   },
   {
    "type": "timeseries",
-   "id": 23,
+   "id": 27,
    "title": "CPU busy",
    "datasource": {
     "type": "prometheus",
@@ -1272,7 +1598,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 50,
+    "y": 57,
     "w": 8,
     "h": 8
    },
@@ -1313,7 +1639,7 @@
   },
   {
    "type": "timeseries",
-   "id": 24,
+   "id": 28,
    "title": "Memory available",
    "datasource": {
     "type": "prometheus",
@@ -1321,7 +1647,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 50,
+    "y": 57,
     "w": 8,
     "h": 8
    },
@@ -1362,7 +1688,7 @@
   },
   {
    "type": "timeseries",
-   "id": 25,
+   "id": 29,
    "title": "Disk free (/)",
    "datasource": {
     "type": "prometheus",
@@ -1370,7 +1696,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 50,
+    "y": 57,
     "w": 8,
     "h": 8
    },
@@ -1411,7 +1737,7 @@
   },
   {
    "type": "timeseries",
-   "id": 26,
+   "id": 30,
    "title": "Public endpoints",
    "datasource": {
     "type": "prometheus",
@@ -1419,7 +1745,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 58,
+    "y": 65,
     "w": 12,
     "h": 8
    },
@@ -1468,7 +1794,7 @@
   },
   {
    "type": "timeseries",
-   "id": 27,
+   "id": 31,
    "title": "Failed units",
    "description": "japharsworld-yt units, bgutil-pot and caddy in the failed state.",
    "datasource": {
@@ -1477,7 +1803,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 58,
+    "y": 65,
     "w": 12,
     "h": 8
    },

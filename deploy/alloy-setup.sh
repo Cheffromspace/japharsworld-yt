@@ -34,6 +34,7 @@ EOT
 fi
 chown root:root "$ENVF"; chmod 600 "$ENVF"
 
+install -d -m 755 /var/lib/japharsworld-yt-deploy   # deploy markers (deploy/deploy-record.sh, textfile collector)
 install -m 644 "$HERE/alloy/$ROLE.alloy" /etc/alloy/config.alloy
 # The Debian package reads /etc/default/alloy; point it at our env file too.
 mkdir -p /etc/systemd/system/alloy.service.d

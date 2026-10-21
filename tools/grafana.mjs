@@ -54,6 +54,21 @@ function series(title, list, { unit = 'short', w = 12, h = 8, stack = false, des
     fieldConfig: { defaults: { unit, min, custom: { lineWidth: 2, fillOpacity: stack ? 30 : 8, stacking: { mode: stack ? 'normal' : 'none' } } }, overrides: [] },
   };
 }
+// The latest rows of a "value = when (ms)" series: one row per label set, newest first.
+function versions(title, expr, labels, description) {
+  return {
+    type: 'table', id: ++id, title, description, datasource: DS, gridPos: place(12, 6),
+    targets: targets([[expr, '', { instant: true, format: 'table' }]]),
+    transformations: [{ id: 'organize', options: { indexByName: Object.fromEntries([...labels, 'Value'].map((l, i) => [l, i])), excludeByName: { Time: true }, renameByName: { Value: 'When' } } }],
+    options: { showHeader: true, sortBy: [{ displayName: 'When', desc: true }] },
+    fieldConfig: { defaults: {}, overrides: [{ matcher: { id: 'byName', options: 'When' }, properties: [{ id: 'unit', value: 'dateTimeAsLocal' }] }] },
+  };
+}
+// Markers on every time series: each release or deploy at its own time (the series' value), not at the scrape.
+const marker = (name, expr, iconColor, titleFormat, tagKeys) => ({
+  name, datasource: DS, enable: true, iconColor, expr, step: '5m', useValueForTime: true, titleFormat, textFormat: '', tagKeys,
+});
+
 // Tokyo Night status colours.
 const OK = '#9ece6a', WARN = '#e0af68', BAD = '#f7768e', INK = '#7aa2f7';
 const upDown = [{ type: 'value', options: { 0: { text: 'down', color: BAD }, 1: { text: 'up', color: OK } } }];
@@ -70,6 +85,12 @@ export function dashboard() {
   p.push(stat('Channels hidden', 'sum(eiok_slot_hidden * on(slot) (1 - eiok_slot_spare))', { w: 3, thresholds: [{ color: OK, value: null }, { color: WARN, value: 1 }, { color: BAD, value: 5 }] }));
   p.push(stat('Flash fails now', 'count(eiok_slot_flash_pass == 0) or vector(0)', { w: 3, thresholds: [{ color: OK, value: null }, { color: BAD, value: 1 }], description: 'Slots whose current stream failed its last flash check.' }));
   p.push(stat('Oldest waiting check', 'max(eiok_jobs_oldest_pending_seconds)', { w: 3, unit: 's', thresholds: [{ color: OK, value: null }, { color: WARN, value: 3600 }, { color: BAD, value: 7200 }], description: 'Resolution + flash jobs wait for the Optiplex worker (every 20 min).' }));
+
+  p.push(row('Versions and deploys'));
+  p.push(versions('World uploads and releases', 'max by (source, version) (eiok_release_timestamp_seconds) * 1000', ['source', 'version'],
+    'VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.'));
+  p.push(versions('Deploys of main', 'max by (host, commit, outcome) (eiok_deploy_timestamp_seconds) * 1000', ['host', 'commit', 'outcome'],
+    'Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.'));
 
   p.push(row('Visitors and search'));
   p.push(series('Searches, plays, joins (per hour)', [
@@ -89,11 +110,20 @@ export function dashboard() {
   p.push(series('Play routes (per 3 h)', [
     ['sum by (key) (increase(eiok_events_total{metric="play_route"}[3h]))', '{{key}}'],
   ], { w: 8, stack: true }));
-  p.push(series('Tunelio credits left', [['max(eiok_credits_remaining)', 'left']], { w: 12, min: 0 }));
+  p.push(series('Tunelio credits left', [['max(eiok_credits_remaining)', 'left']], { w: 8, min: 0 }));
   p.push(series('Tunelio build time', [
     ['histogram_quantile(0.5, sum by (le) (increase(eiok_build_progressive_seconds_bucket[6h])))', 'progressive p50'],
     ['histogram_quantile(0.95, sum by (le) (increase(eiok_build_progressive_seconds_bucket[6h])))', 'progressive p95'],
-  ], { w: 12, unit: 's' }));
+    ['histogram_quantile(0.5, sum by (le) (increase(eiok_build_hls_seconds_bucket[6h])))', 'HLS p50'],
+    ['histogram_quantile(0.95, sum by (le) (increase(eiok_build_hls_seconds_bucket[6h])))', 'HLS p95'],
+    ['histogram_quantile(0.95, sum by (le) (increase(eiok_ticket_hold_seconds_bucket[6h])))', 'ticket hold p95'],
+  ], { w: 8, unit: 's', description: 'From the daily buckets, over 6 h windows. A player is held up to 90 s, the resolver 12 s (claude/play-latency.md).' }));
+  p.push(series('Start-up problems (per 3 h)', [
+    ['sum(increase(eiok_events_total{metric="ticket_timeout"}[3h]))', 'player timeouts (got youtube.com)'],
+    ['sum(increase(eiok_events_total{metric="ticket_fastfail"}[3h]))', 'resolver fast-fails (normal while building)'],
+    ['sum(increase(eiok_events_total{metric="build",key="failed"}[3h]))', 'failed builds'],
+    ['sum by (key) (increase(eiok_events_total{metric="play_fallback"}[3h]))', 'fallback: {{key}}'],
+  ], { w: 8, min: 0, description: 'Per ticket request, so one slow video retried by the player counts several timeouts; plays count once per room.' }));
 
   p.push(row('Channels and flash checks'));
   p.push({
@@ -137,6 +167,12 @@ export function dashboard() {
     uid: DASH_UID, title: 'Everything is OK', tags: ['everything-is-ok'], timezone: 'America/Chicago', refresh: '5m',
     time: { from: 'now-2d', to: 'now' }, schemaVersion: 39, editable: true, graphTooltip: 1,
     templating: { list: [{ name: 'ds', label: 'Data source', type: 'datasource', query: 'prometheus', regex: '.*-prom$', current: {} }] },
+    annotations: { list: [
+      { builtIn: 1, name: 'Annotations & Alerts', type: 'dashboard', datasource: { type: 'grafana', uid: '-- Grafana --' }, enable: true, hide: true, iconColor: 'rgba(0, 211, 255, 1)' },
+      marker('World uploads', 'max by (source, version) (eiok_release_timestamp_seconds{source=~"world:.*"}) * 1000', '#bb9af7', '{{source}} v{{version}}', 'source'),
+      marker('GitHub releases', 'max by (source, version) (eiok_release_timestamp_seconds{source!~"world:.*"}) * 1000', '#7dcfff', '{{source}} {{version}}', 'source'),
+      marker('Deploys', 'max by (host, commit, outcome) (eiok_deploy_timestamp_seconds) * 1000', '#e0af68', '{{host}} {{commit}} ({{outcome}})', 'host,outcome'),
+    ] },
     panels: p,
   };
 }

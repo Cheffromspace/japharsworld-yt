@@ -1,0 +1,21 @@
+[Unit]
+Description=Prometheus exporter for Grafana Cloud (VRChat world Everything is OK; claude/monitoring.md)
+After=network-online.target japharsworld-yt.service
+
+[Service]
+User=jyt
+Group=jyt
+EnvironmentFile=/etc/japharsworld-yt.env
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning /opt/japharsworld-yt/metrics/exporter.js
+Restart=always
+RestartSec=5
+Nice=10
+MemoryMax=150M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/var/lib/japharsworld-yt -/var/lib/japharsworld-yt-monitor
+
+[Install]
+WantedBy=multi-user.target

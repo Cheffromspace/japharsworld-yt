@@ -106,6 +106,7 @@ and a login happens only when it stops working. A failed login alerts Discord (a
 - **Weekly**, Mondays: the week to Sunday against the week before.
 - **TEST world** (stats and TEST uploads) stays out of Discord. It is still polled and stored (and on `/stats`); each
   daily report also writes a `test_world_daily` line to the poller's journal (`journalctl -u japharsworld-yt-metrics`).
+- **Grafana Cloud** dashboard and alerts: claude/monitoring.md.
 - By hand: `sudo node /opt/japharsworld-yt/metrics/poll.js report [--day 2026-10-18] [--weekly] [--send]`.
 
 ## Stats page

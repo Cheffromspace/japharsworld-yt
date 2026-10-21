@@ -32,12 +32,15 @@ EOT
 fi
 chown root:root "$ENVF"; chmod 600 "$ENVF"
 
-for unit in japharsworld-yt-metrics.service japharsworld-yt-metrics.timer; do
+for unit in japharsworld-yt-metrics.service japharsworld-yt-metrics.timer japharsworld-yt-exporter.service; do
   install -m 644 "$APP/deploy/$unit" /etc/systemd/system/
 done
 systemctl daemon-reload
 systemctl enable -q --now japharsworld-yt-metrics.timer
+# The Prometheus exporter for Grafana Cloud (claude/monitoring.md); loopback only.
+systemctl enable -q japharsworld-yt-exporter.service
+systemctl restart japharsworld-yt-exporter.service
 [ "$restart" = 0 ] || systemctl restart japharsworld-yt.service
-echo "Metrics timer: $(systemctl is-active japharsworld-yt-metrics.timer). Logs: journalctl -u japharsworld-yt-metrics"
+echo "Metrics timer: $(systemctl is-active japharsworld-yt-metrics.timer), exporter: $(systemctl is-active japharsworld-yt-exporter). Logs: journalctl -u japharsworld-yt-metrics"
 }
 main "$@"

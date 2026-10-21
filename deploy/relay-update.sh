@@ -25,6 +25,8 @@ if echo "$changed" | grep -qx 'package-lock.json'; then sudo -u jytrelay npm ci 
 for unit in japharsworld-yt-relay.service japharsworld-yt-relay-update.service japharsworld-yt-relay-update.timer     $( [ -f /etc/systemd/system/japharsworld-yt-slotworker.timer ] && echo japharsworld-yt-slotworker.service japharsworld-yt-slotworker.timer ); do
   cmp -s "deploy/$unit" "/etc/systemd/system/$unit" || { install -m 644 "deploy/$unit" /etc/systemd/system/; systemctl daemon-reload; }
 done
+# Grafana Alloy (claude/monitoring.md), once it has been set up here.
+if command -v alloy >/dev/null && echo "$changed" | grep -qE '^deploy/alloy'; then bash deploy/alloy-setup.sh optiplex || echo "alloy setup failed"; fi
 if echo "$changed" | grep -qE '^(relay/|src/|package(-lock)?\.json$|deploy/japharsworld-yt-relay)'; then
   systemctl restart japharsworld-yt-relay.service
   echo "worker restarted on $(git log -1 --format='%h %s')"

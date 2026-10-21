@@ -1,0 +1,34 @@
+// Grafana Alloy on the Optiplex (claude/monitoring.md). Installed by deploy/alloy-setup.sh optiplex.
+// Host metrics and the state of the relay and flash-check worker units. No logs leave the machine.
+
+prometheus.remote_write "cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_PROM_URL")
+    basic_auth {
+      username = sys.env("GRAFANA_PROM_USER")
+      password = sys.env("GRAFANA_CLOUD_TOKEN")
+    }
+  }
+  external_labels = { host = "optiplex" }
+}
+
+prometheus.exporter.unix "host" {
+  disable_collectors = ["ipvs", "btrfs", "infiniband", "xfs", "zfs"]
+  enable_collectors  = ["systemd"]
+  systemd {
+    unit_include = "japharsworld-yt-.*\\.(service|timer)"
+  }
+}
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  scrape_interval = "60s"
+  forward_to      = [prometheus.relabel.host.receiver]
+}
+prometheus.relabel "host" {
+  rule {
+    source_labels = ["__name__"]
+    regex         = "node_(cpu_seconds_total|load1|load5|memory_MemAvailable_bytes|memory_MemTotal_bytes|filesystem_avail_bytes|filesystem_size_bytes|network_(receive|transmit)_bytes_total|boot_time_seconds|systemd_unit_state|time_seconds|uname_info)"
+    action        = "keep"
+  }
+  forward_to = [prometheus.remote_write.cloud.receiver]
+}

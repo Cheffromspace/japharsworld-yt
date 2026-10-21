@@ -31,7 +31,7 @@ git fetch -q origin main
 current=$(git rev-parse HEAD); target=$(git rev-parse origin/main)
 if [ "$current" = "$target" ]; then
   [ -x /opt/japharsworld-yt-monitor-venv/bin/python ] || bash deploy/monitor-setup.sh
-  [ -f /etc/systemd/system/japharsworld-yt-exporter.service ] || bash deploy/metrics-setup.sh
+  [ -f /etc/systemd/system/japharsworld-yt-exporter.service ] && [ -f /etc/systemd/system/japharsworld-yt-occupants.timer ] || bash deploy/metrics-setup.sh
   exit 0
 fi
 
@@ -40,9 +40,9 @@ changed=$(git diff --name-only "$current" "$target")
 # The monitor's own "Channels status" commits (docs/ only) are not deploys worth a marker on the dashboard.
 record() { echo "$changed" | grep -qv '^docs/' || return 0; bash deploy/deploy-record.sh "$1" || echo "deploy record failed"; }
 lock_changed=$(echo "$changed" | grep -x 'package-lock.json' || true)
-service_changed=$(echo "$changed" | grep -v -E '^(docs/|monitor/|relay/|deploy/monitor-setup\.sh$|deploy/slotmon(-remote)?$|deploy/japharsworld-yt-monitor\.|deploy/relay-|deploy/slotworker-|deploy/japharsworld-yt-slotworker|deploy/japharsworld-yt-relay|metrics/|deploy/metrics-setup\.sh$|deploy/japharsworld-yt-(metrics|exporter)\.|deploy/alloy|deploy/update\.sh$|deploy/deploy-record\.sh$|public/|test/|tools/|bench/|claude/|grafana/|README\.md$|CLAUDE\.md$|deploy-now\.cmd$|\.gitignore$)' || true)
+service_changed=$(echo "$changed" | grep -v -E '^(docs/|monitor/|relay/|deploy/monitor-setup\.sh$|deploy/slotmon(-remote)?$|deploy/japharsworld-yt-monitor\.|deploy/relay-|deploy/slotworker-|deploy/japharsworld-yt-slotworker|deploy/japharsworld-yt-relay|metrics/|deploy/metrics-setup\.sh$|deploy/japharsworld-yt-(metrics|exporter|occupants)\.|deploy/alloy|deploy/update\.sh$|deploy/deploy-record\.sh$|public/|test/|tools/|bench/|claude/|grafana/|README\.md$|CLAUDE\.md$|deploy-now\.cmd$|\.gitignore$)' || true)
 monitor_setup_changed=$(echo "$changed" | grep -E '^(monitor/requirements\.txt|monitor/seed/|deploy/monitor-setup\.sh|deploy/slotmon|deploy/japharsworld-yt-monitor\.)' || true)
-metrics_setup_changed=$(echo "$changed" | grep -E '^(deploy/metrics-setup\.sh|deploy/japharsworld-yt-(metrics|exporter)\.)' || true)
+metrics_setup_changed=$(echo "$changed" | grep -E '^(deploy/metrics-setup\.sh|deploy/japharsworld-yt-(metrics|exporter|occupants)\.)' || true)
 exporter_changed=$(echo "$changed" | grep -E '^(metrics/exporter\.js|src/metrics\.js)$' || true)
 alloy_changed=$(echo "$changed" | grep -E '^deploy/alloy' || true)
 if [ -n "$service_changed" ]; then
@@ -59,7 +59,7 @@ if [ -n "$monitor_setup_changed" ] || [ ! -x /opt/japharsworld-yt-monitor-venv/b
   bash deploy/monitor-setup.sh || echo "monitor setup failed"
 fi
 # The metrics poller (metrics/) runs from this checkout on its own timer, so its code needs no restart here.
-if [ -n "$metrics_setup_changed" ] || [ ! -f /etc/systemd/system/japharsworld-yt-exporter.service ]; then
+if [ -n "$metrics_setup_changed" ] || [ ! -f /etc/systemd/system/japharsworld-yt-exporter.service ] || [ ! -f /etc/systemd/system/japharsworld-yt-occupants.timer ]; then
   bash deploy/metrics-setup.sh || echo "metrics setup failed"
 elif [ -n "$exporter_changed" ]; then
   systemctl try-restart japharsworld-yt-exporter.service

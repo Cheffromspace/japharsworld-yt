@@ -1,5 +1,6 @@
 // Metrics poller (claude/metrics.md), run by japharsworld-yt-metrics.timer about every 15 minutes.
 //   node metrics/poll.js                    one pass: VRChat; once a day Tunelio + GitHub; the reports when due
+//   node metrics/poll.js occupants          the per-minute pass (japharsworld-yt-occupants.timer): production world counts
 //   node metrics/poll.js report [--day D] [--weekly] [--send]   print (or send) a report now
 //
 // Starts as root only to read and update the VRChat session in the root-only secrets file (and its state file),
@@ -228,8 +229,32 @@ export async function run(cfg = settings(), { now = Date.now() } = {}) {
   } finally { db.close(); }
 }
 
+// The numbers the per-minute pass keeps (owner, 2026-10-21: see who is in the world minute by minute, and visits).
+export const OCCUPANCY = ['occupants', 'publicOccupants', 'privateOccupants', 'visits'];
+
+// Per-minute pass (japharsworld-yt-occupants.timer): one VRChat request, the production world only, nothing else.
+// The world response carries its counts, so this is the whole cost: about 1 request a minute (randomized, not on the
+// clock), plus the full pass's 3 every ~15 min. Shares the full pass's 429 back-off, login guard and session.
+export async function runOccupants(cfg = settings(), { now = Date.now(), fetcher, sleep } = {}) {
+  const prod = cfg.worlds.filter(([name]) => name === 'prod');
+  if (!prod.length) return;
+  const state = readState(cfg.stateFile);
+  const { alert } = waitingAlert(cfg.webhook);
+  const vr = await pollVRChat({ ...cfg, worlds: prod, groupId: '' }, { state, alert, now, fetcher, sleep, saveCookies: (u) => updateEnvFile(cfg.secretsFile, u) });
+  writeState(cfg.stateFile, state);
+  dropPrivileges(cfg.runAs);
+  const db = openMetricsDb(cfg.db);
+  try {
+    for (const r of vr.rows) {
+      recordPoll(db, { ts: now, source: r.source, values: Object.fromEntries(OCCUPANCY.map((k) => [k, r.values[k]])), tz: cfg.tz });
+      if (r.values.version != null) recordReleases(db, [{ source: r.source, version: r.values.version, at: (r.values.updatedAt ?? 0) * 1000 }], now);
+    }
+  } finally { db.close(); }
+}
+
 async function cli(args) {
   const cfg = settings();
+  if (args[0] === 'occupants') return runOccupants(cfg);
   if (args[0] === 'report') {
     dropPrivileges(cfg.runAs);
     const db = openMetricsDb(cfg.db);

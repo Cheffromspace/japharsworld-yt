@@ -598,7 +598,7 @@
   {
    "type": "row",
    "id": 10,
-   "title": "Versions and deploys",
+   "title": "Visitors and search",
    "collapsed": false,
    "gridPos": {
     "x": 0,
@@ -609,10 +609,10 @@
    "panels": []
   },
   {
-   "type": "table",
+   "type": "timeseries",
    "id": 11,
-   "title": "World uploads and releases",
-   "description": "VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.",
+   "title": "In world (production)",
+   "description": "VRChat’s world counts, polled about every minute (japharsworld-yt-occupants.timer). VRChat updates them on its own schedule.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -621,7 +621,7 @@
     "x": 0,
     "y": 6,
     "w": 12,
-    "h": 6
+    "h": 8
    },
    "targets": [
     {
@@ -630,62 +630,66 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (source, version) (eiok_release_timestamp_seconds) * 1000",
-     "legendFormat": "",
-     "instant": true,
-     "format": "table"
-    }
-   ],
-   "transformations": [
+     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"occupants\"})",
+     "legendFormat": "in world"
+    },
     {
-     "id": "organize",
-     "options": {
-      "indexByName": {
-       "source": 0,
-       "version": 1,
-       "Value": 2
-      },
-      "excludeByName": {
-       "Time": true
-      },
-      "renameByName": {
-       "Value": "When"
-      }
-     }
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"publicOccupants\"})",
+     "legendFormat": "public instances"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"privateOccupants\"})",
+     "legendFormat": "private instances"
+    },
+    {
+     "refId": "D",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{source=\"group\",metric=\"online\"})",
+     "legendFormat": "group online"
     }
    ],
    "options": {
-    "showHeader": true,
-    "sortBy": [
-     {
-      "displayName": "When",
-      "desc": true
-     }
-    ]
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
    },
    "fieldConfig": {
-    "defaults": {},
-    "overrides": [
-     {
-      "matcher": {
-       "id": "byName",
-       "options": "When"
-      },
-      "properties": [
-       {
-        "id": "unit",
-        "value": "dateTimeAsLocal"
-       }
-      ]
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "stacking": {
+       "mode": "none"
+      }
      }
-    ]
+    },
+    "overrides": []
    }
   },
   {
-   "type": "table",
+   "type": "timeseries",
    "id": 12,
-   "title": "Deploys of main",
-   "description": "Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.",
+   "title": "Total visits (production)",
+   "description": "All-time counts from VRChat. Grafana has them from 2026-10-21; /stats has the daily history before that.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -694,7 +698,7 @@
     "x": 12,
     "y": 6,
     "w": 12,
-    "h": 6
+    "h": 8
    },
    "targets": [
     {
@@ -703,52 +707,49 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (host, commit, outcome) (eiok_deploy_timestamp_seconds) * 1000",
-     "legendFormat": "",
-     "instant": true,
-     "format": "table"
-    }
-   ],
-   "transformations": [
+     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"visits\"})",
+     "legendFormat": "visits"
+    },
     {
-     "id": "organize",
-     "options": {
-      "indexByName": {
-       "host": 0,
-       "commit": 1,
-       "outcome": 2,
-       "Value": 3
-      },
-      "excludeByName": {
-       "Time": true
-      },
-      "renameByName": {
-       "Value": "When"
-      }
-     }
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"favorites\"})",
+     "legendFormat": "favorites"
     }
    ],
    "options": {
-    "showHeader": true,
-    "sortBy": [
-     {
-      "displayName": "When",
-      "desc": true
-     }
-    ]
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
    },
    "fieldConfig": {
-    "defaults": {},
+    "defaults": {
+     "unit": "short",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
     "overrides": [
      {
       "matcher": {
        "id": "byName",
-       "options": "When"
+       "options": "favorites"
       },
       "properties": [
        {
-        "id": "unit",
-        "value": "dateTimeAsLocal"
+        "id": "custom.axisPlacement",
+        "value": "right"
        }
       ]
      }
@@ -756,21 +757,8 @@
    }
   },
   {
-   "type": "row",
-   "id": 13,
-   "title": "Visitors and search",
-   "collapsed": false,
-   "gridPos": {
-    "x": 0,
-    "y": 12,
-    "w": 24,
-    "h": 1
-   },
-   "panels": []
-  },
-  {
    "type": "timeseries",
-   "id": 14,
+   "id": 13,
    "title": "Searches, plays, joins (per hour)",
    "datasource": {
     "type": "prometheus",
@@ -778,9 +766,9 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 13,
-    "w": 12,
-    "h": 8
+    "y": 14,
+    "w": 24,
+    "h": 6
    },
    "targets": [
     {
@@ -818,65 +806,7 @@
   },
   {
    "type": "timeseries",
-   "id": 15,
-   "title": "VRChat (production)",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "${ds}"
-   },
-   "gridPos": {
-    "x": 12,
-    "y": 13,
-    "w": 12,
-    "h": 8
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${ds}"
-     },
-     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"occupants\"})",
-     "legendFormat": "in world"
-    },
-    {
-     "refId": "B",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${ds}"
-     },
-     "expr": "max(eiok_poll{source=\"group\",metric=\"online\"})",
-     "legendFormat": "group online"
-    }
-   ],
-   "options": {
-    "legend": {
-     "displayMode": "list",
-     "placement": "bottom"
-    },
-    "tooltip": {
-     "mode": "multi"
-    }
-   },
-   "fieldConfig": {
-    "defaults": {
-     "unit": "short",
-     "min": 0,
-     "custom": {
-      "lineWidth": 2,
-      "fillOpacity": 8,
-      "stacking": {
-       "mode": "none"
-      }
-     }
-    },
-    "overrides": []
-   }
-  },
-  {
-   "type": "timeseries",
-   "id": 16,
+   "id": 14,
    "title": "Search latency",
    "description": "From the daily buckets, over 3 h windows.",
    "datasource": {
@@ -885,7 +815,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 21,
+    "y": 20,
     "w": 8,
     "h": 8
    },
@@ -934,7 +864,7 @@
   },
   {
    "type": "timeseries",
-   "id": 17,
+   "id": 15,
    "title": "Search failure rate",
    "datasource": {
     "type": "prometheus",
@@ -942,7 +872,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 21,
+    "y": 20,
     "w": 8,
     "h": 8
    },
@@ -983,7 +913,7 @@
   },
   {
    "type": "timeseries",
-   "id": 18,
+   "id": 16,
    "title": "Play routes (per 3 h)",
    "datasource": {
     "type": "prometheus",
@@ -991,7 +921,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 21,
+    "y": 20,
     "w": 8,
     "h": 8
    },
@@ -1031,7 +961,7 @@
   },
   {
    "type": "timeseries",
-   "id": 19,
+   "id": 17,
    "title": "Tunelio credits left",
    "datasource": {
     "type": "prometheus",
@@ -1039,7 +969,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 29,
+    "y": 28,
     "w": 8,
     "h": 8
    },
@@ -1080,7 +1010,7 @@
   },
   {
    "type": "timeseries",
-   "id": 20,
+   "id": 18,
    "title": "Tunelio build time",
    "description": "From the daily buckets, over 6 h windows. A player is held up to 90 s, the resolver 12 s (claude/play-latency.md).",
    "datasource": {
@@ -1089,7 +1019,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 29,
+    "y": 28,
     "w": 8,
     "h": 8
    },
@@ -1165,7 +1095,7 @@
   },
   {
    "type": "timeseries",
-   "id": 21,
+   "id": 19,
    "title": "Start-up problems (per 3 h)",
    "description": "Per ticket request, so one slow video retried by the player counts several timeouts; plays count once per room.",
    "datasource": {
@@ -1174,7 +1104,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 29,
+    "y": 28,
     "w": 8,
     "h": 8
    },
@@ -1242,12 +1172,12 @@
   },
   {
    "type": "row",
-   "id": 22,
+   "id": 20,
    "title": "Channels and flash checks",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 37,
+    "y": 36,
     "w": 24,
     "h": 1
    },
@@ -1255,7 +1185,7 @@
   },
   {
    "type": "table",
-   "id": 23,
+   "id": 21,
    "title": "Slots",
    "datasource": {
     "type": "prometheus",
@@ -1263,7 +1193,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 38,
+    "y": 37,
     "w": 14,
     "h": 12
    },
@@ -1471,7 +1401,7 @@
   },
   {
    "type": "timeseries",
-   "id": 24,
+   "id": 22,
    "title": "Flash checks (per 6 h)",
    "datasource": {
     "type": "prometheus",
@@ -1479,7 +1409,7 @@
    },
    "gridPos": {
     "x": 14,
-    "y": 38,
+    "y": 37,
     "w": 10,
     "h": 6
    },
@@ -1519,7 +1449,7 @@
   },
   {
    "type": "timeseries",
-   "id": 25,
+   "id": 23,
    "title": "Check queue",
    "datasource": {
     "type": "prometheus",
@@ -1527,7 +1457,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 50,
+    "y": 49,
     "w": 10,
     "h": 6
    },
@@ -1577,12 +1507,12 @@
   },
   {
    "type": "row",
-   "id": 26,
+   "id": 24,
    "title": "Hosts",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 56,
+    "y": 55,
     "w": 24,
     "h": 1
    },
@@ -1590,7 +1520,7 @@
   },
   {
    "type": "timeseries",
-   "id": 27,
+   "id": 25,
    "title": "CPU busy",
    "datasource": {
     "type": "prometheus",
@@ -1598,7 +1528,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 57,
+    "y": 56,
     "w": 8,
     "h": 8
    },
@@ -1639,7 +1569,7 @@
   },
   {
    "type": "timeseries",
-   "id": 28,
+   "id": 26,
    "title": "Memory available",
    "datasource": {
     "type": "prometheus",
@@ -1647,7 +1577,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 57,
+    "y": 56,
     "w": 8,
     "h": 8
    },
@@ -1688,7 +1618,7 @@
   },
   {
    "type": "timeseries",
-   "id": 29,
+   "id": 27,
    "title": "Disk free (/)",
    "datasource": {
     "type": "prometheus",
@@ -1696,7 +1626,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 57,
+    "y": 56,
     "w": 8,
     "h": 8
    },
@@ -1737,7 +1667,7 @@
   },
   {
    "type": "timeseries",
-   "id": 30,
+   "id": 28,
    "title": "Public endpoints",
    "datasource": {
     "type": "prometheus",
@@ -1745,7 +1675,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 65,
+    "y": 64,
     "w": 12,
     "h": 8
    },
@@ -1794,7 +1724,7 @@
   },
   {
    "type": "timeseries",
-   "id": 31,
+   "id": 29,
    "title": "Failed units",
    "description": "japharsworld-yt units, bgutil-pot and caddy in the failed state.",
    "datasource": {
@@ -1803,7 +1733,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 65,
+    "y": 64,
     "w": 12,
     "h": 8
    },
@@ -1839,6 +1769,226 @@
      }
     },
     "overrides": []
+   }
+  },
+  {
+   "type": "row",
+   "id": 30,
+   "title": "Versions and deploys",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 72,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "type": "state-timeline",
+   "id": 31,
+   "title": "World version over time",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 73,
+    "w": 24,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"version\"})",
+     "legendFormat": "production"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{source=\"world:test\",metric=\"version\"})",
+     "legendFormat": "TEST"
+    }
+   ],
+   "options": {
+    "showValue": "always",
+    "mergeValues": true,
+    "rowHeight": 0.8,
+    "legend": {
+     "showLegend": false
+    },
+    "tooltip": {
+     "mode": "single"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "prefix:v",
+     "decimals": 0,
+     "color": {
+      "mode": "continuous-BlPu"
+     },
+     "custom": {
+      "fillOpacity": 70,
+      "lineWidth": 0
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "table",
+   "id": 32,
+   "title": "World uploads and releases",
+   "description": "VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 77,
+    "w": 12,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max by (source, version) (eiok_release_timestamp_seconds) * 1000",
+     "legendFormat": "",
+     "instant": true,
+     "format": "table"
+    }
+   ],
+   "transformations": [
+    {
+     "id": "organize",
+     "options": {
+      "indexByName": {
+       "source": 0,
+       "version": 1,
+       "Value": 2
+      },
+      "excludeByName": {
+       "Time": true
+      },
+      "renameByName": {
+       "Value": "When"
+      }
+     }
+    }
+   ],
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "displayName": "When",
+      "desc": true
+     }
+    ]
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "When"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "dateTimeAsLocal"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "type": "table",
+   "id": 33,
+   "title": "Deploys of main",
+   "description": "Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 77,
+    "w": 12,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max by (host, commit, outcome) (eiok_deploy_timestamp_seconds) * 1000",
+     "legendFormat": "",
+     "instant": true,
+     "format": "table"
+    }
+   ],
+   "transformations": [
+    {
+     "id": "organize",
+     "options": {
+      "indexByName": {
+       "host": 0,
+       "commit": 1,
+       "outcome": 2,
+       "Value": 3
+      },
+      "excludeByName": {
+       "Time": true
+      },
+      "renameByName": {
+       "Value": "When"
+      }
+     }
+    }
+   ],
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "displayName": "When",
+      "desc": true
+     }
+    ]
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "When"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "dateTimeAsLocal"
+       }
+      ]
+     }
+    ]
    }
   }
  ]

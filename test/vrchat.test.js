@@ -4,7 +4,7 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { totp, instanceType, worldValues, groupValues, VRChat } from '../metrics/vrchat.js';
-import { pollVRChat, updateEnvFile, settings, tunelioPass, renewalReminders, recordReleases } from '../metrics/poll.js';
+import { pollVRChat, updateEnvFile, settings, tunelioPass, renewalReminders, recordReleases, runOccupants, OCCUPANCY } from '../metrics/poll.js';
 import { openMetricsDb, getMeta } from '../src/metrics.js';
 import { githubRepo } from '../metrics/sources.js';
 
@@ -233,4 +233,21 @@ test('releases: world versions and GitHub tags recorded once, at their own time'
   const g = await githubRepo({ repo: 'Cheffromspace/Everything-is-OK', userAgent: UA, fetcher: gh });
   assert.deepEqual(g.tags, [{ tag: 'v2026.10.17', at: Date.parse('2026-10-17T21:00:00Z') }, { tag: 'v2026.10.18.2', at: Date.parse('2026-10-18T01:00:00Z') }]);
   assert.equal(g.values.release_downloads, 3);
+});
+
+test('per-minute pass: one request (the production world), occupancy and visits only, the release recorded', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'eiok-occ-'));
+  try {
+    const fake = fakeVRChat();
+    const c = { ...cfg({ authCookie: 'good', twoFactorCookie: 'good2' }), db: join(dir, 'metrics.db'), stateFile: join(dir, 'state.json'), secretsFile: join(dir, 'secrets.env'), runAs: '' };
+    await runOccupants(c, { now: Date.parse('2026-10-21T18:00:00Z'), fetcher: fake.fetcher, sleep: noSleep });
+    assert.deepEqual(fake.calls.map((x) => x.path), ['/worlds/wrld_63bed747-6c3d-428c-b2f4-1a904afa7df8']);
+    const db = openMetricsDb(c.db);
+    try {
+      const rows = db.prepare('SELECT source, metric FROM polls ORDER BY metric').all();
+      assert.ok(rows.every((r) => r.source === 'world:prod' && OCCUPANCY.includes(r.metric)));
+      assert.ok(rows.some((r) => r.metric === 'visits'));
+      assert.equal(db.prepare('SELECT COUNT(*) n FROM releases').get().n, 1);
+    } finally { db.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

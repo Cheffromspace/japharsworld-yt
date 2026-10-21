@@ -43,6 +43,10 @@ About every 15 minutes (`OnUnitActiveSec`, randomized: VRChat asks not to poll o
   and dropped.
 - **VRChat group** `GET /api/1/groups/{id}`: `memberCount`, `onlineMemberCount`, when `VRCHAT_GROUP_ID` is set.
 
+About every minute (`japharsworld-yt-occupants.timer`, `poll.js occupants`; owner, 2026-10-21): one request, the
+production world only, keeping `occupants`, `publicOccupants`, `privateOccupants` and `visits` (and a new `version` as a
+release). About 5,800 poll rows a day, kept 90 days like the rest.
+
 - **Tunelio** `GET /credits` (free): balance and plan, every pass. Tunelio has no API for the wallet funds that
   auto-renew pays from, so the poller watches what it can (see Reports).
 - **Releases** (`releases` table): each world's `version` the first time it is seen, at VRChat's `updated_at` (the
@@ -89,8 +93,8 @@ it opens any database (`CapabilityBoundingSet=CAP_SETUID CAP_SETGID`, `ProtectSy
 ## VRChat rules followed
 
 From VRChat's Creator Guidelines ("API usage") and the community docs (vrchat.community):
-`User-Agent: EverythingIsOK-metrics/1.0 <METRICS_CONTACT>`; 3 requests per poll, 2 s apart, about every 15 minutes, not on
-the clock; on `429` it stops and waits at least `Retry-After` (30 min, doubling to 6 h); the session cookie is reused,
+`User-Agent: EverythingIsOK-metrics/1.0 <METRICS_CONTACT>`; 3 requests per poll, 2 s apart, about every 15 minutes, plus
+1 request about every minute for the production world's counts, neither on the clock (randomized); on `429` it stops and waits at least `Retry-After` (30 min, doubling to 6 h); the session cookie is reused,
 and a login happens only when it stops working. A failed login alerts Discord (at most every 6 h) and is not retried for
 6 h. It only reads public world and group data for the owner's own world and group; it never acts for another user.
 

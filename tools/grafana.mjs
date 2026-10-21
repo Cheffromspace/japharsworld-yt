@@ -47,11 +47,11 @@ function stat(title, expr, { unit = 'short', w = 4, thresholds, decimals, mappin
     fieldConfig: { defaults: { unit, decimals, mappings: mappings ?? [], thresholds: { mode: 'absolute', steps: thresholds ?? [{ color: 'blue', value: null }] } }, overrides: [] },
   };
 }
-function series(title, list, { unit = 'short', w = 12, h = 8, stack = false, description, min } = {}) {
+function series(title, list, { unit = 'short', w = 12, h = 8, stack = false, description, min, overrides = [] } = {}) {
   return {
     type: 'timeseries', id: ++id, title, description, datasource: DS, gridPos: place(w, h), targets: targets(list),
     options: { legend: { displayMode: 'list', placement: 'bottom' }, tooltip: { mode: 'multi' } },
-    fieldConfig: { defaults: { unit, min, custom: { lineWidth: 2, fillOpacity: stack ? 30 : 8, stacking: { mode: stack ? 'normal' : 'none' } } }, overrides: [] },
+    fieldConfig: { defaults: { unit, min, custom: { lineWidth: 2, fillOpacity: stack ? 30 : 8, stacking: { mode: stack ? 'normal' : 'none' } } }, overrides },
   };
 }
 // The latest rows of a "value = when (ms)" series: one row per label set, newest first.
@@ -86,20 +86,21 @@ export function dashboard() {
   p.push(stat('Flash fails now', 'count(eiok_slot_flash_pass == 0) or vector(0)', { w: 3, thresholds: [{ color: OK, value: null }, { color: BAD, value: 1 }], description: 'Slots whose current stream failed its last flash check.' }));
   p.push(stat('Oldest waiting check', 'max(eiok_jobs_oldest_pending_seconds)', { w: 3, unit: 's', thresholds: [{ color: OK, value: null }, { color: WARN, value: 3600 }, { color: BAD, value: 7200 }], description: 'Resolution + flash jobs wait for the Optiplex worker (every 20 min).' }));
 
-  p.push(row('Versions and deploys'));
-  p.push(versions('World uploads and releases', 'max by (source, version) (eiok_release_timestamp_seconds) * 1000', ['source', 'version'],
-    'VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.'));
-  p.push(versions('Deploys of main', 'max by (host, commit, outcome) (eiok_deploy_timestamp_seconds) * 1000', ['host', 'commit', 'outcome'],
-    'Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.'));
-
   p.push(row('Visitors and search'));
+  p.push(series('In world (production)', [
+    ['max(eiok_poll{source="world:prod",metric="occupants"})', 'in world'],
+    ['max(eiok_poll{source="world:prod",metric="publicOccupants"})', 'public instances'],
+    ['max(eiok_poll{source="world:prod",metric="privateOccupants"})', 'private instances'],
+    ['max(eiok_poll{source="group",metric="online"})', 'group online'],
+  ], { w: 12, min: 0, description: 'VRChat’s world counts, polled about every minute (japharsworld-yt-occupants.timer). VRChat updates them on its own schedule.' }));
+  p.push(series('Total visits (production)', [
+    ['max(eiok_poll{source="world:prod",metric="visits"})', 'visits'],
+    ['max(eiok_poll{source="world:prod",metric="favorites"})', 'favorites'],
+  ], { w: 12, overrides: [{ matcher: { id: 'byName', options: 'favorites' }, properties: [{ id: 'custom.axisPlacement', value: 'right' }] }],
+    description: 'All-time counts from VRChat. Grafana has them from 2026-10-21; /stats has the daily history before that.' }));
   p.push(series('Searches, plays, joins (per hour)', [
     ['sum by (metric) (increase(eiok_events_total{metric=~"search|play|join|more",key=""}[1h]))', '{{metric}}'],
-  ], { w: 12 }));
-  p.push(series('VRChat (production)', [
-    ['max(eiok_poll{source="world:prod",metric="occupants"})', 'in world'],
-    ['max(eiok_poll{source="group",metric="online"})', 'group online'],
-  ], { w: 12, min: 0 }));
+  ], { w: 24, h: 6 }));
   p.push(series('Search latency', [
     ['histogram_quantile(0.5, sum by (le) (increase(eiok_search_seconds_bucket[3h])))', 'p50'],
     ['histogram_quantile(0.95, sum by (le) (increase(eiok_search_seconds_bucket[3h])))', 'p95'],
@@ -162,6 +163,22 @@ export function dashboard() {
   p.push(series('Disk free (/)', [['max by (host) (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})', '{{host}}']], { w: 8, unit: 'percentunit', min: 0 }));
   p.push(series('Public endpoints', [['max by (job) (probe_success)', '{{job}}'], ['max by (job) (probe_duration_seconds)', '{{job}} seconds']], { w: 12 }));
   p.push(series('Failed units', [['sum by (host, name) (node_systemd_unit_state{state="failed"}) > 0', '{{host}} {{name}}']], { w: 12, description: 'japharsworld-yt units, bgutil-pot and caddy in the failed state.' }));
+
+  p.push(row('Versions and deploys'));
+  // A band per world version over time (the polled version number), so uploads read as a timeline.
+  p.push({
+    type: 'state-timeline', id: ++id, title: 'World version over time', datasource: DS, gridPos: place(24, 4),
+    targets: targets([
+      ['max(eiok_poll{source="world:prod",metric="version"})', 'production'],
+      ['max(eiok_poll{source="world:test",metric="version"})', 'TEST'],
+    ]),
+    options: { showValue: 'always', mergeValues: true, rowHeight: 0.8, legend: { showLegend: false }, tooltip: { mode: 'single' } },
+    fieldConfig: { defaults: { unit: 'prefix:v', decimals: 0, color: { mode: 'continuous-BlPu' }, custom: { fillOpacity: 70, lineWidth: 0 } }, overrides: [] },
+  });
+  p.push(versions('World uploads and releases', 'max by (source, version) (eiok_release_timestamp_seconds) * 1000', ['source', 'version'],
+    'VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.'));
+  p.push(versions('Deploys of main', 'max by (host, commit, outcome) (eiok_deploy_timestamp_seconds) * 1000', ['host', 'commit', 'outcome'],
+    'Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.'));
 
   return {
     uid: DASH_UID, title: 'Everything is OK', tags: ['everything-is-ok'], timezone: 'America/Chicago', refresh: '5m',

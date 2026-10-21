@@ -39,7 +39,7 @@ prometheus.scrape "host" {
 prometheus.relabel "host" {
   rule {
     source_labels = ["__name__"]
-    regex         = "node_(cpu_seconds_total|load1|load5|memory_MemAvailable_bytes|memory_MemTotal_bytes|filesystem_avail_bytes|filesystem_size_bytes|network_(receive|transmit)_bytes_total|boot_time_seconds|systemd_unit_state|time_seconds|uname_info)|eiok_deploy_timestamp_seconds"
+    regex         = "node_(cpu_seconds_total|load1|load5|memory_MemAvailable_bytes|memory_MemTotal_bytes|filesystem_avail_bytes|filesystem_size_bytes|network_(receive|transmit)_bytes_total|boot_time_seconds|systemd_unit_state|time_seconds|uname_info)|eiok_deploy_.*"
     action        = "keep"
   }
   forward_to = [prometheus.remote_write.cloud.receiver]

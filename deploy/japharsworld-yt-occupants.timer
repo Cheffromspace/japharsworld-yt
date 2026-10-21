@@ -1,0 +1,11 @@
+[Unit]
+Description=Production world occupants about every minute (not on the clock, as VRChat asks)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+RandomizedDelaySec=10s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

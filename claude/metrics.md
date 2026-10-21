@@ -25,12 +25,25 @@ Counted in memory and written to SQLite every minute and at shutdown (SIGTERM). 
 | `cc_list` / `cc_list_lang` | – / VRChat language or `native` | "Show captions" (list loads) |
 | `cc_track` / `cc_track_lang` | – / track language (`en`, `pt-BR`, `zh-Hans`) | tracks picked on the tablet |
 | `cc_unavailable` | reason (`no_captions`, `no_track_in_language`, `temporarily_unavailable`, `nothing_playing`, `failed`, …) | "not available" answers |
-| `credits` | `playback` (10 per successful `/create`), `captions` (6 per `/transcript`) | Tunelio credits spent |
+| `credits` | `playback` (10 per successful `/create`), `captions` (6 per `/transcript`), `probe` (the speed probe below) | Tunelio credits spent |
 | `join` / `join_lang` | – / VRChat language | the bare search address the world loads once after join (answered `400 empty_query`). Only visitors who **allow untrusted URLs** send it: the closest thing to a per-language join count |
 
 `gauges`: `credits_remaining` (the last `X-Credits-Remaining` seen each day).
 `hourly`: `shard`, one row per hour and shard (0–7) that saw any request. Instances pick a shard at random, so the
 number of rows in an hour roughly counts busy instances; two instances on one shard count once (a lower bound).
+
+### Tunelio speed probe (`src/probe.js`, inside the search service)
+
+Owner, 2026-10-21: track Tunelio's build speed over time (visitors' builds are too few to show a trend), hourly at
+most. Every `TUNELIO_PROBE_MINUTES` (default 60, at least 60, plus a random 0–10 min; 0 = off), only while no
+visitor's build or held player is in flight: one search through the relay worker (never the Linode or the Data API),
+a random 12–30 min result this process hasn't probed, one `/create` at 1080p (10 credits, `credits`/`probe`;
+about 240 a day), then the first byte of the progressive mp4 or, on alternate runs, the HLS playlist and its first
+segment. One `polls` row per run, source `tunelio:progressive` or `tunelio:hls`: `ok`, `warm` (answered in
+under 2 s, so Tunelio already had the file: no speed values), `create_s`, `start_s`, `playlist_s` (HLS), `mb`,
+`mb_per_s`, `minutes`. Numbers only: the probed video's ID stays in memory and the service log. The video is a
+random public one, not anything a visitor searched or played. Due time and run count live in `meta`
+(`tunelio_probe_next`, `tunelio_probe_runs`) so restarts don't probe early.
 
 ### From the poller (`metrics/poll.js`, `japharsworld-yt-metrics.timer`)
 

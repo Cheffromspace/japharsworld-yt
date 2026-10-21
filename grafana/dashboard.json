@@ -1171,13 +1171,144 @@
    }
   },
   {
-   "type": "row",
+   "type": "timeseries",
    "id": 20,
+   "title": "Tunelio probe: time to start",
+   "description": "Hourly speed probe (src/probe.js): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 2 h. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment).",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 36,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max by (source) (eiok_poll{source=~\"tunelio:.*\",metric=\"start_s\"})",
+     "legendFormat": "{{source}}"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max by (source) (eiok_poll{source=~\"tunelio:.*\",metric=\"create_s\"})",
+     "legendFormat": "{{source}} /create"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "timeseries",
+   "id": 21,
+   "title": "Tunelio probe: build speed",
+   "description": "Hourly speed probe (src/probe.js): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 2 h. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment). 2026-10-19 measured ~60 MB/s progressive.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 36,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max by (source) (eiok_poll{source=~\"tunelio:.*\",metric=\"mb_per_s\"})",
+     "legendFormat": "{{source}} MB/s"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max by (source) (eiok_poll{source=~\"tunelio:.*\",metric=\"mb\"})",
+     "legendFormat": "{{source}} file MB"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": ".*file MB"
+      },
+      "properties": [
+       {
+        "id": "custom.axisPlacement",
+        "value": "right"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "type": "row",
+   "id": 22,
    "title": "Channels and flash checks",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 36,
+    "y": 44,
     "w": 24,
     "h": 1
    },
@@ -1185,7 +1316,7 @@
   },
   {
    "type": "table",
-   "id": 21,
+   "id": 23,
    "title": "Slots",
    "datasource": {
     "type": "prometheus",
@@ -1193,7 +1324,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 37,
+    "y": 45,
     "w": 14,
     "h": 12
    },
@@ -1401,7 +1532,7 @@
   },
   {
    "type": "timeseries",
-   "id": 22,
+   "id": 24,
    "title": "Flash checks (per 6 h)",
    "datasource": {
     "type": "prometheus",
@@ -1409,7 +1540,7 @@
    },
    "gridPos": {
     "x": 14,
-    "y": 37,
+    "y": 45,
     "w": 10,
     "h": 6
    },
@@ -1449,7 +1580,7 @@
   },
   {
    "type": "timeseries",
-   "id": 23,
+   "id": 25,
    "title": "Check queue",
    "datasource": {
     "type": "prometheus",
@@ -1457,7 +1588,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 49,
+    "y": 57,
     "w": 10,
     "h": 6
    },
@@ -1507,12 +1638,12 @@
   },
   {
    "type": "row",
-   "id": 24,
+   "id": 26,
    "title": "Hosts",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 55,
+    "y": 63,
     "w": 24,
     "h": 1
    },
@@ -1520,7 +1651,7 @@
   },
   {
    "type": "timeseries",
-   "id": 25,
+   "id": 27,
    "title": "CPU busy",
    "datasource": {
     "type": "prometheus",
@@ -1528,7 +1659,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 56,
+    "y": 64,
     "w": 8,
     "h": 8
    },
@@ -1569,7 +1700,7 @@
   },
   {
    "type": "timeseries",
-   "id": 26,
+   "id": 28,
    "title": "Memory available",
    "datasource": {
     "type": "prometheus",
@@ -1577,7 +1708,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 56,
+    "y": 64,
     "w": 8,
     "h": 8
    },
@@ -1618,7 +1749,7 @@
   },
   {
    "type": "timeseries",
-   "id": 27,
+   "id": 29,
    "title": "Disk free (/)",
    "datasource": {
     "type": "prometheus",
@@ -1626,7 +1757,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 56,
+    "y": 64,
     "w": 8,
     "h": 8
    },
@@ -1667,7 +1798,7 @@
   },
   {
    "type": "timeseries",
-   "id": 28,
+   "id": 30,
    "title": "Public endpoints",
    "datasource": {
     "type": "prometheus",
@@ -1675,7 +1806,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 64,
+    "y": 72,
     "w": 12,
     "h": 8
    },
@@ -1724,7 +1855,7 @@
   },
   {
    "type": "timeseries",
-   "id": 29,
+   "id": 31,
    "title": "Failed units",
    "description": "japharsworld-yt units, bgutil-pot and caddy in the failed state.",
    "datasource": {
@@ -1733,7 +1864,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 64,
+    "y": 72,
     "w": 12,
     "h": 8
    },
@@ -1773,12 +1904,12 @@
   },
   {
    "type": "row",
-   "id": 30,
+   "id": 32,
    "title": "Versions and deploys",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 72,
+    "y": 80,
     "w": 24,
     "h": 1
    },
@@ -1786,7 +1917,7 @@
   },
   {
    "type": "state-timeline",
-   "id": 31,
+   "id": 33,
    "title": "World version over time",
    "datasource": {
     "type": "prometheus",
@@ -1794,7 +1925,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 73,
+    "y": 81,
     "w": 24,
     "h": 4
    },
@@ -1846,7 +1977,7 @@
   },
   {
    "type": "table",
-   "id": 32,
+   "id": 34,
    "title": "World uploads and releases",
    "description": "VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.",
    "datasource": {
@@ -1855,7 +1986,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 77,
+    "y": 85,
     "w": 12,
     "h": 6
    },
@@ -1919,7 +2050,7 @@
   },
   {
    "type": "table",
-   "id": 33,
+   "id": 35,
    "title": "Deploys of main",
    "description": "Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.",
    "datasource": {
@@ -1928,7 +2059,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 77,
+    "y": 85,
     "w": 12,
     "h": 6
    },

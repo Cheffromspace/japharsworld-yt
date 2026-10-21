@@ -125,6 +125,16 @@ export function dashboard() {
     ['sum(increase(eiok_events_total{metric="build",key="failed"}[3h]))', 'failed builds'],
     ['sum by (key) (increase(eiok_events_total{metric="play_fallback"}[3h]))', 'fallback: {{key}}'],
   ], { w: 8, min: 0, description: 'Per ticket request, so one slow video retried by the player counts several timeouts; plays count once per room.' }));
+  const probeNote = 'Hourly speed probe (src/probe.js): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 2 h. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment).';
+  p.push(series('Tunelio probe: time to start', [
+    ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="start_s"})', '{{source}}'],
+    ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="create_s"})', '{{source}} /create'],
+  ], { w: 12, unit: 's', min: 0, description: probeNote }));
+  p.push(series('Tunelio probe: build speed', [
+    ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="mb_per_s"})', '{{source}} MB/s'],
+    ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="mb"})', '{{source}} file MB'],
+  ], { w: 12, min: 0, description: `${probeNote} 2026-10-19 measured ~60 MB/s progressive.`,
+    overrides: [{ matcher: { id: 'byRegexp', options: '.*file MB' }, properties: [{ id: 'custom.axisPlacement', value: 'right' }] }] }));
 
   p.push(row('Channels and flash checks'));
   p.push({

@@ -25,7 +25,8 @@ import { makeAlert } from './alert.js';
 import { Relay, RelayError } from './relay.js';
 import { DataApi } from './dataapi.js';
 import { makeSearch } from './search.js';
-import { Metrics, noMetrics, lengthBucket, secondsBucket, sizeBucket } from './metrics.js';
+import { Metrics, noMetrics, lengthBucket, secondsBucket, sizeBucket, recordPoll, getMeta, setMeta } from './metrics.js';
+import { TunelioProbe } from './probe.js';
 import { statsRoute } from './stats.js';
 
 const API = 1;
@@ -46,7 +47,7 @@ function page(path) {
   return buf;
 }
 
-export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, log = console.log } = {}) {
+export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, log = console.log } = {}) {
   store ??= new Store({ path: config.dbPath, shards: config.shards, pool: config.pool, pinHours: config.pinHours });
   const logJson = (o) => log(JSON.stringify({ at: new Date().toISOString(), ...o }));
   metrics ??= config.metricsPath ? new Metrics({ path: config.metricsPath, tz: config.metricsTz, log: logJson }).start() : noMetrics;
@@ -165,6 +166,25 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     for (const j of playback.jobs?.values?.() ?? []) if (j.state === 'building') building++;
     return holding + building;
   };
+
+  // Tunelio speed over time (src/probe.js): its own client so its credits count as `probe`, not playback. It searches
+  // only through the relay worker, and waits while a visitor's build or held player is in flight.
+  if (probe === undefined && config.tunelioProbeMinutes > 0 && config.tunelioKey) {
+    const probeDb = () => (config.metricsPath && metrics.open ? metrics.open() : null);
+    const kept = new Map();
+    const probeTunelio = new Tunelio({ key: config.tunelioKey, onCredits: (left) => metrics.gauge('credits_remaining', '', left),
+      onCall: ({ path, ok }) => { if (ok && path === '/create') metrics.inc('credits', 'probe', 10); } });
+    probe = new TunelioProbe({
+      tunelio: probeTunelio, quality: config.tunelioQuality, intervalMinutes: config.tunelioProbeMinutes, log: logJson,
+      search: (query, limit) => (relay.enabled && relay.online().length ? relay.search(query, limit, { timeoutMs: config.relayWaitMs }) : null),
+      busy: () => busy() + (Date.now() < (playback.pausedUntil ?? 0) ? 1 : 0),
+      record: (source, values) => { const db = probeDb(); if (db) recordPoll(db, { ts: Date.now(), source, values, tz: config.metricsTz }); },
+      meta: {
+        get: (k) => { const db = probeDb(); return db ? getMeta(db, k) : kept.get(k) ?? null; },
+        set: (k, v) => { const db = probeDb(); if (db) setMeta(db, k, v); else kept.set(k, String(v)); },
+      },
+    }).start();
+  }
 
   async function ticket(req, res, shard, n) {
     const t = store.get(shard, n);
@@ -342,7 +362,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       else res.end();
     }
   }
-  return Object.assign(handler, { relay, checkWorkers, metrics });
+  return Object.assign(handler, { relay, checkWorkers, metrics, probe });
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

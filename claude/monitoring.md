@@ -62,13 +62,15 @@ Only what the services can't say about themselves; their own Discord alerts are 
 3. **Optiplex** (as root): `bash /opt/japharsworld-yt-relay/deploy/alloy-setup.sh optiplex`, same env file
    (the same token is fine), run again.
 4. **Dashboard and alerts** (any machine with the repo): in the stack create a service account (Editor role) and a
-   token, then
+   token, and put the settings in the repo's `.env` (gitignored; real environment variables win):
    ```sh
-   GRAFANA_URL=https://<stack>.grafana.net GRAFANA_TOKEN=glsa_... DISCORD_WEBHOOK=https://discord.com/api/webhooks/... \
-     node tools/grafana.mjs push
+   GRAFANA_URL=https://calmcanoe396.grafana.net
+   GRAFANA_SA_TOKEN=glsa_...
+   GRAFANA_DISCORD_WEBHOOK=https://discord.com/api/webhooks/...   # for now the same channel as ALERT_WEBHOOK
    ```
-   It creates the folder, the dashboard (`/d/everything-is-ok`), the Discord contact point and the alert rules,
-   and is safe to re-run.
+   then `node tools/grafana.mjs push`. It creates the folder, the dashboard (`/d/everything-is-ok`), the Discord
+   contact point and the alert rules, and is safe to re-run. To send alerts elsewhere, change
+   `GRAFANA_DISCORD_WEBHOOK` and push again. (`GRAFANA_TOKEN` in the same file is the write-only token Alloy uses.)
 
 ## Changing things
 

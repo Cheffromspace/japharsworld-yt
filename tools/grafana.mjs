@@ -1,9 +1,22 @@
 // Grafana Cloud dashboard and alert rules for Everything is OK (claude/monitoring.md), kept in the repo.
 //   node tools/grafana.mjs build    writes grafana/dashboard.json and grafana/alert-rules.json
 //   node tools/grafana.mjs push     uploads both to the stack (and the Discord contact point)
-// push needs GRAFANA_URL (https://<stack>.grafana.net), GRAFANA_TOKEN (a service account token, Editor role) and
-// DISCORD_WEBHOOK (the alerts channel; same as ALERT_WEBHOOK on the Linode).
-import { writeFileSync, mkdirSync } from 'node:fs';
+// push reads its settings from the environment or the repo's .env (gitignored; the environment wins):
+//   GRAFANA_URL               https://<stack>.grafana.net
+//   GRAFANA_SA_TOKEN          a service account token (glsa_…, Editor role); not GRAFANA_TOKEN, Alloy's write-only token
+//   GRAFANA_DISCORD_WEBHOOK   where the alerts go (the contact point). Change it and push again to move them.
+import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
+
+const env = { ...dotenv('.env'), ...process.env };
+function dotenv(path) {
+  if (!existsSync(path)) return {};
+  const out = {};
+  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (m) out[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
+  }
+  return out;
+}
 
 const DS = { type: 'prometheus', uid: '${ds}' };
 const DASH_UID = 'everything-is-ok';
@@ -149,9 +162,9 @@ export function alertRules(dsUid) {
 }
 
 async function api(path, { method = 'GET', body } = {}) {
-  const base = process.env.GRAFANA_URL?.replace(/\/$/, '');
-  const token = process.env.GRAFANA_TOKEN;
-  if (!base || !token) throw new Error('set GRAFANA_URL and GRAFANA_TOKEN');
+  const base = env.GRAFANA_URL?.replace(/\/$/, '');
+  const token = env.GRAFANA_SA_TOKEN;
+  if (!base || !token) throw new Error('set GRAFANA_URL and GRAFANA_SA_TOKEN (in .env or the environment)');
   const r = await fetch(`${base}${path}`, {
     method, body: body && JSON.stringify(body),
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-disable-provenance': 'true' },
@@ -161,23 +174,36 @@ async function api(path, { method = 'GET', body } = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+// The stack's Prometheus data source: GRAFANA_PROM_DS_UID, else the list (needs datasources:read), else Grafana
+// Cloud's usual uid.
+async function promSource() {
+  const byUid = (uid) => api(`/api/datasources/uid/${encodeURIComponent(uid)}`);
+  if (env.GRAFANA_PROM_DS_UID) return byUid(env.GRAFANA_PROM_DS_UID);
+  try {
+    const sources = await api('/api/datasources');
+    const prom = sources.find((d) => d.type === 'prometheus' && /-prom$/.test(d.name)) ?? sources.find((d) => d.type === 'prometheus');
+    if (prom) return prom;
+  } catch (err) { if (err.status !== 403) throw err; }
+  try { return await byUid('grafanacloud-prom'); } catch {
+    throw new Error('no Prometheus data source found; set GRAFANA_PROM_DS_UID (Connections > Data sources > the -prom one, uid in its URL)');
+  }
+}
+
 async function push() {
-  const sources = await api('/api/datasources');
-  const prom = sources.find((d) => d.type === 'prometheus' && /-prom$/.test(d.name)) ?? sources.find((d) => d.type === 'prometheus');
-  if (!prom) throw new Error('no Prometheus data source on the stack');
+  const prom = await promSource();
   try { await api('/api/folders', { method: 'POST', body: FOLDER }); } catch (err) { if (err.status !== 409 && err.status !== 412) throw err; }
   await api('/api/dashboards/db', { method: 'POST', body: { dashboard: dashboard(), folderUid: FOLDER.uid, overwrite: true, message: 'tools/grafana.mjs push' } });
-  console.log(`dashboard: ${process.env.GRAFANA_URL.replace(/\/$/, '')}/d/${DASH_UID}`);
+  console.log(`dashboard: ${env.GRAFANA_URL.replace(/\/$/, '')}/d/${DASH_UID}`);
 
-  if (process.env.DISCORD_WEBHOOK) {
+  if (env.GRAFANA_DISCORD_WEBHOOK) {
     const points = await api('/api/v1/provisioning/contact-points');
-    const cp = { name: RECEIVER, type: 'discord', settings: { url: process.env.DISCORD_WEBHOOK, use_discord_username: false }, disableResolveMessage: false };
+    const cp = { name: RECEIVER, type: 'discord', settings: { url: env.GRAFANA_DISCORD_WEBHOOK, use_discord_username: false }, disableResolveMessage: false };
     const existing = points.find((c) => c.name === RECEIVER);
     if (existing) await api(`/api/v1/provisioning/contact-points/${existing.uid}`, { method: 'PUT', body: { ...cp, uid: existing.uid } });
     else await api('/api/v1/provisioning/contact-points', { method: 'POST', body: cp });
     console.log(`contact point: ${RECEIVER}`);
   } else if (!(await api('/api/v1/provisioning/contact-points')).some((c) => c.name === RECEIVER)) {
-    throw new Error('set DISCORD_WEBHOOK the first time (the alert rules send to it)');
+    throw new Error('set GRAFANA_DISCORD_WEBHOOK the first time (the alert rules send to it)');
   }
   for (const r of alertRules(prom.uid)) {
     try { await api(`/api/v1/provisioning/alert-rules/${r.uid}`, { method: 'PUT', body: r }); } catch (err) {
@@ -195,7 +221,7 @@ if (cmd === 'build') {
   writeFileSync('grafana/alert-rules.json', `${JSON.stringify(alertRules('${ds}'), null, 1)}\n`);
   console.log('wrote grafana/dashboard.json, grafana/alert-rules.json');
 } else if (cmd === 'push') {
-  push().catch((err) => { console.error(err.message); process.exit(1); });
+  push().catch((err) => { console.error(err.message); process.exitCode = 1; });
 } else if (cmd) {
   console.error('usage: node tools/grafana.mjs build|push');
   process.exit(2);

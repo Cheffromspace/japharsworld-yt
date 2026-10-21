@@ -15,7 +15,8 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadOnlyPaths=/var/lib/japharsworld-yt -/var/lib/japharsworld-yt-monitor
+# The databases are opened read only, but SQLite WAL needs to write their -shm files.
+ReadWritePaths=/var/lib/japharsworld-yt -/var/lib/japharsworld-yt-monitor
 
 [Install]
 WantedBy=multi-user.target

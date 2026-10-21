@@ -10,7 +10,7 @@
 //   GET /stats, /stats.json, /stats/export.csv         usage metrics (bearer or ?token= STATS_TOKEN; see stats.js)
 //   GET /, /privacy, /logo.png                         home page and privacy policy (public/)
 import http from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { config as defaults } from './config.js';
 import { Store } from './store.js';
@@ -34,10 +34,16 @@ const PAGES = {
   '/privacy': ['privacy.html', 'text/html; charset=utf-8'],
   '/logo.png': ['logo.png', 'image/png'],
 };
+// Re-read when the file changes, so a deploy that only edits public/ needs no restart (deploy/update.sh).
 const pageCache = new Map();
 function page(path) {
-  if (!pageCache.has(path)) pageCache.set(path, readFileSync(new URL('../public/' + PAGES[path][0], import.meta.url)));
-  return pageCache.get(path);
+  const file = new URL('../public/' + PAGES[path][0], import.meta.url);
+  const mtime = statSync(file).mtimeMs;
+  const hit = pageCache.get(path);
+  if (hit?.mtime === mtime) return hit.buf;
+  const buf = readFileSync(file);
+  pageCache.set(path, { mtime, buf });
+  return buf;
 }
 
 export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, log = console.log } = {}) {
@@ -151,6 +157,15 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return json(res, 200, publish(shard, page, { query, lang, page: 1, pasted: Boolean(pasted) }));
   }
 
+  // Players held on a ticket and Tunelio builds in flight. A restart drops both (the visitor's video falls back to
+  // youtube.com, or never starts), so deploy/update.sh waits while /healthz reports busy > 0.
+  let holding = 0;
+  const busy = () => {
+    let building = 0;
+    for (const j of playback.jobs?.values?.() ?? []) if (j.state === 'building') building++;
+    return holding + building;
+  };
+
   async function ticket(req, res, shard, n) {
     const t = store.get(shard, n);
     if (!t) return fail(res, 404, 'unknown_ticket', 'Nothing here yet. Search again.');
@@ -168,7 +183,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // then told "this is not a video" (a plain page), which makes VRChat hand the URL straight to AVPro.
       const resolver = kind === 'ytdlp';
       const started = Date.now();
-      const where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs });
+      holding++;
+      let where;
+      try { where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs }); } finally { holding--; }
       const held = Date.now() - started;
       metrics.latency('ticket_hold_ms', held);
       if (where.ready === false && resolver) {
@@ -299,7 +316,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (url.pathname === '/healthz') {
         route = 'health';
         return json(res, 200, { ok: true, v: API, tunelio: tunelio.enabled, credits: tunelio.credits,
-          workers: relay.online().length, lastSearchVia: searcher.state.lastVia, apiUnitsToday: api.unitsToday });
+          workers: relay.online().length, lastSearchVia: searcher.state.lastVia, apiUnitsToday: api.unitsToday, busy: busy() });
       }
       const pagePath = url.pathname === '/privacy.html' ? '/privacy' : url.pathname;
       if (PAGES[pagePath]) {

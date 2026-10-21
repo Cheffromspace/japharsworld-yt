@@ -107,6 +107,7 @@ test('errors are JSON with codes', async (t) => {
   assert.equal((await s.get('/v1/0/100')).body.error, 'unknown_ticket');
   assert.equal((await s.get('/nope')).status, 404);
   assert.equal((await s.get('/healthz')).body.ok, true);
+  assert.equal((await s.get('/healthz')).body.busy, 0); // deploy/update.sh waits for 0 before restarting
 });
 
 test('rate limits searches per IP', async (t) => {

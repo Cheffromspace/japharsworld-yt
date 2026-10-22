@@ -134,7 +134,10 @@ test('track keys: variant ids and -orig fold to the language code; the key to do
   const info = { subtitles: Object.fromEntries(stanford.subtitles.map((k) => [k, []])), automatic_captions: Object.fromEntries(stanford.automatic_captions.map((k) => [k, []])) };
   assert.equal(keyFor(info, { code: 'en', auto: false }), 'en-eEY6OEpapPo');
   assert.equal(keyFor(info, { code: 'en', auto: true }), 'en-orig');
-  assert.equal(keyFor(info, { code: 'es', auto: false }), 'es-ES');
+  // Two Spanish uploader tracks: the variant-id key folds to the bare code "es" and is the one that code names;
+  // es-ES keeps its region and is reached through its own list entry.
+  assert.equal(keyFor(info, { code: 'es', auto: false }), 'es-y1SAwy5xd4g');
+  assert.equal(keyFor(info, { code: 'es-ES', auto: false }), 'es-ES');
   assert.equal(keyFor(info, { code: 'th', auto: false }), null);
   // A video whose auto track is the spoken language without -orig, and one with none at all.
   assert.deepEqual(tracksFromInfo({ language: 'ja', manual: ['en'], auto: ['ja', 'en'] }), [{ code: 'en', key: 'en', auto: false }, { code: 'ja', key: 'ja', auto: true }]);

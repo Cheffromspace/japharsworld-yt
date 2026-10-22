@@ -33,10 +33,17 @@ This service works within that rule:
   visitor's language, plus `tracks`: every caption track the video has (uploader tracks first, then auto
   captions), named in `<lang>`. `GET /v1/<shard>/cc/<i>` returns track *i* of that list (the tablet's picker).
   `lang` is a VRChat client language or `native`. The response carries the ticket `t` so the world can check
-  it matches what's on the screen. With Tunelio, captions come from its `/transcript` (6 credits per track,
-  cached 7 days, fetched only when someone asks): YouTube's machine translations are not offered, tracks in
-  scripts the world cannot draw (`CAPTION_SCRIPTS`) are left out, and Tunelio's silent English substitute for a
-  missing language is detected and answered as unavailable. Without a key, yt-dlp is used as before.
+  it matches what's on the screen. Captions come from the first source in a chain that answers
+  (`src/captionchain.js`): a relay worker's yt-dlp on a residential connection (free, and YouTube's json3 carries
+  the start of every word in auto-generated tracks), yt-dlp on this server when `CAPTION_LOCAL_YTDLP=on` (or
+  without a Tunelio key), then Tunelio's `/transcript` (6 credits per track, segment timing only). Every answer
+  has the same shape: `lines` (cue timing, as before) and `chunks` (readable lines of about 42 characters, broken
+  at sentences, clauses and pauses, each with the time and position of every word; `src/blocks.js`), plus
+  `words: "real" | "estimated"` and `via`. Results are cached 7 days per video and track; the picker's track
+  numbers mean the same thing whichever source learned the list. YouTube's machine translations are not offered,
+  tracks in scripts the world cannot draw (`CAPTION_SCRIPTS`) are left out, and Tunelio's silent English
+  substitute for a missing language is detected and answered as unavailable. The free sources are warmed when a
+  video is played; Tunelio is asked only when someone turns captions on.
 
 ## API
 

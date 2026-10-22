@@ -87,8 +87,8 @@ export function cuesFromVtt(text) {
     const [a, b] = lines[ti].split('-->');
     const start = vttTime(a), end = vttTime((b ?? '').trim().split(/\s+/)[0] ?? '');
     if (start == null || end == null) continue;
-    const body = clean(decodeEntities(lines.slice(ti + 1).join('\n').replace(/<[^>]+>/g, '')));
-    if (!body.trim()) continue;
+    const body = clean(decodeEntities(lines.slice(ti + 1).join('\n').replace(/<[^>]+>/g, ''))).trim();
+    if (!body) continue;
     cues.push([start, Math.max(0, end - start), [[0, body]]]);
     if (cues.length >= MAX_CUES) break;
   }

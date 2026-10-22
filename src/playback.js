@@ -48,7 +48,8 @@ export class Playback {
     this.probe = probe;
     // ({ id, format, seconds, buildMs, ok }) after every finished build (metrics).
     this.onBuild = onBuild;
-    this.jobs = new Map();     // videoId → job
+    this.jobs = new Map();     // "videoId@quality[@hls]" → job
+    this.creates = new Map();  // "videoId@quality" → { promise, made }: the paid /create, shared
     this.pausedUntil = 0;      // after out-of-credits / auth errors, skip Tunelio for a while
     // Learned build speed per format: seconds of build per second of video, and the fixed part. EWMA over builds.
     this.rate = { ...RATE_PRIOR };
@@ -64,14 +65,19 @@ export class Playback {
     return null;
   }
 
+  // Jobs are kept per video, quality and kind: `hls` jobs are the adaptive playlist's variants (src/adaptive.js), always
+  // HLS and never re-made at another quality; `maxMb` gives up on a file larger than that (a 1080p upgrade that would
+  // not finish before Tunelio's ~2-minute limit).
+  #key(data, quality, hls) { return `${data.id}@${quality}${hls ? '@hls' : ''}`; }
+
   // The job for a video at a quality, if there is one (no build is started).
-  peek(data, quality = this.quality) { return this.jobs.get(`${data.id}@${quality}`) ?? null; }
+  peek(data, quality = this.quality, { hls = false } = {}) { return this.jobs.get(this.#key(data, quality, hls)) ?? null; }
 
   // The job for a video at a quality, started if there is none (or the old one expired or failed long enough ago to
   // retry). ticket data: { id, live?, seconds? }
-  start(data, quality = this.quality) {
+  start(data, quality = this.quality, { hls = false, maxMb = 0 } = {}) {
     const id = data.id;
-    const key = `${id}@${quality}`;
+    const key = this.#key(data, quality, hls);
     const now = this.now();
     let job = this.jobs.get(key);
     if (job) {
@@ -82,15 +88,47 @@ export class Playback {
     }
     if (this.jobs.size > 2000) for (const [k, j] of this.jobs) if (j.state !== 'building') this.jobs.delete(k);
     const seconds = Math.max(0, data.seconds ?? 0);
-    const format = seconds > this.progressiveMaxSeconds ? 'hls' : 'progressive';
-    job = { id, seconds, format, mb: 0, requested: quality, quality, state: 'building', startedMs: now, endedMs: 0, url: null, expiresMs: 0, reason: null, waiters: [] };
+    const format = hls || seconds > this.progressiveMaxSeconds ? 'hls' : 'progressive';
+    job = { id, seconds, format, fixed: hls, maxMb, mb: 0, requested: quality, quality, state: 'building', startedMs: now, endedMs: 0, url: null, expiresMs: 0, reason: null, waiters: [] };
     job.promise = this.#build(job).finally(() => { for (const w of job.waiters) w(); job.waiters = []; });
     this.jobs.set(key, job);
     return job;
   }
 
+  // One paid /create per video and quality while its link lasts, shared by the progressive and HLS builds of it (the
+  // same link serves both: &progressive=1 or &hls=1) and by planning (src/adaptive.js reads the size first).
+  made(id, quality) {
+    const key = `${id}@${quality}`;
+    const hit = this.creates.get(key);
+    if (hit && (!hit.made || hit.made.expires * 1000 - this.marginMs > this.now())) return hit.promise;
+    const entry = { made: null };
+    entry.promise = this.tunelio.create(id, quality).then((m) => { entry.made = m; return m; }, (err) => { this.creates.delete(key); throw err; });
+    this.creates.set(key, entry);
+    if (this.creates.size > 4000) for (const [k, e] of this.creates) if (e.made && e.made.expires * 1000 < this.now()) this.creates.delete(k);
+    return entry.promise;
+  }
+
+  // The file size Tunelio reports for a video at a quality, in MB (costs the /create, which the build then reuses).
+  async size(data, quality) {
+    const m = await this.made(data.id, quality);
+    return Math.round((m.fileSize ?? 0) / 1e5) / 10;
+  }
+
+  // Seconds a build of this many MB is expected to take, from what recent builds took.
+  predict(format, mb) { return this.fixed[format] + this.rate[format] * Math.max(0, mb); }
+
+  // Learn from a finished build (visitors' and the speed probe's): split the time into a fixed part and a per-MB
+  // part, nudging both toward this build.
+  learn(format, mb, buildMs) {
+    if (!(mb > 0) || !(buildMs > 500) || !this.rate[format]) return;
+    const fixed = this.fixed[format], rate = this.rate[format];
+    const k = Math.min(3, Math.max(0.3, buildMs / 1000 / Math.max(1, fixed + rate * mb))); // > 1: slower than predicted
+    this.rate[format] = Math.max(0.0005, rate * (0.7 + 0.3 * k));
+    this.fixed[format] = Math.max(1, fixed * (0.7 + 0.3 * k));
+  }
+
   async #create(job, quality) {
-    const made = await this.tunelio.create(job.id, quality);
+    const made = await this.made(job.id, quality);
     job.quality = made.quality || quality;
     job.mb = Math.round((made.fileSize ?? 0) / 1e5) / 10;
     return made;
@@ -101,11 +139,12 @@ export class Playback {
     let made;
     try {
       made = await this.#create(job, job.requested);
-      if (job.mb > this.maxMbForQuality && this.lowerQuality && this.lowerQuality !== job.requested) {
+      if (job.fixed && job.maxMb && job.mb > job.maxMb) return this.#finish(job, { ok: false, reason: 'too_big' });
+      if (!job.fixed && job.mb > this.maxMbForQuality && this.lowerQuality && this.lowerQuality !== job.requested) {
         this.log({ event: 'build_downgrade', id, mb: job.mb, from: job.quality, to: this.lowerQuality });
         made = await this.#create(job, this.lowerQuality);
       }
-      if (job.format === 'progressive' && job.mb > this.progressiveMaxMb) job.format = 'hls';
+      if (!job.fixed && job.format === 'progressive' && job.mb > this.progressiveMaxMb) job.format = 'hls';
     } catch (err) {
       this.log({ event: 'tunelio_error', id, status: err.status, code: err.code, message: String(err.message).slice(0, 200) });
       if (err.status === 402 || err.status === 401) {
@@ -141,15 +180,7 @@ export class Playback {
     job.expiresMs = expiresMs;
     job.reason = reason;
     const buildMs = job.endedMs - job.startedMs;
-    if (ok && job.mb > 0 && buildMs > 500) {
-      // Learn: split the time into a fixed part and a per-MB part, nudging both toward this build.
-      const f = job.format;
-      const fixed = this.fixed[f], rate = this.rate[f];
-      const predicted = fixed + rate * job.mb;
-      const k = Math.min(3, Math.max(0.3, buildMs / 1000 / Math.max(1, predicted))); // > 1: slower than predicted
-      this.rate[f] = Math.max(0.0005, rate * (0.7 + 0.3 * k));
-      this.fixed[f] = Math.max(1, fixed * (0.7 + 0.3 * k));
-    }
+    if (ok) this.learn(job.format, job.mb, buildMs);
     this.log({ event: ok ? 'tunelio_link' : 'build_failed', id: job.id, quality: job.quality, hls: job.format === 'hls', mb: job.mb, buildMs, seconds: job.seconds, reason });
     try { this.onBuild({ id: job.id, format: job.format, quality: job.quality, seconds: job.seconds, mb: job.mb, buildMs, ok }); } catch { /* metrics only */ }
     return job;
@@ -164,10 +195,10 @@ export class Playback {
 
   // What the tablet shows while a video is prepared. Never waits. `warm` starts the build when there is none.
   //   { state: 'live'|'youtube'|'building'|'ready'|'failed', format?, elapsed?, eta?, progress? }
-  status(data, { warm = true, quality = this.quality } = {}) {
+  status(data, { warm = true, quality = this.quality, hls = false } = {}) {
     const direct = this.#direct(data);
     if (direct) return { state: direct.reason === 'live' ? 'live' : 'youtube', reason: direct.reason };
-    const job = warm ? this.start(data, quality) : this.peek(data, quality);
+    const job = warm ? this.start(data, quality, { hls }) : this.peek(data, quality, { hls });
     if (!job) return { state: 'idle' };
     if (job.state === 'ready') return { state: 'ready', format: job.format, quality: job.quality, mb: job.mb, elapsed: Math.round((job.endedMs - job.startedMs) / 1000) };
     if (job.state === 'failed') return { state: 'failed', format: job.format, reason: job.reason };
@@ -177,20 +208,24 @@ export class Playback {
       progress: Math.round(Math.min(0.95, elapsed / Math.max(1, elapsed + eta)) * 100) / 100 };
   }
 
+  // Resolves when the job has finished building or after holdMs, whichever is first.
+  wait(job, holdMs = Infinity) {
+    if (job.state !== 'building') return Promise.resolve(job);
+    return new Promise((resolve) => {
+      let timer = null;
+      const done = () => { if (timer) clearTimeout(timer); resolve(job); };
+      job.waiters.push(done);
+      if (Number.isFinite(holdMs)) timer = setTimeout(done, Math.max(0, holdMs));
+    });
+  }
+
   // Where to send a player. Waits for the build at most `holdMs` (default: for ever, as before).
   //   { location, via: 'tunelio'|'youtube', reason?, ready }  — ready=false means the hold ran out while building.
-  async location(data, { holdMs = Infinity, quality = this.quality } = {}) {
+  async location(data, { holdMs = Infinity, quality = this.quality, hls = false } = {}) {
     const direct = this.#direct(data);
     if (direct) return { ...direct, ready: true };
-    const job = this.start(data, quality);
-    if (job.state === 'building') {
-      await new Promise((resolve) => {
-        let timer = null;
-        const done = () => { if (timer) clearTimeout(timer); resolve(); };
-        job.waiters.push(done);
-        if (Number.isFinite(holdMs)) timer = setTimeout(done, Math.max(0, holdMs));
-      });
-    }
+    const job = this.start(data, quality, { hls });
+    await this.wait(job, holdMs);
     if (job.state === 'building') return { location: job.url, via: 'tunelio', reason: 'building', ready: false };
     if (job.state === 'ready') return { location: job.url, via: 'tunelio', quality: job.quality, ready: true };
     return { location: watch(data.id), via: 'youtube', reason: job.reason ?? 'tunelio_failed', ready: true };

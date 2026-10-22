@@ -5,6 +5,7 @@
 //   GET /v1/<shard>/cc/<lang>                          captions for the video last played in this shard (lang: VRChat code or
 //                                                      "native"), with the list of the video's caption tracks (names in <lang>)
 //   GET /v1/<shard>/q[/<720|1080>]                    the room's playback quality for search videos (read, or pick on the tablet)
+//   GET /hls/<token>.m3u8, /hls/<token>/<q>.m3u8          adaptive playlists a played ticket leads to (src/adaptive.js)
 //   GET /v1/<shard>/cc/<i>[?l=<lang>]                  track i of that list (the tablet's caption picker; Tunelio captions only)
 //   GET /healthz
 //   GET /relay/next, POST /relay/done                  search relay workers only (bearer RELAY_TOKEN; see relay.js)
@@ -29,10 +30,11 @@ import { makeAlert } from './alert.js';
 import { Relay, RelayError } from './relay.js';
 import { DataApi } from './dataapi.js';
 import { makeSearch } from './search.js';
-import { Metrics, noMetrics, lengthBucket, secondsBucket, sizeBucket, recordPoll, getMeta, setMeta } from './metrics.js';
+import { Metrics, noMetrics, lengthBucket, secondsBucket, sizeBucket, recordPoll, getMeta, setMeta, dayOf } from './metrics.js';
+import { Adaptive, Pacer } from './adaptive.js';
 import { TunelioProbe } from './probe.js';
 import { EventRing, opsRoute, gitHead } from './ops.js';
-import { statsRoute } from './stats.js';
+import { statsRoute, latestCredits, billingPeriod, daysBetween } from './stats.js';
 
 const API = 1;
 const PAGES = {
@@ -52,7 +54,7 @@ function page(path) {
   return buf;
 }
 
-export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, log = console.log } = {}) {
+export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, adaptive, log = console.log } = {}) {
   // Recent events for /ops/events, redacted as they are kept.
   const ring = new EventRing();
   const rawLog = log;
@@ -77,6 +79,19 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       metrics.inc('build', ok ? 'ok' : 'failed');
       if (ok) { metrics.inc(format === 'hls' ? 'build_s_hls' : 'build_s_progressive', secondsBucket(buildMs)); metrics.inc('build_length', lengthBucket({ seconds })); metrics.inc('build_size', sizeBucket(mb)); metrics.inc('build_quality', quality); }
     } });
+  // Adaptive HLS, paced against the credits left until renewal (claude/play-latency.md).
+  const metricsDb = () => (config.metricsPath && metrics.open ? metrics.open() : null);
+  const today = () => dayOf(Date.now(), config.metricsTz);
+  adaptive ??= new Adaptive({
+    playback, log: logJson, onEvent: (k) => metrics.inc('adaptive', k), holdMs: config.adaptiveHoldMs, directSeconds: config.adaptiveDirectSeconds,
+    lower: config.tunelioQuality, upper: config.tunelioQualities.at(-1) ?? '1080p', maxUpperMb: config.tunelioMaxMb,
+    pacer: new Pacer({
+      reserve: config.adaptiveReserve,
+      remaining: () => { if (tunelio.credits != null) return tunelio.credits; const db = metricsDb(); return db ? latestCredits(db) : null; },
+      spentToday: () => { const db = metricsDb(); return db ? db.prepare("SELECT COALESCE(SUM(value), 0) v FROM daily WHERE day = ? AND metric = 'credits'").get(today()).v : 0; },
+      daysLeft: () => { const d = today(); return daysBetween(d, billingPeriod(d, config.tunelioRenewsDay).renews); },
+    }),
+  });
   if (!captions && tunelio.enabled) captions = new TunelioCaptions({ store, tunelio, cacheDays: config.captionCacheDays, scripts: config.captionScripts, alert, log: logJson });
   const warmCaptions = !tunelio.enabled; // yt-dlp captions are free to warm; Tunelio's cost credits, so only on demand
   captions ??= new Captions({ store, ytdlp: config.ytdlp, extraArgs: config.ytdlpExtraArgs, cacheDays: config.captionCacheDays,
@@ -188,12 +203,33 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       tunelio: probeTunelio, quality: config.tunelioQuality, intervalMinutes: config.tunelioProbeMinutes, log: logJson,
       search: (query, limit) => (relay.enabled && relay.online().length ? relay.search(query, limit, { timeoutMs: config.relayWaitMs }) : null),
       busy: () => busy() + (Date.now() < (playback.pausedUntil ?? 0) ? 1 : 0),
-      record: (source, values) => { const db = probeDb(); if (db) recordPoll(db, { ts: Date.now(), source, values, tz: config.metricsTz }); },
+      record: (source, values) => {
+        // The probe's builds teach the same speed estimate visitors' builds do (it plans "1080p at once" vs adaptive).
+        if (values.start_s) playback.learn(source.split(':')[1], values.mb, values.start_s * 1000);
+        const db = probeDb(); if (db) recordPoll(db, { ts: Date.now(), source, values, tz: config.metricsTz });
+      },
       meta: {
         get: (k) => { const db = probeDb(); return db ? getMeta(db, k) : kept.get(k) ?? null; },
         set: (k, v) => { const db = probeDb(); if (db) setMeta(db, k, v); else kept.set(k, String(v)); },
       },
     }).start();
+  }
+
+  // Adaptive playlists (src/adaptive.js). Only a player gets here (through a ticket's redirect); a resolver that does
+  // gets the "not a video" page, so it can't reduce the master to one variant.
+  async function hlsRoute(req, res, url) {
+    const m = url.pathname.match(/^\/hls\/([a-f0-9]{18})(?:\/(\d{3,4}p))?\.m3u8$/);
+    if (!m) return fail(res, 404, 'not_found', 'Unknown path.');
+    if (clientKind(req.headers['user-agent']) === 'ytdlp') {
+      const page = Buffer.from('<!doctype html><title>Video</title><p>Not a video page.</p>');
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': page.length, 'cache-control': 'no-store' });
+      return res.end(page);
+    }
+    const body = m[2] ? await adaptive.variant(m[1], m[2]) : adaptive.master(m[1]);
+    if (body == null) return fail(res, 404, 'not_found', m[2] ? 'Not ready.' : 'Unknown path.');
+    const buf = Buffer.from(body);
+    res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'content-length': buf.length, 'cache-control': 'no-store' });
+    return res.end(req.method === 'HEAD' ? undefined : buf);
   }
 
   // Temporary (2026-10-22): adaptive HLS test (a master playlist over Tunelio's 720p and 1080p HLS links, written by
@@ -232,6 +268,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         learned: { rate: playback.rate, fixed: playback.fixed } },
       relay: { enabled: relay.enabled, workers: relay.online(), idleS: Math.round(relay.idleMs() / 1000) },
       search: { lastVia: searcher.state.lastVia, apiUnitsToday: api.unitsToday },
+      plans: {
+        on: config.adaptiveHls, shards: config.adaptiveShards, directSeconds: config.adaptiveDirectSeconds,
+        // What the estimate says a 1080p build of 300 MB (a typical 20-minute video) would take right now.
+        predict300MbS: Math.round(playback.predict?.('progressive', 300) * 10) / 10,
+        pacer: (() => { try { return adaptive.pacer?.check() ?? null; } catch { return null; } })(),
+        recent: [...adaptive.plans.values()].filter((p) => p.mode).reduce((o, p) => ({ ...o, [p.mode]: (o[p.mode] ?? 0) + 1 }), {}),
+      },
       probe: probe ? { next: new Date(Number(probe.meta.get('tunelio_probe_next')) || 0).toISOString(), runs: Number(probe.meta.get('tunelio_probe_runs')) || 0, running: probe.running } : null,
     };
   }
@@ -239,6 +282,22 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // Playback quality per room (owner, 2026-10-22: a resolution picker for search videos, 720p by default). The tablet
   // loads /v1/<shard>/q/720 or /q/1080 (baked URLs, like everything else) and /v1/<shard>/q to read it back.
   const roomQuality = (shard) => store.quality(shard, config.qualityHours * 3600_000) ?? config.tunelioQuality;
+  // Playback plans for this shard and video (off unless ADAPTIVE_HLS=on; live streams and paused Tunelio go the old way).
+  const adaptiveFor = (shard, data) => config.adaptiveHls && (!config.adaptiveShards.length || config.adaptiveShards.includes(shard))
+    && !data.live && tunelio.enabled && Date.now() >= (playback.pausedUntil ?? 0);
+  // The room's pick decides the 1080p upgrade; with no pick the pacer does.
+  const upgradeMode = (shard) => {
+    const pick = store.quality(shard, config.qualityHours * 3600_000);
+    return pick == null ? 'paced' : pick === adaptive.upper ? 'always' : 'never';
+  };
+  // Which build a ticket uses: { quality, hls, mode } (mode null = plans off: the room's quality, progressive).
+  async function choice(shard, data) {
+    if (!adaptiveFor(shard, data)) return { quality: roomQuality(shard), hls: false, mode: null };
+    const mode = await adaptive.plan(data, upgradeMode(shard));
+    if (mode === 'direct') return { quality: adaptive.upper, hls: false, mode };
+    if (mode === 'adaptive') return { quality: adaptive.lower, hls: true, mode };
+    return { quality: adaptive.lower, hls: false, mode };
+  }
   function quality(res, shard, raw) {
     if (raw) {
       const q = `${raw}p`;
@@ -257,19 +316,36 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       metrics.inc('ticket_client', kind);
       // The tablet asking (a row selected, or watching a build): start the build, report it, never redirect.
       if (kind === 'string') {
-        const q = roomQuality(shard);
-        const before = playback.peek?.(t.data, q)?.state;
-        const st = playback.status(t.data, { quality: q });
+        const c = await choice(shard, t.data);
+        const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
+        const st = playback.status(t.data, { quality: c.quality, hls: c.hls });
+        if (c.mode) st.plan = c.mode;
         if (st.state === 'building' && before !== 'building') { metrics.inc('warm'); warmed.add(`${shard}:${t.data.id}`); }
-        return json(res, 200, { v: API, shard, t: n, room: q, ...st });
+        return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...st });
       }
       // A player (VRChat's resolver, then AVPro). The resolver gives up after 20 s, so it is held only briefly and
       // then told "this is not a video" (a plain page), which makes VRChat hand the URL straight to AVPro.
       const resolver = kind === 'ytdlp';
+      const c = await choice(shard, t.data);
+      if (c.hls && resolver) {
+        // yt-dlp would pick one variant of the master and hand AVPro only that: send it on at once, start the build.
+        playback.start(t.data, adaptive.lower, { hls: true });
+        metrics.inc('adaptive', 'defer');
+        logJson({ event: 'play_defer', shard, n, id: t.data.id, held: 0, adaptive: true });
+        const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+        return res.end(body);
+      }
       const started = Date.now();
       holding++;
       let where;
-      try { where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs, quality: roomQuality(shard) }); } finally { holding--; }
+      try {
+        where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs,
+          quality: c.quality, hls: c.hls });
+      } finally { holding--; }
+      if (c.hls && where.ready && where.via === 'tunelio') {
+        where = { ...where, location: `${config.publicUrl}/hls/${adaptive.session(t.data).token}.m3u8` };
+      }
       const held = Date.now() - started;
       metrics.latency('ticket_hold_ms', held);
       if (where.ready === false && resolver) {
@@ -347,7 +423,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (roomPlays.size > 5000) for (const [k, t] of roomPlays) if (now - t >= ROOM_PLAY_MS) roomPlays.delete(k);
     metrics.inc('play');
     metrics.inc('play_length', lengthBucket(data));
-    if (where.via === 'tunelio') metrics.inc('play_route', /[?&]hls=1/.test(where.location) ? 'tunelio-hls' : 'tunelio-progressive');
+    if (where.via === 'tunelio') metrics.inc('play_route', /\/hls\/[a-f0-9]+\.m3u8$/.test(where.location) ? 'tunelio-adaptive' : /[?&]hls=1/.test(where.location) ? 'tunelio-hls' : 'tunelio-progressive');
     else if (where.reason === 'live') metrics.inc('play_route', 'youtube-live');
     else { metrics.inc('play_route', 'youtube-fallback'); metrics.inc('play_fallback', where.reason); }
   }
@@ -399,6 +475,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
       if (url.pathname.startsWith('/ops/')) { route = 'ops'; return opsRoute(req, res, url, { token: config.statsToken, ring, state: opsState }); }
       if (url.pathname.startsWith('/hls-test/')) { route = 'hls-test'; return hlsTest(req, res, url); }
+      if (url.pathname.startsWith('/hls/')) { route = 'hls'; return await hlsRoute(req, res, url); }
       if (url.pathname === '/healthz') {
         route = 'health';
         return json(res, 200, { ok: true, v: API, tunelio: tunelio.enabled, credits: tunelio.credits,

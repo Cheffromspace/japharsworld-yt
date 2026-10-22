@@ -33,6 +33,18 @@ export const config = {
   tunelioQuality: process.env.TUNELIO_QUALITY ?? '720p',
   tunelioQualities: (process.env.TUNELIO_QUALITIES ?? '720p,1080p').split(',').map((s) => s.trim()).filter((s) => /^\d{3,4}p$/.test(s)),
   qualityHours: int('QUALITY_HOURS', 12),
+  // Adaptive HLS (src/adaptive.js): start at the default quality, step up to the best of TUNELIO_QUALITIES when its
+  // build is ready, paced so the credits last to renewal with ADAPTIVE_RESERVE to spare. ADAPTIVE_HLS=on turns it on,
+  // for the shards in ADAPTIVE_SHARDS only (comma separated; empty = all) while it is being tried.
+  adaptiveHls: (process.env.ADAPTIVE_HLS ?? 'off') === 'on',
+  adaptiveShards: (process.env.ADAPTIVE_SHARDS ?? '').split(',').map((s) => Number.parseInt(s, 10)).filter(Number.isInteger),
+  adaptiveReserve: int('ADAPTIVE_RESERVE', 5000),
+  adaptiveHoldMs: int('ADAPTIVE_HOLD_SECONDS', 8) * 1000,
+  // Play 1080p at once (no adaptive playlist) when its build is predicted to take at most this long (~15–18 s to the
+  // picture with VRChat's own ~5–8 s).
+  adaptiveDirectSeconds: int('ADAPTIVE_DIRECT_SECONDS', 10),
+  // This service's public address, for links it hands out (the adaptive master playlist).
+  publicUrl: (process.env.PUBLIC_URL ?? 'https://yt.japharsworld.com').replace(/\/$/, ''),
   // Build time follows file size (~17 ms per MB, 2026-10-19). A 1080p file above TUNELIO_MAX_MB is made again at
   // TUNELIO_LOWER_QUALITY (10 more credits, about half the wait); a file above TUNELIO_PROGRESSIVE_MAX_MB, or a video
   // longer than TUNELIO_PROGRESSIVE_MAX_MINUTES, is served as HLS instead of a progressive mp4 (which Tunelio builds

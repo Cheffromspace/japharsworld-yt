@@ -81,7 +81,10 @@ export const METRICS = {
   more: ['daily', none],
   more_fail: ['daily', isStatus],
   play: ['daily', none],
-  play_route: ['daily', oneOf('tunelio-progressive', 'tunelio-hls', 'youtube-live', 'youtube-fallback')],
+  play_route: ['daily', oneOf('tunelio-progressive', 'tunelio-hls', 'tunelio-adaptive', 'youtube-live', 'youtube-fallback')],
+  // Playback plans (src/adaptive.js): which plan each video got, masters served, 1080p upgrades started / served /
+  // failed, plays the pacer kept at 720p, resolvers sent on to the player.
+  adaptive: ['daily', oneOf('plan_lower', 'plan_direct', 'plan_adaptive', 'master', 'upgrade', 'upgrade_served', 'upgrade_failed', 'paced_off', 'defer')],
   play_fallback: ['daily', oneOf('disabled', 'paused', 'tunelio_failed', 'build_failed', 'build_timeout')],
   play_length: ['daily', oneOf('live', 'unknown', 'lt10m', 'lt1h', 'lt3h', 'longer')],
   tunelio_create_ms: ['daily', isBucket],

@@ -91,7 +91,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const today = () => dayOf(Date.now(), config.metricsTz);
   adaptive ??= new Adaptive({
     playback, log: logJson, onEvent: (k) => metrics.inc('adaptive', k), holdMs: config.adaptiveHoldMs, directSeconds: config.adaptiveDirectSeconds,
-    base: `${config.publicUrl}/hls`,
+    base: `${config.publicUrl}/hls`, switching: config.adaptiveSwitch,
     lower: config.tunelioQuality, upper: config.tunelioQualities.at(-1) ?? '1080p', maxUpperMb: config.tunelioMaxMb,
     pacer: new Pacer({
       reserve: config.adaptiveReserve,

@@ -47,8 +47,8 @@ const PLAN_MS = 30 * 60_000;
 
 export class Adaptive {
   constructor({ playback, pacer, fetcher = fetch, log = () => {}, onEvent = () => {}, lower = '720p', upper = '1080p',
-    holdMs = 8000, maxUpperMb = 1500, directSeconds = 10, now = () => Date.now(), base = 'https://yt.japharsworld.com/hls' }) {
-    Object.assign(this, { playback, pacer, fetch: fetcher, log, onEvent, lower, upper, holdMs, maxUpperMb, directSeconds, now, base });
+    holdMs = 8000, maxUpperMb = 1500, directSeconds = 10, now = () => Date.now(), base = 'https://yt.japharsworld.com/hls', switching = true }) {
+    Object.assign(this, { playback, pacer, fetch: fetcher, log, onEvent, lower, upper, holdMs, maxUpperMb, directSeconds, now, base, switching });
     this.byJob = new WeakMap(); // build job → its session
     this.plans = new Map();    // video id → { mode, upgrade, until, promise }
     this.sessions = new Map(); // token → { token, data, lowerJob, served, fellBack }
@@ -80,6 +80,10 @@ export class Adaptive {
     if (mb > this.maxUpperMb) return this.#chose(data, 'lower', { why: 'too_big', mb });
     const predicted = Math.round(this.playback.predict('progressive', mb) * 10) / 10;
     if (predicted <= this.directSeconds) return this.#chose(data, 'direct', { mb, predicted });
+    // Switching off: no 720p → 1080p step up mid-video. In VRChat on PC it froze the picture (clock running, no error)
+    // in 2 of 4 tries on 2026-10-22, with segments and timestamps aligned; so a slow 1080p means 720p for this video.
+    // A room that picked 1080p gets it anyway, slower to start.
+    if (!this.switching) return this.#chose(data, upgrade === 'always' ? 'direct' : 'lower', { why: 'slow', mb, predicted });
     return this.#chose(data, 'adaptive', { mb, predicted });
   }
 

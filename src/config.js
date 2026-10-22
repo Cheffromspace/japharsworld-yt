@@ -40,6 +40,9 @@ export const config = {
   adaptiveShards: (process.env.ADAPTIVE_SHARDS ?? '').split(',').map((s) => Number.parseInt(s, 10)).filter(Number.isInteger),
   adaptiveReserve: int('ADAPTIVE_RESERVE', 5000),
   adaptiveHoldMs: int('ADAPTIVE_HOLD_SECONDS', 8) * 1000,
+  // The mid-video 720p → 1080p step up. Off: a 1080p build predicted too slow means 720p for that video (switching froze
+  // the picture in VRChat on PC in 2 of 4 tries, 2026-10-22).
+  adaptiveSwitch: (process.env.ADAPTIVE_SWITCH ?? 'off') === 'on',
   // Play 1080p at once (no adaptive playlist) when its build is predicted to take at most this long (~15–18 s to the
   // picture with VRChat's own ~5–8 s).
   adaptiveDirectSeconds: int('ADAPTIVE_DIRECT_SECONDS', 10),

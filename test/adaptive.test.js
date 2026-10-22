@@ -162,3 +162,20 @@ test('a plain HLS build (a video over 3 hours) reached through the redirect goes
   const y = await fetch(`${url}/v1/0/${n}`, { headers: { 'user-agent': YTDLP }, redirect: 'manual' });
   assert.match(y.headers.get('location'), /^https:\/\/tunelio\.dev\/.*&hls=1$/);
 });
+
+test('switching off: a slow 1080p plays 720p instead of adaptive', async () => {
+  const f = fakes();
+  f.playback.rate.progressive = 0.1;
+  const a = new Adaptive({ playback: f.playback, pacer: { check: () => ({ ok: true }) }, switching: false });
+  assert.equal(await a.plan({ id: 'slowNoSwit1', seconds: 1200 }), 'lower');
+  assert.equal(await a.plan({ id: 'fastShort01', seconds: 120 }, 'paced'), 'lower', 'rate still slow');
+  f.playback.rate.progressive = 0.017;
+  assert.equal(await a.plan({ id: 'fastNoSwit1', seconds: 1200 }), 'direct');
+});
+
+test('switching off: a room that picked 1080p still gets 1080p when it is slow', async () => {
+  const f = fakes();
+  f.playback.rate.progressive = 0.1;
+  const a = new Adaptive({ playback: f.playback, pacer: { check: () => ({ ok: true }) }, switching: false });
+  assert.equal(await a.plan({ id: 'slowPicked1', seconds: 1200 }, 'always'), 'direct');
+});

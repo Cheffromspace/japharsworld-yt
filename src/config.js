@@ -44,8 +44,8 @@ export const config = {
   ticketPlayerHoldMs: int('TICKET_PLAYER_HOLD_SECONDS', 90) * 1000,
   // Day of the month the Tunelio plan renews and its credits refresh (the credits forecast counts from it).
   tunelioRenewsDay: int('TUNELIO_RENEWS_DAY', 1),
-  // Minutes between Tunelio speed probes (src/probe.js; 10 credits each, at least 60, plus a random 0–10). 0 = off.
-  tunelioProbeMinutes: int('TUNELIO_PROBE_MINUTES', 60),
+  // Minutes between Tunelio speed probes (src/probe.js; 10 credits each, at least 20, plus a random quarter). 0 = off.
+  tunelioProbeMinutes: int('TUNELIO_PROBE_MINUTES', 20),
   // Comma-separated ISO 15924 scripts the world can draw captions in.
   captionScripts: (process.env.CAPTION_SCRIPTS ?? 'Latn,Cyrl,Hans,Hant,Jpan,Kore,Thai,Hebr').split(',').map((s) => s.trim()).filter(Boolean),
   // Discord webhook for alerts (Tunelio out of credits, failing, running low).

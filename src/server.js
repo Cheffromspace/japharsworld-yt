@@ -9,10 +9,12 @@
 //   GET /relay/next, POST /relay/done                  search relay workers only (bearer RELAY_TOKEN; see relay.js)
 //   GET /stats, /stats.json, /stats/export.csv         usage metrics (bearer or ?token= STATS_TOKEN; see stats.js)
 //   GET /ops/state, /ops/events                        read-only operator view, redacted (STATS_TOKEN; see ops.js)
+//   GET /hls-test/<hex>.m3u8                           temporary adaptive-HLS test playlist (yt-dlp gets a "not a video" page)
 //   GET /, /privacy, /logo.png                         home page and privacy policy (public/)
 import http from 'node:http';
 import { readFileSync, statSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { dirname, join } from 'node:path';
 import { config as defaults } from './config.js';
 import { Store } from './store.js';
 import { parseQuery, youtubeIdFrom, normalizeLang, LANGS } from './query.js';
@@ -193,6 +195,26 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }).start();
   }
 
+  // Temporary (2026-10-22): adaptive HLS test (a master playlist over Tunelio's 720p and 1080p HLS links, written by
+  // hand into <db dir>/hls-test/<random name>.m3u8; see claude/play-latency.md). VRChat's yt-dlp would pick one variant
+  // from a master playlist and hand AVPro only that, so it gets the "not a video" page like a ticket, and AVPro gets the
+  // master itself. The unguessable name is the only protection: the playlist holds signed links for a few hours.
+  function hlsTest(req, res, url) {
+    const m = url.pathname.match(/^\/hls-test\/([a-f0-9]{16,64})\.m3u8$/);
+    let body = null;
+    if (m) { try { body = readFileSync(join(dirname(config.dbPath), 'hls-test', `${m[1]}.m3u8`)); } catch { body = null; } }
+    if (!body) return fail(res, 404, 'not_found', 'Unknown path.');
+    const kind = clientKind(req.headers['user-agent']);
+    logJson({ event: 'hls_test', client: kind, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
+    if (kind === 'ytdlp') {
+      const page = Buffer.from('<!doctype html><title>Preparing</title><p>Not a video page.</p>');
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': page.length, 'cache-control': 'no-store' });
+      return res.end(page);
+    }
+    res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'content-length': body.length, 'cache-control': 'no-store' });
+    return res.end(req.method === 'HEAD' ? undefined : body);
+  }
+
   // /ops/state: what is in flight right now, without video IDs.
   function opsState() {
     const now = Date.now();
@@ -361,6 +383,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
       if (url.pathname.startsWith('/ops/')) { route = 'ops'; return opsRoute(req, res, url, { token: config.statsToken, ring, state: opsState }); }
+      if (url.pathname.startsWith('/hls-test/')) { route = 'hls-test'; return hlsTest(req, res, url); }
       if (url.pathname === '/healthz') {
         route = 'health';
         return json(res, 200, { ok: true, v: API, tunelio: tunelio.enabled, credits: tunelio.credits,

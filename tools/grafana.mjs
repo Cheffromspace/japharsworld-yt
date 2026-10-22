@@ -101,7 +101,7 @@ export function dashboard() {
     ['max(eiok_poll{source="tunelio:progressive",metric="start_s"})', 'probe progressive'],
     ['max(eiok_poll{source="tunelio:hls",metric="start_s"})', 'probe HLS'],
   ], { w: 8, unit: 's', decimals: 0, mappings: noBuilds, thresholds: [{ color: OK, value: null }, { color: WARN, value: 20 }, { color: BAD, value: 60 }],
-    description: 'Visitors’ progressive builds (p95 over 3 h, from the daily buckets) and the hourly probe’s latest start times (src/probe.js). Over ~20 s the visitor waits past the resolver hold; over ~100 s the player gives up.' }));
+    description: 'Visitors’ progressive builds (p95 over 3 h, from the daily buckets) and the speed probe’s latest start times (src/probe.js). Over ~20 s the visitor waits past the resolver hold; over ~100 s the player gives up.' }));
 
   p.push(row('Visitors and search'));
   p.push(series('In world (production)', [
@@ -142,7 +142,7 @@ export function dashboard() {
     ['sum(increase(eiok_events_total{metric="build",key="failed"}[3h]))', 'failed builds'],
     ['sum by (key) (increase(eiok_events_total{metric="play_fallback"}[3h]))', 'fallback: {{key}}'],
   ], { w: 8, min: 0, description: 'Per ticket request, so one slow video retried by the player counts several timeouts; plays count once per room.' }));
-  const probeNote = 'Hourly speed probe (src/probe.js): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 2 h. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment).';
+  const probeNote = 'Speed probe every ~20 min (src/probe.js): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 45 min. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment).';
   p.push(series('Tunelio probe: time to start', [
     ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="start_s"})', '{{source}}'],
     ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="create_s"})', '{{source}} /create'],

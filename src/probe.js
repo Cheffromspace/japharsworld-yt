@@ -1,8 +1,8 @@
-// Tunelio speed probe (owner, 2026-10-21: track Tunelio's performance over time to inform decisions; "hourly at
-// most, let's be good API citizens"). On 2026-10-21 progressive builds of ~1 GB took 30–120 s, 2–6× slower than the
+// Tunelio speed probe (owner, 2026-10-21: track Tunelio's performance over time to inform decisions; first hourly,
+// then every 20 minutes: "I'm paying for the service and I need it to be reliable"). On 2026-10-21 progressive builds of ~1 GB took 30–120 s, 2–6× slower than the
 // 2026-10-19 measurements (claude/play-latency.md), and visitors' builds alone are too few to show a trend.
 //
-// Once per interval (at least an hour, plus a random 0–10 minutes, never on the clock) and only while no visitor's
+// Once per interval (at least 20 minutes, plus a random quarter of it up to 10 minutes, never on the clock) and only while no visitor's
 // build or held player is in flight: one search through the relay worker (never the Linode's InnerTube or the Data
 // API), a 12–30 minute video from it that this process has not probed before, one /create (10 credits), then what a
 // player waits for: the first byte of the progressive mp4, or the HLS playlist and its first segment, alternating
@@ -14,7 +14,7 @@ const QUERIES = ['documentary', 'video essay', 'history explained', 'science exp
 const WARM_MS = 2000; // a first byte this fast means Tunelio already had the file: not a build, so not a speed sample
 
 export class TunelioProbe {
-  constructor({ tunelio, search, busy = () => 0, record = () => {}, meta, intervalMinutes = 60, quality = '1080p',
+  constructor({ tunelio, search, busy = () => 0, record = () => {}, meta, intervalMinutes = 20, quality = '1080p',
     fetcher = fetch, log = () => {}, now = () => Date.now(), random = Math.random,
     minSeconds = 12 * 60, maxSeconds = 30 * 60, timeoutMs = 150_000, queries = QUERIES }) {
     this.tunelio = tunelio;
@@ -23,7 +23,7 @@ export class TunelioProbe {
     this.record = record;       // (source, values) → poller row
     const kept = new Map();
     this.meta = meta ?? { get: (k) => kept.get(k) ?? null, set: (k, v) => kept.set(k, String(v)) };
-    this.intervalMs = intervalMinutes > 0 ? Math.max(60, intervalMinutes) * 60_000 : 0;
+    this.intervalMs = intervalMinutes > 0 ? Math.max(20, intervalMinutes) * 60_000 : 0;
     this.quality = quality;
     this.fetch = fetcher;
     this.log = log;
@@ -41,7 +41,7 @@ export class TunelioProbe {
   // Due time, kept in the metrics database so a restart (every deploy) neither probes early nor resets the clock.
   #next() { return Number(this.meta.get('tunelio_probe_next')) || 0; }
   #schedule(ms) { this.meta.set('tunelio_probe_next', Math.round(this.now() + ms)); }
-  #jitter() { return this.random() * 10 * 60_000; }
+  #jitter() { return this.random() * Math.min(10 * 60_000, this.intervalMs / 4); }
 
   // Called every few minutes: probes when due and quiet.
   async tick() {

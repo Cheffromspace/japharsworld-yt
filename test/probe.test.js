@@ -81,7 +81,7 @@ test('probe: no relay worker or nothing that fits → no credits spent, retried 
   assert.equal(Number(short.probe.meta.get('tunelio_probe_next')), 1_000_000 + 15 * MIN);
 });
 
-test('probe schedule: not at start-up, at most hourly with jitter, never while a visitor build runs', async () => {
+test('probe schedule: not at start-up, every 20 min at most with jitter, never while a visitor build runs', async () => {
   const s = setup();
   assert.equal(await s.probe.tick(), null, 'first tick only books the first run');
   assert.equal(s.created.length, 0);
@@ -89,8 +89,8 @@ test('probe schedule: not at start-up, at most hourly with jitter, never while a
   assert.equal(await s.probe.tick(), null);
   s.advance(1 * MIN);
   assert.equal((await s.probe.tick()).format, 'progressive');
-  s.advance(59 * MIN);
-  assert.equal(await s.probe.tick(), null, 'hourly at most');
+  s.advance(19 * MIN);
+  assert.equal(await s.probe.tick(), null, 'every 20 minutes at most');
   s.advance(2 * MIN);
   assert.equal((await s.probe.tick()).format, 'hls');
   assert.equal(s.created.length, 2);
@@ -100,6 +100,6 @@ test('probe schedule: not at start-up, at most hourly with jitter, never while a
   assert.equal(await busy.probe.tick(), null);
   assert.equal(busy.created.length, 0);
 
-  assert.equal(new TunelioProbe({ intervalMinutes: 5 }).intervalMs, 60 * MIN, 'clamped to an hour');
+  assert.equal(new TunelioProbe({ intervalMinutes: 5 }).intervalMs, 20 * MIN, 'clamped to 20 minutes');
   assert.equal(new TunelioProbe({ intervalMinutes: 0 }).intervalMs, 0, '0 = off');
 });

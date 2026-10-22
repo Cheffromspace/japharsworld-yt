@@ -70,3 +70,27 @@ test('ops routes: token required, state and redacted events', async (t) => {
   await off({ url: '/ops/state', method: 'GET', headers: {} }, Object.assign(res, { headersSent: false }));
   assert.equal(res.status, 404);
 });
+
+test('hls-test: the resolver gets a "not a video" page, the player the playlist; unknown names 404', async (t) => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'hls-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, 'hls-test'));
+  writeFileSync(join(dir, 'hls-test', '0123456789abcdef.m3u8'), '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nhttps://t/720.m3u8\n');
+  const store = new Store({ path: ':memory:', shards: 2, pool: 100, pinHours: 24 });
+  const app = createApp({ config: { ...config, dbPath: join(dir, 'tickets.db') }, store, tunelio: { enabled: false }, log: () => {} });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}/hls-test/`;
+  const get = (p, ua) => fetch(base + p, { headers: { 'user-agent': ua } });
+  const player = await get('0123456789abcdef.m3u8', 'NSPlayer/12.00');
+  assert.equal(player.headers.get('content-type'), 'application/vnd.apple.mpegurl');
+  assert.match(await player.text(), /^#EXTM3U/);
+  const resolver = await get('0123456789abcdef.m3u8', 'Mozilla/5.0 (Windows NT 10.0) Chrome/149.0 Safari/537.36');
+  assert.match(resolver.headers.get('content-type'), /text\/html/);
+  assert.equal((await get('fedcba9876543210.m3u8', 'NSPlayer')).status, 404);
+  assert.equal((await get('..%2Ftickets.db', 'NSPlayer')).status, 404);
+});

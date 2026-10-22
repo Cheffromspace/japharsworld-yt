@@ -780,7 +780,7 @@
    "type": "stat",
    "id": 13,
    "title": "Tunelio build time",
-   "description": "Visitors’ progressive builds (p95 over 3 h, from the daily buckets) and the hourly probe’s latest start times (src/probe.js). Over ~20 s the visitor waits past the resolver hold; over ~100 s the player gives up.",
+   "description": "Visitors’ progressive builds (p95 over 3 h, from the daily buckets) and the speed probe’s latest start times (src/probe.js). Over ~20 s the visitor waits past the resolver hold; over ~100 s the player gives up.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1458,7 +1458,7 @@
    "type": "timeseries",
    "id": 24,
    "title": "Tunelio probe: time to start",
-   "description": "Hourly speed probe (src/probe.js): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 2 h. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment).",
+   "description": "Speed probe every ~20 min (src/probe.js): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 45 min. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment).",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1517,7 +1517,7 @@
    "type": "timeseries",
    "id": 25,
    "title": "Tunelio probe: build speed",
-   "description": "Hourly speed probe (src/probe.js): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 2 h. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment). 2026-10-19 measured ~60 MB/s progressive.",
+   "description": "Speed probe every ~20 min (src/probe.js): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 45 min. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment). 2026-10-19 measured ~60 MB/s progressive.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"

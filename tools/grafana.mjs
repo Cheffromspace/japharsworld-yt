@@ -40,18 +40,20 @@ function row(title) {
 const target = (expr, legendFormat = '', extra = {}) => ({ refId: String.fromCharCode(65 + (extra.i ?? 0)), datasource: DS, expr, legendFormat, ...extra.t });
 const targets = (list) => list.map(([e, l, t], i) => target(e, l, { i, t }));
 
+// expr: one expression, or a list of [expr, legend] shown side by side with their names.
 function stat(title, expr, { unit = 'short', w = 4, thresholds, decimals, mappings, description } = {}) {
+  const list = Array.isArray(expr) ? expr.map(([e, l]) => [e, l, { instant: true }]) : [[expr, '', { instant: true }]];
   return {
-    type: 'stat', id: ++id, title, description, datasource: DS, gridPos: place(w, 4), targets: targets([[expr, '', { instant: true }]]),
-    options: { reduceOptions: { calcs: ['lastNotNull'] }, colorMode: 'background', graphMode: 'none', textMode: 'value' },
+    type: 'stat', id: ++id, title, description, datasource: DS, gridPos: place(w, 4), targets: targets(list),
+    options: { reduceOptions: { calcs: ['lastNotNull'] }, colorMode: 'background', graphMode: 'none', textMode: Array.isArray(expr) ? 'value_and_name' : 'value' },
     fieldConfig: { defaults: { unit, decimals, mappings: mappings ?? [], thresholds: { mode: 'absolute', steps: thresholds ?? [{ color: 'blue', value: null }] } }, overrides: [] },
   };
 }
-function series(title, list, { unit = 'short', w = 12, h = 8, stack = false, description, min, overrides = [] } = {}) {
+function series(title, list, { unit = 'short', w = 12, h = 8, stack = false, description, min, decimals, overrides = [] } = {}) {
   return {
     type: 'timeseries', id: ++id, title, description, datasource: DS, gridPos: place(w, h), targets: targets(list),
     options: { legend: { displayMode: 'list', placement: 'bottom' }, tooltip: { mode: 'multi' } },
-    fieldConfig: { defaults: { unit, min, custom: { lineWidth: 2, fillOpacity: stack ? 30 : 8, stacking: { mode: stack ? 'normal' : 'none' } } }, overrides },
+    fieldConfig: { defaults: { unit, min, decimals, custom: { lineWidth: 2, fillOpacity: stack ? 30 : 8, stacking: { mode: stack ? 'normal' : 'none' } } }, overrides },
   };
 }
 // The latest rows of a "value = when (ms)" series: one row per label set, newest first.
@@ -86,6 +88,21 @@ export function dashboard() {
   p.push(stat('Flash fails now', 'count(eiok_slot_flash_pass == 0) or vector(0)', { w: 3, thresholds: [{ color: OK, value: null }, { color: BAD, value: 1 }], description: 'Slots whose current stream failed its last flash check.' }));
   p.push(stat('Oldest waiting check', 'max(eiok_jobs_oldest_pending_seconds)', { w: 3, unit: 's', thresholds: [{ color: OK, value: null }, { color: WARN, value: 3600 }, { color: BAD, value: 7200 }], description: 'Resolution + flash jobs wait for the Optiplex worker (every 20 min).' }));
 
+  const startupNote = 'Last 3 h, per ticket request: a slow video the player retries counts several timeouts. A timeout means the player waited 90 s and got youtube.com at 360p.';
+  const noBuilds = [{ type: 'special', options: { match: 'nan', result: { text: 'no builds' } } }, { type: 'special', options: { match: 'null', result: { text: 'no builds' } } }];
+  p.push(stat('Total visits (production)', 'max(eiok_poll{source="world:prod",metric="visits"})', { w: 5, unit: 'locale', decimals: 0, thresholds: [{ color: INK, value: null }] }));
+  p.push(stat('Favorites (production)', 'max(eiok_poll{source="world:prod",metric="favorites"})', { w: 4, unit: 'locale', decimals: 0, thresholds: [{ color: INK, value: null }] }));
+  p.push(stat('Start-up problems, last 3 h', [
+    ['sum(increase(eiok_events_total{metric="ticket_timeout"}[3h])) or vector(0)', 'player timeouts'],
+    ['sum(increase(eiok_events_total{metric="build",key="failed"}[3h])) or vector(0)', 'failed builds'],
+  ], { w: 7, decimals: 0, thresholds: [{ color: OK, value: null }, { color: WARN, value: 0.5 }, { color: BAD, value: 3 }], description: startupNote }));
+  p.push(stat('Tunelio build time', [
+    ['histogram_quantile(0.95, sum by (le) (increase(eiok_build_progressive_seconds_bucket[3h])))', 'visitors p95, 3 h'],
+    ['max(eiok_poll{source="tunelio:progressive",metric="start_s"})', 'probe progressive'],
+    ['max(eiok_poll{source="tunelio:hls",metric="start_s"})', 'probe HLS'],
+  ], { w: 8, unit: 's', decimals: 0, mappings: noBuilds, thresholds: [{ color: OK, value: null }, { color: WARN, value: 20 }, { color: BAD, value: 60 }],
+    description: 'Visitors’ progressive builds (p95 over 3 h, from the daily buckets) and the hourly probe’s latest start times (src/probe.js). Over ~20 s the visitor waits past the resolver hold; over ~100 s the player gives up.' }));
+
   p.push(row('Visitors and search'));
   p.push(series('In world (production)', [
     ['max(eiok_poll{source="world:prod",metric="occupants"})', 'in world'],
@@ -96,7 +113,7 @@ export function dashboard() {
   p.push(series('Total visits (production)', [
     ['max(eiok_poll{source="world:prod",metric="visits"})', 'visits'],
     ['max(eiok_poll{source="world:prod",metric="favorites"})', 'favorites'],
-  ], { w: 12, overrides: [{ matcher: { id: 'byName', options: 'favorites' }, properties: [{ id: 'custom.axisPlacement', value: 'right' }] }],
+  ], { w: 12, unit: 'locale', decimals: 0, overrides: [{ matcher: { id: 'byName', options: 'favorites' }, properties: [{ id: 'custom.axisPlacement', value: 'right' }] }],
     description: 'All-time counts from VRChat. Grafana has them from 2026-10-21; /stats has the daily history before that.' }));
   p.push(series('Searches, plays, joins (per hour)', [
     ['sum by (metric) (increase(eiok_events_total{metric=~"search|play|join|more",key=""}[1h]))', '{{metric}}'],

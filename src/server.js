@@ -8,6 +8,7 @@
 //   GET /healthz
 //   GET /relay/next, POST /relay/done                  search relay workers only (bearer RELAY_TOKEN; see relay.js)
 //   GET /stats, /stats.json, /stats/export.csv         usage metrics (bearer or ?token= STATS_TOKEN; see stats.js)
+//   GET /ops/state, /ops/events                        read-only operator view, redacted (STATS_TOKEN; see ops.js)
 //   GET /, /privacy, /logo.png                         home page and privacy policy (public/)
 import http from 'node:http';
 import { readFileSync, statSync } from 'node:fs';
@@ -27,6 +28,7 @@ import { DataApi } from './dataapi.js';
 import { makeSearch } from './search.js';
 import { Metrics, noMetrics, lengthBucket, secondsBucket, sizeBucket, recordPoll, getMeta, setMeta } from './metrics.js';
 import { TunelioProbe } from './probe.js';
+import { EventRing, opsRoute, gitHead } from './ops.js';
 import { statsRoute } from './stats.js';
 
 const API = 1;
@@ -48,6 +50,11 @@ function page(path) {
 }
 
 export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, log = console.log } = {}) {
+  // Recent events for /ops/events, redacted as they are kept.
+  const ring = new EventRing();
+  const rawLog = log;
+  log = (line) => { rawLog(line); ring.push(line); };
+  const startedAt = Date.now();
   store ??= new Store({ path: config.dbPath, shards: config.shards, pool: config.pool, pinHours: config.pinHours });
   const logJson = (o) => log(JSON.stringify({ at: new Date().toISOString(), ...o }));
   metrics ??= config.metricsPath ? new Metrics({ path: config.metricsPath, tz: config.metricsTz, log: logJson }).start() : noMetrics;
@@ -184,6 +191,26 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         set: (k, v) => { const db = probeDb(); if (db) setMeta(db, k, v); else kept.set(k, String(v)); },
       },
     }).start();
+  }
+
+  // /ops/state: what is in flight right now, without video IDs.
+  function opsState() {
+    const now = Date.now();
+    const jobs = [...(playback.jobs?.values?.() ?? [])];
+    const count = (st) => jobs.filter((j) => j.state === st).length;
+    return {
+      version: gitHead(), uptimeS: Math.round((now - startedAt) / 1000), busy: busy(), holding,
+      tunelio: { enabled: tunelio.enabled, credits: tunelio.credits, pausedS: Math.max(0, Math.round(((playback.pausedUntil ?? 0) - now) / 1000)) },
+      builds: { building: count('building'), ready: count('ready'), failed: count('failed'),
+        inFlight: jobs.filter((j) => j.state === 'building').map((j) => ({ format: j.format, quality: j.quality, mb: j.mb, seconds: j.seconds,
+          elapsedS: Math.round((now - j.startedMs) / 1000), etaS: playback.etaSeconds?.(j) ?? null })),
+        recent: jobs.filter((j) => j.state !== 'building' && now - j.endedMs < 24 * 3600_000).sort((a, b) => a.endedMs - b.endedMs).slice(-30)
+          .map((j) => ({ at: new Date(j.endedMs).toISOString(), state: j.state, reason: j.reason, format: j.format, quality: j.quality, mb: j.mb, seconds: j.seconds, buildS: Math.round((j.endedMs - j.startedMs) / 100) / 10 })),
+        learned: { rate: playback.rate, fixed: playback.fixed } },
+      relay: { enabled: relay.enabled, workers: relay.online(), idleS: Math.round(relay.idleMs() / 1000) },
+      search: { lastVia: searcher.state.lastVia, apiUnitsToday: api.unitsToday },
+      probe: probe ? { next: new Date(Number(probe.meta.get('tunelio_probe_next')) || 0).toISOString(), runs: Number(probe.meta.get('tunelio_probe_runs')) || 0, running: probe.running } : null,
+    };
   }
 
   async function ticket(req, res, shard, n) {
@@ -333,6 +360,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         return statsRoute(req, res, url, { token: config.statsToken, metricsPath: config.metricsPath, monitorDb: config.monitorDb, tz: config.metricsTz, renewDay: config.tunelioRenewsDay, metrics });
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
+      if (url.pathname.startsWith('/ops/')) { route = 'ops'; return opsRoute(req, res, url, { token: config.statsToken, ring, state: opsState }); }
       if (url.pathname === '/healthz') {
         route = 'health';
         return json(res, 200, { ok: true, v: API, tunelio: tunelio.enabled, credits: tunelio.credits,

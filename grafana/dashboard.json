@@ -596,13 +596,296 @@
    }
   },
   {
-   "type": "row",
+   "type": "stat",
    "id": 10,
+   "title": "Total visits (production)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 5,
+    "w": 5,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"visits\"})",
+     "legendFormat": "",
+     "instant": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "graphMode": "none",
+    "textMode": "value"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "locale",
+     "decimals": 0,
+     "mappings": [],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#7aa2f7",
+        "value": null
+       }
+      ]
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "stat",
+   "id": 11,
+   "title": "Favorites (production)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 5,
+    "y": 5,
+    "w": 4,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"favorites\"})",
+     "legendFormat": "",
+     "instant": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "graphMode": "none",
+    "textMode": "value"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "locale",
+     "decimals": 0,
+     "mappings": [],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#7aa2f7",
+        "value": null
+       }
+      ]
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "stat",
+   "id": 12,
+   "title": "Start-up problems, last 3 h",
+   "description": "Last 3 h, per ticket request: a slow video the player retries counts several timeouts. A timeout means the player waited 90 s and got youtube.com at 360p.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 9,
+    "y": 5,
+    "w": 7,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum(increase(eiok_events_total{metric=\"ticket_timeout\"}[3h])) or vector(0)",
+     "legendFormat": "player timeouts",
+     "instant": true
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum(increase(eiok_events_total{metric=\"build\",key=\"failed\"}[3h])) or vector(0)",
+     "legendFormat": "failed builds",
+     "instant": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "graphMode": "none",
+    "textMode": "value_and_name"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "decimals": 0,
+     "mappings": [],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#9ece6a",
+        "value": null
+       },
+       {
+        "color": "#e0af68",
+        "value": 0.5
+       },
+       {
+        "color": "#f7768e",
+        "value": 3
+       }
+      ]
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "stat",
+   "id": 13,
+   "title": "Tunelio build time",
+   "description": "Visitors’ progressive builds (p95 over 3 h, from the daily buckets) and the hourly probe’s latest start times (src/probe.js). Over ~20 s the visitor waits past the resolver hold; over ~100 s the player gives up.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 16,
+    "y": 5,
+    "w": 8,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_build_progressive_seconds_bucket[3h])))",
+     "legendFormat": "visitors p95, 3 h",
+     "instant": true
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{source=\"tunelio:progressive\",metric=\"start_s\"})",
+     "legendFormat": "probe progressive",
+     "instant": true
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{source=\"tunelio:hls\",metric=\"start_s\"})",
+     "legendFormat": "probe HLS",
+     "instant": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "graphMode": "none",
+    "textMode": "value_and_name"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "decimals": 0,
+     "mappings": [
+      {
+       "type": "special",
+       "options": {
+        "match": "nan",
+        "result": {
+         "text": "no builds"
+        }
+       }
+      },
+      {
+       "type": "special",
+       "options": {
+        "match": "null",
+        "result": {
+         "text": "no builds"
+        }
+       }
+      }
+     ],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#9ece6a",
+        "value": null
+       },
+       {
+        "color": "#e0af68",
+        "value": 20
+       },
+       {
+        "color": "#f7768e",
+        "value": 60
+       }
+      ]
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "row",
+   "id": 14,
    "title": "Visitors and search",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 5,
+    "y": 9,
     "w": 24,
     "h": 1
    },
@@ -610,7 +893,7 @@
   },
   {
    "type": "timeseries",
-   "id": 11,
+   "id": 15,
    "title": "In world (production)",
    "description": "VRChat’s world counts, polled about every minute (japharsworld-yt-occupants.timer). VRChat updates them on its own schedule.",
    "datasource": {
@@ -619,7 +902,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 6,
+    "y": 10,
     "w": 12,
     "h": 8
    },
@@ -687,7 +970,7 @@
   },
   {
    "type": "timeseries",
-   "id": 12,
+   "id": 16,
    "title": "Total visits (production)",
    "description": "All-time counts from VRChat. Grafana has them from 2026-10-21; /stats has the daily history before that.",
    "datasource": {
@@ -696,7 +979,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 6,
+    "y": 10,
     "w": 12,
     "h": 8
    },
@@ -731,7 +1014,8 @@
    },
    "fieldConfig": {
     "defaults": {
-     "unit": "short",
+     "unit": "locale",
+     "decimals": 0,
      "custom": {
       "lineWidth": 2,
       "fillOpacity": 8,
@@ -758,7 +1042,7 @@
   },
   {
    "type": "timeseries",
-   "id": 13,
+   "id": 17,
    "title": "Searches, plays, joins (per hour)",
    "datasource": {
     "type": "prometheus",
@@ -766,7 +1050,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 14,
+    "y": 18,
     "w": 24,
     "h": 6
    },
@@ -806,7 +1090,7 @@
   },
   {
    "type": "timeseries",
-   "id": 14,
+   "id": 18,
    "title": "Search latency",
    "description": "From the daily buckets, over 3 h windows.",
    "datasource": {
@@ -815,7 +1099,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 20,
+    "y": 24,
     "w": 8,
     "h": 8
    },
@@ -864,7 +1148,7 @@
   },
   {
    "type": "timeseries",
-   "id": 15,
+   "id": 19,
    "title": "Search failure rate",
    "datasource": {
     "type": "prometheus",
@@ -872,7 +1156,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 20,
+    "y": 24,
     "w": 8,
     "h": 8
    },
@@ -913,7 +1197,7 @@
   },
   {
    "type": "timeseries",
-   "id": 16,
+   "id": 20,
    "title": "Play routes (per 3 h)",
    "datasource": {
     "type": "prometheus",
@@ -921,7 +1205,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 20,
+    "y": 24,
     "w": 8,
     "h": 8
    },
@@ -961,7 +1245,7 @@
   },
   {
    "type": "timeseries",
-   "id": 17,
+   "id": 21,
    "title": "Tunelio credits left",
    "datasource": {
     "type": "prometheus",
@@ -969,7 +1253,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 28,
+    "y": 32,
     "w": 8,
     "h": 8
    },
@@ -1010,7 +1294,7 @@
   },
   {
    "type": "timeseries",
-   "id": 18,
+   "id": 22,
    "title": "Tunelio build time",
    "description": "From the daily buckets, over 6 h windows. A player is held up to 90 s, the resolver 12 s (claude/play-latency.md).",
    "datasource": {
@@ -1019,7 +1303,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 28,
+    "y": 32,
     "w": 8,
     "h": 8
    },
@@ -1095,7 +1379,7 @@
   },
   {
    "type": "timeseries",
-   "id": 19,
+   "id": 23,
    "title": "Start-up problems (per 3 h)",
    "description": "Per ticket request, so one slow video retried by the player counts several timeouts; plays count once per room.",
    "datasource": {
@@ -1104,7 +1388,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 28,
+    "y": 32,
     "w": 8,
     "h": 8
    },
@@ -1172,7 +1456,7 @@
   },
   {
    "type": "timeseries",
-   "id": 20,
+   "id": 24,
    "title": "Tunelio probe: time to start",
    "description": "Hourly speed probe (src/probe.js): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 2 h. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment).",
    "datasource": {
@@ -1181,7 +1465,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 36,
+    "y": 40,
     "w": 12,
     "h": 8
    },
@@ -1231,7 +1515,7 @@
   },
   {
    "type": "timeseries",
-   "id": 21,
+   "id": 25,
    "title": "Tunelio probe: build speed",
    "description": "Hourly speed probe (src/probe.js): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 2 h. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment). 2026-10-19 measured ~60 MB/s progressive.",
    "datasource": {
@@ -1240,7 +1524,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 36,
+    "y": 40,
     "w": 12,
     "h": 8
    },
@@ -1303,12 +1587,12 @@
   },
   {
    "type": "row",
-   "id": 22,
+   "id": 26,
    "title": "Channels and flash checks",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 44,
+    "y": 48,
     "w": 24,
     "h": 1
    },
@@ -1316,7 +1600,7 @@
   },
   {
    "type": "table",
-   "id": 23,
+   "id": 27,
    "title": "Slots",
    "datasource": {
     "type": "prometheus",
@@ -1324,7 +1608,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 45,
+    "y": 49,
     "w": 14,
     "h": 12
    },
@@ -1532,7 +1816,7 @@
   },
   {
    "type": "timeseries",
-   "id": 24,
+   "id": 28,
    "title": "Flash checks (per 6 h)",
    "datasource": {
     "type": "prometheus",
@@ -1540,7 +1824,7 @@
    },
    "gridPos": {
     "x": 14,
-    "y": 45,
+    "y": 49,
     "w": 10,
     "h": 6
    },
@@ -1580,7 +1864,7 @@
   },
   {
    "type": "timeseries",
-   "id": 25,
+   "id": 29,
    "title": "Check queue",
    "datasource": {
     "type": "prometheus",
@@ -1588,7 +1872,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 57,
+    "y": 61,
     "w": 10,
     "h": 6
    },
@@ -1638,12 +1922,12 @@
   },
   {
    "type": "row",
-   "id": 26,
+   "id": 30,
    "title": "Hosts",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 63,
+    "y": 67,
     "w": 24,
     "h": 1
    },
@@ -1651,7 +1935,7 @@
   },
   {
    "type": "timeseries",
-   "id": 27,
+   "id": 31,
    "title": "CPU busy",
    "datasource": {
     "type": "prometheus",
@@ -1659,7 +1943,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 64,
+    "y": 68,
     "w": 8,
     "h": 8
    },
@@ -1700,7 +1984,7 @@
   },
   {
    "type": "timeseries",
-   "id": 28,
+   "id": 32,
    "title": "Memory available",
    "datasource": {
     "type": "prometheus",
@@ -1708,7 +1992,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 64,
+    "y": 68,
     "w": 8,
     "h": 8
    },
@@ -1749,7 +2033,7 @@
   },
   {
    "type": "timeseries",
-   "id": 29,
+   "id": 33,
    "title": "Disk free (/)",
    "datasource": {
     "type": "prometheus",
@@ -1757,7 +2041,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 64,
+    "y": 68,
     "w": 8,
     "h": 8
    },
@@ -1798,7 +2082,7 @@
   },
   {
    "type": "timeseries",
-   "id": 30,
+   "id": 34,
    "title": "Public endpoints",
    "datasource": {
     "type": "prometheus",
@@ -1806,7 +2090,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 72,
+    "y": 76,
     "w": 12,
     "h": 8
    },
@@ -1855,7 +2139,7 @@
   },
   {
    "type": "timeseries",
-   "id": 31,
+   "id": 35,
    "title": "Failed units",
    "description": "japharsworld-yt units, bgutil-pot and caddy in the failed state.",
    "datasource": {
@@ -1864,7 +2148,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 72,
+    "y": 76,
     "w": 12,
     "h": 8
    },
@@ -1904,12 +2188,12 @@
   },
   {
    "type": "row",
-   "id": 32,
+   "id": 36,
    "title": "Versions and deploys",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 80,
+    "y": 84,
     "w": 24,
     "h": 1
    },
@@ -1917,7 +2201,7 @@
   },
   {
    "type": "state-timeline",
-   "id": 33,
+   "id": 37,
    "title": "World version over time",
    "datasource": {
     "type": "prometheus",
@@ -1925,7 +2209,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 81,
+    "y": 85,
     "w": 24,
     "h": 4
    },
@@ -1977,7 +2261,7 @@
   },
   {
    "type": "table",
-   "id": 34,
+   "id": 38,
    "title": "World uploads and releases",
    "description": "VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.",
    "datasource": {
@@ -1986,7 +2270,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 85,
+    "y": 89,
     "w": 12,
     "h": 6
    },
@@ -2050,7 +2334,7 @@
   },
   {
    "type": "table",
-   "id": 35,
+   "id": 39,
    "title": "Deploys of main",
    "description": "Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.",
    "datasource": {
@@ -2059,7 +2343,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 85,
+    "y": 89,
     "w": 12,
     "h": 6
    },

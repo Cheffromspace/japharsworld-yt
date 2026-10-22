@@ -133,6 +133,12 @@ fails its health check, and updates yt-dlp daily.
 
 Settings live in `/etc/japharsworld-yt.env`. Logs: `journalctl -u japharsworld-yt -f`.
 
+Without SSH: `GET /ops/state` (builds in flight and recently finished, holds, relay workers, the speed probe, the
+deployed commit) and `GET /ops/events?event=a,b&minutes=&limit=` (the service's recent log events, kept in memory
+since the last restart), behind `STATS_TOKEN`. Both are read only and redacted (`src/ops.js`): an allowlist of fields,
+so video IDs, ticket numbers, shards and User-Agents stay on the server. `node tools/ops.mjs state | events --event
+tunelio_link,build_failed` reads them with `STATS_TOKEN` from `.env`.
+
 ## Development
 
 ```sh

@@ -1,0 +1,72 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import { createApp } from '../src/server.js';
+import { Store } from '../src/store.js';
+import { config as base } from '../src/config.js';
+import { EventRing, mask, redact, gitHead } from '../src/ops.js';
+import { Playback } from '../src/playback.js';
+
+const config = { ...base, shards: 2, pool: 100, statsToken: 'secret', metricsPath: '', tunelioKey: '' };
+
+test('ops redaction: allowlisted fields only, IDs and query strings masked', () => {
+  const e = redact({ at: 'x', event: 'play', id: 'dQw4w9WgXcQ', n: 5, shard: 1, ua: 'Mozilla/5.0', via: 'tunelio', held: 1200, nested: { a: 1 },
+    message: 'ERROR: [youtube] dQw4w9WgXcQ: Sign in; see https://tunelio.dev/tunnel?id=dQw4w9WgXcQ&sig=abc' });
+  assert.deepEqual(Object.keys(e).sort(), ['at', 'event', 'held', 'message', 'via']);
+  assert.doesNotMatch(JSON.stringify(e), /dQw4w9WgXcQ|sig=|Mozilla/);
+  assert.equal(mask('video unavailable Information'), 'video unavailable Information', 'ordinary words stay');
+  const ring = new EventRing(3);
+  for (let i = 0; i < 5; i++) ring.push(JSON.stringify({ at: new Date(1000 + i).toISOString(), event: i % 2 ? 'a' : 'b', i }));
+  ring.push('{"route":"ticket","status":302}'); // request lines are not events
+  ring.push('not json');
+  assert.equal(ring.items.length, 3);
+  assert.deepEqual(ring.query({ events: ['b'] }).map((x) => x.at), [new Date(1002).toISOString(), new Date(1004).toISOString()]);
+  assert.match(gitHead() ?? '', /^[0-9a-f]{40}$/);
+});
+
+test('ops routes: token required, state and redacted events', async (t) => {
+  const store = new Store({ path: ':memory:', shards: 2, pool: 100, pinHours: 24 });
+  const youtube = { async search() { return { videos: [{ id: 'AbCdEfGh1jK', title: 't', channel: 'c', length: '20:00', seconds: 1200, views: '', age: '', live: false }], more: null }; }, thumbnailUrl: () => '' };
+  const tunelio = { enabled: true, credits: 77, async create() { return { url: 'https://tunelio.dev/tunnel?id=x&sig=y', expires: 9e9, quality: '1080p', fileSize: 500e6 }; } };
+  const lines = [];
+  const playback = new Playback({ tunelio, probe: async () => ({ ok: true }), log: (o) => lines.push(JSON.stringify(o)) });
+  const app = createApp({ config, store, youtube, tunelio, playback, captions: { async get() { return { available: false }; } }, log: () => {} });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const get = async (path, token = 'secret') => {
+    const r = await fetch(url + path, { headers: token ? { authorization: `Bearer ${token}` } : {}, redirect: 'manual' });
+    return { status: r.status, body: await r.json().catch(() => null) };
+  };
+
+  assert.equal((await get('/ops/state', null)).status, 401);
+  assert.equal((await get('/ops/state', 'wrong')).status, 401);
+  assert.equal((await get('/ops/nope')).status, 404);
+
+  // A search and a play put events in the ring.
+  const s = await (await fetch(`${url}/v1/1/s?l=en&q=x`)).json();
+  const play = await fetch(`${url}/v1/1/${s.results[0].t}`, { redirect: 'manual', headers: { 'user-agent': 'NSPlayer/12.00' } });
+  assert.equal(play.status, 302);
+
+  const st = await get('/ops/state');
+  assert.equal(st.status, 200);
+  assert.equal(st.body.tunelio.credits, 77);
+  assert.equal(st.body.builds.ready, 1);
+  assert.equal(st.body.builds.recent[0].mb, 500);
+  assert.match(st.body.version ?? '', /^[0-9a-f]{40}$/);
+
+  const ev = await get('/ops/events?event=play,tunelio_link&minutes=60');
+  assert.equal(ev.status, 200);
+  assert.deepEqual(ev.body.events.map((e) => e.event), ['play']);
+  assert.equal(ev.body.events[0].client, 'avpro');
+  assert.equal(ev.body.events[0].via, 'tunelio');
+  const all = JSON.stringify((await get('/ops/events')).body) + JSON.stringify(st.body);
+  assert.doesNotMatch(all, /AbCdEfGh1jK|sig=y|NSPlayer/, 'no video IDs, link signatures or User-Agents');
+
+  // Without a token configured the routes don't exist.
+  const off = createApp({ config: { ...config, statsToken: '' }, store, youtube, tunelio, log: () => {} });
+  const res = { writeHead(s) { this.status = s; return this; }, end() {} , on() {} };
+  await off({ url: '/ops/state', method: 'GET', headers: {} }, Object.assign(res, { headersSent: false }));
+  assert.equal(res.status, 404);
+});

@@ -341,7 +341,7 @@ ${ch.length ? `<table><tr><th>Slot</th><th>Uptime</th><th>Restarts</th><th>Flash
 </main></body></html>`;
 }
 
-function tokenOk(req, url, token) {
+export function tokenOk(req, url, token) {
   if (!token) return false;
   const auth = String(req.headers.authorization ?? '');
   const given = auth.startsWith('Bearer ') ? auth.slice(7) : (url.searchParams.get('token') ?? '');

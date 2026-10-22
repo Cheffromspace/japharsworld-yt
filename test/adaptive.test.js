@@ -60,7 +60,7 @@ async function server(over = {}) {
   const youtube = { async search() { return { videos: [{ id: 'AbCdEfGh1jK', title: 't', channel: 'c', length: '20:00', seconds: 1200, views: '', age: '', live: false }], more: null }; }, thumbnailUrl: () => '' };
   const config = { ...base, shards: 4, pool: 100, metricsPath: '', tunelioKey: '', tunelioQuality: '720p', tunelioQualities: ['720p', '1080p'],
     adaptiveHls: true, adaptiveShards: [3], adaptiveHoldMs: 200, publicUrl: 'http://pub.example' };
-  const adaptive = new Adaptive({ playback: f.playback, pacer: { check: () => ({ ok: true }) }, fetcher: f.fetcher, holdMs: 200 });
+  const adaptive = new Adaptive({ playback: f.playback, pacer: { check: () => ({ ok: true }) }, fetcher: f.fetcher, holdMs: 200, base: 'http://pub.example/hls' });
   const app = createApp({ config, store, youtube, tunelio: f.tunelio, playback: f.playback, adaptive, captions: { async get() { return { available: false }; } }, log: () => {} });
   const srv = http.createServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -88,8 +88,9 @@ test('adaptive play: resolver sent on at once, player → our master, 720p now, 
   const path = new URL(master).pathname;
 
   const m = await (await s.get(path)).text();
-  assert.match(m, /RESOLUTION=1280x720[^\n]*\n[a-f0-9]{18}\/720p\.m3u8/);
-  assert.match(m, /RESOLUTION=1920x1080[^\n]*\n[a-f0-9]{18}\/1080p\.m3u8/);
+  // Absolute: a player that came through the ticket's redirect resolves relative links against the ticket URL.
+  assert.match(m, /RESOLUTION=1280x720[^\n]*\nhttp:\/\/pub\.example\/hls\/[a-f0-9]{18}\/720p\.m3u8/);
+  assert.match(m, /RESOLUTION=1920x1080[^\n]*\nhttp:\/\/pub\.example\/hls\/[a-f0-9]{18}\/1080p\.m3u8/);
   assert.match(await (await s.get(path, YTDLP)).text(), /Not a video/, 'a resolver never gets the master');
 
   const v720 = await (await s.get(path.replace('.m3u8', '/720p.m3u8'))).text();
@@ -138,4 +139,26 @@ test('speed estimate: the median of recent builds wins over the long-run average
   assert.equal(Math.round(p.predict('progressive', 300)), 62, 'slow period: 2 s + 300 / 5');
   now += 3 * 3600_000;
   assert.equal(Math.round(p.predict('progressive', 300)), 7, 'two hours later the slow builds no longer count');
+});
+
+test('a plain HLS build (a video over 3 hours) reached through the redirect goes to our copy with absolute links', async (t) => {
+  const f = fakes();
+  const long = { id: 'LongRain001', title: 't', channel: 'c', length: '10:00:00', seconds: 36000, views: '', age: '', live: false };
+  const store = new Store({ path: ':memory:', shards: 4, pool: 100, pinHours: 24 });
+  const app = createApp({ config: { ...base, shards: 4, pool: 100, metricsPath: '', tunelioKey: '', tunelioQuality: '720p', tunelioQualities: ['720p', '1080p'] },
+    store, youtube: { async search() { return { videos: [long], more: null }; }, thumbnailUrl: () => '' }, tunelio: f.tunelio, playback: f.playback,
+    adaptive: new Adaptive({ playback: f.playback, fetcher: f.fetcher, base: 'http://pub.example/hls' }), captions: { async get() { return { available: false }; } }, log: () => {} });
+  const srv = http.createServer(app);
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => srv.close());
+  const url = `http://127.0.0.1:${srv.address().port}`;
+  const n = (await (await fetch(`${url}/v1/0/s?l=en&q=rain`)).json()).results[0].t;
+  const p = await fetch(`${url}/v1/0/${n}`, { headers: { 'user-agent': 'NSPlayer/12.00' }, redirect: 'manual' });
+  const loc = p.headers.get('location');
+  assert.match(loc, /^http:\/\/pub\.example\/hls\/[a-f0-9]{18}\/720p\.m3u8$/);
+  const text = await (await fetch(url + new URL(loc).pathname, { headers: { 'user-agent': 'NSPlayer/12.00' } })).text();
+  assert.match(text, /\nhttps:\/\/tunelio\.dev\/tunnel\?id=x&hls=data\n/);
+  // VRChat's resolver still gets Tunelio's own link once the build is ready (VRChat hands AVPro that final URL, which works).
+  const y = await fetch(`${url}/v1/0/${n}`, { headers: { 'user-agent': YTDLP }, redirect: 'manual' });
+  assert.match(y.headers.get('location'), /^https:\/\/tunelio\.dev\/.*&hls=1$/);
 });

@@ -17,6 +17,11 @@
 // `holdMs` while it builds (fewer retries), then 404; if its build fails it serves the 720p playlist, ending the
 // retries. Tunelio only answers an HLS playlist once the whole file is built, so the start waits for the 720p build.
 // The 1080p HLS build starts when a player first loads the master, not while the 720p one is still building.
+//
+// Every link we hand out is absolute: a player that reached a playlist through the ticket's redirect resolves relative
+// links against the ticket URL (2026-10-22: "<token>/720p.m3u8" and Tunelio's "tunnel?id=…" both became /v1/3/… 404s
+// and AVPro failed with "Loading failed"). The same goes for a plain HLS build (videos over 3 hours): the ticket
+// redirects to our copy of its playlist, `single()`, not to Tunelio's.
 import { randomBytes } from 'node:crypto';
 
 // Allows the extra credits of an adaptive play while today's spend stays under an even share of what is left until the
@@ -42,8 +47,9 @@ const PLAN_MS = 30 * 60_000;
 
 export class Adaptive {
   constructor({ playback, pacer, fetcher = fetch, log = () => {}, onEvent = () => {}, lower = '720p', upper = '1080p',
-    holdMs = 8000, maxUpperMb = 1500, directSeconds = 10, now = () => Date.now() }) {
-    Object.assign(this, { playback, pacer, fetch: fetcher, log, onEvent, lower, upper, holdMs, maxUpperMb, directSeconds, now });
+    holdMs = 8000, maxUpperMb = 1500, directSeconds = 10, now = () => Date.now(), base = 'https://yt.japharsworld.com/hls' }) {
+    Object.assign(this, { playback, pacer, fetch: fetcher, log, onEvent, lower, upper, holdMs, maxUpperMb, directSeconds, now, base });
+    this.byJob = new WeakMap(); // build job → its session
     this.plans = new Map();    // video id → { mode, upgrade, until, promise }
     this.sessions = new Map(); // token → { token, data, lowerJob, served, fellBack }
     this.byVideo = new Map();  // video id → token
@@ -83,26 +89,24 @@ export class Adaptive {
     return mode;
   }
 
-  // The adaptive session for a video whose 720p HLS build is ready, shared by everyone who plays it while that build's
-  // links last (a rebuilt 720p variant, hours later, starts a new session).
-  session(data) {
-    const lowerJob = this.playback.peek(data, this.lower, { hls: true });
-    let s = this.sessions.get(this.byVideo.get(data.id));
-    if (s && s.lowerJob !== lowerJob) { this.sessions.delete(s.token); s = null; }
+  // The session for a ready HLS build, shared by everyone who plays it while that build's links last (a rebuild, hours
+  // later, starts a new session). Adaptive sessions are on the 720p HLS build; single ones on a plain HLS build.
+  session(data, job = this.playback.peek(data, this.lower, { hls: true }), { single = false } = {}) {
+    let s = this.byJob.get(job);
     if (!s) {
-      s = { token: randomBytes(9).toString('hex'), data, lowerJob, started: false };
+      s = { token: randomBytes(9).toString('hex'), data, lowerJob: job, single, started: false };
+      this.byJob.set(job, s);
       this.sessions.set(s.token, s);
-      this.byVideo.set(data.id, s.token);
-      if (this.sessions.size > 2000) {
-        const [first] = this.sessions.keys();
-        this.byVideo.delete(this.sessions.get(first).data.id);
-        this.sessions.delete(first);
-      }
+      if (this.sessions.size > 2000) this.sessions.delete(this.sessions.keys().next().value);
     }
     return s;
   }
 
-  #lowerJob(s) { return this.playback.peek(s.data, this.lower, { hls: true }); }
+  // The URL to send a player to: the master playlist (adaptive), or our copy of a plain HLS build's playlist.
+  url(s) { return s.single ? `${this.base}/${s.token}/${s.lowerJob.quality}.m3u8` : `${this.base}/${s.token}.m3u8`; }
+  single(data, job) { return this.url(this.session(data, job, { single: true })); }
+
+  #lowerJob(s) { return s.lowerJob; }
   #upperJob(s) { return this.playback.peek(s.data, this.upper, { hls: true }); }
 
   bandwidth(job, factor = 1) {
@@ -113,20 +117,22 @@ export class Adaptive {
   // The master playlist, or null for an unknown token. The first load starts the 1080p HLS build.
   master(token) {
     const s = this.sessions.get(token);
-    if (!s) return null;
+    if (!s || s.single) return null;
     if (!s.started) { s.started = true; this.playback.start(s.data, this.upper, { hls: true, maxMb: this.maxUpperMb }); this.onEvent('upgrade'); }
     const low = this.#lowerJob(s), up = this.#upperJob(s);
     this.onEvent('master');
     return `${['#EXTM3U', '#EXT-X-INDEPENDENT-SEGMENTS',
-      `#EXT-X-STREAM-INF:BANDWIDTH=${this.bandwidth(low)},RESOLUTION=${RES[this.lower]},CODECS="${CODECS[this.lower]}"`, `${token}/${this.lower}.m3u8`,
-      `#EXT-X-STREAM-INF:BANDWIDTH=${up?.state === 'ready' ? this.bandwidth(up) : this.bandwidth(low, 1.8)},RESOLUTION=${RES[this.upper]},CODECS="${CODECS[this.upper]}"`, `${token}/${this.upper}.m3u8`,
+      `#EXT-X-STREAM-INF:BANDWIDTH=${this.bandwidth(low)},RESOLUTION=${RES[this.lower]},CODECS="${CODECS[this.lower]}"`, `${this.base}/${token}/${this.lower}.m3u8`,
+      `#EXT-X-STREAM-INF:BANDWIDTH=${up?.state === 'ready' ? this.bandwidth(up) : this.bandwidth(low, 1.8)},RESOLUTION=${RES[this.upper]},CODECS="${CODECS[this.upper]}"`, `${this.base}/${token}/${this.upper}.m3u8`,
     ].join('\n')}\n`;
   }
 
   // A variant playlist: Tunelio's, with its segment links made absolute. Null = not (yet) available (404).
   async variant(token, quality) {
     const s = this.sessions.get(token);
-    if (!s || (quality !== this.lower && quality !== this.upper)) return null;
+    if (!s) return null;
+    if (s.single) return quality === s.lowerJob.quality ? this.#playlist(s.lowerJob) : null;
+    if (quality !== this.lower && quality !== this.upper) return null;
     if (quality === this.lower) return this.#playlist(this.#lowerJob(s));
     let up = this.#upperJob(s);
     if (!up) return null;

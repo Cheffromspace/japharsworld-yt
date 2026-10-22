@@ -91,6 +91,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const today = () => dayOf(Date.now(), config.metricsTz);
   adaptive ??= new Adaptive({
     playback, log: logJson, onEvent: (k) => metrics.inc('adaptive', k), holdMs: config.adaptiveHoldMs, directSeconds: config.adaptiveDirectSeconds,
+    base: `${config.publicUrl}/hls`,
     lower: config.tunelioQuality, upper: config.tunelioQualities.at(-1) ?? '1080p', maxUpperMb: config.tunelioMaxMb,
     pacer: new Pacer({
       reserve: config.adaptiveReserve,
@@ -351,7 +352,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           quality: c.quality, hls: c.hls });
       } finally { holding--; }
       if (c.hls && where.ready && where.via === 'tunelio') {
-        where = { ...where, location: `${config.publicUrl}/hls/${adaptive.session(t.data).token}.m3u8` };
+        where = { ...where, location: adaptive.url(adaptive.session(t.data)) };
+      } else if (!resolver && where.ready && where.via === 'tunelio' && /[?&]hls=1$/.test(where.location)) {
+        // A plain HLS build reached through the redirect: our copy with absolute links (see src/adaptive.js).
+        const job = playback.peek(t.data, c.quality, { hls: c.hls });
+        if (job?.url === where.location) where = { ...where, location: adaptive.single(t.data, job) };
       }
       const held = Date.now() - started;
       metrics.latency('ticket_hold_ms', held);
@@ -430,7 +435,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (roomPlays.size > 5000) for (const [k, t] of roomPlays) if (now - t >= ROOM_PLAY_MS) roomPlays.delete(k);
     metrics.inc('play');
     metrics.inc('play_length', lengthBucket(data));
-    if (where.via === 'tunelio') metrics.inc('play_route', /\/hls\/[a-f0-9]+\.m3u8$/.test(where.location) ? 'tunelio-adaptive' : /[?&]hls=1/.test(where.location) ? 'tunelio-hls' : 'tunelio-progressive');
+    if (where.via === 'tunelio') metrics.inc('play_route', /\/hls\/[a-f0-9]+\.m3u8$/.test(where.location) ? 'tunelio-adaptive' : /[?&]hls=1|\/hls\/[a-f0-9]+\/\d+p\.m3u8$/.test(where.location) ? 'tunelio-hls' : 'tunelio-progressive');
     else if (where.reason === 'live') metrics.inc('play_route', 'youtube-live');
     else { metrics.inc('play_route', 'youtube-fallback'); metrics.inc('play_fallback', where.reason); }
   }

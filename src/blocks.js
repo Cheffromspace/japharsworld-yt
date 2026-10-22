@@ -51,6 +51,8 @@ export function wordsFromCues(cues, { units = 'words' } = {}) {
       const real = offset != null;
       const pieces = split(text, units);
       if (!pieces.length) continue;
+      // A cue's first word starts fresh after the cue before it (json3 only puts the space on words within a cue).
+      if (i === 0) pieces[0].sp = true;
       if (pieces.length === 1) { words.push({ t: segStart, e: segEnd, w: pieces[0].w, sp: pieces[0].sp || /^\s/.test(text), real }); continue; }
       const weights = pieces.map((p) => Math.max(1, p.w.length + (units === 'words' ? 1 : 0)));
       const total = weights.reduce((a, b) => a + b, 0);

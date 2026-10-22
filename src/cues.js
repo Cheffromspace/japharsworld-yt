@@ -114,10 +114,10 @@ export function cuesFromLines(lines) {
 // yt-dlp's keys for uploader tracks sometimes carry a variant id ("en-eEY6OEpapPo": a second English track with its
 // own name). The language code is what the picker and the cache go by; the key is what yt-dlp downloads.
 export function codeOfKey(key) {
-  const k = String(key ?? '');
+  const k = String(key ?? '').replace(/-orig$/, '');
   const m = /^([a-zA-Z]{2,3})-([A-Za-z0-9_-]{6,})$/.exec(k);
   if (m && !/^(Hans|Hant|Latn|Cyrl)$/.test(m[2])) return m[1];
-  return k.replace(/-orig$/, '');
+  return k;
 }
 
 // The yt-dlp key to download for a wanted { code, auto } among an info JSON's keys: the original auto track for the

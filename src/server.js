@@ -205,7 +205,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (m) { try { body = readFileSync(join(dirname(config.dbPath), 'hls-test', `${m[1]}.m3u8`)); } catch { body = null; } }
     if (!body) return fail(res, 404, 'not_found', 'Unknown path.');
     const kind = clientKind(req.headers['user-agent']);
-    logJson({ event: 'hls_test', client: kind, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
+    logJson({ event: 'hls_test', name: m[1].slice(0, 6), client: kind, range: req.headers.range, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
     if (kind === 'ytdlp') {
       const page = Buffer.from('<!doctype html><title>Preparing</title><p>Not a video page.</p>');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': page.length, 'cache-control': 'no-store' });

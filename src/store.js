@@ -57,7 +57,10 @@ export class Store {
     const r = this.q.qualityGet.get(shard);
     return r && this.now() - r.at < maxAgeMs ? r.quality : null;
   }
-  setQuality(shard, quality) { this.q.qualitySet.run(shard, quality, this.now()); }
+  setQuality(shard, quality) {
+    if (quality == null) this.db.prepare('DELETE FROM shard_quality WHERE shard = ?').run(shard);
+    else this.q.qualitySet.run(shard, quality, this.now());
+  }
 
   validShard(shard) { return Number.isInteger(shard) && shard >= 0 && shard < this.shards; }
   validTicket(n) { return Number.isInteger(n) && n >= 0 && n < this.pool; }

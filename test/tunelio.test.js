@@ -297,7 +297,7 @@ test('room quality: 720p by default, a pick per shard, builds kept apart per qua
   const url = `http://127.0.0.1:${server.address().port}`;
   const get = (p, ua = 'UnityPlayer/2022.3.22f1') => fetch(url + p, { headers: { 'user-agent': ua }, redirect: 'manual' });
 
-  assert.deepEqual(await (await get('/v1/1/q')).json(), { v: 1, shard: 1, quality: '720p', default: '720p', options: ['720p', '1080p'] });
+  assert.deepEqual(await (await get('/v1/1/q')).json(), { v: 1, shard: 1, quality: '720p', pick: 'auto', default: '720p', options: ['720p', '1080p'] });
   const s = await (await get('/v1/1/s?l=en&q=x')).json();
   const t0 = s.results[0].t;
   assert.equal((await (await get(`/v1/1/${t0}`)).json()).room, '720p');
@@ -322,4 +322,12 @@ test('room quality: 720p by default, a pick per shard, builds kept apart per qua
   assert.equal(old.quality(1, 3600_000), '1080p');
   old.now = () => 2 * 3600_000;
   assert.equal(old.quality(1, 3600_000), null);
+});
+
+test('room quality: q/auto clears the pick', async () => {
+  const store = new Store({ path: ':memory:', shards: 2, pool: 10, pinHours: 1 });
+  store.setQuality(1, '1080p');
+  assert.equal(store.quality(1, 3600_000), '1080p');
+  store.setQuality(1, null);
+  assert.equal(store.quality(1, 3600_000), null);
 });

@@ -307,13 +307,18 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return { quality: adaptive.lower, hls: false, mode };
   }
   function quality(res, shard, raw) {
-    if (raw) {
+    if (raw === 'auto') {
+      // No pick: the playback plan decides (1080p when Tunelio is fast, else the default), or the default when plans are off.
+      store.setQuality(shard, null);
+      metrics.inc('quality_pick', 'auto');
+    } else if (raw) {
       const q = `${raw}p`;
       if (!config.tunelioQualities.includes(q)) return fail(res, 400, 'bad_quality', 'Unknown quality.');
       store.setQuality(shard, q);
       metrics.inc('quality_pick', q);
     }
-    return json(res, 200, { v: API, shard, quality: roomQuality(shard), default: config.tunelioQuality, options: config.tunelioQualities });
+    const pick = store.quality(shard, config.qualityHours * 3600_000);
+    return json(res, 200, { v: API, shard, quality: roomQuality(shard), pick: pick ?? 'auto', default: config.tunelioQuality, options: config.tunelioQualities });
   }
 
   async function ticket(req, res, shard, n) {
@@ -500,7 +505,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         res.writeHead(200, { 'content-type': PAGES[pagePath][1], 'content-length': buf.length, 'cache-control': 'public, max-age=3600' });
         return res.end(req.method === 'HEAD' ? undefined : buf);
       }
-      const m = url.pathname.match(/^\/v1\/(\d+)\/(s|q(?:\/\d{3,4})?|cc\/(?:[A-Za-z-]+|\d{1,3})|\d+)\/?$/);
+      const m = url.pathname.match(/^\/v1\/(\d+)\/(s|q(?:\/(?:\d{3,4}|auto))?|cc\/(?:[A-Za-z-]+|\d{1,3})|\d+)\/?$/);
       if (!m) return fail(res, 404, 'not_found', 'Unknown path.');
       const shard = Number(m[1]);
       if (!store.validShard(shard)) return fail(res, 404, 'bad_shard', 'Unknown shard.');

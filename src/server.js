@@ -251,7 +251,16 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (!body) return fail(res, 404, 'not_found', 'Unknown path.');
     const kind = clientKind(req.headers['user-agent']);
     logJson({ event: 'hls_test', name: m[1].slice(0, 6), client: kind, range: req.headers.range, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
-    if (kind === 'ytdlp') {
+    // Player test slots (owner, 2026-10-22: the VRPlayer TEST world bakes fixed slot URLs; what a slot plays is changed
+    // here): a file "#REDIRECT <url>" answers 302 to that URL; ?resolve=1 lets VRChat's yt-dlp through too, to test the
+    // path where VRChat hands the player yt-dlp's result instead of the raw URL.
+    const text = body.toString('utf8');
+    if (text.startsWith('#REDIRECT ')) {
+      if (kind === 'ytdlp' && url.searchParams.get('resolve') !== '1') return fail(res, 404, 'not_found', 'Not for the resolver.');
+      res.writeHead(302, { location: text.slice(10).trim(), 'cache-control': 'no-store' });
+      return res.end();
+    }
+    if (kind === 'ytdlp' && url.searchParams.get('resolve') !== '1') {
       const page = Buffer.from('<!doctype html><title>Preparing</title><p>Not a video page.</p>');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': page.length, 'cache-control': 'no-store' });
       return res.end(page);

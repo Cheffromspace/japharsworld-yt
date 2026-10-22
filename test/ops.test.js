@@ -94,3 +94,27 @@ test('hls-test: the resolver gets a "not a video" page, the player the playlist;
   assert.equal((await get('fedcba9876543210.m3u8', 'NSPlayer')).status, 404);
   assert.equal((await get('..%2Ftickets.db', 'NSPlayer')).status, 404);
 });
+
+test('hls-test slots: #REDIRECT files answer 302; ?resolve=1 lets the resolver through', async (t) => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'hls-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, 'hls-test'));
+  writeFileSync(join(dir, 'hls-test', '7e57000000000001.m3u8'), '#REDIRECT https://tunelio.dev/tunnel?id=x&progressive=1\n');
+  writeFileSync(join(dir, 'hls-test', '7e57000000000002.m3u8'), '#EXTM3U\n');
+  const store = new Store({ path: ':memory:', shards: 2, pool: 100, pinHours: 24 });
+  const app = createApp({ config: { ...config, dbPath: join(dir, 'tickets.db') }, store, tunelio: { enabled: false }, log: () => {} });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}/hls-test/`;
+  const get = (p, ua) => fetch(base + p, { headers: { 'user-agent': ua }, redirect: 'manual' });
+  const chrome = 'Mozilla/5.0 (Windows NT 10.0) Chrome/149.0 Safari/537.36';
+  assert.equal((await get('7e57000000000001.m3u8', 'NSPlayer/12.00')).headers.get('location'), 'https://tunelio.dev/tunnel?id=x&progressive=1');
+  assert.equal((await get('7e57000000000001.m3u8', chrome)).status, 404, 'the resolver fails over to the raw URL');
+  assert.equal((await get('7e57000000000001.m3u8?resolve=1', chrome)).status, 302);
+  assert.match(await (await get('7e57000000000002.m3u8?resolve=1', chrome)).text(), /^#EXTM3U/);
+  assert.match(await (await get('7e57000000000002.m3u8', chrome)).text(), /Not a video/);
+});

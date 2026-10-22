@@ -30,7 +30,10 @@ async function start(over = {}) {
   const store = new Store({ path: ':memory:', shards: config.shards, pool: config.pool, pinHours: 24 });
   const youtube = fakeYoutube();
   const captionCalls = [];
-  const captions = { async get(id, lang) { captionCalls.push([id, lang]); return { id, lang, available: true, source: 'manual', lines: [[0, 1, 'hi']] }; } };
+  const captions = {
+    async get(id, lang) { captionCalls.push([id, lang]); return { id, lang, available: true, source: 'manual', lines: [[0, 1, 'hi']] }; },
+    warm(id) { this.get(id, 'native'); }, // the play route warms the free sources (src/captionchain.js)
+  };
   const red = await sharp({ create: { width: 320, height: 180, channels: 3, background: '#f7768e' } }).jpeg().toBuffer();
   const app = createApp({ config, store, youtube, captions, sheetOpts: { fetcher: async () => red }, log: () => {}, ...over });
   const server = http.createServer(app);

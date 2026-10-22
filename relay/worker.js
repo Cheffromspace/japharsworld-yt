@@ -1,19 +1,29 @@
-// Search relay worker (runs at home, on the owner's Optiplex). It never listens on a port: it long-polls
-// RELAY_URL/relay/next over HTTPS for search jobs, runs them through InnerTube from this residential connection
-// (src/youtube.js, so videos come out exactly as on the server) and posts the results to RELAY_URL/relay/done.
-// Settings (environment, /etc/japharsworld-yt-relay.env): RELAY_URL, RELAY_TOKEN, WORKER_NAME, RELAY_POLLS (3).
+// Search and caption relay worker (runs at home, on the owner's Optiplex). It never listens on a port: it long-polls
+// RELAY_URL/relay/next over HTTPS for jobs, runs them from this residential connection (search through InnerTube,
+// src/youtube.js, so videos come out exactly as on the server; captions through yt-dlp, relay/captions.js) and posts
+// the results to RELAY_URL/relay/done.
+// Settings (environment, /etc/japharsworld-yt-relay.env): RELAY_URL, RELAY_TOKEN, WORKER_NAME, RELAY_POLLS (3),
+// YTDLP (found in the flash-check venv or PATH when unset), YTDLP_ARGS (--js-runtimes node).
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { youtube as defaultYoutube, resetClient } from '../src/youtube.js';
+import { captionsJob, findYtdlp, ytdlpArgs } from './captions.js';
 
 const CONT_MINUTES = 30;
 const MAX_CONTS = 2000;
 const is403 = (err) => /status code 403\b/.test(String(err?.message ?? err));
 
 export function createWorker({ url, token, name = 'worker', version = '', polls = 3, youtube = defaultYoutube, reset = resetClient,
+  captions = null, ytdlp = null, ytdlpExtraArgs = ytdlpArgs(),
   fetcher = fetch, log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o })), now = () => Date.now(),
   sleep = (ms, signal) => new Promise((r) => { const t = setTimeout(r, ms); signal?.addEventListener('abort', () => { clearTimeout(t); r(); }); }) }) {
+  // Caption jobs: an injected function (tests) or yt-dlp, found once on first use.
+  let ytdlpPath = ytdlp;
+  const runCaptions = captions ?? (async (job) => {
+    ytdlpPath ??= await findYtdlp();
+    return captionsJob(job, { ytdlp: ytdlpPath, extraArgs: ytdlpExtraArgs, log });
+  });
   const base = String(url).replace(/\/+$/, '');
   const headers = { authorization: `Bearer ${token}` };
   const conts = new Map(); // id → { more, at }
@@ -37,11 +47,16 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
     }
   }
 
-  // Job → { id, ok, page: { videos, cont }, error }
+  // Job → { id, ok, page: { videos, cont }, error } for search, { id, ok, captions, error } for captions
   async function handle(job) {
     const started = now();
     try {
       let page;
+      if (job.kind === 'captions') {
+        const captions = await runCaptions(job);
+        log({ event: 'job', kind: job.kind, ms: now() - started, cues: captions.cues?.length ?? 0, reason: captions.reason });
+        return { id: job.id, ok: true, captions };
+      }
       if (job.kind === 'search') page = await once(() => youtube.search(String(job.query ?? ''), Math.min(50, Number(job.limit) || 20)));
       else if (job.kind === 'more') {
         const c = conts.get(job.cont);

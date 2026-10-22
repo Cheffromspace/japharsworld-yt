@@ -108,6 +108,8 @@ export const METRICS = {
   cc_track_lang: ['daily', isTrackLang],
   cc_unavailable: ['daily', oneOf('no_captions', 'no_track_in_language', 'temporarily_unavailable', 'translation_unavailable',
     'nothing_playing', 'no_tracks', 'failed', 'none')],
+  cc_via: ['daily', oneOf('worker', 'local', 'tunelio')],  // which caption source answered a fetch (src/captionchain.js)
+  cc_words: ['daily', oneOf('real', 'estimated')],         // word timing in a served track: YouTube's, or spread by character
   credits: ['daily', oneOf('playback', 'captions', 'probe', 'test')],
   join: ['daily', none],
   join_lang: ['daily', isLang],

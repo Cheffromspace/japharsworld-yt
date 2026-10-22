@@ -18,6 +18,11 @@ export const config = {
   ytdlp: process.env.YTDLP ?? 'yt-dlp',
   ytdlpExtraArgs: (process.env.YTDLP_ARGS ?? '').split(' ').filter(Boolean),
   captionCacheDays: int('CAPTION_CACHE_DAYS', 7),
+  // Captions come from a chain of sources (src/captionchain.js): a relay worker's yt-dlp, then yt-dlp on this
+  // server when CAPTION_LOCAL_YTDLP=on (YouTube usually bot-walls the Linode, and a refused attempt is slow), then
+  // Tunelio. RELAY_CAPTION_WAIT_MS is how long a worker gets for one video (two yt-dlp runs).
+  captionLocalYtdlp: (process.env.CAPTION_LOCAL_YTDLP ?? 'off') === 'on',
+  relayCaptionWaitMs: int('RELAY_CAPTION_WAIT_MS', 40_000),
   // A routed IPv6 /64 of our own (e.g. 2600:3c06:e001:35e::/64). When set, each yt-dlp lookup goes out from a
   // random address in it. The box must accept that: see README, "Sending from your own IPv6 range".
   sourcePrefix: process.env.SOURCE_IPV6_PREFIX ?? '',

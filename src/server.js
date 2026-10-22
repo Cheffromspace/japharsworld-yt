@@ -3,10 +3,12 @@
 //   GET /v1/<shard>/<n>                                ticket: 302 to the video (Tunelio HD link, or YouTube), JPEG (thumbnail sheet),
 //                                                      JSON (next page)
 //   GET /v1/<shard>/cc/<lang>                          captions for the video last played in this shard (lang: VRChat code or
-//                                                      "native"), with the list of the video's caption tracks (names in <lang>)
+//                                                      "native"), with the list of the video's caption tracks (names in <lang>);
+//                                                      `lines` (cue timing) and `chunks` (readable lines with word timing,
+//                                                      src/blocks.js), from the first source in src/captionchain.js that answers
 //   GET /v1/<shard>/q[/<720|1080>]                    the room's playback quality for search videos (read, or pick on the tablet)
 //   GET /hls/<token>.m3u8, /hls/<token>/<q>.m3u8          adaptive playlists a played ticket leads to (src/adaptive.js)
-//   GET /v1/<shard>/cc/<i>[?l=<lang>]                  track i of that list (the tablet's caption picker; Tunelio captions only)
+//   GET /v1/<shard>/cc/<i>[?l=<lang>]                  track i of that list (the tablet's caption picker)
 //   GET /healthz
 //   GET /relay/next, POST /relay/done                  search relay workers only (bearer RELAY_TOKEN; see relay.js)
 //   GET /stats, /stats.json, /stats/export.csv         usage metrics (bearer or ?token= STATS_TOKEN; see stats.js)
@@ -27,6 +29,7 @@ import { Captions, errorLine } from './captions.js';
 import { Tunelio } from './tunelio.js';
 import { Playback, linkProbe, clientKind } from './playback.js';
 import { TunelioCaptions } from './transcripts.js';
+import { CaptionChain } from './captionchain.js';
 import { makeAlert } from './alert.js';
 import { Relay, RelayError } from './relay.js';
 import { DataApi } from './dataapi.js';
@@ -102,11 +105,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       daysLeft: () => { const d = today(); return daysBetween(d, billingPeriod(d, config.tunelioRenewsDay).renews); },
     }),
   });
-  if (!captions && tunelio.enabled) captions = new TunelioCaptions({ store, tunelio, cacheDays: config.captionCacheDays, scripts: config.captionScripts, alert, log: logJson });
-  const warmCaptions = !tunelio.enabled; // yt-dlp captions are free to warm; Tunelio's cost credits, so only on demand
-  captions ??= new Captions({ store, ytdlp: config.ytdlp, extraArgs: config.ytdlpExtraArgs, cacheDays: config.captionCacheDays,
-    sourcePrefix: config.sourcePrefix, blockedMinutes: config.blockedMinutes });
   relay ??= new Relay({ token: config.relayToken, log: logJson });
+  // Captions: relay worker → yt-dlp here (when turned on, or when there is no Tunelio) → Tunelio (src/captionchain.js).
+  captions ??= new CaptionChain({ store, relay, metrics, log: logJson, cacheDays: config.captionCacheDays, scripts: config.captionScripts,
+    relayWaitMs: config.relayCaptionWaitMs,
+    local: config.captionLocalYtdlp || !tunelio.enabled ? new Captions({ store, ytdlp: config.ytdlp, extraArgs: config.ytdlpExtraArgs, cacheDays: config.captionCacheDays,
+      sourcePrefix: config.sourcePrefix, blockedMinutes: config.blockedMinutes }) : null,
+    tunelio: tunelio.enabled ? new TunelioCaptions({ store, tunelio, cacheDays: config.captionCacheDays, scripts: config.captionScripts, alert, log: logJson }) : null });
   api ??= new DataApi({ key: config.youtubeApiKey, dailyUnits: config.youtubeApiDailyUnits, alert, log: logJson });
   const searcher = makeSearch({ relay, youtube, api, alert, log: logJson, workerTimeoutMs: config.relayWaitMs });
   function checkWorkers() {
@@ -395,8 +400,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         return res.end(body);
       }
       store.markPlayed(shard, n, t.data.id);
-      // Warm the original-language captions so the overlay is ready when people look for it.
-      if (warmCaptions) captions.get(t.data.id, 'native').catch(() => {});
+      // Warm the original-language captions (free sources only) so the overlay is ready when people look for it.
+      captions.warm?.(t.data.id);
       let location = where.location;
       let via = where.via, reason = where.reason;
       if (where.ready === false) { location = `https://www.youtube.com/watch?v=${t.data.id}`; via = 'youtube'; reason = 'build_timeout'; metrics.inc('ticket_timeout'); }

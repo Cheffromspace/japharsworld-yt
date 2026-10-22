@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process';
 import { mkdir, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { LANGS } from './query.js';
+import { cuesFrom } from './cues.js';
 import { randomBytes } from 'node:crypto';
 
 const INFO_MAX_AGE_MS = 60 * 60_000; // signed caption URLs inside the info JSON expire after a few hours
@@ -54,7 +55,7 @@ export function run(cmd, args, timeoutMs = 90_000) {
   });
 }
 
-const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const base = (k) => k.replace(/-orig$/, '');
 
 export function originalLanguage(info) {
@@ -197,6 +198,28 @@ export class Captions {
     const raw = await readFile(path, 'utf8');
     await rm(path, { force: true });
     return parseJson3(raw);
+  }
+
+  // True while a bot-wall refusal has paused lookups (the caption chain then skips this source at once).
+  get blocked() { return this.now() < this.blockedUntil; }
+
+  // One track as cues (src/cues.js) for the caption chain: json3 first (word timing), srv3, then vtt.
+  async cues(videoId, infoFile, track) {
+    await mkdir(this.subsDir, { recursive: true });
+    const formats = ['json3', 'srv3', 'vtt'];
+    await this.run(this.ytdlp, [...this.extraArgs, ...this.attemptArgs(this.preferred, this.addresses.get(videoId) ?? null), '--load-info-json', infoFile, '--skip-download', '--no-warnings',
+      track.auto ? '--write-auto-subs' : '--write-subs', '--sub-langs', `^${escapeRe(track.key)}$`,
+      '--sub-format', formats.join('/'), '-o', join(this.subsDir, '%(id)s')]);
+    const files = await readdir(this.subsDir);
+    for (const f of formats) {
+      const name = files.find((x) => x.startsWith(`${videoId}.`) && x.endsWith(`.${track.key}.${f}`));
+      if (!name) continue;
+      const path = join(this.subsDir, name);
+      const raw = await readFile(path, 'utf8');
+      await rm(path, { force: true });
+      return cuesFrom(f, raw);
+    }
+    throw new Error(`yt-dlp wrote no ${formats.join('/')} file for ${videoId} ${track.key}`);
   }
 
   // lang: a key of LANGS, or 'native'. Returns { id, lang, available, source?, key?, lines? }.

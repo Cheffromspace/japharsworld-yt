@@ -88,8 +88,16 @@ export class Relay {
     this.inflight.delete(result.id);
     clearTimeout(f.timer);
     if (result.ok && result.page && Array.isArray(result.page.videos)) f.resolve({ ...result.page, worker: f.worker });
+    else if (result.ok && result.captions && typeof result.captions === 'object') f.resolve({ ...result.captions, worker: f.worker });
     else f.reject(new RelayError(result.error === 'expired' ? 'expired' : 'worker_failed', String(result.error ?? 'worker failed')));
     return true;
+  }
+
+  // A video's caption track list and one track from a worker (relay/captions.js). want: { lang } | { code, auto } | null.
+  captions(videoId, want, opts = {}) {
+    const worker = this.online()[0];
+    if (!worker) return Promise.reject(new RelayError('offline', 'no caption worker online'));
+    return this.run({ kind: 'captions', videoId, want }, { ...opts, worker });
   }
 
   // Sends a job (to `worker`, or to whoever polls first) and waits up to timeoutMs for its result.

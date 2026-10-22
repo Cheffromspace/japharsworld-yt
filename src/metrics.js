@@ -96,6 +96,7 @@ export const METRICS = {
   build_length: ['daily', oneOf('live', 'unknown', 'lt10m', 'lt1h', 'lt3h', 'longer')],
   build_size: ['daily', oneOf(...MB_BUCKETS.map(String), 'inf')],
   build_quality: ['daily', (k) => /^\d{3,4}p$/.test(k)],
+  quality_pick: ['daily', (k) => /^\d{3,4}p$/.test(k)], // a room picked this playback quality on its tablet
   warm: ['daily', none],              // builds started by a tablet before Play (10 credits each)
   warm_played: ['daily', none],       // …of which a player then asked for the video
   cc_list: ['daily', none],

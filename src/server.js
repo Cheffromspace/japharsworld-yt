@@ -4,6 +4,7 @@
 //                                                      JSON (next page)
 //   GET /v1/<shard>/cc/<lang>                          captions for the video last played in this shard (lang: VRChat code or
 //                                                      "native"), with the list of the video's caption tracks (names in <lang>)
+//   GET /v1/<shard>/q[/<720|1080>]                    the room's playback quality for search videos (read, or pick on the tablet)
 //   GET /v1/<shard>/cc/<i>[?l=<lang>]                  track i of that list (the tablet's caption picker; Tunelio captions only)
 //   GET /healthz
 //   GET /relay/next, POST /relay/done                  search relay workers only (bearer RELAY_TOKEN; see relay.js)
@@ -235,6 +236,19 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     };
   }
 
+  // Playback quality per room (owner, 2026-10-22: a resolution picker for search videos, 720p by default). The tablet
+  // loads /v1/<shard>/q/720 or /q/1080 (baked URLs, like everything else) and /v1/<shard>/q to read it back.
+  const roomQuality = (shard) => store.quality(shard, config.qualityHours * 3600_000) ?? config.tunelioQuality;
+  function quality(res, shard, raw) {
+    if (raw) {
+      const q = `${raw}p`;
+      if (!config.tunelioQualities.includes(q)) return fail(res, 400, 'bad_quality', 'Unknown quality.');
+      store.setQuality(shard, q);
+      metrics.inc('quality_pick', q);
+    }
+    return json(res, 200, { v: API, shard, quality: roomQuality(shard), default: config.tunelioQuality, options: config.tunelioQualities });
+  }
+
   async function ticket(req, res, shard, n) {
     const t = store.get(shard, n);
     if (!t) return fail(res, 404, 'unknown_ticket', 'Nothing here yet. Search again.');
@@ -243,10 +257,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       metrics.inc('ticket_client', kind);
       // The tablet asking (a row selected, or watching a build): start the build, report it, never redirect.
       if (kind === 'string') {
-        const before = playback.jobs.get(t.data.id)?.state;
-        const st = playback.status(t.data);
+        const q = roomQuality(shard);
+        const before = playback.peek?.(t.data, q)?.state;
+        const st = playback.status(t.data, { quality: q });
         if (st.state === 'building' && before !== 'building') { metrics.inc('warm'); warmed.add(`${shard}:${t.data.id}`); }
-        return json(res, 200, { v: API, shard, t: n, ...st });
+        return json(res, 200, { v: API, shard, t: n, room: q, ...st });
       }
       // A player (VRChat's resolver, then AVPro). The resolver gives up after 20 s, so it is held only briefly and
       // then told "this is not a video" (a plain page), which makes VRChat hand the URL straight to AVPro.
@@ -254,7 +269,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const started = Date.now();
       holding++;
       let where;
-      try { where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs }); } finally { holding--; }
+      try { where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs, quality: roomQuality(shard) }); } finally { holding--; }
       const held = Date.now() - started;
       metrics.latency('ticket_hold_ms', held);
       if (where.ready === false && resolver) {
@@ -396,13 +411,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         res.writeHead(200, { 'content-type': PAGES[pagePath][1], 'content-length': buf.length, 'cache-control': 'public, max-age=3600' });
         return res.end(req.method === 'HEAD' ? undefined : buf);
       }
-      const m = url.pathname.match(/^\/v1\/(\d+)\/(s|cc\/(?:[A-Za-z-]+|\d{1,3})|\d+)\/?$/);
+      const m = url.pathname.match(/^\/v1\/(\d+)\/(s|q(?:\/\d{3,4})?|cc\/(?:[A-Za-z-]+|\d{1,3})|\d+)\/?$/);
       if (!m) return fail(res, 404, 'not_found', 'Unknown path.');
       const shard = Number(m[1]);
       if (!store.validShard(shard)) return fail(res, 404, 'bad_shard', 'Unknown shard.');
       metrics.shard(shard);
       if (m[2] === 's') { route = 'search'; return await search(req, res, shard, url); }
       if (m[2].startsWith('cc/')) { route = 'captions'; return await caption(req, res, shard, m[2].slice(3), url); }
+      if (m[2] === 'q' || m[2].startsWith('q/')) { route = 'quality'; return quality(res, shard, m[2].slice(2)); }
       const n = Number(m[2]);
       if (!store.validTicket(n)) return fail(res, 404, 'unknown_ticket', 'Unknown ticket.');
       route = 'ticket';

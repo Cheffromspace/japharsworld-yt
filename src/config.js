@@ -27,7 +27,12 @@ export const config = {
   // Tunelio (hosted YouTube media API) for HD playback of ordinary videos and for captions. Without a key, played
   // tickets go to youtube.com (360p in VRChat) and captions use yt-dlp.
   tunelioKey: process.env.TUNELIO_API_KEY ?? '',
-  tunelioQuality: process.env.TUNELIO_QUALITY ?? '1080p',
+  // Default playback quality (owner, 2026-10-22: 720p for now; builds are about half as long and the difference is
+  // hard to see on the wall screen). A room can pick another of TUNELIO_QUALITIES on its tablet (/v1/<shard>/q/<p>),
+  // kept for QUALITY_HOURS.
+  tunelioQuality: process.env.TUNELIO_QUALITY ?? '720p',
+  tunelioQualities: (process.env.TUNELIO_QUALITIES ?? '720p,1080p').split(',').map((s) => s.trim()).filter((s) => /^\d{3,4}p$/.test(s)),
+  qualityHours: int('QUALITY_HOURS', 12),
   // Build time follows file size (~17 ms per MB, 2026-10-19). A 1080p file above TUNELIO_MAX_MB is made again at
   // TUNELIO_LOWER_QUALITY (10 more credits, about half the wait); a file above TUNELIO_PROGRESSIVE_MAX_MB, or a video
   // longer than TUNELIO_PROGRESSIVE_MAX_MINUTES, is served as HLS instead of a progressive mp4 (which Tunelio builds

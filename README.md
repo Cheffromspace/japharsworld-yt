@@ -44,12 +44,13 @@ This service works within that rule:
 |---|---|
 | `GET /v1/<shard>/s?l=<lang>&q=<…> → <query>` | JSON: `results[]` (`t`, `id`, `title`, `channel`, `length`, `seconds`, `views`, `age`, `live`, `cc`, `desc` = up to 240 characters of the description), `sheet`, `sheetCols`, `sheetRows`, `cellW`, `cellH`, `next` (`-1` = none) |
 | `GET /v1/<shard>/<n>` | video: 302 to a Tunelio link or YouTube (from a `UnityPlayer` UA: JSON `state` = `building`/`ready`/`failed`/`live`/`youtube`, `format`, `quality`, `mb`, `elapsed`, `eta`, `progress`) · sheet: JPEG, cell *i* = result *i*, row-major · page: JSON like a search |
+| `GET /v1/<shard>/q` · `/v1/<shard>/q/<720|1080>` | JSON `quality` (the room's playback quality for search videos), `default`, `options`; the second form picks it (kept `QUALITY_HOURS`, 12). The tablet's ticket status carries it as `room` |
 | `GET /v1/<shard>/cc/<lang>` | JSON: `t`, `id`, `available`, `source` (`manual`/`auto`/`translated`), `lines` = `[[start, dur, text], …]`, `tracks` = `[{i, code, name, auto}]`, `track` (index shown, `-1` = none), `reason` when unavailable |
 | `GET /v1/<shard>/cc/<i>?l=<lang>` | the same for track *i* (Tunelio captions only) |
 | `GET /healthz` | `{"ok": true, "tunelio": bool, "credits": n, "workers": n, "lastSearchVia": "worker"/"local"/"api", "apiUnitsToday": n}` (credits as last reported by Tunelio) |
 
 Errors are JSON `{ "error": code, "message": … }` with codes `empty_query`, `rate_limited`, `youtube_failed`,
-`unknown_ticket`, `expired`, `bad_shard`, `nothing_playing`, `captions_failed`; the world shows its own
+`unknown_ticket`, `expired`, `bad_shard`, `bad_quality`, `nothing_playing`, `captions_failed`; the world shows its own
 localized text per code.
 
 Changing `SHARDS` or `POOL` changes the baked URLs: the world must be re-uploaded with regenerated URLs.

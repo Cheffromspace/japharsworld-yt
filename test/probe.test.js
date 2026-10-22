@@ -33,7 +33,7 @@ test('probe: a fresh 12–30 min video, progressive first byte, then HLS on the 
   assert.deepEqual(s.fetched[0], ['https://tunelio.dev/tunnel?id=AAAAAAAAAAA&progressive=1', 'bytes=0-0']);
   const [source, values] = s.rows[0];
   assert.equal(source, 'tunelio:progressive');
-  assert.deepEqual(values, { ok: 1, warm: 0, create_s: 0.8, mb: 900, minutes: 20, start_s: 30, mb_per_s: 30 });
+  assert.deepEqual(values, { ok: 1, warm: 0, create_s: 0.8, mb: 900, minutes: 20, height: 1080, start_s: 30, mb_per_s: 30 });
 
   const b = await s.probe.runOnce();
   assert.equal(b.format, 'hls');

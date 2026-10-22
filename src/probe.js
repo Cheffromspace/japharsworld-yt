@@ -84,7 +84,8 @@ export class TunelioProbe {
     const warm = r.ok && startMs < WARM_MS;
     this.log({ event: 'tunelio_probe', format, id: video.id, seconds: video.seconds, quality: made.quality || this.quality, mb, createMs, startMs,
       playlistMs: r.playlistMs, ok: r.ok, warm, status: r.status, error: r.error });
-    const values = { ok: r.ok ? 1 : 0, warm: warm ? 1 : 0, create_s: createMs / 1000, mb, minutes: Math.round(video.seconds / 6) / 10 };
+    const values = { ok: r.ok ? 1 : 0, warm: warm ? 1 : 0, create_s: createMs / 1000, mb, minutes: Math.round(video.seconds / 6) / 10,
+      height: Number.parseInt(made.quality || this.quality, 10) || 0 };
     if (r.ok && !warm) {
       values.start_s = startMs / 1000;
       if (mb > 0) values.mb_per_s = Math.round(mb / (startMs / 1000) * 10) / 10;

@@ -25,6 +25,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS cursors (shard INTEGER PRIMARY KEY, next INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS played (
         shard INTEGER PRIMARY KEY, n INTEGER NOT NULL, video_id TEXT NOT NULL, at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS shard_quality (shard INTEGER PRIMARY KEY, quality TEXT NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS captions (
         video_id TEXT NOT NULL, key TEXT NOT NULL, json TEXT NOT NULL, fetched INTEGER NOT NULL,
         PRIMARY KEY (video_id, key));
@@ -40,12 +41,23 @@ export class Store {
       setPlayed: this.db.prepare(`INSERT INTO played (shard, n, video_id, at) VALUES (?, ?, ?, ?)
         ON CONFLICT(shard) DO UPDATE SET n = excluded.n, video_id = excluded.video_id, at = excluded.at`),
       getPlayed: this.db.prepare('SELECT n, video_id, at FROM played WHERE shard = ?'),
+      qualityGet: this.db.prepare('SELECT quality, at FROM shard_quality WHERE shard = ?'),
+      qualitySet: this.db.prepare(`INSERT INTO shard_quality (shard, quality, at) VALUES (?, ?, ?)
+        ON CONFLICT(shard) DO UPDATE SET quality = excluded.quality, at = excluded.at`),
       capGet: this.db.prepare('SELECT json, fetched FROM captions WHERE video_id = ? AND key = ?'),
       capPut: this.db.prepare(`INSERT INTO captions (video_id, key, json, fetched) VALUES (?, ?, ?, ?)
         ON CONFLICT(video_id, key) DO UPDATE SET json = excluded.json, fetched = excluded.fetched`),
       capPrune: this.db.prepare('DELETE FROM captions WHERE fetched < ?'),
     };
   }
+
+  // The playback quality a room picked on its tablet (YouTube search videos only), while younger than maxAgeMs: the
+  // shard is all the service knows of the room, and another instance may land on the same shard later.
+  quality(shard, maxAgeMs) {
+    const r = this.q.qualityGet.get(shard);
+    return r && this.now() - r.at < maxAgeMs ? r.quality : null;
+  }
+  setQuality(shard, quality) { this.q.qualitySet.run(shard, quality, this.now()); }
 
   validShard(shard) { return Number.isInteger(shard) && shard >= 0 && shard < this.shards; }
   validTicket(n) { return Number.isInteger(n) && n >= 0 && n < this.pool; }

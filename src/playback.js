@@ -8,8 +8,9 @@
 // Tunelio builds the file on the first request for a link (10–35 s for a 15-minute to 10-hour video, measured
 // 2026-10-19). Everything that asks for the link waits on that one build, so the ticket route needs to know, without
 // waiting, whether a video is still building, how far along it probably is, and whether a player may be handed the
-// link yet. A build is one `job` per video: created by the first warm or play request, shared by everyone in the room
-// and by late joiners, kept until shortly before the link expires.
+// link yet. A build is one `job` per video and quality (the room's pick, 720p by default since 2026-10-22): created by
+// the first warm or play request, shared by everyone in the room and by late joiners, kept until shortly before the link
+// expires.
 //
 // Why the waiting matters: VRChat resolves every URL with its own yt-dlp first, which gives up after 20 s of silence
 // (measured) and only then hands the raw URL to AVPro, which waits on the same build again. So a ticket answer that
@@ -63,24 +64,28 @@ export class Playback {
     return null;
   }
 
-  // The job for a video, started if there is none (or the old one expired or failed long enough ago to retry).
-  // ticket data: { id, live?, seconds? }
-  start(data) {
+  // The job for a video at a quality, if there is one (no build is started).
+  peek(data, quality = this.quality) { return this.jobs.get(`${data.id}@${quality}`) ?? null; }
+
+  // The job for a video at a quality, started if there is none (or the old one expired or failed long enough ago to
+  // retry). ticket data: { id, live?, seconds? }
+  start(data, quality = this.quality) {
     const id = data.id;
+    const key = `${id}@${quality}`;
     const now = this.now();
-    let job = this.jobs.get(id);
+    let job = this.jobs.get(key);
     if (job) {
       const stale = job.state === 'ready' ? job.expiresMs - this.marginMs <= now
         : job.state === 'failed' ? now - job.endedMs > 30_000 : false;
       if (!stale) return job;
-      this.jobs.delete(id);
+      this.jobs.delete(key);
     }
     if (this.jobs.size > 2000) for (const [k, j] of this.jobs) if (j.state !== 'building') this.jobs.delete(k);
     const seconds = Math.max(0, data.seconds ?? 0);
     const format = seconds > this.progressiveMaxSeconds ? 'hls' : 'progressive';
-    job = { id, seconds, format, mb: 0, quality: this.quality, state: 'building', startedMs: now, endedMs: 0, url: null, expiresMs: 0, reason: null, waiters: [] };
+    job = { id, seconds, format, mb: 0, requested: quality, quality, state: 'building', startedMs: now, endedMs: 0, url: null, expiresMs: 0, reason: null, waiters: [] };
     job.promise = this.#build(job).finally(() => { for (const w of job.waiters) w(); job.waiters = []; });
-    this.jobs.set(id, job);
+    this.jobs.set(key, job);
     return job;
   }
 
@@ -95,8 +100,8 @@ export class Playback {
     const id = job.id;
     let made;
     try {
-      made = await this.#create(job, this.quality);
-      if (job.mb > this.maxMbForQuality && this.lowerQuality && this.lowerQuality !== this.quality) {
+      made = await this.#create(job, job.requested);
+      if (job.mb > this.maxMbForQuality && this.lowerQuality && this.lowerQuality !== job.requested) {
         this.log({ event: 'build_downgrade', id, mb: job.mb, from: job.quality, to: this.lowerQuality });
         made = await this.#create(job, this.lowerQuality);
       }
@@ -159,10 +164,10 @@ export class Playback {
 
   // What the tablet shows while a video is prepared. Never waits. `warm` starts the build when there is none.
   //   { state: 'live'|'youtube'|'building'|'ready'|'failed', format?, elapsed?, eta?, progress? }
-  status(data, { warm = true } = {}) {
+  status(data, { warm = true, quality = this.quality } = {}) {
     const direct = this.#direct(data);
     if (direct) return { state: direct.reason === 'live' ? 'live' : 'youtube', reason: direct.reason };
-    const job = warm ? this.start(data) : this.jobs.get(data.id);
+    const job = warm ? this.start(data, quality) : this.peek(data, quality);
     if (!job) return { state: 'idle' };
     if (job.state === 'ready') return { state: 'ready', format: job.format, quality: job.quality, mb: job.mb, elapsed: Math.round((job.endedMs - job.startedMs) / 1000) };
     if (job.state === 'failed') return { state: 'failed', format: job.format, reason: job.reason };
@@ -174,10 +179,10 @@ export class Playback {
 
   // Where to send a player. Waits for the build at most `holdMs` (default: for ever, as before).
   //   { location, via: 'tunelio'|'youtube', reason?, ready }  — ready=false means the hold ran out while building.
-  async location(data, { holdMs = Infinity } = {}) {
+  async location(data, { holdMs = Infinity, quality = this.quality } = {}) {
     const direct = this.#direct(data);
     if (direct) return { ...direct, ready: true };
-    const job = this.start(data);
+    const job = this.start(data, quality);
     if (job.state === 'building') {
       await new Promise((resolve) => {
         let timer = null;
@@ -187,7 +192,7 @@ export class Playback {
       });
     }
     if (job.state === 'building') return { location: job.url, via: 'tunelio', reason: 'building', ready: false };
-    if (job.state === 'ready') return { location: job.url, via: 'tunelio', ready: true };
+    if (job.state === 'ready') return { location: job.url, via: 'tunelio', quality: job.quality, ready: true };
     return { location: watch(data.id), via: 'youtube', reason: job.reason ?? 'tunelio_failed', ready: true };
   }
 }

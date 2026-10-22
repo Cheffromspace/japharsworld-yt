@@ -274,11 +274,52 @@ test('server: tickets answer the tablet, the resolver and the player differently
   release();
   const a = await pending;
   assert.equal(a.status, 302);
-  assert.equal(a.headers.get('location'), 'https://tunelio.dev/tunnel?id=AAAAAAAAAAA&q=1080p&progressive=1');
+  assert.equal(a.headers.get('location'), 'https://tunelio.dev/tunnel?id=AAAAAAAAAAA&q=720p&progressive=1'); // the room's quality: 720p by default
   assert.equal(store.lastPlayed(0).videoId, 'AAAAAAAAAAA');
   assert.ok(counted.includes('warm_played'));
   assert.ok(counted.includes('ticket_client:string') && counted.includes('ticket_client:ytdlp') && counted.includes('ticket_client:avpro'));
   // Once ready, the resolver gets the redirect at once and the tablet sees ready.
   assert.equal((await get(ticket, chrome)).status, 302);
   assert.equal((await (await get(ticket, unity)).json()).state, 'ready');
+});
+
+test('room quality: 720p by default, a pick per shard, builds kept apart per quality', async (t) => {
+  const store = new Store({ path: ':memory:', shards: 2, pool: 100, pinHours: 24 });
+  const created = [];
+  const tunelio = { enabled: true, credits: 1, async create(id, q) { created.push([id, q]); return { url: `https://tunelio.dev/tunnel?id=${id}&q=${q}`, expires: 9e9, quality: q, fileSize: 1e8 }; } };
+  const playback = new Playback({ tunelio, quality: '720p', probe: async () => ({ ok: true }) });
+  const youtube = { async search() { return { videos: [{ id: 'AbCdEfGh1jK', title: 't', channel: 'c', length: '20:00', seconds: 1200, views: '', age: '', live: false }], more: null }; }, thumbnailUrl: () => '' };
+  const app = createApp({ config: { ...base, shards: 2, pool: 100, tunelioQuality: '720p', tunelioQualities: ['720p', '1080p'], metricsPath: '', tunelioKey: '' },
+    store, youtube, tunelio, playback, captions: { async get() { return { available: false }; } }, log: () => {} });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const get = (p, ua = 'UnityPlayer/2022.3.22f1') => fetch(url + p, { headers: { 'user-agent': ua }, redirect: 'manual' });
+
+  assert.deepEqual(await (await get('/v1/1/q')).json(), { v: 1, shard: 1, quality: '720p', default: '720p', options: ['720p', '1080p'] });
+  const s = await (await get('/v1/1/s?l=en&q=x')).json();
+  const t0 = s.results[0].t;
+  assert.equal((await (await get(`/v1/1/${t0}`)).json()).room, '720p');
+  const play720 = await get(`/v1/1/${t0}`, 'NSPlayer/12.00');
+  assert.match(play720.headers.get('location'), /q=720p&progressive=1$/);
+
+  assert.equal((await (await get('/v1/1/q/1080')).json()).quality, '1080p');
+  assert.equal((await (await get('/v1/0/q')).json()).quality, '720p', 'other shards keep the default');
+  const st = await (await get(`/v1/1/${t0}`)).json();
+  assert.equal(st.room, '1080p');
+  const play1080 = await get(`/v1/1/${t0}`, 'NSPlayer/12.00');
+  assert.match(play1080.headers.get('location'), /q=1080p&progressive=1$/);
+  assert.deepEqual(created, [['AbCdEfGh1jK', '720p'], ['AbCdEfGh1jK', '1080p']], 'one build per quality');
+
+  assert.equal((await get('/v1/1/q/480')).status, 400);
+  assert.equal((await (await get('/v1/1/q/480')).json()).error, 'bad_quality');
+  assert.equal((await get('/v1/9/q/720')).status, 404);
+
+  // A pick expires (another instance may land on the shard later).
+  const old = new Store({ path: ':memory:', shards: 2, pool: 100, pinHours: 24, now: () => 0 });
+  old.setQuality(1, '1080p');
+  assert.equal(old.quality(1, 3600_000), '1080p');
+  old.now = () => 2 * 3600_000;
+  assert.equal(old.quality(1, 3600_000), null);
 });

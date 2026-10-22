@@ -50,6 +50,7 @@ export class Playback {
     this.onBuild = onBuild;
     this.jobs = new Map();     // "videoId@quality[@hls]" → job
     this.creates = new Map();  // "videoId@quality" → { promise, made }: the paid /create, shared
+    this.speeds = [];          // recent build speeds { at, mbps }, newest last
     this.pausedUntil = 0;      // after out-of-credits / auth errors, skip Tunelio for a while
     // Learned build speed per format: seconds of build per second of video, and the fixed part. EWMA over builds.
     this.rate = { ...RATE_PRIOR };
@@ -114,13 +115,28 @@ export class Playback {
     return Math.round((m.fileSize ?? 0) / 1e5) / 10;
   }
 
-  // Seconds a build of this many MB is expected to take, from what recent builds took.
-  predict(format, mb) { return this.fixed[format] + this.rate[format] * Math.max(0, mb); }
+  // Seconds a build of this many MB is expected to take. Tunelio's speed swings with the hour (2026-10-22: 35–82 MB/s at
+  // 00:45 UTC, 4–6 MB/s for every build from 01:28 to 01:42), so the median speed of the last few builds within two hours
+  // (visitors' and the probe's) beats the long-run average; with fewer than two, the learned average.
+  predict(format, mb) {
+    const since = this.now() - 2 * 3600_000;
+    const recent = this.speeds.filter((x) => x.at >= since).slice(-5).map((x) => x.mbps).sort((a, b) => a - b);
+    if (recent.length >= 2) return this.fixed[format] + Math.max(0, mb) / recent[Math.floor(recent.length / 2)];
+    return this.fixed[format] + this.rate[format] * Math.max(0, mb);
+  }
+
+  // A measured build speed (MB/s): small files are mostly fixed overhead, so only 20 MB and up count.
+  speed(mb, buildMs, at = this.now()) {
+    if (!(mb >= 20) || !(buildMs > 0)) return;
+    this.speeds.push({ at, mbps: mb / (buildMs / 1000) });
+    if (this.speeds.length > 50) this.speeds.shift();
+  }
 
   // Learn from a finished build (visitors' and the speed probe's): split the time into a fixed part and a per-MB
   // part, nudging both toward this build.
   learn(format, mb, buildMs) {
     if (!(mb > 0) || !(buildMs > 500) || !this.rate[format]) return;
+    this.speed(mb, buildMs);
     const fixed = this.fixed[format], rate = this.rate[format];
     const k = Math.min(3, Math.max(0.3, buildMs / 1000 / Math.max(1, fixed + rate * mb))); // > 1: slower than predicted
     this.rate[format] = Math.max(0.0005, rate * (0.7 + 0.3 * k));

@@ -81,6 +81,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     } });
   // Adaptive HLS, paced against the credits left until renewal (claude/play-latency.md).
   const metricsDb = () => (config.metricsPath && metrics.open ? metrics.open() : null);
+  // Seed the speed estimate with the probe's builds of the last two hours, so a restart doesn't forget a slow period.
+  try {
+    const db = metricsDb();
+    for (const r of db?.prepare(`SELECT p.ts, p.value mbps FROM polls p WHERE p.source LIKE 'tunelio:%' AND p.metric = 'mb_per_s' AND p.ts > ? ORDER BY p.ts`).all(Date.now() - 2 * 3600_000) ?? []) {
+      playback.speeds?.push({ at: r.ts, mbps: r.mbps });
+    }
+  } catch (err) { logJson({ event: 'speed_seed_failed', message: String(err?.message ?? err).slice(0, 200) }); }
   const today = () => dayOf(Date.now(), config.metricsTz);
   adaptive ??= new Adaptive({
     playback, log: logJson, onEvent: (k) => metrics.inc('adaptive', k), holdMs: config.adaptiveHoldMs, directSeconds: config.adaptiveDirectSeconds,

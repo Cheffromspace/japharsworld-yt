@@ -129,3 +129,13 @@ test('direct and off: a fast 1080p plays progressive; other shards keep the old 
   const o = await s.get(`/v1/0/${n0}`);
   assert.equal(o.headers.get('location'), 'https://tunelio.dev/tunnel?id=AbCdEfGh1jK-720p&exp=1&sig=s&progressive=1', 'shard 0: plans off, the room default');
 });
+
+test('speed estimate: the median of recent builds wins over the long-run average, old ones expire', () => {
+  let now = 10 * 3600_000;
+  const p = new Playback({ tunelio: { enabled: true }, now: () => now });
+  assert.equal(Math.round(p.predict('progressive', 300)), 7, 'priors: ~60 MB/s');
+  p.speed(300, 60_000); p.speed(200, 40_000); p.speed(10, 100); // 5, 5 MB/s; the 10 MB one is ignored
+  assert.equal(Math.round(p.predict('progressive', 300)), 62, 'slow period: 2 s + 300 / 5');
+  now += 3 * 3600_000;
+  assert.equal(Math.round(p.predict('progressive', 300)), 7, 'two hours later the slow builds no longer count');
+});

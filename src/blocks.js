@@ -65,8 +65,11 @@ export function wordsFromCues(cues, { units = 'words' } = {}) {
       }
     }
   }
-  // Words never overlap: each ends where the next begins when the source said otherwise.
+  // Time runs forward in text order even when cues overlap (YouTube's transcript segments often do): a word never
+  // starts before the one before it, and ends where the next begins when the source said otherwise.
+  for (let i = 1; i < words.length; i++) if (words[i].t < words[i - 1].t) words[i].t = words[i - 1].t;
   for (let i = 0; i + 1 < words.length; i++) if (words[i].e > words[i + 1].t) words[i].e = Math.max(words[i].t, words[i + 1].t);
+  for (const w of words) if (w.e < w.t) w.e = w.t;
   return words;
 }
 

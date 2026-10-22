@@ -109,6 +109,19 @@ test('orphans: a one-word last line takes a word from the line before', () => {
   assert.equal(chunks[1][2], 'dog today.');
 });
 
+test('overlapping cues (Tunelio segments) still give word times that run forward', () => {
+  // Seen live on 2026-10-22 (shard 7, a Dutch uploader track): the next cue began before the previous one ended.
+  const cues = cuesFromLines([[4.24, 2.19, 'We moeten ze stuk voor stuk verzamelen .'], [5.3, 2.56, 'Beginnend bij één tegelijk .']]);
+  const words = wordsFromCues(cues, layoutFor('nl'));
+  for (let i = 1; i < words.length; i++) assert.ok(words[i].t >= words[i - 1].t, `word ${i} goes back in time`);
+  for (const w of words) assert.ok(w.e >= w.t);
+  const { chunks } = chunksFromCues(cues, 'nl');
+  for (const c of chunks) {
+    const cs = c[4].split(',').map((p) => Number(p.split(':')[0]));
+    for (let i = 1; i < cs.length; i++) assert.ok(cs[i] >= cs[i - 1], `offsets go back in ${c[2]}`);
+  }
+});
+
 test('srv3 and vtt parse to the same cue shape', () => {
   const srv3 = `<?xml version="1.0" encoding="utf-8" ?><timedtext format="3"><body>
 <p t="1000" d="2000" w="1"><s ac="0">We&#39;re</s><s t="300" ac="0"> no</s><s t="600" ac="0"> strangers</s></p>

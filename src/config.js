@@ -66,6 +66,9 @@ export const config = {
   tunelioRenewsDay: int('TUNELIO_RENEWS_DAY', 1),
   // Minutes between Tunelio speed probes (src/probe.js; 10 credits each, at least 20, plus a random quarter). 0 = off.
   tunelioProbeMinutes: int('TUNELIO_PROBE_MINUTES', 20),
+  // The probe's own quality (2026-10-22: it followed TUNELIO_QUALITY, so it measured 720p while Auto decides whether
+  // 1080p is fast enough).
+  tunelioProbeQuality: process.env.TUNELIO_PROBE_QUALITY ?? '1080p',
   // Player test slot refills a day through POST /ops/slots/refill (src/slots.js; 20 credits each, 0 = off).
   slotRefillsPerDay: int('SLOT_REFILLS_PER_DAY', 6),
   // Comma-separated ISO 15924 scripts the world can draw captions in.

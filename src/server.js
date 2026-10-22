@@ -86,7 +86,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // Seed the speed estimate with the probe's builds of the last two hours, so a restart doesn't forget a slow period.
   try {
     const db = metricsDb();
-    for (const r of db?.prepare(`SELECT p.ts, p.value mbps FROM polls p WHERE p.source LIKE 'tunelio:%' AND p.metric = 'mb_per_s' AND p.ts > ? ORDER BY p.ts`).all(Date.now() - 2 * 3600_000) ?? []) {
+    for (const r of db?.prepare(`SELECT p.ts, p.value mbps FROM polls p WHERE p.source IN ('tunelio:progressive', 'tunelio:hls') AND p.metric = 'mb_per_s' AND p.ts > ? ORDER BY p.ts`).all(Date.now() - 2 * 3600_000) ?? []) {
       playback.speeds?.push({ at: r.ts, mbps: r.mbps });
     }
   } catch (err) { logJson({ event: 'speed_seed_failed', message: String(err?.message ?? err).slice(0, 200) }); }
@@ -210,12 +210,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const probeTunelio = new Tunelio({ key: config.tunelioKey, onCredits: (left) => metrics.gauge('credits_remaining', '', left),
       onCall: ({ path, ok }) => { if (ok && path === '/create') metrics.inc('credits', 'probe', 10); } });
     probe = new TunelioProbe({
-      tunelio: probeTunelio, quality: config.tunelioQuality, intervalMinutes: config.tunelioProbeMinutes, log: logJson,
+      tunelio: probeTunelio, quality: config.tunelioProbeQuality, intervalMinutes: config.tunelioProbeMinutes, log: logJson,
       search: (query, limit) => (relay.enabled && relay.online().length ? relay.search(query, limit, { timeoutMs: config.relayWaitMs }) : null),
       busy: () => busy() + (Date.now() < (playback.pausedUntil ?? 0) ? 1 : 0),
       record: (source, values) => {
         // The probe's builds teach the same speed estimate visitors' builds do (it plans "1080p at once" vs adaptive).
-        if (values.start_s) playback.learn(source.split(':')[1], values.mb, values.start_s * 1000);
+        // Pair rows (two builds at once) don't: the estimate predicts a build on its own.
+        if (values.start_s && !source.includes(':pair')) playback.learn(source.split(':')[1], values.mb, values.start_s * 1000);
         const db = probeDb(); if (db) recordPoll(db, { ts: Date.now(), source, values, tz: config.metricsTz });
       },
       meta: {

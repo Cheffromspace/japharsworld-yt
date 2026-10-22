@@ -103,3 +103,20 @@ test('probe schedule: not at start-up, every 20 min at most with jitter, never w
   assert.equal(new TunelioProbe({ intervalMinutes: 5 }).intervalMs, 20 * MIN, 'clamped to 20 minutes');
   assert.equal(new TunelioProbe({ intervalMinutes: 0 }).intervalMs, 0, '0 = off');
 });
+
+test('probe: every 3rd run builds the same video at 720p and 1080p at once', async () => {
+  const s = setup();
+  await s.probe.runOnce(); // progressive
+  await s.probe.runOnce(); // hls
+  s.probe.seen.clear();
+  const c = await s.probe.runOnce();
+  assert.equal(c.pair, true);
+  assert.equal(c.format, 'progressive');
+  assert.deepEqual(s.created.slice(2).map(([id, q]) => [id, q]).sort(), [['AAAAAAAAAAA', '1080p'], ['AAAAAAAAAAA', '720p']], 'one video, both qualities');
+  assert.deepEqual(s.rows.slice(2).map(([src, v]) => [src, v.height, v.hls]).sort(), [['tunelio:pair1080', 1080, 0], ['tunelio:pair720', 720, 0]]);
+  s.probe.seen.clear();
+  for (let i = 0; i < 3; i++) { s.probe.seen.clear(); await s.probe.runOnce(); }
+  assert.equal(s.rows.at(-1)[0].startsWith('tunelio:pair'), true, 'run 6 is a pair again');
+  assert.equal(s.rows.at(-1)[1].hls, 1, 'pairs alternate format too');
+  assert.equal(new TunelioProbe({ pairEvery: 0 }).pairEvery, 0);
+});

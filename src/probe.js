@@ -8,6 +8,11 @@
 // player waits for: the first byte of the progressive mp4, or the HLS playlist and its first segment, alternating
 // between the two by run. Each run is a poller row (source `tunelio:progressive` or `tunelio:hls`; numbers only, no
 // video ID), which the exporter sends to Grafana as `eiok_poll`.
+//
+// Every `pairEvery`-th run (owner, 2026-10-22: "run some in parallel too, every 3rd run or something") builds the same
+// video at 720p and 1080p at once, as an adaptive play does (src/adaptive.js): rows `tunelio:pair720` and
+// `tunelio:pair1080` (with `hls` 0/1), 20 credits. They show whether 1080p builds at the 720p rate per MB and whether two
+// builds at once slow each other; they don't feed the speed estimate, which predicts a build on its own.
 
 const QUERIES = ['documentary', 'video essay', 'history explained', 'science explained', 'cooking', 'travel vlog',
   'nature documentary', 'interview', 'lecture', 'short film', 'car review', 'game review'];
@@ -16,7 +21,7 @@ const WARM_MS = 2000; // a first byte this fast means Tunelio already had the fi
 export class TunelioProbe {
   constructor({ tunelio, search, busy = () => 0, record = () => {}, meta, intervalMinutes = 20, quality = '1080p',
     fetcher = fetch, log = () => {}, now = () => Date.now(), random = Math.random,
-    minSeconds = 12 * 60, maxSeconds = 30 * 60, timeoutMs = 150_000, queries = QUERIES }) {
+    minSeconds = 12 * 60, maxSeconds = 30 * 60, timeoutMs = 150_000, queries = QUERIES, pairEvery = 3, pairQualities = ['720p', '1080p'] }) {
     this.tunelio = tunelio;
     this.search = search;       // (query, limit) → page { videos } or null (no worker)
     this.busy = busy;           // > 0 while a visitor's build or held player is in flight
@@ -33,6 +38,8 @@ export class TunelioProbe {
     this.maxSeconds = maxSeconds;
     this.timeoutMs = timeoutMs;
     this.queries = queries;
+    this.pairEvery = pairEvery;
+    this.pairQualities = pairQualities;
     this.seen = new Set();      // video IDs probed by this process (memory only: IDs never reach the database)
     this.running = false;
     this.timer = null;
@@ -66,13 +73,24 @@ export class TunelioProbe {
     this.#schedule(this.intervalMs + this.#jitter());
     this.seen.add(video.id);
     if (this.seen.size > 5000) this.seen.clear();
-    const source = `tunelio:${format}`;
+    const pair = this.pairEvery > 1 && n % this.pairEvery === this.pairEvery - 1;
+    if (!pair) {
+      const b = await this.#build(video, this.quality, format, `tunelio:${format}`);
+      return { format, ...b };
+    }
+    const builds = await Promise.all(this.pairQualities.map((q) => this.#build(video, q, format, `tunelio:pair${Number.parseInt(q, 10)}`, { hls: format === 'hls' ? 1 : 0 })));
+    return { format, pair: true, ok: builds.every((b) => b.ok), builds };
+  }
+
+  // One /create and what a player waits for, recorded as one row of `source`.
+  async #build(video, quality, format, source, extra = {}) {
+    const pair = source.includes(':pair');
     const t0 = this.now();
     let made;
-    try { made = await this.tunelio.create(video.id, this.quality); } catch (err) {
-      this.log({ event: 'tunelio_probe', format, id: video.id, ok: false, step: 'create', status: err.status, code: err.code });
-      this.record(source, { ok: 0 });
-      return { format, ok: false };
+    try { made = await this.tunelio.create(video.id, quality); } catch (err) {
+      this.log({ event: 'tunelio_probe', format, pair, quality, id: video.id, ok: false, step: 'create', status: err.status, code: err.code });
+      this.record(source, { ok: 0, ...extra });
+      return { quality, ok: false };
     }
     const createMs = this.now() - t0;
     const mb = Math.round((made.fileSize ?? 0) / 1e5) / 10;
@@ -82,17 +100,17 @@ export class TunelioProbe {
     try { r = format === 'hls' ? await this.#hlsStart(url, t1) : await this.#firstByte(url); } catch (err) { r = { ok: false, error: String(err?.name ?? err) }; }
     const startMs = this.now() - t1;
     const warm = r.ok && startMs < WARM_MS;
-    this.log({ event: 'tunelio_probe', format, id: video.id, seconds: video.seconds, quality: made.quality || this.quality, mb, createMs, startMs,
+    this.log({ event: 'tunelio_probe', format, pair, id: video.id, seconds: video.seconds, quality: made.quality || quality, mb, createMs, startMs,
       playlistMs: r.playlistMs, ok: r.ok, warm, status: r.status, error: r.error });
     const values = { ok: r.ok ? 1 : 0, warm: warm ? 1 : 0, create_s: createMs / 1000, mb, minutes: Math.round(video.seconds / 6) / 10,
-      height: Number.parseInt(made.quality || this.quality, 10) || 0 };
+      height: Number.parseInt(made.quality || quality, 10) || 0, ...extra };
     if (r.ok && !warm) {
       values.start_s = startMs / 1000;
       if (mb > 0) values.mb_per_s = Math.round(mb / (startMs / 1000) * 10) / 10;
       if (r.playlistMs != null) values.playlist_s = r.playlistMs / 1000;
     }
     this.record(source, values);
-    return { format, ok: r.ok, warm, mb, createMs, startMs };
+    return { quality, ok: r.ok, warm, mb, createMs, startMs };
   }
 
   async #pick() {

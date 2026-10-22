@@ -40,9 +40,11 @@ Owner, 2026-10-21: track Tunelio's build speed over time (visitors' builds are t
 then every 20 minutes ("I'm paying for the service and I need it to be reliable"). Every `TUNELIO_PROBE_MINUTES`
 (default 20, at least 20, plus a random quarter of it, at most 10 min; 0 = off), only while no
 visitor's build or held player is in flight: one search through the relay worker (never the Linode or the Data API),
-a random 12–30 min result this process hasn't probed, one `/create` at 1080p (10 credits, `credits`/`probe`;
-about 720 a day), then the first byte of the progressive mp4 or, on alternate runs, the HLS playlist and its first
-segment. One `polls` row per run, source `tunelio:progressive` or `tunelio:hls`: `ok`, `warm` (answered in
+a random 12–30 min result this process hasn't probed, one `/create` at `TUNELIO_PROBE_QUALITY` (default 1080p;
+10 credits, `credits`/`probe`), then the first byte of the progressive mp4 or, on alternate runs, the HLS playlist and
+its first segment. Every 3rd run builds the same video at 720p and 1080p at once instead (20 credits; rows
+`tunelio:pair720` and `tunelio:pair1080` with `hls` 0/1): does 1080p build at the 720p rate per MB, and do two builds
+at once slow each other (an adaptive play builds both). About 770 credits a day in all (runs average ~25 min). One `polls` row per run, source `tunelio:progressive` or `tunelio:hls`: `ok`, `warm` (answered in
 under 2 s, so Tunelio already had the file: no speed values), `create_s`, `start_s`, `playlist_s` (HLS), `mb`,
 `mb_per_s`, `minutes`. Numbers only: the probed video's ID stays in memory and the service log. The video is a
 random public one, not anything a visitor searched or played. Due time and run count live in `meta`

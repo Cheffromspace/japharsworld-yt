@@ -155,7 +155,7 @@ export function summary(db, { from, to, now = Date.now(), tz = 'America/Chicago'
     },
     captions: { lists: total(c.cc_list), tracks: total(c.cc_track), trackLang: c.cc_track_lang ?? {}, unavailable: c.cc_unavailable ?? {} },
     credits: {
-      playback: c.credits?.playback ?? 0, captions: c.credits?.captions ?? 0, probe: c.credits?.probe ?? 0, remaining, plan: getMeta(db, 'tunelio_plan'),
+      playback: c.credits?.playback ?? 0, captions: c.credits?.captions ?? 0, probe: c.credits?.probe ?? 0, test: c.credits?.test ?? 0, remaining, plan: getMeta(db, 'tunelio_plan'),
       forecast: forecast({ remaining, spent: total(period), today, renewDay, now, tz }),
     },
     releases: releases(db, Date.parse(`${addDays(from, -1)}T00:00:00Z`)).filter((r) => {
@@ -330,7 +330,7 @@ ${barChart('Active instances per hour (last 3 days)', d.activeInstancesByHour)}
 <p>Playback: builds ${fmt(w.playback.buildsOk)} ok, ${fmt(w.playback.buildsFailed)} failed · progressive p50 ${fmt(w.playback.buildProgressiveS.p50)} s, p95 ${fmt(w.playback.buildProgressiveS.p95)} s · HLS p50 ${fmt(w.playback.buildHlsS.p50)} s, p95 ${fmt(w.playback.buildHlsS.p95)} s · by length: ${kv(w.playback.buildLengths)}<br>
 Tickets by client: ${kv(w.playback.clients)} · held p50 ${fmt(w.playback.holdMs.p50)} ms, p95 ${fmt(w.playback.holdMs.p95)} ms · resolver fast-fails ${fmt(w.playback.fastFails)} · player timeouts ${fmt(w.playback.timeouts)} · warmed ${fmt(w.playback.warmed)}, of which played ${fmt(w.playback.warmedPlayed)}</p>
 <p>Captions: ${fmt(w.captions.lists)} shown, ${fmt(w.captions.tracks)} tracks picked (${kv(w.captions.trackLang)}) · not available: ${kv(w.captions.unavailable)}</p>
-<p>Credits spent: playback ${fmt(w.credits.playback)}, captions ${fmt(w.credits.captions)}, speed probe ${fmt(w.credits.probe)}</p>
+<p>Credits spent: playback ${fmt(w.credits.playback)}, captions ${fmt(w.credits.captions)}, speed probe ${fmt(w.credits.probe)}, player test slots ${fmt(w.credits.test)}</p>
 <p>Search languages: ${kv(w.searchLang)} · join languages: ${kv(w.joinLang)}</p>
 ${w.group ? `<p>Group: ${fmt(w.group.members)} members, up to ${fmt(w.group.online)} online</p>` : ''}
 ${Object.keys(w.github).length ? `<p>GitHub: ${Object.entries(w.github).map(([r, g]) => `${esc(r)} ★${fmt(g.stars)} ⬇${fmt(g.downloads)}`).join(' · ')}</p>` : ''}

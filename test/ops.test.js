@@ -118,3 +118,64 @@ test('hls-test slots: #REDIRECT files answer 302; ?resolve=1 lets the resolver t
   assert.match(await (await get('7e57000000000002.m3u8?resolve=1', chrome)).text(), /^#EXTM3U/);
   assert.match(await (await get('7e57000000000002.m3u8', chrome)).text(), /Not a video/);
 });
+
+test('test slots: refill writes the seven slots, caps a day and refuses while the links are fresh', async (t) => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { TestSlots, slotName } = await import('../src/slots.js');
+  const dir = mkdtempSync(join(tmpdir(), 'slots-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  let now = Date.parse('2026-10-22T18:00:00Z');
+  const creates = [];
+  const tunelio = { async create(id, q) { creates.push(q); return { url: `https://tunelio.dev/tunnel?id=${q}`, expires: now / 1000 + 6 * 3600, fileSize: 456e6 }; } };
+  const fetcher = async (u) => ({ status: u.includes('hls=1') ? 200 : 206, text: async () => '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\nseg1.m4s\n', body: null });
+  const slots = new TestSlots({ dir, tunelio, fetcher, maxPerDay: 2, base: 'https://yt/hls-test', now: () => now });
+  const read = (n) => readFileSync(join(dir, `${slotName(n)}.m3u8`), 'utf8');
+
+  assert.equal(slots.refill({ id: 'bad' }).error, 'bad_id');
+  assert.deepEqual(slots.refill(), { started: true });
+  assert.equal(slots.refill().already, true, 'a second call joins the running refill');
+  const last = await slots.running;
+  assert.equal(last.ok, true);
+  assert.deepEqual(creates, ['720p', '1080p']);
+  assert.match(read(2), /^https:\/\/tunelio\.dev\/seg1\.m4s$/m, 'segment links are absolute');
+  assert.match(read(2), /URI="https:\/\/tunelio\.dev\/init\.mp4"/);
+  assert.match(read(1), /RESOLUTION=1280x720[^\n]*\nhttps:\/\/yt\/hls-test\/7e57000000000002\.m3u8\?resolve=1/);
+  assert.match(read(4), /RESOLUTION=1920x1080[^\n]*\nhttps:\/\/yt\/hls-test\/7e57000000000003\.m3u8\?resolve=1/);
+  assert.equal(read(5), '#REDIRECT https://tunelio.dev/tunnel?id=720p&progressive=1\n');
+  assert.equal(read(7), '#REDIRECT https://tunelio.dev/tunnel?id=720p&hls=1\n');
+  const st = slots.status();
+  assert.equal(st.running, false);
+  assert.equal(st.refillsToday, 1);
+  assert.equal(st.last.expires['1080p'], '2026-10-23T00:00:00.000Z');
+
+  assert.equal(slots.refill().error, 'still_valid');
+  now += 5 * 3600_000; // an hour left
+  assert.equal(slots.refill().started, true);
+  await slots.running;
+  assert.equal(slots.refill({ force: true }).error, 'daily_cap');
+  now = Date.parse('2026-10-24T01:00:00Z');
+  assert.equal(slots.refill().started, true, 'the cap resets at 00:00 UTC');
+  await slots.running;
+});
+
+test('ops slot routes: refill is POST only and answers 202; the slots answer what they hold', async (t) => {
+  const store = new Store({ path: ':memory:', shards: 2, pool: 100, pinHours: 24 });
+  const calls = [];
+  const slots = { status: () => ({ running: false, refillsToday: 0 }), refill: (o) => { calls.push(o); return o.id === 'x' ? { error: 'bad_id' } : { started: true }; } };
+  const app = createApp({ config, store, tunelio: { enabled: false }, slots, log: () => {} });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const go = (path, method = 'GET', token = 'secret') => fetch(url + path, { method, headers: token ? { authorization: `Bearer ${token}` } : {} });
+  assert.equal((await go('/ops/slots/refill', 'POST', null)).status, 401);
+  assert.equal((await go('/ops/slots/refill')).status, 405);
+  assert.equal((await go('/ops/state', 'POST')).status, 405);
+  assert.equal((await go('/ops/slots/refill?force=1', 'POST')).status, 202);
+  assert.equal((await go('/ops/slots/refill?id=x', 'POST')).status, 400);
+  assert.deepEqual(calls[0], { id: undefined, force: true });
+  assert.equal((await (await go('/ops/slots')).json()).refillsToday, 0);
+  assert.equal((await go('/search', 'POST')).status, 405, 'other routes stay GET only');
+});

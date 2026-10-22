@@ -108,7 +108,7 @@ export const METRICS = {
   cc_track_lang: ['daily', isTrackLang],
   cc_unavailable: ['daily', oneOf('no_captions', 'no_track_in_language', 'temporarily_unavailable', 'translation_unavailable',
     'nothing_playing', 'no_tracks', 'failed', 'none')],
-  credits: ['daily', oneOf('playback', 'captions', 'probe')],
+  credits: ['daily', oneOf('playback', 'captions', 'probe', 'test')],
   join: ['daily', none],
   join_lang: ['daily', isLang],
   credits_remaining: ['gauge', none],

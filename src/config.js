@@ -66,6 +66,8 @@ export const config = {
   tunelioRenewsDay: int('TUNELIO_RENEWS_DAY', 1),
   // Minutes between Tunelio speed probes (src/probe.js; 10 credits each, at least 20, plus a random quarter). 0 = off.
   tunelioProbeMinutes: int('TUNELIO_PROBE_MINUTES', 20),
+  // Player test slot refills a day through POST /ops/slots/refill (src/slots.js; 20 credits each, 0 = off).
+  slotRefillsPerDay: int('SLOT_REFILLS_PER_DAY', 6),
   // Comma-separated ISO 15924 scripts the world can draw captions in.
   captionScripts: (process.env.CAPTION_SCRIPTS ?? 'Latn,Cyrl,Hans,Hant,Jpan,Kore,Thai,Hebr').split(',').map((s) => s.trim()).filter(Boolean),
   // Discord webhook for alerts (Tunelio out of credits, failing, running low).

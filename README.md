@@ -141,6 +141,11 @@ since the last restart), behind `STATS_TOKEN`. Both are read only and redacted (
 so video IDs, ticket numbers, shards and User-Agents stay on the server. `node tools/ops.mjs state | events --event
 tunelio_link,build_failed` reads them with `STATS_TOKEN` from `.env`.
 
+The VRPlayer TEST world's slots (`/hls-test/7e570000000000NN.m3u8`, `src/slots.js`) are refilled with
+`POST /ops/slots/refill[?id=<video>&force=1]` (20 credits, `SLOT_REFILLS_PER_DAY` a day, refused while the links
+still have 2 hours left) and read with `GET /ops/slots`: `node tools/ops.mjs refill` starts one and waits for the
+builds, `node tools/ops.mjs slots` shows what the slots hold and when they expire.
+
 ## Development
 
 ```sh

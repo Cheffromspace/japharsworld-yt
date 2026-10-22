@@ -27,7 +27,7 @@ Counted in memory and written to SQLite every minute and at shutdown (SIGTERM). 
 | `cc_list` / `cc_list_lang` | – / VRChat language or `native` | "Show captions" (list loads) |
 | `cc_track` / `cc_track_lang` | – / track language (`en`, `pt-BR`, `zh-Hans`) | tracks picked on the tablet |
 | `cc_unavailable` | reason (`no_captions`, `no_track_in_language`, `temporarily_unavailable`, `nothing_playing`, `failed`, …) | "not available" answers |
-| `credits` | `playback` (10 per successful `/create`), `captions` (6 per `/transcript`), `probe` (the speed probe below) | Tunelio credits spent |
+| `credits` | `playback` (10 per successful `/create`), `captions` (6 per `/transcript`), `probe` (the speed probe below), `test` (player test slot refills, `src/slots.js`) | Tunelio credits spent |
 | `join` / `join_lang` | – / VRChat language | the bare search address the world loads once after join (answered `400 empty_query`). Only visitors who **allow untrusted URLs** send it: the closest thing to a per-language join count |
 
 `gauges`: `credits_remaining` (the last `X-Credits-Remaining` seen each day).

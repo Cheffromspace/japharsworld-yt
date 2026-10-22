@@ -1,6 +1,8 @@
-// Read-only operator routes (owner, 2026-10-21: query the Linode without SSH, which Claude's sessions can't use):
+// Operator routes, read only except the slot refill (owner, 2026-10-21: query the Linode without SSH, which Claude's sessions can't use):
 //   GET /ops/state                                      what the service is doing now (builds, holds, relay, probe, version)
 //   GET /ops/events?event=a,b&minutes=1440&limit=500    recent log events from memory, newest last
+//   GET /ops/slots, POST /ops/slots/refill?id=&force=1  the player test slots (src/slots.js): the one write here,
+//                                                       capped per day, so the test session can refill them itself
 // Behind STATS_TOKEN like /stats (404 without one). Fixed answers only: no parameters reach a shell, a file path or
 // SQL. Events are the service's own `logJson` lines kept in memory (lost on restart) and reduced to an allowlist of
 // fields: video IDs, ticket numbers, shards and User-Agents never leave, and IDs inside messages are masked.
@@ -57,7 +59,7 @@ export function gitHead(dir = new URL('../.git/', import.meta.url)) {
   } catch { return null; }
 }
 
-export function opsRoute(req, res, url, { token, ring, state }) {
+export function opsRoute(req, res, url, { token, ring, state, slots }) {
   const send = (status, body) => {
     const buf = Buffer.from(JSON.stringify(body));
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': buf.length, 'cache-control': 'no-store', 'x-robots-tag': 'noindex' });
@@ -66,6 +68,7 @@ export function opsRoute(req, res, url, { token, ring, state }) {
   if (!token) return send(404, { v: 1, error: 'not_found', message: 'Unknown path.' });
   if (!tokenOk(req, url, token)) return send(401, { v: 1, error: 'unauthorized', message: 'Bad stats token.' });
   const p = url.pathname.replace(/\/$/, '');
+  if (req.method !== 'GET' && req.method !== 'HEAD' && p !== '/ops/slots/refill') return send(405, { v: 1, error: 'method', message: 'GET only.' });
   if (p === '/ops/state') return send(200, { v: 1, at: new Date().toISOString(), ...state() });
   if (p === '/ops/events') {
     const num = (k, d, lo, hi) => Math.min(hi, Math.max(lo, Number.parseInt(url.searchParams.get(k) ?? '', 10) || d));
@@ -74,6 +77,12 @@ export function opsRoute(req, res, url, { token, ring, state }) {
     const events = (url.searchParams.get('event') ?? '').split(',').map((s) => s.trim()).filter((s) => /^[a-z_]{1,40}$/.test(s));
     const items = ring.query({ events, sinceMs: Date.now() - minutes * 60_000, limit });
     return send(200, { v: 1, minutes, kept: ring.items.length, oldest: ring.items[0]?.at ?? null, count: items.length, events: items });
+  }
+  if (p === '/ops/slots' && slots) return send(200, { v: 1, at: new Date().toISOString(), ...slots.status() });
+  if (p === '/ops/slots/refill' && slots) {
+    if (req.method !== 'POST') return send(405, { v: 1, error: 'method', message: 'POST to refill.' });
+    const r = slots.refill({ id: url.searchParams.get('id') || undefined, force: url.searchParams.get('force') === '1' });
+    return send(r.error ? (r.error === 'bad_id' ? 400 : 409) : 202, { v: 1, ...r });
   }
   return send(404, { v: 1, error: 'not_found', message: 'Unknown path.' });
 }

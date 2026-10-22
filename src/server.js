@@ -11,6 +11,7 @@
 //   GET /relay/next, POST /relay/done                  search relay workers only (bearer RELAY_TOKEN; see relay.js)
 //   GET /stats, /stats.json, /stats/export.csv         usage metrics (bearer or ?token= STATS_TOKEN; see stats.js)
 //   GET /ops/state, /ops/events                        read-only operator view, redacted (STATS_TOKEN; see ops.js)
+//   GET /ops/slots, POST /ops/slots/refill             player test slots: what they hold, refill them (src/slots.js)
 //   GET /hls-test/<hex>.m3u8                           temporary adaptive-HLS test playlist (yt-dlp gets a "not a video" page)
 //   GET /, /privacy, /logo.png                         home page and privacy policy (public/)
 import http from 'node:http';
@@ -34,6 +35,7 @@ import { Metrics, noMetrics, lengthBucket, secondsBucket, sizeBucket, recordPoll
 import { Adaptive, Pacer } from './adaptive.js';
 import { TunelioProbe } from './probe.js';
 import { EventRing, opsRoute, gitHead } from './ops.js';
+import { TestSlots } from './slots.js';
 import { statsRoute, latestCredits, billingPeriod, daysBetween } from './stats.js';
 
 const API = 1;
@@ -54,7 +56,7 @@ function page(path) {
   return buf;
 }
 
-export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, adaptive, log = console.log } = {}) {
+export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, adaptive, slots, log = console.log } = {}) {
   // Recent events for /ops/events, redacted as they are kept.
   const ring = new EventRing();
   const rawLog = log;
@@ -221,6 +223,16 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         set: (k, v) => { const db = probeDb(); if (db) setMeta(db, k, v); else kept.set(k, String(v)); },
       },
     }).start();
+  }
+
+  // Player test slots (src/slots.js): the test session refills them itself through /ops/slots/refill. Its own
+  // Tunelio client, so its credits count as `test`.
+  if (slots === undefined && config.slotRefillsPerDay > 0 && config.tunelioKey) {
+    slots = new TestSlots({
+      dir: join(dirname(config.dbPath), 'hls-test'), base: `${config.publicUrl}/hls-test`, maxPerDay: config.slotRefillsPerDay, log: logJson,
+      tunelio: new Tunelio({ key: config.tunelioKey, timeoutMs: 30_000, onCredits: (left) => metrics.gauge('credits_remaining', '', left),
+        onCall: ({ path, ok }) => { if (ok && path === '/create') metrics.inc('credits', 'test', 10); } }),
+    });
   }
 
   // Adaptive playlists (src/adaptive.js). Only a player gets here (through a ticket's redirect); a resolver that does
@@ -498,8 +510,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         route = 'stats';
         return statsRoute(req, res, url, { token: config.statsToken, metricsPath: config.metricsPath, monitorDb: config.monitorDb, tz: config.metricsTz, renewDay: config.tunelioRenewsDay, metrics });
       }
+      if (url.pathname.startsWith('/ops/')) { route = 'ops'; return opsRoute(req, res, url, { token: config.statsToken, ring, state: opsState, slots }); }
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
-      if (url.pathname.startsWith('/ops/')) { route = 'ops'; return opsRoute(req, res, url, { token: config.statsToken, ring, state: opsState }); }
       if (url.pathname.startsWith('/hls-test/')) { route = 'hls-test'; return hlsTest(req, res, url); }
       if (url.pathname.startsWith('/hls/')) { route = 'hls'; return await hlsRoute(req, res, url); }
       if (url.pathname === '/healthz') {

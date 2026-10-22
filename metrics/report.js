@@ -23,8 +23,8 @@ function worldLine(name, w) {
 function creditsLine(s) {
   const c = s.credits;
   const f = c.forecast;
-  const spent = c.playback + c.captions + (c.probe ?? 0);
-  let out = `Credits: ${n(spent)} spent (playback ${n(c.playback)}, captions ${n(c.captions)}${c.probe ? `, speed probe ${n(c.probe)}` : ''}), ${n(c.remaining)} left`;
+  const spent = c.playback + c.captions + (c.probe ?? 0) + (c.test ?? 0);
+  let out = `Credits: ${n(spent)} spent (playback ${n(c.playback)}, captions ${n(c.captions)}${c.probe ? `, speed probe ${n(c.probe)}` : ''}${c.test ? `, test slots ${n(c.test)}` : ''}), ${n(c.remaining)} left`;
   if (f) out += f.lastsPeriod ? `; at ${n(f.perDay)}/day they last to renewal (${shortDay(f.renews)})`
     : `; at ${n(f.perDay)}/day they run out ${shortDay(f.runsOut)}, before renewal (${shortDay(f.renews)})`;
   return out;
@@ -99,7 +99,7 @@ export function weeklyReport(db, { endDay, tz = 'America/Chicago', now = Date.no
   lines.push(`Search: ${n(s.searches)} searches${change(s.searches, p.searches)}, ${n(s.plays)} plays${change(s.plays, p.plays)}, ${n(s.joins)} joins${change(s.joins, p.joins)}`);
   lines.push(`Failures ${pct(s.failureRate)} (was ${pct(p.failureRate)}); sources: ${top(s.sources)}`);
   lines.push(`Captions: ${n(s.captions.lists)} shown${change(s.captions.lists, p.captions.lists)}`);
-  const spent = s.credits.playback + s.credits.captions + (s.credits.probe ?? 0), before = p.credits.playback + p.credits.captions + (p.credits.probe ?? 0);
+  const spent = s.credits.playback + s.credits.captions + (s.credits.probe ?? 0) + (s.credits.test ?? 0), before = p.credits.playback + p.credits.captions + (p.credits.probe ?? 0) + (p.credits.test ?? 0);
   lines.push(`Credits: ${n(spent)} spent${change(spent, before)}, ${n(s.credits.remaining)} left`);
   lines.push(`Languages: ${s.languages.join(', ') || 'none'}`);
   const rel = releasesLine(s.releases, tz);

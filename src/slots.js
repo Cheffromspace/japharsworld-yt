@@ -31,8 +31,8 @@ export function absolute(text, base) {
 
 export class TestSlots {
   constructor({ dir, tunelio, base = 'https://yt.japharsworld.com/hls-test', fetcher = fetch, maxPerDay = 6,
-    validHours = 2, log = () => {}, now = Date.now }) {
-    Object.assign(this, { dir, tunelio, base, fetcher, maxPerDay, validHours, log, now });
+    validHours = 2, log = () => {}, now = Date.now, retryMs = 3000 }) {
+    Object.assign(this, { dir, tunelio, base, fetcher, maxPerDay, validHours, log, now, retryMs });
     this.running = null;
   }
 
@@ -75,7 +75,7 @@ export class TestSlots {
       return { error: 'still_valid', message: `The links are good until ${new Date(this.now() + left).toISOString()}; Tunelio would hand the same ones back. Pass force to rebuild anyway.` };
     }
     this.#save({ ...s, day, count: count + 1 });
-    this.running = this.#fill(id).catch((e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 200) }))
+    this.running = this.#fill(id).catch((e) => ({ ok: false, error: `${String(e?.message ?? e)}${e?.cause?.code ? ` (${e.cause.code})` : ''}`.slice(0, 200) }))
       .then((last) => {
         last = { at: new Date(this.now()).toISOString(), id, ...last };
         this.#save({ ...this.#state(), last });
@@ -84,6 +84,18 @@ export class TestSlots {
         return last;
       });
     return { started: true };
+  }
+
+  // A network error ("fetch failed": a reset or refused connection to Tunelio's edge) is tried twice more, a few
+  // seconds apart (2026-10-23: a refill right after a restart failed so and spent one of the day's refills for nothing).
+  async #get(url, opts) {
+    for (let i = 0; ; i++) {
+      try { return await this.fetcher(url, { ...opts, signal: AbortSignal.timeout(200_000) }); } catch (err) {
+        if (i >= 2 || err?.name === 'TimeoutError' || err?.name === 'AbortError') throw err;
+        this.log({ event: 'test_slots_retry', try: i + 1, message: String(err?.message ?? err).slice(0, 100), code: err?.cause?.code });
+        await new Promise((r) => setTimeout(r, this.retryMs));
+      }
+    }
   }
 
   async #fill(id) {
@@ -95,13 +107,13 @@ export class TestSlots {
     await Promise.all(QUALITIES.map(async (q) => {
       const link = `${made[q].url}&hls=1`;
       const t = this.now();
-      const r = await this.fetcher(link, { signal: AbortSignal.timeout(200_000) });
+      const r = await this.#get(link);
       hls[q] = { link, text: r.status === 200 ? absolute(await r.text(), link) : null };
       builds[`hls_${q}`] = { status: r.status, s: Math.round((this.now() - t) / 100) / 10 };
     }));
     for (const q of QUALITIES) {
       const t = this.now();
-      const r = await this.fetcher(`${made[q].url}&progressive=1`, { headers: { range: 'bytes=0-0' }, signal: AbortSignal.timeout(200_000) });
+      const r = await this.#get(`${made[q].url}&progressive=1`, { headers: { range: 'bytes=0-0' } });
       try { await r.body?.cancel(); } catch { /* already done */ }
       builds[`mp4_${q}`] = { status: r.status, s: Math.round((this.now() - t) / 100) / 10, mb: Math.round(made[q].fileSize / 1e5) / 10 };
     }

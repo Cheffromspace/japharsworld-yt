@@ -22,6 +22,7 @@ import http from 'node:http';
 import { readFileSync, statSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { config as defaults } from './config.js';
 import { Store } from './store.js';
 import { parseQuery, youtubeIdFrom, normalizeLang, LANGS } from './query.js';
@@ -269,7 +270,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': page.length, 'cache-control': 'no-store' });
       return res.end(page);
     }
-    const body = m[2] ? await adaptive.variant(m[1], m[2]) : adaptive.master(m[1]);
+    // Which player this is, only to tell a reload from a new player (src/adaptive.js master); never stored or logged.
+    const viewer = createHash('sha256').update(`${clientIp(req)} ${req.headers['user-agent'] ?? ''}`).digest('hex').slice(0, 16);
+    const body = m[2] ? await adaptive.variant(m[1], m[2], viewer) : adaptive.master(m[1], viewer);
     if (body == null) return fail(res, 404, 'not_found', m[2] ? 'Not ready.' : 'Unknown path.');
     const buf = Buffer.from(body);
     res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'content-length': buf.length, 'cache-control': 'no-store' });
@@ -546,7 +549,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       let via = where.via, reason = where.reason;
       if (where.ready === false) { location = `https://www.youtube.com/watch?v=${t.data.id}`; via = 'youtube'; reason = 'build_timeout'; metrics.inc('ticket_timeout'); }
       logJson({ event: 'play', shard, n, id: t.data.id, via, reason, client: kind, held, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
-      countPlay(shard, t.data, { via, reason, location });
+      countPlay(shard, t.data, { via, reason, location }, android || hlsTicket ? 'android' : kind === 'avpro' ? 'pc' : null);
       if (warmed.delete(`${shard}:${t.data.id}`)) metrics.inc('warm_played');
       res.writeHead(302, { location, 'cache-control': 'no-store' });
       return res.end();
@@ -598,9 +601,16 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // (or a late joiner, or a replay) until ROOM_PLAY_MS after it was counted. Held in memory only; video IDs never reach the metrics.
   const ROOM_PLAY_MS = 3 * 3600_000;
   const roomPlays = new Map(); // "shard:videoId" → when it was last counted (ms)
-  function countPlay(shard, data, where) {
+  // The platform (pc / android, from the player's User-Agent or a .m3u8 ticket) counts once per room and platform, so a
+  // room with PC and Quest players counts one of each; the resolver's requests can't tell, so they don't count it.
+  function countPlay(shard, data, where, platform) {
     const key = `${shard}:${data.id}`;
     const now = Date.now();
+    if (platform) {
+      const pk = `${key}:${platform}`;
+      const seen = roomPlays.get(pk);
+      if (!seen || now - seen >= ROOM_PLAY_MS) { roomPlays.set(pk, now); metrics.inc('play_platform', platform); }
+    }
     const counted = roomPlays.get(key);
     if (counted && now - counted < ROOM_PLAY_MS) return;
     roomPlays.set(key, now);

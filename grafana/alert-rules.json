@@ -265,6 +265,165 @@
   ]
  },
  {
+  "uid": "eiok-home-cap",
+  "title": "Home relay near its daily cap",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "5m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "The home relay has used 90 % of HOME_DAILY_MB today; at the cap, long videos go to Tunelio (credits) or youtube.com instead."
+  },
+  "labels": {
+   "project": "everything-is-ok"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "max(eiok_home_today{key=\"mb\"}) / max(eiok_home_today{key=\"cap_mb\"}) >= 0.9",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-home-worker",
+  "title": "Home relay has no worker",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "15m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "No media worker (the Optiplex relay) connected for 15 minutes: home relay plays fall back to Tunelio or youtube.com."
+  },
+  "labels": {
+   "project": "everything-is-ok"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "max(eiok_home_today{key=\"workers\"}) < 1",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-credits-pace",
+  "title": "Credits run out before renewal",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "60m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "At the last 3 days’ spend, the Tunelio credits run out before the plan renews on the 1st (the pacer then keeps plays at 720p; at 0 they go to youtube.com)."
+  },
+  "labels": {
+   "project": "everything-is-ok"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "(sum(increase(eiok_events_total{metric=\"credits\"}[3d])) / 3) * (days_in_month() - day_of_month() + 1) - max(eiok_credits_remaining) > 0",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
   "uid": "eiok-disk-low",
   "title": "Disk almost full",
   "folderUID": "everything-is-ok",

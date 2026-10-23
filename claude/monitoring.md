@@ -42,10 +42,17 @@ Linode                                                  Optiplex
 
 ## Alerts (Grafana, to Discord)
 
-Only what the services can't say about themselves; their own Discord alerts are unchanged.
+Only what the services can't say about themselves, plus three the owner asked for on 2026-10-23 (home cap, home
+worker, credits pace). Each sends a "resolved" message too (the contact point has resolved messages on). The services'
+own Discord alerts send a matching all-clear since 2026-10-23: VRChat login, no search worker, Tunelio down / key /
+credits (`alert.resolve`, src/alert.js), and the monitor's quota and API warnings (`discord.resolve`). Notices with no
+failed state (credits low, Data API quota, plan renewals, reports) have none.
 
 | Alert | Fires when |
 |---|---|
+| Home relay near its daily cap | today's home relay MB ≥ 90 % of `HOME_DAILY_MB`, 5 min |
+| Home relay has no worker | no media worker connected for 15 min (only while `HOME_RELAY=on`; the gauge isn't set otherwise) |
+| Credits run out before renewal | the last 3 days' credit spend per day × days to the 1st > credits left, for 1 h |
 | Linode sends nothing | no `eiok_search_up` from the Linode for 10 min (server, Alloy or exporter down) |
 | Optiplex sends nothing | no host metrics from the Optiplex for 15 min |
 | Search service down | `/healthz` unanswered on the Linode for 5 min |

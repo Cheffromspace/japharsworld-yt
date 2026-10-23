@@ -27,3 +27,14 @@ def send(con, title, body="", level="info", dedupe=None, every_hours=6):
         http(config.DISCORD_WEBHOOK, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}, method="POST")
     except Exception as e:
         print("discord send failed: %s" % e, flush=True)
+
+
+def resolve(con, dedupe, title, body=""):
+    """The all-clear for a dedupe'd warning, sent once and only if that warning went out since the last all-clear
+    (owner, 2026-10-23: every "failed" alert gets a "restored" one). A new failure after it is sent at once."""
+    if not db.get_meta(con, "alert:" + dedupe, 0):
+        return False
+    db.set_meta(con, "alert:" + dedupe, 0)
+    con.commit()
+    send(con, title, body, "good")
+    return True

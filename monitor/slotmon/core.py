@@ -78,6 +78,8 @@ def statuses(con, api, ids):
     if api.can_read:
         try:
             out = api.videos(ids)
+            discord.resolve(con, "quota-fallback", "Quota back: status checks use the YouTube API again")
+            discord.resolve(con, "api-error", "YouTube API works again: status checks use it again")
         except QuotaExceeded as e:
             discord.send(con, "Quota: falling back to page checks", str(e), "warn", dedupe="quota-fallback", every_hours=12)
         except Exception as e:

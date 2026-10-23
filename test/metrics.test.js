@@ -179,6 +179,11 @@ test('search service counts searches, joins, plays, captions, failures and shard
   await s.get(`/v1/2/s?l=ja&q=${encodeURIComponent('→ other room')}`, { 'x-forwarded-for': '198.51.100.9' }).then((x) => x.json()).then((r2) => s.get(`/v1/2/${r2.results[0].t}`));
   s.metrics.flush();
   assert.equal(db.prepare("SELECT value FROM daily WHERE metric = 'play'").get().value, 5); // + the same video in another room
+  // Platform: once per room and platform, from the player's User-Agent (the resolver's can't tell).
+  const pc = { 'user-agent': 'NSPlayer/12.00.26100.1 WMFSDK/12.00.26100.1' }, quest = { 'user-agent': 'stagefright/1.2 (Linux;Android 12)' };
+  for (const h of [pc, pc, quest, quest, { 'user-agent': 'Mozilla/5.0 Chrome/120' }]) await s.get(`/v1/1/${r.results[0].t}`, h);
+  s.metrics.flush();
+  assert.deepEqual(Object.fromEntries(db.prepare("SELECT key, value FROM daily WHERE metric = 'play_platform'").all().map((x) => [x.key, x.value])), { pc: 1, android: 1 });
   assert.deepEqual(by.play_route, { 'tunelio-progressive': 1, 'tunelio-hls': 1, 'youtube-fallback': 1, 'youtube-live': 1 });
   assert.deepEqual(by.play_fallback, { tunelio_failed: 1 });
   assert.deepEqual(by.play_length, { lt10m: 1, lt1h: 1, lt3h: 1, live: 1 });

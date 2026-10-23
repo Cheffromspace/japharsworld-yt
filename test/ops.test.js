@@ -162,6 +162,14 @@ test('test slots: refill writes the slots (seven, plus the Quest audio masters 0
   now = Date.parse('2026-10-24T01:00:00Z');
   assert.equal(slots.refill().started, true, 'the cap resets at 00:00 UTC');
   await slots.running;
+
+  // A dropped connection to Tunelio is tried again instead of failing the refill.
+  let drops = 1;
+  const flaky = new TestSlots({ dir, tunelio, maxPerDay: 2, base: 'https://yt/hls-test', now: () => now, retryMs: 1,
+    fetcher: async (u) => { if (drops-- > 0) throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } }); return fetcher(u); } });
+  now = Date.parse('2026-10-25T01:00:00Z');
+  flaky.refill();
+  assert.equal((await flaky.running).ok, true);
 });
 
 test('ops slot routes: refill is POST only and answers 202; the slots answer what they hold', async (t) => {

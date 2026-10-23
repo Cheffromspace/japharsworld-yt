@@ -108,6 +108,25 @@ test('adaptive play: resolver sent on at once, player → our master, 720p now, 
   assert.deepEqual(s.created.map(([, q]) => q).sort(), ['1080p', '720p'], 'one /create per quality (the 1080p one reused for its HLS)');
 });
 
+test('freeze proxy: the same player loading the master again counts as a reload, after or before its step up', async (t) => {
+  const events = [];
+  const s = await server({}, { onEvent: (k) => events.push(k) });
+  t.after(() => s.srv.close());
+  s.playback.rate.progressive = 0.1;
+  const n = await s.ticket(3);
+  const path = new URL((await s.get(`/v1/3/${n}`)).headers.get('location')).pathname;
+  const reloads = () => events.filter((k) => k.startsWith('reload_'));
+  await s.get(path);
+  await s.get(path, 'NSPlayer/12.00 other-player');       // a second player in the room: not a reload
+  await s.get(path);                                      // the first player again, still on 720p
+  assert.deepEqual(reloads(), ['reload_before_upgrade']);
+  s.releaseUpper();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal((await s.get(path.replace('.m3u8', '/1080p.m3u8'))).status, 200);
+  await s.get(path);                                      // Play again after the switch
+  assert.deepEqual(reloads(), ['reload_before_upgrade', 'reload_after_upgrade']);
+});
+
 test('adaptive play: a failed 1080p build serves the 720p playlist (ends the retries)', async (t) => {
   const s = await server();
   t.after(() => s.srv.close());

@@ -1652,7 +1652,7 @@
    "type": "timeseries",
    "id": 28,
    "title": "Adaptive steps and Quest tickets (per 6 h)",
-   "description": "master = adaptive playlists served, upgrade / upgrade_served / upgrade_failed = 1080p step-ups started, played, failed; hls_ticket = .m3u8 tickets (the world’s Android build); android_progressive = Quest players sent progressive; defer = resolver told to wait. A freeze after a switch is not visible here (the player does not report it).",
+   "description": "master = adaptive playlists served, upgrade / upgrade_served / upgrade_failed = 1080p step-ups started, played, failed; hls_ticket = .m3u8 tickets (the world’s Android build); android_progressive = Quest players sent progressive; defer = resolver told to wait. reload_after_upgrade / reload_before_upgrade = the same player loading the master again after / before it got 1080p: the freeze proxy (a freeze shows no error, so Play pressed again is the closest signal; compare the two).",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2149,7 +2149,7 @@
    "gridPos": {
     "x": 0,
     "y": 73,
-    "w": 12,
+    "w": 8,
     "h": 8
    },
    "targets": [
@@ -2191,15 +2191,65 @@
   {
    "type": "timeseries",
    "id": 37,
+   "title": "Plays by platform (per 6 h)",
+   "description": "Once per room and platform (a room with PC and Quest players counts one of each), from the player’s User-Agent or a .m3u8 ticket. Counted from 2026-10-23.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 73,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (key) (increase(eiok_events_total{metric=\"play_platform\"}[6h]))",
+     "legendFormat": "{{key}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 30,
+      "stacking": {
+       "mode": "normal"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "timeseries",
+   "id": 38,
    "title": "Room quality picks and tablet warm-ups (per 6 h)",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 12,
+    "x": 16,
     "y": 73,
-    "w": 12,
+    "w": 8,
     "h": 8
    },
    "targets": [
@@ -2257,7 +2307,7 @@
   },
   {
    "type": "row",
-   "id": 38,
+   "id": 39,
    "title": "Channels and flash checks",
    "collapsed": false,
    "gridPos": {
@@ -2270,7 +2320,7 @@
   },
   {
    "type": "table",
-   "id": 39,
+   "id": 40,
    "title": "Slots",
    "datasource": {
     "type": "prometheus",
@@ -2486,7 +2536,7 @@
   },
   {
    "type": "timeseries",
-   "id": 40,
+   "id": 41,
    "title": "Flash checks (per 6 h)",
    "datasource": {
     "type": "prometheus",
@@ -2534,7 +2584,7 @@
   },
   {
    "type": "timeseries",
-   "id": 41,
+   "id": 42,
    "title": "Check queue",
    "datasource": {
     "type": "prometheus",
@@ -2592,7 +2642,7 @@
   },
   {
    "type": "row",
-   "id": 42,
+   "id": 43,
    "title": "Hosts",
    "collapsed": false,
    "gridPos": {
@@ -2605,7 +2655,7 @@
   },
   {
    "type": "timeseries",
-   "id": 43,
+   "id": 44,
    "title": "CPU busy",
    "datasource": {
     "type": "prometheus",
@@ -2654,7 +2704,7 @@
   },
   {
    "type": "timeseries",
-   "id": 44,
+   "id": 45,
    "title": "Memory available",
    "datasource": {
     "type": "prometheus",
@@ -2703,7 +2753,7 @@
   },
   {
    "type": "timeseries",
-   "id": 45,
+   "id": 46,
    "title": "Disk free (/)",
    "datasource": {
     "type": "prometheus",
@@ -2752,7 +2802,7 @@
   },
   {
    "type": "timeseries",
-   "id": 46,
+   "id": 47,
    "title": "Public endpoints",
    "datasource": {
     "type": "prometheus",
@@ -2809,7 +2859,7 @@
   },
   {
    "type": "timeseries",
-   "id": 47,
+   "id": 48,
    "title": "Failed units",
    "description": "japharsworld-yt units, bgutil-pot and caddy in the failed state.",
    "datasource": {
@@ -2858,7 +2908,7 @@
   },
   {
    "type": "row",
-   "id": 48,
+   "id": 49,
    "title": "Versions and deploys",
    "collapsed": false,
    "gridPos": {
@@ -2871,7 +2921,7 @@
   },
   {
    "type": "state-timeline",
-   "id": 49,
+   "id": 50,
    "title": "World version over time",
    "datasource": {
     "type": "prometheus",
@@ -2931,7 +2981,7 @@
   },
   {
    "type": "table",
-   "id": 50,
+   "id": 51,
    "title": "World uploads and releases",
    "description": "VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.",
    "datasource": {
@@ -3004,7 +3054,7 @@
   },
   {
    "type": "table",
-   "id": 51,
+   "id": 52,
    "title": "Deploys of main",
    "description": "Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.",
    "datasource": {

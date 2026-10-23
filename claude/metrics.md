@@ -23,10 +23,11 @@ Counted in memory and written to SQLite every minute and at shutdown (SIGTERM). 
 | `home_why` | `tunelio_off` `long` `pacer` `tunelio_failed` | why a session went home, once per session |
 | `home_start_s` | seconds bucket | session start to its first playlist |
 | `play_fallback` | `disabled` `paused` `tunelio_failed` | why a video went to YouTube at 360p |
+| `play_platform` | `pc` `android` | once per room and platform (a mixed room counts one of each): the player's User-Agent (`isAndroidPlayer`) or a `.m3u8` ticket; resolver requests don't count |
 | `play_length` | `lt10m` `lt1h` `lt3h` `longer` `live` `unknown` | length bucket of the played video |
 | `tunelio_create_ms` | latency bucket | Tunelio `/create` |
 | `quality_pick` | `720p` `1080p` `auto` | a room picked a playback quality (or Auto) on its tablet |
-| `adaptive` | `plan_lower` `plan_direct` `plan_adaptive` `plan_start` `master` `upgrade` `upgrade_served` `upgrade_failed` `paced_off` `defer` | playback plans (src/adaptive.js): the plan each video got (`plan_start`: adaptive from a 360p first rung), adaptive masters served, upgrades (720p/1080p rungs) started / served / failed, plays the pacer kept at 720p, resolvers sent on |
+| `adaptive` | `plan_lower` `plan_direct` `plan_adaptive` `plan_start` `master` `upgrade` `upgrade_served` `upgrade_failed` `paced_off` `defer` `android_progressive` `hls_ticket` `reload_before_upgrade` `reload_after_upgrade` | playback plans (src/adaptive.js): the plan each video got (`plan_start`: adaptive from a 360p first rung), adaptive masters served, upgrades (720p/1080p rungs) started / served / failed, plays the pacer kept at 720p, resolvers sent on; Quest players sent progressive, `.m3u8` tickets; the same player loading a master again, after or before it was served a higher rung (the freeze proxy: the player is told apart by a hash of address and User-Agent held in memory with the session, never stored) |
 | `cc_list` / `cc_list_lang` | – / VRChat language or `native` | "Show captions" (list loads) |
 | `cc_track` / `cc_track_lang` | – / track language (`en`, `pt-BR`, `zh-Hans`) | tracks picked on the tablet |
 | `cc_unavailable` | reason (`no_captions`, `no_track_in_language`, `temporarily_unavailable`, `nothing_playing`, `failed`, …) | "not available" answers |

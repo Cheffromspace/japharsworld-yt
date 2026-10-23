@@ -115,7 +115,7 @@ export class Adaptive {
     let s = this.byJob.get(job);
     if (!s) {
       const rungs = this.start && job.requested === this.start ? [this.start, this.lower, this.upper] : [this.lower, this.upper];
-      s = { token: randomBytes(9).toString('hex'), data, lowerJob: job, rungs, single, started: false, served: new Set() };
+      s = { token: randomBytes(9).toString('hex'), data, lowerJob: job, rungs, single, started: false, served: new Set(), viewers: new Map() };
       this.byJob.set(job, s);
       this.sessions.set(s.token, s);
       if (this.sessions.size > 2000) this.sessions.delete(this.sessions.keys().next().value);
@@ -137,9 +137,19 @@ export class Adaptive {
 
   // The master playlist, or null for an unknown token. The first load starts the HLS builds of the rungs above the first
   // (1080p only up to maxUpperMb). Players start on the first variant listed, which is the one already built.
-  master(token) {
+  // viewer: an opaque per-player key (server.js: a hash of address and User-Agent, in memory only). A player loads the
+  // master once per play, so the same player loading it again is someone pressing Play again (or the player retrying
+  // after an error). Counted as reload_after_upgrade when that player had been served a higher rung, else
+  // reload_before_upgrade: the freeze after a switch (2026-10-22) shows no error, so a reload is the closest signal
+  // the server has. A proxy, not a freeze count: compare the two.
+  master(token, viewer) {
     const s = this.sessions.get(token);
     if (!s || s.single) return null;
+    if (viewer) {
+      const v = s.viewers.get(viewer);
+      if (v) this.onEvent(v.upgraded ? 'reload_after_upgrade' : 'reload_before_upgrade');
+      else { s.viewers.set(viewer, { upgraded: false }); if (s.viewers.size > 200) s.viewers.delete(s.viewers.keys().next().value); }
+    }
     if (!s.started) {
       s.started = true;
       for (const q of s.rungs.slice(1)) this.playback.start(s.data, q, { hls: true, maxMb: q === this.upper ? this.maxUpperMb : 0 });
@@ -157,7 +167,7 @@ export class Adaptive {
   }
 
   // A variant playlist: Tunelio's, with its segment links made absolute. Null = not (yet) available (404).
-  async variant(token, quality) {
+  async variant(token, quality, viewer) {
     const s = this.sessions.get(token);
     if (!s) return null;
     if (s.single) return quality === s.lowerJob.quality ? this.#playlist(s.lowerJob) : null;
@@ -175,6 +185,8 @@ export class Adaptive {
       return this.#playlist(below ?? s.lowerJob);
     }
     const text = await this.#playlist(up);
+    const v = viewer && s.viewers.get(viewer);
+    if (text && v) v.upgraded = true;
     if (text && !s.served.has(quality)) { s.served.add(quality); this.onEvent('upgrade_served'); this.log({ event: 'adaptive_upgrade_served', id: s.data.id, quality, mb: up.mb, buildMs: up.endedMs - up.startedMs }); }
     return text;
   }

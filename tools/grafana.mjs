@@ -159,7 +159,7 @@ export function dashboard() {
   p.push(series('Playback plans (per 6 h)', [[ev('adaptive').replace('}[', ',key=~"plan_.*|paced_off"}['), '{{key}}']], { w: 8, stack: true, min: 0,
     description: 'Which plan each video got (src/adaptive.js): plan_direct = 1080p at once, plan_adaptive = 720p then 1080p, plan_start = the 360p first rung, plan_lower = 720p only; paced_off = kept at 720p by the credit pacer.' }));
   p.push(series('Adaptive steps and Quest tickets (per 6 h)', [[ev('adaptive').replace('}[', ',key!~"plan_.*|paced_off"}['), '{{key}}']], { w: 8, min: 0,
-    description: 'master = adaptive playlists served, upgrade / upgrade_served / upgrade_failed = 1080p step-ups started, played, failed; hls_ticket = .m3u8 tickets (the world’s Android build); android_progressive = Quest players sent progressive; defer = resolver told to wait. A freeze after a switch is not visible here (the player does not report it).' }));
+    description: 'master = adaptive playlists served, upgrade / upgrade_served / upgrade_failed = 1080p step-ups started, played, failed; hls_ticket = .m3u8 tickets (the world’s Android build); android_progressive = Quest players sent progressive; defer = resolver told to wait. reload_after_upgrade / reload_before_upgrade = the same player loading the master again after / before it got 1080p: the freeze proxy (a freeze shows no error, so Play pressed again is the closest signal; compare the two).' }));
   p.push(series('Ticket requests by client (per 6 h)', [[ev('ticket_client'), '{{key}}']], { w: 8, stack: true, min: 0,
     description: 'string = the tablet’s status checks, ytdlp = VRChat’s resolver, avpro = the player. Per request, not per play.' }));
   p.push(stat('Home relay today', [
@@ -184,9 +184,11 @@ export function dashboard() {
   ], { w: 8, min: 0, description: 'Track lists and tracks served, which source answered (worker, local yt-dlp, Tunelio), word timing real or estimated, and why none was available.' }));
   p.push(series('Rooms active (shards with a request, per hour)', [
     ['count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)', 'rooms'],
-  ], { w: 12, min: 0, decimals: 0, description: 'Distinct shards that saw a request in the past hour (from the hourly shard table).' }));
+  ], { w: 8, min: 0, decimals: 0, description: 'Distinct shards that saw a request in the past hour (from the hourly shard table).' }));
+  p.push(series('Plays by platform (per 6 h)', [[ev('play_platform'), '{{key}}']], { w: 8, stack: true, min: 0,
+    description: 'Once per room and platform (a room with PC and Quest players counts one of each), from the player’s User-Agent or a .m3u8 ticket. Counted from 2026-10-23.' }));
   p.push(series('Room quality picks and tablet warm-ups (per 6 h)', [[ev('quality_pick'), 'pick {{key}}'],
-    ['sum(increase(eiok_events_total{metric="warm"}[6h]))', 'warm builds'], ['sum(increase(eiok_events_total{metric="warm_played"}[6h]))', 'warm then played']], { w: 12, min: 0 }));
+    ['sum(increase(eiok_events_total{metric="warm"}[6h]))', 'warm builds'], ['sum(increase(eiok_events_total{metric="warm_played"}[6h]))', 'warm then played']], { w: 8, min: 0 }));
 
   p.push(row('Channels and flash checks'));
   p.push({
@@ -272,6 +274,11 @@ export function alertRules(dsUid) {
     rule('eiok-search-down', 'Search service down', 'max_over_time(eiok_search_up[5m]) < 1', { summary: 'The search service has not answered /healthz on the Linode for 5 minutes.' }),
     rule('eiok-public-down', 'yt.japharsworld.com unreachable', 'max_over_time(probe_success{job=~".*search-healthz.*"}[10m]) < 1', { forM: 5, summary: 'https://yt.japharsworld.com/healthz failed from outside for 10 minutes (Caddy, TLS or DNS).' }),
     rule('eiok-checks-waiting', 'Flash checks waiting', 'max(eiok_jobs_oldest_pending_seconds) > 7200', { summary: 'A resolution/flash job has waited over 2 hours; the Optiplex worker runs every 20 minutes.' }),
+    // Owner, 2026-10-23 (the dashboard audit): the home relay's cap and worker, and the credits lasting to renewal.
+    rule('eiok-home-cap', 'Home relay near its daily cap', 'max(eiok_home_today{key="mb"}) / max(eiok_home_today{key="cap_mb"}) >= 0.9', { forM: 5, summary: 'The home relay has used 90 % of HOME_DAILY_MB today; at the cap, long videos go to Tunelio (credits) or youtube.com instead.' }),
+    rule('eiok-home-worker', 'Home relay has no worker', 'max(eiok_home_today{key="workers"}) < 1', { forM: 15, summary: 'No media worker (the Optiplex relay) connected for 15 minutes: home relay plays fall back to Tunelio or youtube.com.' }),
+    // Renewal on the 1st (TUNELIO_RENEWS_DAY's default): the last 3 days' spend per day times the days left, minus the credits left.
+    rule('eiok-credits-pace', 'Credits run out before renewal', '(sum(increase(eiok_events_total{metric="credits"}[3d])) / 3) * (days_in_month() - day_of_month() + 1) - max(eiok_credits_remaining) > 0', { forM: 60, summary: 'At the last 3 days’ spend, the Tunelio credits run out before the plan renews on the 1st (the pacer then keeps plays at 720p; at 0 they go to youtube.com).' }),
     rule('eiok-disk-low', 'Disk almost full', 'max by (host) (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) > 0.9', { forM: 15, summary: 'Under 10 % free on / of {{ $labels.host }}.' }),
   ];
 }

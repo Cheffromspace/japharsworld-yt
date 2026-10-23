@@ -88,6 +88,15 @@ class Base(unittest.TestCase):
 
 
 class Tests(Base):
+    def test_api_warnings_get_an_all_clear_once_the_api_answers(self):
+        core.statuses(self.con, self.api, ["CAMCAMCAM01"])
+        self.assertEqual(self.alerts, [])  # nothing was wrong: no all-clear
+        db.set_meta(self.con, "alert:api-error", time.time())  # as discord.send records a sent warning
+        core.statuses(self.con, self.api, ["CAMCAMCAM01"])
+        core.statuses(self.con, self.api, ["CAMCAMCAM01"])
+        self.assertEqual(self.alerts, [("good", "YouTube API works again: status checks use it again")])
+        self.assertFalse(db.get_meta(self.con, "alert:api-error", 0))
+
     def test_all_up_queues_new_flash_checks_but_not_for_videos(self):
         self.api.world["NOISENOISE1"] = st("NOISENOISE1", "video")
         self.check()

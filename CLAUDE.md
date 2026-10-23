@@ -90,3 +90,6 @@ that changes what is collected must also update `claude/metrics.md` and `public/
 - Comments explain *why* and record measured facts with dates (e.g. "~17 ms per MB, 2026-10-19"); match that.
 - Logs are one JSON object per line (`logJson({ event: … })`).
 - Commit messages: `Area: what changed (why)`, plain sentences.
+- Owner rule (2026-10-23): when the player test kit changes (test slots, refill limits or link lifetime, `/hls-test`,
+  how to get a given play plan, `/ops/events` fields), also update the Everything is OK e2e-test skill:
+  `../Everything is OK/.claude/skills/e2e-test/quest.md` and the `slot` line in `desktop-client.md`.

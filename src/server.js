@@ -111,6 +111,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   relay ??= new Relay({ token: config.relayToken, log: logJson });
   home ??= new Home({ relay, dir: join(dirname(config.dbPath), 'home'), base: `${config.publicUrl}/home`, enabled: config.homeRelay && relay.enabled,
     dailyBuilds: config.homeDailyBuilds, dailyMb: config.homeDailyMb, keepHours: config.homeKeepHours, maxGb: config.homeMaxGb, readyMs: config.homeReadyMs,
+    segmentHoldMs: config.homeSegmentHoldMs,
     log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
   if (home.enabled) setInterval(() => home.sweep(), 10 * 60_000).unref();
   // Captions: relay worker → yt-dlp here (when turned on, or when there is no Tunelio) → Tunelio (src/captionchain.js).
@@ -319,14 +320,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   }
 
   // Home relay playback (src/home.js). Like /hls/, a resolver that gets here is told "not a video" for the playlist.
-  function homeRoute(req, res, url) {
+  async function homeRoute(req, res, url) {
     const m = url.pathname.match(/^\/home\/([a-f0-9]{18})\/([\w.-]{1,32})$/);
     if (m && m[2] === 'index.m3u8' && clientKind(req.headers['user-agent']) === 'ytdlp') {
       const page = Buffer.from('<!doctype html><title>Video</title><p>Not a video page.</p>');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': page.length, 'cache-control': 'no-store' });
       return res.end(page);
     }
-    const f = m ? home.file(m[1], m[2]) : null;
+    const f = m ? await home.file(m[1], m[2]) : null;
     if (!f) return fail(res, 404, 'not_found', 'Unknown path.');
     res.writeHead(200, { 'content-type': f.type, 'content-length': f.body.length, 'cache-control': 'no-store' });
     return res.end(req.method === 'HEAD' ? undefined : f.body);
@@ -648,7 +649,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
       if (url.pathname.startsWith('/hls-test/')) { route = 'hls-test'; return await hlsTest(req, res, url); }
       if (url.pathname.startsWith('/hls/')) { route = 'hls'; return await hlsRoute(req, res, url); }
-      if (url.pathname.startsWith('/home/')) { route = 'home'; return homeRoute(req, res, url); }
+      if (url.pathname.startsWith('/home/')) { route = 'home'; return await homeRoute(req, res, url); }
       if (url.pathname === '/healthz') {
         route = 'health';
         return json(res, 200, { ok: true, v: API, tunelio: tunelio.enabled, credits: tunelio.credits,

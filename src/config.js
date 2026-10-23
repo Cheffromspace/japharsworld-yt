@@ -100,8 +100,11 @@ export const config = {
   homeDailyMb: int('HOME_DAILY_MB', 10_000),
   homeKeepHours: int('HOME_KEEP_HOURS', 12),
   homeMaxGb: int('HOME_MAX_GB', 6),
-  // How long a new session may take to its first playlist (yt-dlp ~3 s + the first segments, 2026-10-23).
-  homeReadyMs: int('HOME_READY_SECONDS', 30) * 1000,
+  // How long a new session may take to its first playlist: yt-dlp ~3 s, then its stream URLs answer 403 for 0.1–2.6 s,
+  // once 22 s, before they work (2026-10-23), then the first segments.
+  homeReadyMs: int('HOME_READY_SECONDS', 40) * 1000,
+  // How long a player's request for a segment that hasn't arrived yet is held (the whole playlist is published up front).
+  homeSegmentHoldMs: int('HOME_SEGMENT_HOLD_SECONDS', 20) * 1000,
   // YouTube Data API v3: last fallback for search. Empty = never used.
   youtubeApiKey: process.env.YOUTUBE_API_KEY ?? '',
   youtubeApiDailyUnits: int('YOUTUBE_API_DAILY_UNITS', 10000),

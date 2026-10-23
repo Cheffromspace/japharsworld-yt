@@ -10,7 +10,7 @@ import { Store } from '../src/store.js';
 import { Relay } from '../src/relay.js';
 import { Home } from '../src/home.js';
 import { createWorker } from '../relay/worker.js';
-import { mediaJob, ffmpegArgs, formatFor, rangeProxy } from '../relay/media.js';
+import { mediaJob, ffmpegArgs, formatFor, rangeProxy, predictPlaylist } from '../relay/media.js';
 import { config as base } from '../src/config.js';
 
 const TOKEN = 'secret-token';
@@ -24,32 +24,33 @@ function fakeRelay({ online = true } = {}) {
   return { jobs, enabled: true, capable: () => (online ? ['home'] : []), run(job) { jobs.push(job); return new Promise(() => {}); } };
 }
 
-test('home: a session is ready at its first playlist with a segment; the playlist served has absolute links and starts at 0', (t) => {
+test('home: a session is ready at its first playlist with a segment; the playlist served has absolute links and starts at 0', async (t) => {
   const relay = fakeRelay();
   const events = [];
   const home = new Home({ relay, dir: tmp(t), base: 'https://yt/home', enabled: true, onEvent: (k) => events.push(k) });
   const s = home.start({ id: 'aaaaaaaaaaa', seconds: 600 }, '720p');
   assert.equal(s.state, 'building');
-  assert.deepEqual(relay.jobs[0], { kind: 'media', videoId: 'aaaaaaaaaaa', quality: '720p', token: s.token });
+  assert.deepEqual(relay.jobs[0], { kind: 'media', videoId: 'aaaaaaaaaaa', quality: '720p', token: s.token, seconds: 600 });
   assert.equal(home.start({ id: 'aaaaaaaaaaa' }, '720p'), s, 'one session per video and quality');
   assert.equal(home.put(s.token, 'index.m3u8', Buffer.from('#EXTM3U\n')), 204);
   assert.equal(s.state, 'building', 'no segment yet');
   assert.equal(home.put(s.token, 'seg0.ts', Buffer.from('ts0')), 204);
   assert.equal(home.put(s.token, 'index.m3u8', Buffer.from(PL1)), 204);
   assert.equal(s.state, 'ready');
-  const pl = home.file(s.token, 'index.m3u8');
+  const pl = await home.file(s.token, 'index.m3u8');
   assert.equal(pl.type, 'application/vnd.apple.mpegurl');
   assert.match(pl.body.toString(), /^#EXTM3U\n#EXT-X-START:TIME-OFFSET=0\n/);
   assert.match(pl.body.toString(), new RegExp(`\nhttps://yt/home/${s.token}/seg0\\.ts\n`));
-  assert.equal(home.file(s.token, 'seg0.ts').body.toString(), 'ts0');
+  assert.equal((await home.file(s.token, 'seg0.ts')).body.toString(), 'ts0');
   assert.equal(s.ended, false);
-  home.put(s.token, 'seg1.ts', Buffer.from('ts1'));
   home.put(s.token, 'index.m3u8', Buffer.from(PL2));
+  assert.equal(s.ended, false, 'ENDLIST, but seg1 is not here yet');
+  home.put(s.token, 'seg1.ts', Buffer.from('ts1'));
   assert.equal(s.ended, true);
   assert.deepEqual(events, ['start', 'ready']);
 });
 
-test('home: uploads are checked (names, playlist lines, unknown sessions)', (t) => {
+test('home: uploads are checked (names, playlist lines, unknown sessions)', async (t) => {
   const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true });
   const s = home.start({ id: 'aaaaaaaaaaa' }, '720p');
   assert.equal(home.put(s.token, '../x.ts', Buffer.from('x')), 400);
@@ -57,8 +58,8 @@ test('home: uploads are checked (names, playlist lines, unknown sessions)', (t) 
   assert.equal(home.put(s.token, 'index.m3u8', Buffer.from('#EXTM3U\nhttps://elsewhere/x.ts\n')), 400);
   assert.equal(home.put(s.token, 'index.m3u8', Buffer.from('not a playlist')), 400);
   assert.equal(home.put('0'.repeat(18), 'seg0.ts', Buffer.from('x')), 410);
-  assert.equal(home.file(s.token, '../../etc/passwd'), null);
-  assert.equal(home.file('f'.repeat(18), 'index.m3u8'), null);
+  assert.equal(await home.file(s.token, '../../etc/passwd'), null);
+  assert.equal(await home.file('f'.repeat(18), 'index.m3u8'), null);
 });
 
 test('home: off, no media worker, or the daily cap reached → no new session; a failed one is retried after a minute', (t) => {
@@ -86,21 +87,59 @@ test('home: off, no media worker, or the daily cap reached → no new session; a
   });
 });
 
-test('home: old sessions are swept, and the oldest finished ones while over maxGb', (t) => {
+test('home: old sessions are swept, and the oldest finished ones while over maxGb', async (t) => {
   let now = 0;
   const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, keepHours: 1, maxGb: 0.000002, now: () => now });
   const a = home.start({ id: 'aaaaaaaaaaa' }, '720p');
   home.put(a.token, 'seg0.ts', Buffer.alloc(1500));
+  home.put(a.token, 'seg1.ts', Buffer.alloc(10));
   home.put(a.token, 'index.m3u8', Buffer.from(PL2));
   now += 1000;
   const b = home.start({ id: 'bbbbbbbbbbb' }, '720p');
   home.put(b.token, 'seg0.ts', Buffer.alloc(1500));
   home.sweep();
-  assert.equal(home.file(a.token, 'seg0.ts'), null, 'finished and over the size cap');
-  assert.ok(home.file(b.token, 'seg0.ts'), 'still uploading: kept');
+  assert.equal(await home.file(a.token, 'seg0.ts'), null, 'finished and over the size cap');
+  assert.ok(await home.file(b.token, 'seg0.ts'), 'still uploading: kept');
   now += 2 * 3600_000;
   home.sweep();
-  assert.equal(home.file(b.token, 'seg0.ts'), null, 'older than keepHours');
+  assert.equal(await home.file(b.token, 'seg0.ts'), null, 'older than keepHours');
+});
+
+test('home: a segment asked for before it is here is held until it arrives; one past the end is not', async (t) => {
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, segmentHoldMs: 2000 });
+  const s = home.start({ id: 'aaaaaaaaaaa' }, '720p');
+  home.put(s.token, 'seg0.ts', Buffer.from('ts0'));
+  home.put(s.token, 'index.m3u8', Buffer.from(PL2)); // the whole playlist up front
+  const t0 = Date.now();
+  const later = home.file(s.token, 'seg1.ts');
+  setTimeout(() => home.put(s.token, 'seg1.ts', Buffer.from('ts1')), 100);
+  assert.equal((await later).body.toString(), 'ts1');
+  assert.ok(Date.now() - t0 < 1500, 'answered when it arrived, not at the hold limit');
+  assert.equal(s.ended, true);
+  assert.equal(await home.file(s.token, 'seg2.ts'), null, 'ended: no hold');
+  const short = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, segmentHoldMs: 50 });
+  const s2 = short.start({ id: 'bbbbbbbbbbb' }, '720p');
+  assert.equal(await short.file(s2.token, 'seg9.ts'), null, 'held, then 404');
+});
+
+test('home: sessions and the day\'s use survive a restart (a deploy); an unfinished one keeps taking uploads', async (t) => {
+  const dir = tmp(t);
+  const now = () => Date.parse('2026-10-23T12:00:00Z');
+  const first = new Home({ relay: fakeRelay(), dir, base: 'https://yt/home', enabled: true, now });
+  const a = first.start({ id: 'aaaaaaaaaaa', seconds: 8 }, '720p');
+  first.put(a.token, 'seg0.ts', Buffer.from('ts0'));
+  first.put(a.token, 'index.m3u8', Buffer.from(PL2));
+  first.start({ id: 'bbbbbbbbbbb' }, '720p'); // never ready: dropped on load
+  const again = new Home({ relay: fakeRelay(), dir, base: 'https://yt/home', enabled: true, now });
+  const b = again.peek({ id: 'aaaaaaaaaaa' }, '720p');
+  assert.equal(b.token, a.token);
+  assert.equal(b.state, 'ready');
+  assert.equal(b.ended, false);
+  assert.equal(again.peek({ id: 'bbbbbbbbbbb' }, '720p'), null);
+  assert.deepEqual(again.state().today, { builds: 2, mb: 0 });
+  assert.equal(again.put(a.token, 'seg1.ts', Buffer.from('ts1')), 204);
+  assert.equal(b.ended, true);
+  assert.match((await again.file(a.token, 'index.m3u8')).body.toString(), new RegExp(`https://yt/home/${a.token}/seg1\\.ts`));
 });
 
 // A fake ffmpeg: writes segments and the playlist into its output folder like the real one, then exits with `code`.
@@ -173,6 +212,52 @@ test('rangeProxy: serves every request (seeks too) from &range= pieces upstream'
     assert.equal((await fetch(proxy.urls[0], { headers: { range: 'bytes=30-' } })).status, 416);
     assert.equal((await fetch(proxy.urls[0].replace(/\/0$/, '/5'))).status, 404);
   } finally { proxy.close(); }
+});
+
+test('predictPlaylist: the rest of the video at the usual length, the remainder last (the 6 h mix of 2026-10-23)', () => {
+  const p = predictPlaylist([5.071733], 5.071733, 22257.851848);
+  assert.equal(p.count, 4389);
+  assert.match(p.text, /#EXT-X-PLAYLIST-TYPE:VOD\n/);
+  assert.match(p.text, /#EXTINF:3\.08\d+,\nseg4388\.ts\n#EXT-X-ENDLIST\n$/);
+  assert.match(p.text, /#EXT-X-TARGETDURATION:6\n/);
+  const short = predictPlaylist([2.5], 5, 12.5);
+  assert.deepEqual([...short.text.matchAll(/#EXTINF:([\d.]+)/g)].map((m) => Number(m[1])), [2.5, 5, 5]);
+});
+
+test('mediaJob: steady segments → the whole playlist goes up first (the real one only if they differ); uneven ones → growing', async () => {
+  const pl = (ds) => `#EXTM3U\n${ds.map((d, i) => `#EXTINF:${d},\nseg${i}.ts\n`).join('')}`;
+  const segs = (from, to) => Array.from({ length: to - from }, (_, i) => `seg${from + i}.ts`);
+  const even = Array(9).fill(4);
+  const steps = [[pl(even.slice(0, 8)), segs(0, 8)], [`${pl(even)}#EXT-X-ENDLIST\n`, segs(8, 9)]];
+  const run = async (seconds, stepsUsed) => {
+    const uploads = [];
+    const ff = fakeFfmpeg({ steps: stepsUsed });
+    const first = await mediaJob({ videoId: 'aaaaaaaaaaa', quality: '720p', token: 'x', seconds }, { ytdlp: 'yt-dlp', runner, spawnFn: ff.spawnFn, pollMs: 10,
+      upload: async (file, body) => { uploads.push([file, body.toString()]); return 204; } });
+    await first.done;
+    return uploads.filter(([f]) => f === 'index.m3u8').map(([, b]) => b);
+  };
+  const right = await run(36, steps);
+  assert.equal(right.length, 1, 'predicted once, and it held');
+  assert.match(right[0], /VOD[\s\S]*seg8\.ts\n#EXT-X-ENDLIST\n$/);
+  const wrong = await run(40, steps); // predicts 10 segments, ffmpeg makes 9
+  assert.equal(wrong.length, 2);
+  assert.match(wrong[0], /seg9\.ts/);
+  assert.doesNotMatch(wrong[1], /seg9\.ts/);
+  const uneven = [7, 6.72, 3, 6.96, 7, 1.04, 7, 6.4, 3];
+  const growing = await run(47, [[pl(uneven.slice(0, 8)), segs(0, 8)], [`${pl(uneven)}#EXT-X-ENDLIST\n`, segs(8, 9)]]);
+  assert.ok(growing.every((p) => !/VOD/.test(p)), 'uneven: the growing playlist');
+  assert.match(growing.at(-1), /seg8\.ts\n#EXT-X-ENDLIST\n$/);
+});
+
+test('mediaJob: an upload that fails (server restarting) is tried again', async () => {
+  let fails = 2;
+  const uploads = [];
+  const ff = fakeFfmpeg();
+  const first = await mediaJob({ videoId: 'aaaaaaaaaaa', quality: '720p', token: 'x' }, { ytdlp: 'yt-dlp', runner, spawnFn: ff.spawnFn, pollMs: 10, retryMs: 5,
+    upload: async (file) => { if (fails-- > 0) throw new Error('ECONNREFUSED'); uploads.push(file); return 204; } });
+  await first.done;
+  assert.deepEqual(uploads, ['seg0.ts', 'index.m3u8', 'seg1.ts', 'index.m3u8']);
 });
 
 test('media formats: H.264 + m4a at the quality\'s height; one input when YouTube serves a single file', () => {

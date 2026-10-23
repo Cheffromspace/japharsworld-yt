@@ -38,7 +38,10 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
       try { await res.body?.cancel(); } catch { /* ignore */ }
       return res.status;
     };
-    return mediaJob(job, { ytdlp: ytdlpPath, ffmpeg, extraArgs: ytdlpExtraArgs, upload, log: (o) => log({ ...o, quality: job.quality }) });
+    const attempt = () => mediaJob(job, { ytdlp: ytdlpPath, ffmpeg, extraArgs: ytdlpExtraArgs, upload, log: (o) => log({ ...o, quality: job.quality }) });
+    // ffmpeg that can't open the streams: once more from a fresh yt-dlp resolve (2026-10-23, 1 of 8 test videos: its
+    // fresh stream URLs answered 403 for a minute or two).
+    return attempt().catch((err) => (/ffmpeg exited/.test(err?.message ?? '') ? attempt() : Promise.reject(err)));
   });
   const conts = new Map(); // id → { more, at }
   const stopping = new AbortController();

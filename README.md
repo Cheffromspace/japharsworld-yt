@@ -125,9 +125,17 @@ up (YouTube may flag an IP that downloads a lot). Otherwise, or when the first s
 H.264 + AAC stream URLs (they only work from the IP that resolved them), and ffmpeg reads them through a local proxy
 that fetches 10 MB pieces with the URL's `&range=` parameter, as yt-dlp does (YouTube throttles a plain read to about
 real time), and cuts 4 s MPEG-TS segments without re-encoding. It PUTs each segment and the growing playlist to `/relay/media/<token>/<file>` (relay token) and answers
-the job once the first ones are up. Players get `302` to `/home/<token>/index.m3u8`, an EVENT playlist with absolute
-links that starts at 0 and gets `#EXT-X-ENDLIST` when the upload ends; the resolver gets the "not a video" page. Files
-are kept `HOME_KEEP_HOURS` (oldest finished first out above `HOME_MAX_GB`) and dropped on restart.
+the job once the first ones are up. Players get `302` to `/home/<token>/index.m3u8` (absolute links, starts at 0); the
+resolver gets the "not a video" page. VizVid shows a playlist that is still growing as a live stream with no seek bar
+for the whole play, so when the first 8 segments are all the same length (an encode with evenly spaced keyframes, like
+long mixes) the worker uploads the whole playlist, `#EXT-X-ENDLIST` included, at once, and a segment asked for before
+it arrives is held up to `HOME_SEGMENT_HOLD_SECONDS` (20). Other videos (keyframes at scene cuts) get the growing
+playlist: no seek bar on the first play, one for replays and late joiners once the upload is done. Sessions are saved
+next to their files and reloaded on restart (a deploy doesn't cut plays off, and the worker retries its uploads through
+it); the day's use is saved too. Files are kept `HOME_KEEP_HOURS`, oldest finished first out above `HOME_MAX_GB`.
+
+Fresh stream URLs often answer `403` for a while before they work (0.1–2.6 s, once 22 s, 2026-10-23); the worker's
+proxy keeps asking every second for up to 30 s, so a start can take up to `HOME_READY_SECONDS` (40).
 
 Measured 2026-10-23 on the Optiplex (ffmpeg 8.0.1, uploads only counted): first segments 2.9 s after the job at 720p
 (yt-dlp 2.4 s), 6.2 s at 1080p; a 22-minute 720p video (216 MB) in 9.2 s. Uploads from home run ~12.6 MB/s.

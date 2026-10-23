@@ -44,7 +44,9 @@ export const config = {
   adaptiveHls: (process.env.ADAPTIVE_HLS ?? 'off') === 'on',
   adaptiveShards: (process.env.ADAPTIVE_SHARDS ?? '').split(',').map((s) => Number.parseInt(s, 10)).filter(Number.isInteger),
   adaptiveReserve: int('ADAPTIVE_RESERVE', 5000),
-  adaptiveHoldMs: int('ADAPTIVE_HOLD_SECONDS', 8) * 1000,
+  // How long a not-yet-built upper rung's playlist request is held before its 404. 1 s: held 8 s, AVPro stalled the
+  // lower rung's picture every 8 s (owner's A/B, 2026-10-23, #104).
+  adaptiveHoldMs: int('ADAPTIVE_HOLD_SECONDS', 1) * 1000,
   // The mid-video 720p → 1080p step up. Off: a 1080p build predicted too slow means 720p for that video (switching froze
   // the picture in VRChat on PC in 2 of 4 tries, 2026-10-22).
   adaptiveSwitch: (process.env.ADAPTIVE_SWITCH ?? 'off') === 'on',

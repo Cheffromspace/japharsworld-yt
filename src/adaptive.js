@@ -26,7 +26,8 @@
 // the player asks for the other one ~2 s in and switches without a stutter; a variant answering 404 is retried (about
 // 50 tries in 3 s, then every ~6 s) and picked up within seconds once it exists. So the 1080p playlist is held here up to
 // `holdMs` while it builds (fewer retries), then 404; if its build fails it serves the 720p playlist, ending the
-// retries. Tunelio only answers an HLS playlist once the whole file is built, so the start waits for the 720p build.
+// retries. The hold is 1 s, not 8: held 8 s, AVPro's picture stalled every 8 s while it played the lower rung
+// (owner's A/B, 2026-10-23, #104: "many stutters" on 360p with 8 s, none with 1 s, 0 still frame pairs in 112). Tunelio only answers an HLS playlist once the whole file is built, so the start waits for the 720p build.
 // The 1080p HLS build starts when a player first loads the master, not while the 720p one is still building.
 //
 // Every link we hand out is absolute: a player that reached a playlist through the ticket's redirect resolves relative
@@ -60,7 +61,7 @@ const PLAN_MS = 30 * 60_000;
 
 export class Adaptive {
   constructor({ playback, pacer, fetcher = fetch, log = () => {}, onEvent = () => {}, lower = '720p', upper = '1080p',
-    holdMs = 8000, maxUpperMb = 1500, directSeconds = 10, now = () => Date.now(), base = 'https://yt.japharsworld.com/hls', switching = true,
+    holdMs = 1000, maxUpperMb = 1500, directSeconds = 10, now = () => Date.now(), base = 'https://yt.japharsworld.com/hls', switching = true,
     start = null, startSeconds = 10, startMid = false, startStepSeconds = 30, androidNoAv1 = false, stateFile = null }) {
     Object.assign(this, { playback, pacer, fetch: fetcher, log, onEvent, lower, upper, holdMs, maxUpperMb, directSeconds, now, base, switching, start, startSeconds, startMid, androidNoAv1 });
     this.startStepSeconds = startStepSeconds;

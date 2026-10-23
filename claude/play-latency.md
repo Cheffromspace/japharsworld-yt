@@ -162,8 +162,11 @@ unlisted 720p still stands in for a failed or (Quest) AV1 1080p.
 Same play, during the 360p phase: d4's 2 s frame diffs showed an identical pair about every 8 s, none after the
 switch. The service side lines up with that: the 1080p variant was asked for every 8.03 s, each time held
 `ADAPTIVE_HOLD_SECONDS` (8) and answered 404 (18:40:51, :59, 18:41:07, …; rI9x6DvOaao's play showed the same
-pattern for 84 s). Segments come straight from Tunelio, so the service sees nothing of them. Not yet known whether the held
-request is what stalls Media Foundation's 360p playback.
+pattern for 84 s). Segments come straight from Tunelio, so the service sees nothing of them.
+
+A/B, 2026-10-23 (owner watching, d4's frame diffs): `ADAPTIVE_HOLD_SECONDS=1` on Mexico (Nz1ysSXBlPs, forced
+`start`) showed no stutters and 0 still frame pairs in 112, against "many stutters" on Croatia with the 8 s hold. The
+held request is what stalled the picture, so the default is now 1 s.
 
 The first real retest of that (rI9x6DvOaao, 18:29 UTC) got `adaptive`. The plan predicted 12.4 s for a 613 MB 1080p;
 the builds took 33 s (720p HLS, 170 MB) and 84 s (1080p). The median of the last five build speeds had come from

@@ -1,6 +1,9 @@
 {
  "notice": "",
  "slots": {
+  "fan-noise-black": {
+   "hidden": true
+  },
   "jack-donkey-kong": {
    "hidden": true
   },
@@ -8,6 +11,9 @@
    "hidden": true
   },
   "jack-pokemon": {
+   "hidden": true
+  },
+  "jack-stardew": {
    "hidden": true
   }
  }

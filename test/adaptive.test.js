@@ -328,10 +328,12 @@ test('start rung: a slow 720p build starts on 360p; no 360p when 720p is quick o
   assert.equal(await new Adaptive({ playback: f.playback, pacer: ok }).plan({ id: 'noStartRung', seconds: 1200 }), 'adaptive', 'off without ADAPTIVE_START');
 });
 
-async function startPlay(opts = {}) {
+// hls: the learned HLS rate. 0.05: 720p 200 MB ≈ 13 s (> 10 s: a start plan), 1080p 400 MB ≈ 23 s (≤ 30 s: one
+// switch). 0.2: 720p ≈ 43 s, 1080p ≈ 83 s (two steps).
+async function startPlay(opts = {}, hls = 0.05) {
   const s = await server({ hold720: true }, { start: '360p', startSeconds: 10, ...opts });
   s.playback.rate.progressive = 0.1;
-  s.playback.rate.hls = 0.2; // 720p HLS 200 MB ≈ 43 s
+  s.playback.rate.hls = hls;
   const n = await s.ticket(3);
   assert.equal((await (await s.get(`/v1/3/${n}`, 'UnityPlayer/2022')).json()).plan, 'start');
   assert.match((await s.get(`/v1/3/${n}`, YTDLP)).headers.get('content-type'), /text\/html/);
@@ -344,10 +346,12 @@ async function startPlay(opts = {}) {
 }
 const settle = () => new Promise((r) => setTimeout(r, 20));
 
-test('start rung play: master with 360p and 1080p only (one switch), the unlisted 720p built for a failed 1080p', async (t) => {
-  const s = await startPlay();
+test('start rung play, 1080p due soon: master with 360p and 1080p only (one switch), the unlisted 720p for a failed 1080p', async (t) => {
+  const events = [];
+  const s = await startPlay({ onEvent: (k) => events.push(k) });
   t.after(() => s.srv.close());
   assert.deepEqual(s.order, ['360p', '1080p'], 'the built 360p first, no 720p step (#104)');
+  assert.ok(events.includes('start_one_step'));
   assert.match(s.m, /RESOLUTION=640x360$/m);
   assert.doesNotMatch(s.m, /CODECS/, 'no CODECS: Quest plays a master that lists mp4a muted');
   assert.equal((await s.rung('360p')).status, 200);
@@ -355,7 +359,7 @@ test('start rung play: master with 360p and 1080p only (one switch), the unliste
   assert.equal((await s.rung('1080p')).status, 404, '1080p still building');
   s.release720();
   await settle();
-  assert.equal((await s.rung('1080p')).status, 404, 'a ready 720p is not served before ADAPTIVE_START_STEP_SECONDS');
+  assert.equal((await s.rung('1080p')).status, 404, 'a ready 720p is never served under a building 1080p');
   s.releaseUpper(true);
   await settle();
   const r = await s.rung('1080p');
@@ -364,22 +368,20 @@ test('start rung play: master with 360p and 1080p only (one switch), the unliste
   assert.deepEqual(s.created.map(([, q]) => q).sort(), ['1080p', '360p', '720p'], 'one /create per quality: 30 credits');
 });
 
-test('start rung play: a 1080p still building ADAPTIVE_START_STEP_SECONDS after the start gets the ready 720p in its place', async (t) => {
-  let now = Date.now();
+test('start rung play, 1080p predicted over ADAPTIVE_START_STEP_SECONDS: 360p, 720p, 1080p (two steps, reaches 1080p)', async (t) => {
   const events = [];
-  const s = await startPlay({ now: () => now, startStepSeconds: 30, onEvent: (k) => events.push(k) });
+  const s = await startPlay({ startStepSeconds: 30, onEvent: (k) => events.push(k) }, 0.2);
   t.after(() => s.srv.close());
-  now += 31_000;
-  assert.equal((await s.rung('1080p')).status, 404, '720p not ready either: keep waiting');
+  assert.deepEqual(s.order, ['360p', '720p', '1080p']);
+  assert.ok(events.includes('start_mid'));
+  assert.equal((await s.rung('720p')).status, 404, '720p still building');
   s.release720();
   await settle();
-  const r = await s.rung('1080p');
-  assert.equal(r.status, 200);
-  assert.match(await r.text(), /#BUILD:720p/);
-  assert.deepEqual(events.filter((k) => k === 'start_step_lower'), ['start_step_lower']);
+  assert.match(await (await s.rung('720p')).text(), /#BUILD:720p/);
+  assert.equal((await s.rung('1080p')).status, 404, '1080p still building');
   s.releaseUpper();
   await settle();
-  assert.match(await (await s.rung('1080p')).text(), /#BUILD:1080p/, 'once built, later players get 1080p');
+  assert.match(await (await s.rung('1080p')).text(), /#BUILD:1080p/);
 });
 
 test('start rung play with ADAPTIVE_START_MID=on: 360p, 720p, 1080p', async (t) => {

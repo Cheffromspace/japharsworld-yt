@@ -55,9 +55,9 @@ export const config = {
   // more than ADAPTIVE_START_SECONDS, so the picture starts on the small build and steps up (10 more credits per play).
   adaptiveStart: /^\d{3,4}p$/.test(process.env.ADAPTIVE_START ?? '') ? process.env.ADAPTIVE_START : null,
   adaptiveStartSeconds: int('ADAPTIVE_START_SECONDS', 10),
-  // A start play lists 720p between the start rung and 1080p (on: two switches, 360p → 720p → 1080p) or not (off, the
-  // default since 2026-10-23, #104: one switch, the unlisted 720p standing in for a 1080p that isn't built within
-  // ADAPTIVE_START_STEP_SECONDS of the first master load, fails, or is AV1 on a Quest).
+  // A start play lists 720p between the start rung and 1080p always (on: 360p → 720p → 1080p) or only when the 1080p
+  // build is predicted to take over ADAPTIVE_START_STEP_SECONDS (off, the default since 2026-10-23, #104: else one
+  // switch, 360p → 1080p).
   adaptiveStartMid: (process.env.ADAPTIVE_START_MID ?? 'off') === 'on',
   adaptiveStartStepSeconds: int('ADAPTIVE_START_STEP_SECONDS', 30),
   // This service's public address, for links it hands out (the adaptive master playlist).

@@ -103,6 +103,12 @@ export class Playback {
 
   // One paid /create per video and quality while its link lasts, shared by the progressive and HLS builds of it (the
   // same link serves both: &progressive=1 or &hls=1) and by planning (src/adaptive.js reads the size first).
+  // The size of a quality whose /create has already answered, in MB, else null (no call).
+  knownMb(id, quality) {
+    const fileSize = this.creates.get(`${id}@${quality}`)?.made?.fileSize;
+    return fileSize > 0 ? Math.round(fileSize / 1e5) / 10 : null;
+  }
+
   made(id, quality) {
     const key = `${id}@${quality}`;
     const hit = this.creates.get(key);

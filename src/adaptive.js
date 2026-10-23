@@ -12,12 +12,14 @@
 //              credits (the 1080p /create made for the size is reused).
 //   start    — adaptive with a quick first rung (`start`, 360p): when the 720p HLS build itself is predicted to take more
 //              than `startSeconds`, the player starts on a 360p HLS build (a much smaller file, so a few seconds) and
-//              steps up to 1080p when that is built: one switch, 360p → 1080p. The 720p HLS build is made too but not
-//              listed; it stands in for the 1080p rung when that fails, is AV1 on a Quest, or isn't built `startStepSeconds`
-//              after the first master load (owner, 2026-10-23, #104: 360p → 720p at +7 s → 1080p at +17 s stuttered at the
-//              start, 360p → 1080p at +11 s didn't; "if possible I'd love it to be completely seamless"). 30 credits; the
-//              720p /create made for the prediction is reused. `startMid` (ADAPTIVE_START_MID=on) lists the 720p again:
-//              360p → 720p → 1080p, two switches. 360p through Tunelio rather than VRChat's free youtube.com path,
+//              steps up as the builds finish. When the 1080p build is predicted ready within `startStepSeconds` of the
+//              first master load, the master lists only 360p and 1080p: one switch (owner, 2026-10-23, #104: 360p →
+//              720p at +7 s → 1080p at +17 s stuttered at the start, 360p → 1080p at +11 s didn't). Slower, it lists
+//              360p, 720p, 1080p: two steps, so a big video still reaches 1080p (owner, same day, after fjords2's 1080p
+//              took over 80 s). The players read the master and each variant playlist once, so that choice is made
+//              when the master is first served and can't change later. In a two-rung session the 720p HLS build is
+//              still made, unlisted: it stands in for a 1080p that fails or is AV1 on a Quest. 30 credits; the 720p
+//              /create made for the prediction is reused. `startMid` (ADAPTIVE_START_MID=on) always lists the 720p. 360p through Tunelio rather than VRChat's free youtube.com path,
 //              because only a Tunelio link can be a variant in our playlist (googlevideo links are single mp4s, bound to the IP that resolved them).
 //
 // Adaptive HLS was tested in VRChat on PC on 2026-10-22 (AVPro, Media Foundation): playback starts on the first variant;
@@ -60,7 +62,7 @@ export class Adaptive {
     holdMs = 8000, maxUpperMb = 1500, directSeconds = 10, now = () => Date.now(), base = 'https://yt.japharsworld.com/hls', switching = true,
     start = null, startSeconds = 10, startMid = false, startStepSeconds = 30, androidNoAv1 = false }) {
     Object.assign(this, { playback, pacer, fetch: fetcher, log, onEvent, lower, upper, holdMs, maxUpperMb, directSeconds, now, base, switching, start, startSeconds, startMid, androidNoAv1 });
-    this.startStepMs = startStepSeconds * 1000;
+    this.startStepSeconds = startStepSeconds;
     this.byJob = new WeakMap(); // build job → its session
     this.plans = new Map();    // video id → { mode, upgrade, until, promise }
     this.sessions = new Map(); // token → { token, data, lowerJob, served, fellBack }
@@ -195,7 +197,14 @@ export class Adaptive {
     }
     if (!s.started) {
       s.started = true;
-      s.startedMs = this.now();
+      if (s.rungs.length < s.ladder.length) {
+        // One switch only when the 1080p build (starting now) should be ready soon; unknown size counts as slow.
+        const mb = this.playback.knownMb(s.data.id, this.upper);
+        const predicted = mb == null ? null : Math.round(this.playback.predict('hls', mb) * 10) / 10;
+        if (predicted == null || predicted > this.startStepSeconds) s.rungs = s.ladder;
+        this.onEvent(s.rungs.length === s.ladder.length ? 'start_mid' : 'start_one_step');
+        this.log({ event: 'adaptive_start_rungs', id: s.data.id, rungs: s.rungs.length, mb, predicted });
+      }
       for (const q of s.ladder.slice(1)) this.playback.start(s.data, q, { hls: true, maxMb: q === this.upper ? this.maxUpperMb : 0 });
       this.onEvent('upgrade');
     }
@@ -227,14 +236,7 @@ export class Adaptive {
     // Every build below this rung, listed or not (a `start` session's 720p).
     const under = s.ladder.slice(0, s.ladder.indexOf(quality)).map((q) => this.#job(s, q));
     if (up.state === 'building') up = await this.playback.wait(up, this.holdMs);
-    if (up.state === 'building') {
-      // A `start` session whose 1080p is still building well after the first master load, with the unlisted 720p ready:
-      // the player gets 720p under this rung rather than more 360p (its one switch then lands on 720p for this video).
-      const mid = s.rungs.length < s.ladder.length && this.now() - s.startedMs >= this.startStepMs ? under.at(-1) : null;
-      if (mid?.state !== 'ready' || (android && this.androidNoAv1 && await this.codec(mid) === 'av1')) return null;
-      if (!s.served.has(`slow:${quality}`)) { s.served.add(`slow:${quality}`); this.onEvent('start_step_lower'); this.log({ event: 'adaptive_start_step_lower', id: s.data.id, quality, waitedMs: this.now() - s.startedMs }); }
-      return this.#playlist(mid);
-    }
+    if (up.state === 'building') return null;
     if (up.state === 'failed') {
       // The best ready build below it, which ends the player's retries of this one.
       if (!s.served.has(`failed:${quality}`)) { s.served.add(`failed:${quality}`); this.onEvent('upgrade_failed'); this.log({ event: 'adaptive_upgrade_failed', id: s.data.id, quality, reason: up.reason }); }

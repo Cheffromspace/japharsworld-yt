@@ -148,10 +148,22 @@ speed probe's ~520–720. Not yet measured: a real 360p /create (size, build tim
 1080p without the freeze seen 10-22.
 
 2026-10-23 (#104/#91), PC: 360p → 720p at +7 s → 1080p at +17 s stuttered in that window; 360p → 1080p at +11 s didn't.
-Owner: one switch. The master of a start play now lists only 360p and 1080p; the 720p HLS build is still made and stands
-in under the 1080p link when the 1080p fails, is AV1 on a Quest, or isn't built `ADAPTIVE_START_STEP_SECONDS` (30)
-after the first master load (`adaptive`/`start_step_lower`; the player then stays on 720p, since a VOD variant playlist
-is read once). `ADAPTIVE_START_MID=on` lists the 720p again.
+Owner: one switch. The master of a start play listed only 360p and 1080p (6d1e54e); the 720p HLS build was still made
+and stood in under the 1080p link when the 1080p failed, was AV1 on a Quest, or wasn't built 30 s after the first
+master load. `ADAPTIVE_START_MID=on` lists the 720p again.
+
+fjords2 (GEmzhBA5nkE, 1080p 580 MB, forced `start`, 18:40 UTC): 360p HLS 22.6 s, 720p HLS 77.8 s; the 1080p wasn't
+there at 30 s, so the 720p was served under the 1080p link, AVPro switched at +91 s and stayed on 720p (a VOD variant
+playlist is read once). Owner: step up twice instead, so big videos reach 1080p. Now the master's first load predicts
+the 1080p HLS build (its /create has answered by then): ready within `ADAPTIVE_START_STEP_SECONDS` (30) → 360p, 1080p;
+slower or unknown → 360p, 720p, 1080p (`adaptive`/`start_one_step`, `start_mid`; log `adaptive_start_rungs`). The
+unlisted 720p still stands in for a failed or (Quest) AV1 1080p.
+
+Same play, during the 360p phase: d4's 2 s frame diffs showed an identical pair about every 8 s, none after the
+switch. The service side lines up with that: the 1080p variant was asked for every 8.03 s, each time held
+`ADAPTIVE_HOLD_SECONDS` (8) and answered 404 (18:40:51, :59, 18:41:07, …; rI9x6DvOaao's play showed the same
+pattern for 84 s). Segments come straight from Tunelio, so the service sees nothing of them. Not yet known whether the held
+request is what stalls Media Foundation's 360p playback.
 
 The first real retest of that (rI9x6DvOaao, 18:29 UTC) got `adaptive`. The plan predicted 12.4 s for a 613 MB 1080p;
 the builds took 33 s (720p HLS, 170 MB) and 84 s (1080p). The median of the last five build speeds had come from

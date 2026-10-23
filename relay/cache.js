@@ -13,6 +13,8 @@ import { join } from 'node:path';
 
 const KEY = /^[A-Za-z0-9_-]{11}@\d{3,4}p$/;
 const SEGMENT = /^seg\d{1,5}\.ts$/;
+// The stream format (relay/media.js ffmpegArgs). Entries of another are made again: 2 = SPS/PPS in every segment (2026-10-23).
+export const FORMAT = 2;
 
 export class MediaCache {
   constructor({ dir, maxGb = 40, now = () => Date.now(), log = () => {} }) {
@@ -32,6 +34,7 @@ export class MediaCache {
     if (!KEY.test(key)) return null;
     const meta = this.#meta(key);
     if (!meta) return null;
+    if (meta.format !== FORMAT) { rmSync(join(this.dir, key), { recursive: true, force: true }); return null; }
     const dir = join(this.dir, key);
     let playlist;
     try { playlist = readFileSync(join(dir, 'index.m3u8'), 'utf8'); } catch { return null; }
@@ -54,7 +57,7 @@ export class MediaCache {
       else rmSync(join(staging, f), { force: true }); // ffmpeg's own playlist and segments the final playlist doesn't list
     }
     writeFileSync(join(staging, 'index.m3u8'), playlist);
-    writeFileSync(join(staging, 'meta.json'), JSON.stringify({ bytes, mb: Math.round(bytes / 1e5) / 10, savedMs: this.now(), usedMs: this.now() }));
+    writeFileSync(join(staging, 'meta.json'), JSON.stringify({ format: FORMAT, bytes, mb: Math.round(bytes / 1e5) / 10, savedMs: this.now(), usedMs: this.now() }));
     rmSync(join(this.dir, key), { recursive: true, force: true });
     renameSync(staging, join(this.dir, key));
     this.log({ event: 'media_cached', quality, mb: Math.round(bytes / 1e6), segments: segments.length });

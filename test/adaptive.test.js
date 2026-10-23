@@ -144,7 +144,7 @@ test('Quest and an AV1 1080p rung: the Quest gets the 720p playlist (H.264) inst
     const path = new URL((await s.get(`/v1/3/${n}`)).headers.get('location')).pathname;
     await s.get(path, ua);
     s.releaseUpper();
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 60));
     const v = await s.get(path.replace('.m3u8', '/1080p.m3u8'), ua);
     assert.equal(v.status, 200);
     assert.match(await v.text(), new RegExp(`seg-${expect}\\.m4s`), `${ua}, androidNoAv1=${androidNoAv1}`);

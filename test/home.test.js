@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { createApp } from '../src/server.js';
@@ -175,6 +175,7 @@ test('mediaJob: answers at the first playlist, uploads the rest, closes with END
   const args = ff.calls[0].args;
   assert.ok(args.filter((a, i) => args[i - 1] === '-i').every((u) => u.startsWith('http://127.0.0.1:')), 'read through the range proxy');
   assert.ok(args.includes('copy') && args.includes('event'));
+  assert.equal(args[args.indexOf('-bsf:v') + 1], 'h264_mp4toannexb,dump_extra=freq=keyframe', 'SPS/PPS in every segment');
 });
 
 test('mediaJob: ffmpeg dying part way closes the playlist where it got to; a 410 stops it', async () => {
@@ -426,6 +427,10 @@ test('media cache: least recently used out above maxGb', async (t) => {
   assert.ok(cache.get('ccccccccccc', '720p'));
   const s = cache.staging();
   assert.equal(cache.put('ddddddddddd', '720p', s, '#EXTM3U\n#EXTINF:4,\nseg0.ts\n'), false, 'no ENDLIST, no segment: not kept');
+  // An entry made in an older stream format is dropped (made again from YouTube).
+  const meta = join(dir, 'aaaaaaaaaaa@720p', 'meta.json');
+  writeFileSync(meta, JSON.stringify({ ...JSON.parse(readFileSync(meta, 'utf8')), format: 1 }));
+  assert.equal(cache.get('aaaaaaaaaaa', '720p'), null);
 });
 
 test('home: uploads from the worker cache count as a cache hit, not against the daily cap', () => {

@@ -125,7 +125,11 @@ const STEADY = 8;
 export function ffmpegArgs(urls, dir) {
   const inputs = urls.flatMap((u) => ['-i', u]);
   const maps = urls.length > 1 ? ['-map', '0:v:0', '-map', '1:a:0'] : [];
-  return ['-hide_banner', '-loglevel', 'error', '-nostdin', ...inputs, ...maps, '-c', 'copy',
+  // h264_mp4toannexb,dump_extra: the H.264 parameter sets (SPS/PPS) before every keyframe. Copied from YouTube's mp4
+  // they were only in seg0 (its keyframes aren't IDR, the only frames mp4toannexb repeats them for), so every later
+  // segment failed to decode on its own ("non-existing PPS 0", 2026-10-23; a 12 s open-GOP test file on the Optiplex:
+  // seg1 0 frames → 118 with the filter): a player that starts or seeks past seg0 had nothing to decode with.
+  return ['-hide_banner', '-loglevel', 'error', '-nostdin', ...inputs, ...maps, '-c', 'copy', '-bsf:v', 'h264_mp4toannexb,dump_extra=freq=keyframe',
     '-f', 'hls', '-hls_time', '4', '-hls_list_size', '0', '-hls_playlist_type', 'event', '-hls_flags', 'temp_file',
     '-hls_segment_type', 'mpegts', '-hls_segment_filename', join(dir, 'seg%d.ts'), join(dir, 'index.m3u8')];
 }

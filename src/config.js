@@ -96,6 +96,10 @@ export const config = {
   // with the file and fails at ~115 s; home starts in seconds whatever the length). PC players only: Android can't open
   // HLS behind a ticket. HOME_DAILY_BUILDS / HOME_DAILY_MB cap what the home IP downloads a day (YouTube may flag it).
   homeRelay: (process.env.HOME_RELAY ?? 'off') === 'on',
+  // The home relay for .m3u8 tickets too (the world's Android build: Quest opens HLS behind those), by the same rules
+  // as a PC player, and for an AV1 Tunelio build, which the Quest 2 can't decode (home is always H.264). Off until
+  // verified on the Quest (2026-10-23).
+  homeAndroid: (process.env.HOME_ANDROID ?? 'off') === 'on',
   homeLongMinutes: int('HOME_LONG_MINUTES', 30),
   homeDailyBuilds: int('HOME_DAILY_BUILDS', 40),
   homeDailyMb: int('HOME_DAILY_MB', 50_000), // owner, 2026-10-23: 10 GB went in a few long videos (a 6 h mix is ~2.5 GB)

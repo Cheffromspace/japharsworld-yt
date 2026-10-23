@@ -191,6 +191,28 @@ export class Adaptive {
     return text;
   }
 
+  // The video codec of a ready HLS build: 'av1' | 'h264' | 'hevc' | 'vp9', or null when unknown. Read from the sample
+  // entry in its init segment (the EXT-X-MAP file, a few KB), once per build. The Quest 2 can't decode AV1, and
+  // Tunelio's builds sometimes are (Everything-is-OK #101), so an Android play of one goes home instead (server.js).
+  async codec(job) {
+    if (!job || job.state !== 'ready') return null;
+    if (job.codec !== undefined) return job.codec;
+    const text = await this.#playlist(job);
+    const map = text?.match(/#EXT-X-MAP:[^\n]*URI="([^"]+)"/)?.[1];
+    if (!map) return null; // TS segments or no playlist: not known (not cached, so a later play asks again)
+    try {
+      const res = await this.fetch(map, { headers: { range: 'bytes=0-65535' }, signal: AbortSignal.timeout(10_000) });
+      if (res.status !== 200 && res.status !== 206) { try { await res.body?.cancel(); } catch { /* ignore */ } return null; }
+      const head = Buffer.from(await res.arrayBuffer()).subarray(0, 65536).toString('latin1');
+      const box = head.match(/av01|avc[13]|hev1|hvc1|vp09/)?.[0];
+      job.codec = box ? { av01: 'av1', avc1: 'h264', avc3: 'h264', hev1: 'hevc', hvc1: 'hevc', vp09: 'vp9' }[box] : null;
+      return job.codec;
+    } catch (err) {
+      this.log({ event: 'adaptive_codec_error', id: job.id, quality: job.quality, message: String(err?.message ?? err).slice(0, 200) });
+      return null;
+    }
+  }
+
   async #playlist(job) {
     if (!job || job.state !== 'ready' || !job.url) return null;
     if (job.playlist) return job.playlist;

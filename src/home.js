@@ -5,7 +5,8 @@
 // /relay/media/<token>/<file>. Players get /home/<token>/index.m3u8 and start once the first segments are here.
 //
 // Measured 2026-10-22/23 (claude/play-latency.md): home downloads 8–27 MB/s and uploads ~8–12 MB/s, so the upload
-// outruns playback ~40×. Android players can't open HLS behind a ticket (f331bcc), so they never come here.
+// outruns playback ~40×. Android players can't open HLS behind a plain ticket (f331bcc), so they come here only through a
+// .m3u8 ticket (the world's Android build) and only with HOME_ANDROID=on (server.js).
 //
 // The playlist: a growing EVENT playlist played from 0:00 in VizVid, but as a live stream (no seek bar, 2026-10-23),
 // for the whole play even after #EXT-X-ENDLIST arrived; a finished one has the seek bar. So the worker uploads the

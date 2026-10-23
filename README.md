@@ -108,14 +108,17 @@ pulls `main` every 5 minutes and restarts the worker when `relay/`, `src/` or th
 A relay worker with ffmpeg (`relay/media.js`) can also serve videos from the home connection (owner, 2026-10-23:
 Tunelio first while the credits allow, home for longer videos, with a daily cap). Off unless `HOME_RELAY=on`.
 
-**When a play goes home** (`src/server.js` `homeWhy`), for PC players only (Android players can't open HLS behind a
-ticket, f331bcc) and never for live streams:
+**When a play goes home** (`src/server.js` `homeWhy`), for PC players, and for `.m3u8` tickets (the world's Android
+build, which opens HLS) when `HOME_ANDROID=on`; never for an Android player on a plain ticket (it can't open HLS behind
+one, f331bcc) and never for live streams:
 1. a home session for the video is already there (late joiners, replays, a tablet warm),
 2. Tunelio is off or paused (no key, out of credits),
 3. the video is `HOME_LONG_MINUTES` (30) or longer: Tunelio's build time grows with the file and fails at ~115 s,
    while home starts in seconds whatever the length,
 4. today's Tunelio spend is past the credit pacer's allowance (`src/adaptive.js` `Pacer`),
-5. Tunelio's build failed (before youtube.com's 360p).
+5. Tunelio's build failed (before youtube.com's 360p),
+6. on a `.m3u8` ticket with `HOME_ANDROID=on`: Tunelio's HLS build is AV1 (read from its init segment), which the
+   Quest 2 can't decode; home is always H.264 + AAC. Counted as `adaptive`/`android_av1` whether or not the flag is on.
 
 Only while a worker that announced `caps=media` is online and today's `HOME_DAILY_BUILDS` / `HOME_DAILY_MB` aren't used
 up (YouTube may flag an IP that downloads a lot). Otherwise, or when the first segments don't arrive within

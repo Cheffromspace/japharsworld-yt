@@ -315,3 +315,62 @@ test('ticket → home: a PC player gets the home playlist when Tunelio is off; t
   // Uploads need the relay token.
   assert.equal((await fetch(`${url}/relay/media/${path.split('/')[2]}/seg1.ts`, { method: 'PUT', body: 'x' })).status, 401);
 });
+
+// The home app of the test above, with a home worker connected; over: config and createApp overrides.
+async function homeApp(t, { config: c = {}, ...over } = {}) {
+  const dir = tmp(t);
+  const config = { ...base, shards: 2, pool: 50, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub', metricsPath: '', ...c };
+  const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
+  const relay = new Relay({ token: TOKEN, pollMs: 200 });
+  const app = createApp({ config, store, relay, tunelio: { enabled: false }, captions: { async get() { return {}; } }, log: () => {}, ...over });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const jobs = [];
+  const worker = createWorker({ url, token: TOKEN, name: 'home', polls: 1, caps: ['media'], log: () => {},
+    media: async (job) => {
+      jobs.push(job);
+      const put = (file, body) => fetch(`${url}/relay/media/${job.token}/${file}`, { method: 'PUT', headers: { authorization: `Bearer ${TOKEN}` }, body });
+      await put('seg0.ts', 'ts0');
+      await put('index.m3u8', PL1);
+      return { ready: true, segments: 1, done: Promise.resolve() };
+    } });
+  worker.start();
+  t.after(() => worker.stop());
+  while (!relay.capable('media').length) await new Promise((r) => setTimeout(r, 20));
+  const [n] = store.allocate(0, [{ kind: 'video', data: { id: 'aaaaaaaaaaa', title: 'T', seconds: 600, live: false } }]);
+  const play = (ua, ext = '.m3u8') => fetch(`${url}/v1/0/${n}${ext}`, { redirect: 'manual', headers: { 'user-agent': ua } });
+  return { play, jobs };
+}
+const QUEST = 'AVProMobileVideo/2026.3.3p2 (Linux;Android 14) ExoPlayer';
+
+test('ticket → home on Quest: a .m3u8 ticket goes home only with HOME_ANDROID=on; a plain ticket never', async (t) => {
+  const off = await homeApp(t);
+  assert.doesNotMatch((await off.play(QUEST)).headers.get('location'), /\/home\//, 'HOME_ANDROID off: as before');
+  assert.equal(off.jobs.length, 0);
+  const on = await homeApp(t, { config: { homeAndroid: true } });
+  assert.doesNotMatch((await on.play(QUEST, '')).headers.get('location'), /\/home\//, 'a plain ticket on Android: never home (f331bcc)');
+  assert.match((await on.play(QUEST)).headers.get('location'), /^http:\/\/pub\/home\/[a-f0-9]{18}\/index\.m3u8$/);
+  assert.equal(on.jobs.length, 1);
+});
+
+test('ticket → home on Quest: an AV1 Tunelio build on a .m3u8 ticket goes home (H.264); H.264 builds stay on Tunelio', async (t) => {
+  const { Adaptive } = await import('../src/adaptive.js');
+  const make = (box) => {
+    const job = { id: 'aaaaaaaaaaa', quality: '720p', state: 'ready', url: 'https://tunelio.dev/t?id=x&hls=1' };
+    const playback = { jobs: new Map(), peek: () => job, status: () => ({ state: 'ready' }), start() {},
+      async location() { return { location: job.url, via: 'tunelio', ready: true }; } };
+    const fetcher = async (u) => (u.includes('init')
+      ? { status: 206, arrayBuffer: async () => new TextEncoder().encode(`....ftyp....moov....stsd....${box}....`).buffer }
+      : { status: 200, text: async () => '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4,\nseg1.m4s\n' });
+    return { playback, adaptive: new Adaptive({ playback, fetcher, base: 'http://pub/hls' }), tunelio: { enabled: true } };
+  };
+  const av1 = await homeApp(t, { config: { homeAndroid: true }, ...make('av01') });
+  assert.match((await av1.play(QUEST)).headers.get('location'), /\/home\/[a-f0-9]{18}\/index\.m3u8$/);
+  const h264 = await homeApp(t, { config: { homeAndroid: true }, ...make('avc1') });
+  assert.match((await h264.play(QUEST)).headers.get('location'), /^http:\/\/pub\/hls\/[a-f0-9]{18}\/720p\.m3u8$/);
+  assert.equal(h264.jobs.length, 0);
+  const flagOff = await homeApp(t, make('av01'));
+  assert.match((await flagOff.play(QUEST)).headers.get('location'), /\/hls\//, 'AV1 counted but not sent home while HOME_ANDROID is off');
+});

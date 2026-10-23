@@ -453,7 +453,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // The tablet asking (a row selected, or watching a build): start the build, report it, never redirect.
       if (kind === 'string') {
         const hq = roomQuality(shard);
-        const hw = hlsTicket ? null : homeWhy(t.data, hq);
+        const hw = hlsTicket && !config.homeAndroid ? null : homeWhy(t.data, hq);
         const hs = hw ? startHome(t.data, hq, hw) : null;
         if (hs && hs.state !== 'failed') return json(res, 200, { v: API, shard, t: n, room: hq, ...homeStatus(hs) });
         let c = await choice(shard, t.data);
@@ -470,10 +470,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const android = isAndroidPlayer(req.headers['user-agent']);
       const started = Date.now();
       let where = null;
-      // Home relay first when it applies. HLS only, so never for Android players (f331bcc). The resolver is sent on at
-      // once (it would only pick the playlist apart); the player waits for the first segments.
+      // Home relay first when it applies. HLS only, so never for an Android player on a plain ticket (f331bcc); on a
+      // .m3u8 ticket (the world's Android build, which opens HLS) only with HOME_ANDROID=on (2026-10-23, to be verified
+      // on the Quest). The resolver is sent on at once (it would only pick the playlist apart); the player waits for
+      // the first segments.
       const hq = roomQuality(shard);
-      const why = android || hlsTicket ? null : homeWhy(t.data, hq);
+      const homeOk = hlsTicket ? config.homeAndroid : !android;
+      const why = homeOk ? homeWhy(t.data, hq) : null;
       const hs = why ? startHome(t.data, hq, why) : null;
       if (hs && hs.state !== 'failed') {
         if (resolver) {
@@ -523,9 +526,21 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           const job = playback.peek(t.data, c.quality, { hls: c.hls });
           if (job?.url === where.location) where = { ...where, location: adaptive.single(t.data, job) };
         }
-        // Tunelio's build failed: home before youtube.com's 360p, for a PC player when a worker is free.
-        if (!resolver && !android && !hlsTicket && where.ready && where.via === 'youtube' && /^(tunelio_failed|build_failed)$/.test(where.reason ?? '') && home.worker()) {
-          const fallback = startHome(t.data, hq, 'tunelio_failed');
+        // An AV1 build on a .m3u8 ticket: the Quest 2 can't decode AV1 (Everything-is-OK #101), and home is always
+        // H.264 + AAC (relay/media.js). Counted whether or not HOME_ANDROID is on, to show how often it happens.
+        let homeFor = null;
+        if (hlsTicket && !resolver && where.ready && where.via === 'tunelio' && c.hls) {
+          const codec = await adaptive.codec?.(playback.peek(t.data, c.quality, { hls: true }));
+          if (codec === 'av1') {
+            metrics.inc('adaptive', 'android_av1');
+            logJson({ event: 'android_av1', shard, n, id: t.data.id, quality: c.quality, home: homeOk && home.enabled });
+            if (homeOk && home.enabled && home.worker()) homeFor = 'av1';
+          }
+        }
+        // Tunelio's build failed: home before youtube.com's 360p, for a player that can take home's HLS, when a worker is free.
+        if (!homeFor && !resolver && homeOk && where.ready && where.via === 'youtube' && /^(tunelio_failed|build_failed)$/.test(where.reason ?? '') && home.worker()) homeFor = 'tunelio_failed';
+        if (homeFor) {
+          const fallback = startHome(t.data, hq, homeFor);
           if (fallback && fallback.state !== 'failed') {
             holding++;
             try { await home.wait(fallback, config.homeReadyMs); } finally { holding--; }

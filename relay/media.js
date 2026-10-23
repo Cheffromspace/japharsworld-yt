@@ -1,7 +1,7 @@
 // Media job for the relay worker (home relay playback, src/home.js): stream a video from this residential connection
 // to the server as HLS. yt-dlp only resolves the stream URLs (they work from the IP that resolved them, so the media
-// can't be handed out directly); ffmpeg reads them at network speed and cuts 4 s MPEG-TS segments without re-encoding;
-// every new segment and then the playlist are PUT to RELAY_URL/relay/media/<token>/<file>.
+// can't be handed out directly); ffmpeg reads them through rangeProxy at network speed and cuts 4 s MPEG-TS segments
+// without re-encoding; every new segment and then the playlist are PUT to RELAY_URL/relay/media/<token>/<file>.
 //
 // The job's answer goes back as soon as the first playlist with a segment is uploaded (the server can send players
 // then); the rest uploads in the background until ffmpeg ends and the playlist carries #EXT-X-ENDLIST. If ffmpeg dies
@@ -13,12 +13,20 @@
 // for the end of the upload, which the worker keeps)
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { run } from '../src/captions.js';
 
 const SEGMENT = /^seg\d{1,5}\.ts$/;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Until the response can take more, or is gone (both listeners removed again: one per write would pile up).
+const drained = (res) => new Promise((resolve) => {
+  const done = () => { res.off('drain', done); res.off('close', done); resolve(); };
+  res.on('drain', done);
+  res.on('close', done);
+});
 
 // H.264 + AAC so Media Foundation (VRChat on PC) can play it; the height from the quality ("720p" → 720).
 export function formatFor(quality) {
@@ -26,11 +34,68 @@ export function formatFor(quality) {
   return `bv*[height<=${h}][vcodec^=avc1]+ba[ext=m4a]/b[height<=${h}][vcodec^=avc1]`;
 }
 
-// Range requests of 10 MB, as yt-dlp makes: YouTube throttles one long read of a stream URL to about real time
-// (2026-10-23, this connection: 0.1 MB/s for a plain read, 13.6 MB/s with -request_size). The option needs FFmpeg 7.1+
-// (the worker checks, relay/worker.js). A small first request makes the probing, and so the first segment, quicker.
+// A local HTTP server that ffmpeg reads the stream URLs through. YouTube throttles one long read of a stream URL to about
+// real time; ~10 MB pieces asked for with the URL's `&range=a-b` parameter, as yt-dlp does, are not (2026-10-23:
+// ffmpeg's plain read 0.1 MB/s; on the Optiplex `&range=` 19.8 MB/s, while a 10 MB Range header got 403 and only small
+// ones 206). ffmpeg can't make such requests itself (-request_size, a header, and only in development builds; the
+// Optiplex has 8.0.1), so every request ffmpeg makes here, seeks included, is answered by fetching `chunk`-byte pieces
+// in turn. → { urls (local, same order), close() }
+export async function rangeProxy(urls, { fetcher = fetch, chunk = 10_000_000, retries = 3, retryMs = 1000 } = {}) {
+  const totals = new Map();
+  async function total(i) {
+    if (totals.has(i)) return totals.get(i);
+    let n = Number(new URL(urls[i]).searchParams.get('clen')) || 0;
+    if (!n) {
+      const r = await fetcher(urls[i], { headers: { range: 'bytes=0-0' } });
+      try { await r.body?.cancel(); } catch { /* ignore */ }
+      n = Number(/\/(\d+)$/.exec(r.headers.get('content-range') ?? '')?.[1]) || 0;
+    }
+    totals.set(i, n);
+    return n;
+  }
+  const server = createServer(async (req, res) => {
+    const i = Number(req.url.slice(1));
+    if (!Number.isInteger(i) || !urls[i]) { res.writeHead(404); return res.end(); }
+    const ac = new AbortController();
+    res.on('close', () => ac.abort());
+    try {
+      const size = await total(i);
+      if (!size) throw new Error('unknown size');
+      const m = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? '');
+      const start = m ? Number(m[1]) : 0;
+      const end = m && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+      if (start >= size) { res.writeHead(416, { 'content-range': `bytes */${size}` }); return res.end(); }
+      res.writeHead(m ? 206 : 200, { 'content-type': 'application/octet-stream', 'accept-ranges': 'bytes', 'content-length': end - start + 1,
+        ...(m ? { 'content-range': `bytes ${start}-${end}/${size}` } : {}) });
+      if (req.method === 'HEAD') return res.end();
+      for (let pos = start; pos <= end;) {
+        // A piece that fails is asked for again: during rapid testing on 2026-10-23 one video's fresh URLs answered 403
+        // for a minute or two and then 200 (the same URLs), so a 403 here may pass.
+        let up;
+        for (let attempt = 0; ; attempt++) {
+          up = await fetcher(`${urls[i]}&range=${pos}-${Math.min(pos + chunk - 1, end)}`, { signal: ac.signal });
+          if (up.status === 200 || up.status === 206) break;
+          try { await up.body?.cancel(); } catch { /* ignore */ }
+          if (attempt >= retries) throw new Error(`upstream answered ${up.status}`);
+          await sleep(retryMs * (attempt + 1));
+        }
+        for await (const c of up.body) {
+          pos += c.length;
+          if (!res.write(c)) await drained(res);
+          if (ac.signal.aborted) return;
+        }
+      }
+      res.end();
+    } catch { res.destroy(); }
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = server.address();
+  return { urls: urls.map((_, i) => `http://127.0.0.1:${port}/${i}`), close: () => { server.close(); server.closeAllConnections(); } };
+}
+
 export function ffmpegArgs(urls, dir) {
-  const inputs = urls.flatMap((u) => ['-request_size', '10000000', '-initial_request_size', '1000000', '-i', u]);
+  const inputs = urls.flatMap((u) => ['-i', u]);
   const maps = urls.length > 1 ? ['-map', '0:v:0', '-map', '1:a:0'] : [];
   return ['-hide_banner', '-loglevel', 'error', '-nostdin', ...inputs, ...maps, '-c', 'copy',
     '-f', 'hls', '-hls_time', '4', '-hls_list_size', '0', '-hls_playlist_type', 'event', '-hls_flags', 'temp_file',
@@ -40,7 +105,7 @@ export function ffmpegArgs(urls, dir) {
 // → Promise that resolves { ready: true, segments } once the first playlist is up, or rejects before that.
 // upload(file, body, type) → HTTP status. spawnFn/runner are injectable for tests.
 export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], upload, runner = run, spawnFn = spawn,
-  tmp = tmpdir(), pollMs = 500, maxMs = 4 * 3600_000, log = () => {} }) {
+  fetcher = fetch, tmp = tmpdir(), pollMs = 500, maxMs = 4 * 3600_000, log = () => {} }) {
   const videoId = String(job.videoId ?? '');
   const quality = String(job.quality ?? '720p');
   if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) throw new Error('bad videoId');
@@ -52,7 +117,8 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   if (!urls.length) throw new Error('no stream urls');
   const resolveMs = Date.now() - started;
   const dir = await mkdtemp(join(tmp, 'jyt-media-'));
-  const ff = spawnFn(ffmpeg, ffmpegArgs(urls, dir), { stdio: ['ignore', 'ignore', 'pipe'] });
+  const proxy = await rangeProxy(urls, { fetcher });
+  const ff = spawnFn(ffmpeg, ffmpegArgs(proxy.urls, dir), { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   ff.stderr?.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
   let exit = null;
@@ -110,6 +176,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
     } finally {
       clearTimeout(killer);
       await exited;
+      proxy.close();
       await rm(dir, { recursive: true, force: true });
     }
   })();

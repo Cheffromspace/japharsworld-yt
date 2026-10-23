@@ -122,19 +122,19 @@ up (YouTube may flag an IP that downloads a lot). Otherwise, or when the first s
 `HOME_READY_SECONDS`, the play takes the Tunelio path as before.
 
 **How:** the server sends the worker `{kind: "media", videoId, quality, token}`. The worker has yt-dlp resolve the
-H.264 + AAC stream URLs (they only work from the IP that resolved them) and ffmpeg read them in 10 MB range requests
-(`-request_size`, FFmpeg 7.1+: YouTube throttles a plain read to about real time) and cut 4 s MPEG-TS segments without
-re-encoding. It PUTs each segment and the growing playlist to `/relay/media/<token>/<file>` (relay token) and answers
+H.264 + AAC stream URLs (they only work from the IP that resolved them), and ffmpeg reads them through a local proxy
+that fetches 10 MB pieces with the URL's `&range=` parameter, as yt-dlp does (YouTube throttles a plain read to about
+real time), and cuts 4 s MPEG-TS segments without re-encoding. It PUTs each segment and the growing playlist to `/relay/media/<token>/<file>` (relay token) and answers
 the job once the first ones are up. Players get `302` to `/home/<token>/index.m3u8`, an EVENT playlist with absolute
 links that starts at 0 and gets `#EXT-X-ENDLIST` when the upload ends; the resolver gets the "not a video" page. Files
 are kept `HOME_KEEP_HOURS` (oldest finished first out above `HOME_MAX_GB`) and dropped on restart.
 
-Measured 2026-10-23: ~4 s from Play to the first segments (yt-dlp ~3 s), a 22-minute 720p video (216 MB) in 9 s on
-this machine; uploads from home run ~12.6 MB/s. `/ops/state` shows `home` (workers, today's use, sessions).
+Measured 2026-10-23 on the Optiplex (ffmpeg 8.0.1, uploads only counted): first segments 2.9 s after the job at 720p
+(yt-dlp 2.4 s), 6.2 s at 1080p; a 22-minute 720p video (216 MB) in 9.2 s. Uploads from home run ~12.6 MB/s.
+`/ops/state` shows `home` (workers, today's use, sessions).
 
-The worker needs ffmpeg 7.1 or newer on the Optiplex (`relay-setup.sh` installs the distro's; `ffmpeg -h
-protocol=http | grep request_size` shows whether it is new enough). Without it the worker doesn't announce `media`.
-`RELAY_MEDIA=off` in `/etc/japharsworld-yt-relay.env` turns it off at home.
+The worker needs ffmpeg on the Optiplex (`relay-setup.sh` installs the distro's); without it the worker doesn't
+announce `media`. `RELAY_MEDIA=off` in `/etc/japharsworld-yt-relay.env` turns it off at home.
 
 ## Channels link monitor
 

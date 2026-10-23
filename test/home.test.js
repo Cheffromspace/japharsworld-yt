@@ -10,7 +10,7 @@ import { Store } from '../src/store.js';
 import { Relay } from '../src/relay.js';
 import { Home } from '../src/home.js';
 import { createWorker } from '../relay/worker.js';
-import { mediaJob, ffmpegArgs, formatFor } from '../relay/media.js';
+import { mediaJob, ffmpegArgs, formatFor, rangeProxy } from '../relay/media.js';
 import { config as base } from '../src/config.js';
 
 const TOKEN = 'secret-token';
@@ -121,7 +121,7 @@ function fakeFfmpeg({ code = 0, steps = [[PL1, ['seg0.ts']], [PL2, ['seg1.ts']]]
   };
   return { calls, spawnFn };
 }
-const runner = async () => 'https://v.example/video\nhttps://v.example/audio\n';
+const runner = async () => 'https://v.example/video?clen=100\nhttps://v.example/audio?clen=100\n';
 
 test('mediaJob: answers at the first playlist, uploads the rest, closes with ENDLIST', async () => {
   const ff = fakeFfmpeg();
@@ -134,8 +134,7 @@ test('mediaJob: answers at the first playlist, uploads the rest, closes with END
   assert.deepEqual(uploads.map(([f]) => f), ['seg0.ts', 'index.m3u8', 'seg1.ts', 'index.m3u8']);
   assert.match(uploads.at(-1)[1], /#EXT-X-ENDLIST/);
   const args = ff.calls[0].args;
-  assert.deepEqual(args.filter((a, i) => args[i - 1] === '-i'), ['https://v.example/video', 'https://v.example/audio']);
-  assert.equal(args.filter((a) => a === '-request_size').length, 2, 'ranged reads on both inputs');
+  assert.ok(args.filter((a, i) => args[i - 1] === '-i').every((u) => u.startsWith('http://127.0.0.1:')), 'read through the range proxy');
   assert.ok(args.includes('copy') && args.includes('event'));
 });
 
@@ -150,6 +149,30 @@ test('mediaJob: ffmpeg dying part way closes the playlist where it got to; a 410
   await assert.rejects(mediaJob({ videoId: 'aaaaaaaaaaa', quality: '720p', token: 'x' }, { ytdlp: 'yt-dlp', runner, spawnFn: gone.spawnFn, pollMs: 10,
     upload: async () => 410 }), /session gone/);
   await assert.rejects(mediaJob({ videoId: 'bad', quality: '720p' }, { ytdlp: 'yt-dlp', runner, upload: async () => 204 }), /bad videoId/);
+});
+
+test('rangeProxy: serves every request (seeks too) from &range= pieces upstream', async () => {
+  const data = Buffer.from(Array.from({ length: 25 }, (_, i) => String.fromCharCode(97 + i)).join(''));
+  const asked = [];
+  // Like googlevideo: a small Range header answers 206 with the total; &range=a-b answers 200 with those bytes.
+  const fetcher = async (url, { headers } = {}) => {
+    const param = /[?&]range=(\d+)-(\d+)$/.exec(url);
+    const [a, b] = (param ?? /bytes=(\d+)-(\d+)/.exec(headers.range)).slice(1).map(Number);
+    asked.push(param ? `&range=${a}-${b}` : headers.range);
+    const body = data.subarray(a, b + 1);
+    return new Response(body, param ? { status: 200 } : { status: 206, headers: { 'content-range': `bytes ${a}-${a + body.length - 1}/${data.length}` } });
+  };
+  const proxy = await rangeProxy(['https://v.example/x?id=1'], { fetcher, chunk: 10 });
+  try {
+    assert.equal(await (await fetch(proxy.urls[0])).text(), data.toString());
+    assert.deepEqual(asked, ['bytes=0-0', '&range=0-9', '&range=10-19', '&range=20-24'], 'size first (no clen), then pieces');
+    const seek = await fetch(proxy.urls[0], { headers: { range: 'bytes=12-' } });
+    assert.equal(seek.status, 206);
+    assert.equal(seek.headers.get('content-range'), 'bytes 12-24/25');
+    assert.equal(await seek.text(), 'mnopqrstuvwxy');
+    assert.equal((await fetch(proxy.urls[0], { headers: { range: 'bytes=30-' } })).status, 416);
+    assert.equal((await fetch(proxy.urls[0].replace(/\/0$/, '/5'))).status, 404);
+  } finally { proxy.close(); }
 });
 
 test('media formats: H.264 + m4a at the quality\'s height; one input when YouTube serves a single file', () => {

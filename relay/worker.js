@@ -138,10 +138,9 @@ function gitVersion() {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const { RELAY_URL, RELAY_TOKEN, WORKER_NAME = 'worker', RELAY_POLLS = '3', FFMPEG = 'ffmpeg', RELAY_MEDIA = 'on', RELAY_MEDIA_MAX = '2' } = process.env;
   if (!RELAY_URL || !RELAY_TOKEN) { console.error('Set RELAY_URL and RELAY_TOKEN.'); process.exit(2); }
-  // Media jobs only when this ffmpeg can make range requests (FFmpeg 7.1+, relay/media.js: without them YouTube
-  // throttles the stream to about real time); the server sends them only to workers that announce caps=media.
+  // Media jobs only when ffmpeg runs here; the server sends them only to workers that announce caps=media.
   let hasFfmpeg = false;
-  try { hasFfmpeg = /request_size/.test(execFileSync(FFMPEG, ['-hide_banner', '-h', 'protocol=http'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })); } catch { /* no ffmpeg */ }
+  try { execFileSync(FFMPEG, ['-version'], { stdio: 'ignore' }); hasFfmpeg = true; } catch { /* no ffmpeg */ }
   const caps = RELAY_MEDIA !== 'off' && hasFfmpeg ? ['media'] : [];
   const worker = createWorker({ url: RELAY_URL, token: RELAY_TOKEN, name: WORKER_NAME, version: gitVersion(), polls: Number(RELAY_POLLS) || 3,
     caps, ffmpeg: FFMPEG, mediaMax: Number(RELAY_MEDIA_MAX) || 2 });

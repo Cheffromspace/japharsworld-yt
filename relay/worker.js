@@ -132,7 +132,7 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
 
   return {
     handle, conts, get streaming() { return streaming; },
-    start() { log({ event: 'start', worker: name, version, relay: base, polls }); return Promise.all(Array.from({ length: polls }, (_, i) => loop(i))); },
+    start() { log({ event: 'start', worker: name, version, relay: base, polls, cacheGb: cache?.maxGb ?? 0, cacheDir: cache?.dir }); return Promise.all(Array.from({ length: polls }, (_, i) => loop(i))); },
     stop() { stopping.abort(); },
   };
 }

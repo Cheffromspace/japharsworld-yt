@@ -238,18 +238,22 @@ export class Playback {
     const link = (format) => made.url + (format === 'hls' ? '&hls=1' : '&progressive=1');
     if (this.probe) {
       // The first request makes Tunelio build the file; a refused progressive build (413) falls back to HLS.
-      let r;
-      try { r = await this.probe(link(job.format)); } catch { r = { ok: false, refused: false }; }
+      // status: Tunelio's answer when it fails (0 = no answer: timeout or network, `error` says which), logged with the
+      // failure. 2026-10-23: 1080p HLS builds failed after 115–128 s, and one after 63 s, without a record of why.
+      const tryProbe = async (url) => {
+        try { return await this.probe(url); } catch (err) { return { ok: false, refused: false, status: 0, error: err?.name ?? 'error' }; }
+      };
+      let r = await tryProbe(link(job.format));
       if (!r.ok && r.refused && job.format === 'progressive') {
         job.format = 'hls';
-        try { r = await this.probe(link('hls')); } catch { r = { ok: false, refused: false }; }
+        r = await tryProbe(link('hls'));
       }
-      if (!r.ok) return this.#finish(job, { ok: false, reason: 'build_failed', url: link(job.format), expiresMs });
+      if (!r.ok) return this.#finish(job, { ok: false, reason: 'build_failed', url: link(job.format), expiresMs, status: r.status, error: r.error });
     }
     return this.#finish(job, { ok: true, url: link(job.format), expiresMs });
   }
 
-  #finish(job, { ok, reason = null, url = null, expiresMs = 0 }) {
+  #finish(job, { ok, reason = null, url = null, expiresMs = 0, status, error }) {
     job.endedMs = this.now();
     job.state = ok ? 'ready' : 'failed';
     job.url = url;
@@ -258,7 +262,7 @@ export class Playback {
     const buildMs = job.endedMs - job.startedMs;
     if (ok) this.learn(job.format, job.mb, buildMs);
     this.log({ event: ok ? 'tunelio_link' : 'build_failed', id: job.id, quality: job.quality, hls: job.format === 'hls', mb: job.mb, buildMs, seconds: job.seconds, reason,
-      ...(ok && cachedBuild(job.mb, buildMs) ? { cached: true } : {}) });
+      ...(ok && cachedBuild(job.mb, buildMs) ? { cached: true } : {}), ...(status !== undefined ? { status } : {}), ...(error ? { error } : {}) });
     try { this.onBuild({ id: job.id, format: job.format, quality: job.quality, seconds: job.seconds, mb: job.mb, buildMs, ok }); } catch { /* metrics only */ }
     return job;
   }

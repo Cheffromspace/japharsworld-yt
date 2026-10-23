@@ -19,7 +19,7 @@ Counted in memory and written to SQLite every minute and at shutdown (SIGTERM). 
 | `more` / `more_fail` | – / status | "More results" loads |
 | `play` | – | videos played, **once per room**: the first load of a video in a shard counts; the other players in the instance, late joiners and replays don't, until 3 hours after it was counted (held in memory only) |
 | `play_route` | `tunelio-progressive` `tunelio-hls` `tunelio-adaptive` `home` `youtube-live` `youtube-fallback` | `home`: streamed from the owner's home connection (README, "Home relay playback") |
-| `home` | `start` `ready` `failed` `capped` `defer` `timeout` | home relay sessions (src/home.js): started, first segments in, failed; new sessions refused by the daily cap; resolvers sent on; players that waited `HOME_READY_SECONDS` and went to Tunelio instead |
+| `home` | `start` `ready` `failed` `capped` `defer` `timeout` `cache_hit` | home relay sessions (src/home.js): started, first segments in, failed; new sessions refused by the daily cap; resolvers sent on; players that waited `HOME_READY_SECONDS` and went to Tunelio instead; `cache_hit`: a session the worker uploaded from its own cache (relay/cache.js), not counted against the daily cap |
 | `home_why` | `tunelio_off` `long` `pacer` `tunelio_failed` `av1` | why a session went home, once per session (`av1`: an AV1 Tunelio build on a `.m3u8` ticket, `HOME_ANDROID=on`) |
 | `home_start_s` | seconds bucket | session start to its first playlist |
 | `play_fallback` | `disabled` `paused` `tunelio_failed` | why a video went to YouTube at 360p |
@@ -35,7 +35,7 @@ Counted in memory and written to SQLite every minute and at shutdown (SIGTERM). 
 | `join` / `join_lang` | – / VRChat language | the bare search address the world loads once after join (answered `400 empty_query`). Only visitors who **allow untrusted URLs** send it: the closest thing to a per-language join count |
 
 `gauges`: `credits_remaining` (the last `X-Credits-Remaining` seen each day); `home_today` with keys `mb` `builds`
-`cap_mb` `workers` (the home relay's use today, its cap and the media workers connected; set every minute, numbers only).
+`cap_mb` `workers` `cache_mb` (MB uploaded from the worker's cache today) (the home relay's use today, its cap and the media workers connected; set every minute, numbers only).
 `hourly`: `shard`, one row per hour and shard (0–7) that saw any request. Instances pick a shard at random, so the
 number of rows in an hour roughly counts busy instances; two instances on one shard count once (a lower bound).
 

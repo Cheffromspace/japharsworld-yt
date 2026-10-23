@@ -9,6 +9,9 @@ Group=jytrelay
 WorkingDirectory=/opt/japharsworld-yt-relay
 EnvironmentFile=/etc/japharsworld-yt-relay.env
 ExecStart=/usr/bin/node /opt/japharsworld-yt-relay/relay/worker.js
+# The worker's cache of finished home relay streams (relay/cache.js), writable despite ProtectSystem=strict. A bigger
+# volume can be mounted at /var/cache/japharsworld-yt-relay (README, home relay cache).
+CacheDirectory=japharsworld-yt-relay
 Restart=always
 RestartSec=5
 MemoryMax=300M

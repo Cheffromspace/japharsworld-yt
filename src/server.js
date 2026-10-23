@@ -121,6 +121,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     metrics.gauge('home_today', 'builds', s.today.builds);
     metrics.gauge('home_today', 'cap_mb', s.cap.mb);
     metrics.gauge('home_today', 'workers', s.workers.length);
+    metrics.gauge('home_today', 'cache_mb', s.today.cacheMb);
   }, 60_000).unref();
   // Captions: relay worker → yt-dlp here (when turned on, or when there is no Tunelio) → Tunelio (src/captionchain.js).
   captions ??= new CaptionChain({ store, relay, metrics, log: logJson, cacheDays: config.captionCacheDays, scripts: config.captionScripts,
@@ -671,7 +672,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (m && req.method === 'PUT') {
       let body;
       try { body = await readBody(req, 64 << 20); } catch { return fail(res, 413, 'too_large', 'Too large.'); }
-      const status = home.put(m[1], m[2], body);
+      const status = home.put(m[1], m[2], body, { cached: req.headers['x-media-cached'] === '1' });
       if (status === 204) { res.writeHead(204); return res.end(); }
       return fail(res, status, status === 410 ? 'gone' : status === 413 ? 'too_large' : 'bad_file', 'Not stored.');
     }

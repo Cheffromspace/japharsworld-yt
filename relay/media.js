@@ -17,8 +17,12 @@
 //
 // Measured 2026-10-22/23 from the owner's connection: yt-dlp -g ~3 s, YouTube download 8–27 MB/s, upload ~12.6 MB/s.
 //
-// Job: { kind: 'media', videoId, quality: '720p', token }   Answer: { ready: true, segments } (plus `done`, a promise
-// for the end of the upload, which the worker keeps)
+// Job: { kind: 'media', videoId, quality: '720p', token }   Answer: { ready: true, segments, cached } (plus `done`, a
+// promise for the end of the upload, which the worker keeps)
+//
+// With a cache (relay/cache.js), a finished stream is kept on the worker's disk and a later job for the same video and
+// quality is uploaded from there (`cached`: no yt-dlp, no YouTube download; each upload says so with x-media-cached: 1,
+// so the server doesn't count it against HOME_DAILY_MB).
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -129,12 +133,14 @@ export function ffmpegArgs(urls, dir) {
 // → Promise that resolves { ready: true, segments } once the first playlist is up, or rejects before that.
 // upload(file, body, type) → HTTP status. spawnFn/runner are injectable for tests.
 export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], upload: put, runner = run, spawnFn = spawn,
-  fetcher = fetch, tmp = tmpdir(), pollMs = 500, maxMs = 4 * 3600_000, retryMs = 1000, log = () => {} }) {
+  fetcher = fetch, tmp = tmpdir(), pollMs = 500, maxMs = 4 * 3600_000, retryMs = 1000, cache = null, log = () => {} }) {
   const videoId = String(job.videoId ?? '');
   const quality = String(job.quality ?? '720p');
   if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) throw new Error('bad videoId');
   if (!/^\d{3,4}p$/.test(quality)) throw new Error('bad quality');
   const started = Date.now();
+  const hit = cache?.get(videoId, quality);
+  if (hit) return fromCache(hit, { upload: put, retryMs, started, log });
   const out = await runner(ytdlp, [...extraArgs, '--no-warnings', '--no-cache-dir', '--no-playlist', '-g', '-f', formatFor(quality),
     '--', `https://www.youtube.com/watch?v=${videoId}`], 30_000);
   const urls = out.split(/\r?\n/).map((l) => l.trim()).filter((l) => /^https?:\/\//.test(l)).slice(0, 2);
@@ -153,7 +159,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       await sleep(retryMs * (attempt + 1));
     }
   }
-  const dir = await mkdtemp(join(tmp, 'jyt-media-'));
+  const dir = cache ? cache.staging() : await mkdtemp(join(tmp, 'jyt-media-'));
   const proxy = await rangeProxy(urls, { fetcher });
   const ff = spawnFn(ffmpeg, ffmpegArgs(proxy.urls, dir), { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
@@ -179,7 +185,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       if (status !== 204) throw new Error(`upload ${s} answered ${status}`);
       sent.add(s);
       mb += body.length / 1e6;
-      rm(join(dir, s), { force: true }).catch(() => {});
+      if (!cache) rm(join(dir, s), { force: true }).catch(() => {}); // with a cache, kept for it
     }
     // Closed where it got to when ffmpeg died part way, so players end instead of waiting for more.
     if (final && !text.includes('#EXT-X-ENDLIST')) text = `${text.trimEnd()}\n#EXT-X-ENDLIST\n`;
@@ -229,8 +235,46 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       clearTimeout(killer);
       await exited;
       proxy.close();
-      await rm(dir, { recursive: true, force: true });
+      // A stream that finished whole goes into the cache (put checks every listed segment is here); anything else is dropped.
+      let kept = false;
+      if (cache && exit === 0 && !gone) {
+        try { kept = cache.put(videoId, quality, dir, lastPlaylist); } catch (err) { log({ event: 'media_cache_failed', message: String(err?.message ?? err).slice(0, 200) }); }
+      }
+      if (!kept) await rm(dir, { recursive: true, force: true });
     }
   })();
   return first;
+}
+
+// A cached stream, uploaded from disk: the first segment and the whole playlist (the server can send players then), the
+// rest in order in the background. A segment a player asks for early is held by the server until it arrives.
+async function fromCache(hit, { upload: put, retryMs, started, log }) {
+  const upload = async (file, body, type) => {
+    for (let attempt = 0; ; attempt++) {
+      let status;
+      try { status = await put(file, body, type, { cached: true }); } catch { status = 0; }
+      if ((status && status < 500) || attempt >= 4) return status;
+      await sleep(retryMs * (attempt + 1));
+    }
+  };
+  const send = async (file) => {
+    const status = await upload(file, await readFile(join(hit.dir, file)), 'video/mp2t');
+    if (status !== 204) throw Object.assign(new Error(`upload ${file} answered ${status}`), { status });
+  };
+  await send(hit.segments[0]);
+  const status = await upload('index.m3u8', Buffer.from(hit.playlist), 'application/vnd.apple.mpegurl');
+  if (status !== 204) throw new Error(`upload playlist answered ${status}`);
+  log({ event: 'media_ready', ms: Date.now() - started, cached: true, segments: hit.segments.length });
+  const done = (async () => {
+    let n = 1;
+    try {
+      for (; n < hit.segments.length; n++) await send(hit.segments[n]);
+      log({ event: 'media_done', ms: Date.now() - started, cached: true, mb: Math.round(hit.mb ?? 0), segments: n });
+    } catch (err) {
+      const gone = err.status === 410;
+      log({ event: gone ? 'media_done' : 'media_failed', ms: Date.now() - started, cached: true, segments: n, gone,
+        message: gone ? undefined : String(err?.message ?? err).slice(0, 200) });
+    }
+  })();
+  return { ready: true, segments: hit.segments.length, cached: true, done };
 }

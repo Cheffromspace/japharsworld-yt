@@ -136,7 +136,7 @@ test('home: sessions and the day\'s use survive a restart (a deploy); an unfinis
   assert.equal(b.state, 'ready');
   assert.equal(b.ended, false);
   assert.equal(again.peek({ id: 'bbbbbbbbbbb' }, '720p'), null);
-  assert.deepEqual(again.state().today, { builds: 2, mb: 0 });
+  assert.deepEqual(again.state().today, { builds: 2, mb: 0, cacheHits: 0, cacheMb: 0 });
   assert.equal(again.put(a.token, 'seg1.ts', Buffer.from('ts1')), 204);
   assert.equal(b.ended, true);
   assert.match((await again.file(a.token, 'index.m3u8')).body.toString(), new RegExp(`https://yt/home/${a.token}/seg1\\.ts`));
@@ -373,4 +373,71 @@ test('ticket → home on Quest: an AV1 Tunelio build on a .m3u8 ticket goes home
   assert.equal(h264.jobs.length, 0);
   const flagOff = await homeApp(t, make('av01'));
   assert.match((await flagOff.play(QUEST)).headers.get('location'), /\/hls\//, 'AV1 counted but not sent home while HOME_ANDROID is off');
+});
+
+test('media cache: a finished stream is kept and the next job for it uploads from disk, marked cached, without yt-dlp', async (t) => {
+  const { MediaCache } = await import('../relay/cache.js');
+  const dir = tmp(t);
+  const cache = new MediaCache({ dir, maxGb: 1 });
+  const ff = fakeFfmpeg();
+  const first = await mediaJob({ videoId: 'aaaaaaaaaaa', quality: '720p', token: 'x' }, { ytdlp: 'yt-dlp', runner, spawnFn: ff.spawnFn, pollMs: 10, cache,
+    upload: async () => 204 });
+  assert.equal(first.cached, undefined);
+  await first.done;
+  await new Promise((r) => setTimeout(r, 20)); // the finally block's put
+  assert.ok(cache.get('aaaaaaaaaaa', '720p'), 'kept');
+
+  const uploads = [];
+  let resolved = 0;
+  const again = await mediaJob({ videoId: 'aaaaaaaaaaa', quality: '720p', token: 'y' }, { ytdlp: 'yt-dlp', runner: async () => { resolved++; return ''; }, cache,
+    spawnFn: () => { throw new Error('no ffmpeg for a cached stream'); },
+    upload: async (file, body, type, opts) => { uploads.push([file, opts?.cached]); return 204; } });
+  assert.equal(again.cached, true);
+  await again.done;
+  assert.equal(resolved, 0, 'no yt-dlp');
+  assert.deepEqual(uploads, [['seg0.ts', true], ['index.m3u8', true], ['seg1.ts', true]]);
+
+  // A stream that did not finish (ffmpeg died) is not kept.
+  const bad = await mediaJob({ videoId: 'bbbbbbbbbbb', quality: '720p', token: 'z' }, { ytdlp: 'yt-dlp', runner, spawnFn: fakeFfmpeg({ code: 1, steps: [[PL1, ['seg0.ts']]] }).spawnFn,
+    pollMs: 10, cache, upload: async () => 204 });
+  await bad.done;
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(cache.get('bbbbbbbbbbb', '720p'), null);
+});
+
+test('media cache: least recently used out above maxGb', async (t) => {
+  const { MediaCache } = await import('../relay/cache.js');
+  const dir = tmp(t);
+  let now = 1000;
+  const cache = new MediaCache({ dir, maxGb: 0.000002, now: () => now }); // 2 kB
+  const put = (id) => {
+    const s = cache.staging();
+    writeFileSync(join(s, 'seg0.ts'), Buffer.alloc(900));
+    now += 1000;
+    return cache.put(id, '720p', s, '#EXTM3U\n#EXTINF:4,\nseg0.ts\n#EXT-X-ENDLIST\n');
+  };
+  assert.equal(put('aaaaaaaaaaa'), true);
+  assert.equal(put('bbbbbbbbbbb'), true);
+  now += 1000;
+  assert.ok(cache.get('aaaaaaaaaaa', '720p'), 'a used again: b is now the oldest');
+  put('ccccccccccc');
+  assert.ok(cache.get('aaaaaaaaaaa', '720p'));
+  assert.equal(cache.get('bbbbbbbbbbb', '720p'), null, 'evicted');
+  assert.ok(cache.get('ccccccccccc', '720p'));
+  const s = cache.staging();
+  assert.equal(cache.put('ddddddddddd', '720p', s, '#EXTM3U\n#EXTINF:4,\nseg0.ts\n'), false, 'no ENDLIST, no segment: not kept');
+});
+
+test('home: uploads from the worker cache count as a cache hit, not against the daily cap', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'home-cache-'));
+  try {
+    const events = [];
+    const home = new Home({ relay: fakeRelay(), dir, base: 'https://yt/home', enabled: true, dailyMb: 1, onEvent: (k) => events.push(k) });
+    const s = home.start({ id: 'aaaaaaaaaaa', seconds: 8 }, '720p');
+    assert.equal(home.put(s.token, 'seg0.ts', Buffer.alloc(2e6), { cached: true }), 204);
+    assert.equal(home.put(s.token, 'index.m3u8', Buffer.from(PL2), { cached: true }), 204);
+    assert.deepEqual(home.state().today, { builds: 0, mb: 0, cacheHits: 1, cacheMb: 2 });
+    assert.equal(home.capped(), false, '2 MB from the cache, cap 1 MB: not capped');
+    assert.ok(events.includes('cache_hit'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

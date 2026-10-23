@@ -139,6 +139,21 @@ playlist: no seek bar on the first play, one for replays and late joiners once t
 next to their files and reloaded on restart (a deploy doesn't cut plays off, and the worker retries its uploads through
 it); the day's use is saved too. Files are kept `HOME_KEEP_HOURS`, oldest finished first out above `HOME_MAX_GB`.
 
+**The worker's cache** (`relay/cache.js`, owner 2026-10-23: "be aggressive, the Optiplex has lots of disk"): every
+stream that finishes whole stays on the Optiplex too, one folder per video and quality, least recently used out above
+`RELAY_CACHE_GB` (40; 0 = off; in the worker's env file). A later home job for it, after the Linode's copy expired, is
+uploaded from that disk without yt-dlp or YouTube: faster, and no download from the home IP. Those uploads carry
+`x-media-cached: 1`, so the server counts them as `home`/`cache_hit` and `home_today`/`cache_mb`, not against
+`HOME_DAILY_BUILDS`/`HOME_DAILY_MB` (which exist for YouTube downloads). It lives in systemd's `CacheDirectory`,
+`/var/cache/japharsworld-yt-relay/media`, or `RELAY_CACHE_DIR`. The Optiplex's root volume is 100 GB of a 954 GB disk
+(the rest is unallocated in `ubuntu-vg`, 2026-10-23); a bigger cache wants its own volume mounted there (below). The
+server's daily cap is checked before the job, so once it is reached even a cached video isn't asked for.
+
+    sudo lvcreate -L 500G -n media ubuntu-vg && sudo mkfs.ext4 -L jyt-media /dev/ubuntu-vg/media
+    echo 'LABEL=jyt-media /var/cache/japharsworld-yt-relay ext4 defaults,noatime 0 2' | sudo tee -a /etc/fstab
+    sudo systemctl stop japharsworld-yt-relay && sudo mkdir -p /var/cache/japharsworld-yt-relay && sudo mount /var/cache/japharsworld-yt-relay
+    echo RELAY_CACHE_GB=450 | sudo tee -a /etc/japharsworld-yt-relay.env && sudo systemctl start japharsworld-yt-relay
+
 Fresh stream URLs often answer `403` for a while before they work (0.1–2.6 s, once 22 s, 2026-10-23); the worker's
 proxy keeps asking every second for up to 30 s, so a start can take up to `HOME_READY_SECONDS` (40).
 

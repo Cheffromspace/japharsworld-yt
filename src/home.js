@@ -71,7 +71,7 @@ export class Home {
 
   #today() {
     const d = new Date(this.now()).toISOString().slice(0, 10);
-    if (this.day.date !== d) this.day = { date: d, builds: 0, mb: 0 };
+    if (this.day.date !== d) this.day = { date: d, builds: 0, mb: 0, cacheHits: 0, cacheMb: 0 };
     return this.day;
   }
 
@@ -159,10 +159,18 @@ export class Home {
   }
 
   // A worker's upload. → HTTP status: 204 stored, 400 bad name or playlist, 410 no such session any more (the worker
-  // stops), 413 too large.
-  put(token, file, body) {
+  // stops), 413 too large. cached: uploaded from the worker's own cache (relay/cache.js), not downloaded from YouTube,
+  // so it counts as a cache hit and its MB as cacheMb, not against dailyBuilds / dailyMb.
+  put(token, file, body, { cached = false } = {}) {
     const s = this.byToken.get(token);
     if (!s || s.state === 'failed') return 410;
+    if (cached && !s.cached) {
+      s.cached = true;
+      const d = this.#today();
+      d.builds = Math.max(0, d.builds - 1);
+      d.cacheHits = (d.cacheHits ?? 0) + 1;
+      this.onEvent('cache_hit');
+    }
     if (file === 'index.m3u8') {
       const text = body.toString('utf8');
       const lines = text.split(/\r?\n/).filter(Boolean);
@@ -176,7 +184,12 @@ export class Home {
     if (!SEGMENT.test(file)) return 400;
     if (body.length > MAX_SEGMENT_BYTES) return 413;
     this.#write(s, file, body);
-    if (!s.stored.has(file)) { s.stored.add(file); s.mb += body.length / 1e6; this.#today().mb += body.length / 1e6; }
+    if (!s.stored.has(file)) {
+      s.stored.add(file);
+      s.mb += body.length / 1e6;
+      const d = this.#today();
+      if (s.cached) d.cacheMb = (d.cacheMb ?? 0) + body.length / 1e6; else d.mb += body.length / 1e6;
+    }
     const ws = s.segmentWaiters.get(file);
     if (ws) { s.segmentWaiters.delete(file); for (const w of ws) w(); }
     if (s.state === 'building' && s.segments > 0) { s.state = 'ready'; s.readyMs = this.now(); this.#ready(s); }
@@ -245,7 +258,8 @@ export class Home {
   state() {
     const all = [...this.byToken.values()];
     const d = this.#today();
-    return { enabled: this.enabled, workers: this.relay?.capable?.('media') ?? [], today: { builds: d.builds, mb: Math.round(d.mb) },
+    return { enabled: this.enabled, workers: this.relay?.capable?.('media') ?? [],
+      today: { builds: d.builds, mb: Math.round(d.mb), cacheHits: d.cacheHits ?? 0, cacheMb: Math.round(d.cacheMb ?? 0) },
       cap: { builds: this.dailyBuilds, mb: this.dailyMb },
       building: all.filter((s) => s.state === 'building').length, ready: all.filter((s) => s.state === 'ready' && !s.ended).length,
       ended: all.filter((s) => s.ended).length, failed: all.filter((s) => s.state === 'failed').length,

@@ -1752,7 +1752,7 @@
    "type": "stat",
    "id": 30,
    "title": "Home relay today",
-   "description": "What the Optiplex downloaded for home relay plays today (Chicago day) against HOME_DAILY_MB, and the media workers connected now. Set every minute by the search service.",
+   "description": "What the Optiplex downloaded for home relay plays today (Chicago day) against HOME_DAILY_MB, what the worker uploaded from its own cache instead (not counted against the cap, relay/cache.js), and the media workers connected now. Set every minute by the search service.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1802,6 +1802,16 @@
      },
      "expr": "max(eiok_home_today{key=\"workers\"})",
      "legendFormat": "workers",
+     "instant": true
+    },
+    {
+     "refId": "E",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_home_today{key=\"cache_mb\"}) / 1000",
+     "legendFormat": "from cache GB",
      "instant": true
     }
    ],

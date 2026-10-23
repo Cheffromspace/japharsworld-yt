@@ -138,6 +138,20 @@ test('poller: a failed login alerts (at most every 6 hours) and waits 6 hours be
   assert.equal(alerts.length, 2);
 });
 
+test('poller: a login that works again after a failure alert says so once', async () => {
+  const alerts = [];
+  const state = { loginAlertAt: Date.parse('2026-10-19T08:00:00Z'), loginFailedAt: Date.parse('2026-10-19T08:00:00Z') };
+  const fake = fakeVRChat();
+  const opts = (t) => ({ state, alert: (kind, text) => alerts.push([kind, text]), now: t, fetcher: fake.fetcher, sleep: noSleep });
+  const now = Date.parse('2026-10-19T14:30:00Z');
+  const r = await pollVRChat(cfg(), opts(now));
+  assert.ok(r.rows.length > 0);
+  assert.deepEqual(alerts.map(([k]) => k), ['vrchat_login_ok']);
+  assert.match(alerts[0][1], /works again/);
+  await pollVRChat(cfg(), opts(now + 60_000));
+  assert.equal(alerts.length, 1);
+});
+
 test('poller: 429 backs off (doubling, at least Retry-After), and skips polls until then', async () => {
   const fake = fakeVRChat({ rateLimit: true });
   const state = {};

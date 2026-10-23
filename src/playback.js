@@ -174,6 +174,10 @@ export class Playback {
       }
       return this.#finish(job, { ok: false, reason: 'tunelio_failed' });
     }
+    // /create answered: the all-clear for whichever of these alerted (sent only if it did).
+    this.alert.resolve?.('tunelio_down', 'Tunelio works again: videos play in HD.');
+    this.alert.resolve?.('credits_out', 'Tunelio has credits again: HD playback and captions are back.');
+    this.alert.resolve?.('auth', 'Tunelio accepts the API key again: videos play in HD.');
     const expiresMs = made.expires * 1000 || this.now() + 3600_000;
     const link = (format) => made.url + (format === 'hls' ? '&hls=1' : '&progressive=1');
     if (this.probe) {

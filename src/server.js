@@ -114,6 +114,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     segmentHoldMs: config.homeSegmentHoldMs,
     log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
   if (home.enabled) setInterval(() => home.sweep(), 10 * 60_000).unref();
+  if (home.enabled) setInterval(() => {
+    const s = home.state();
+    metrics.gauge('home_today', 'mb', s.today.mb);
+    metrics.gauge('home_today', 'builds', s.today.builds);
+    metrics.gauge('home_today', 'cap_mb', s.cap.mb);
+    metrics.gauge('home_today', 'workers', s.workers.length);
+  }, 60_000).unref();
   // Captions: relay worker → yt-dlp here (when turned on, or when there is no Tunelio) → Tunelio (src/captionchain.js).
   captions ??= new CaptionChain({ store, relay, metrics, log: logJson, cacheDays: config.captionCacheDays, scripts: config.captionScripts,
     relayWaitMs: config.relayCaptionWaitMs,
@@ -125,6 +132,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   function checkWorkers() {
     if (relay.enabled && relay.idleMs() >= config.relayIdleAlertMinutes * 60_000) {
       alert('no_worker', `No search worker for ${config.relayIdleAlertMinutes} minutes: YouTube search runs from the Linode, which YouTube often blocks.`);
+    } else if (relay.online().length) {
+      alert.resolve?.('no_worker', 'Search worker is back: YouTube search runs through it again.');
     }
   }
   setInterval(checkWorkers, 60_000).unref();

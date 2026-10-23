@@ -16,6 +16,7 @@ const HISTOGRAMS = {
   search_ms: ['eiok_search_seconds', MS_BUCKETS, 1000], tunelio_create_ms: ['eiok_tunelio_create_seconds', MS_BUCKETS, 1000],
   ticket_hold_ms: ['eiok_ticket_hold_seconds', MS_BUCKETS, 1000],
   build_s_progressive: ['eiok_build_progressive_seconds', S_BUCKETS, 1], build_s_hls: ['eiok_build_hls_seconds', S_BUCKETS, 1],
+  home_start_s: ['eiok_home_start_seconds', S_BUCKETS, 1],
 };
 
 const esc = (v) => String(v).replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
@@ -68,6 +69,14 @@ export function metricsDbSeries(db, o) {
   }
   const credits = db.prepare("SELECT value, at FROM gauges WHERE metric = 'credits_remaining' ORDER BY day DESC, at DESC LIMIT 1").get();
   if (credits) o.add('eiok_credits_remaining', 'gauge', 'Tunelio credits left (search service, last seen).', {}, credits.value);
+  for (const r of db.prepare(`SELECT key, value FROM gauges WHERE metric = 'home_today'
+      AND day = (SELECT MAX(day) FROM gauges WHERE metric = 'home_today')`).all()) {
+    o.add('eiok_home_today', 'gauge', 'Home relay today (mb, builds, cap_mb) and media workers connected, set every minute.', { key: r.key }, r.value);
+  }
+  // Rooms: one row per (hour, shard) that saw a request, so increase() over an hour = the shards active in it.
+  for (const r of db.prepare("SELECT key, COUNT(*) n FROM hourly WHERE metric = 'shard' GROUP BY key").all()) {
+    o.add('eiok_shard_active_hours_total', 'counter', 'Hours each shard (room) saw a request, all days summed.', { shard: r.key }, r.n);
+  }
   // Latest poll per source and metric: VRChat worlds (prod/test), group, Tunelio, GitHub.
   const polls = db.prepare(`SELECT p.source, p.metric, p.value, p.ts FROM polls p
     JOIN (SELECT source, metric, MAX(ts) ts FROM polls GROUP BY source, metric) m USING (source, metric, ts)`).all();

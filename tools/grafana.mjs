@@ -153,6 +153,41 @@ export function dashboard() {
   ], { w: 12, min: 0, description: `${probeNote} 2026-10-19 measured ~60 MB/s progressive.`,
     overrides: [{ matcher: { id: 'byRegexp', options: '.*file MB' }, properties: [{ id: 'custom.axisPlacement', value: 'right' }] }] }));
 
+  // Playback plans, the home relay, captions and credits (2026-10-23 audit: all of these were counted but not shown).
+  const ev = (metric, w = '6h') => `sum by (key) (increase(eiok_events_total{metric="${metric}"}[${w}]))`;
+  p.push(row('Playback plans, home relay, captions'));
+  p.push(series('Playback plans (per 6 h)', [[ev('adaptive').replace('}[', ',key=~"plan_.*|paced_off"}['), '{{key}}']], { w: 8, stack: true, min: 0,
+    description: 'Which plan each video got (src/adaptive.js): plan_direct = 1080p at once, plan_adaptive = 720p then 1080p, plan_start = the 360p first rung, plan_lower = 720p only; paced_off = kept at 720p by the credit pacer.' }));
+  p.push(series('Adaptive steps and Quest tickets (per 6 h)', [[ev('adaptive').replace('}[', ',key!~"plan_.*|paced_off"}['), '{{key}}']], { w: 8, min: 0,
+    description: 'master = adaptive playlists served, upgrade / upgrade_served / upgrade_failed = 1080p step-ups started, played, failed; hls_ticket = .m3u8 tickets (the world’s Android build); android_progressive = Quest players sent progressive; defer = resolver told to wait. A freeze after a switch is not visible here (the player does not report it).' }));
+  p.push(series('Ticket requests by client (per 6 h)', [[ev('ticket_client'), '{{key}}']], { w: 8, stack: true, min: 0,
+    description: 'string = the tablet’s status checks, ytdlp = VRChat’s resolver, avpro = the player. Per request, not per play.' }));
+  p.push(stat('Home relay today', [
+    ['max(eiok_home_today{key="mb"}) / 1000', 'GB'],
+    ['max(eiok_home_today{key="cap_mb"}) / 1000', 'cap GB'],
+    ['max(eiok_home_today{key="builds"})', 'videos'],
+    ['max(eiok_home_today{key="workers"})', 'workers'],
+  ], { w: 8, decimals: 1, thresholds: [{ color: INK, value: null }], description: 'What the Optiplex downloaded for home relay plays today (Chicago day) against HOME_DAILY_MB, and the media workers connected now. Set every minute by the search service.' }));
+  p.push(series('Home relay (per 6 h)', [[ev('home'), '{{key}}'], [ev('home_why'), 'why: {{key}}']], { w: 8, min: 0,
+    description: 'Sessions started / ready / failed / capped (refused by the daily cap) / timeout, and why a play went home (long video, Tunelio off or failed, the pacer).' }));
+  p.push(series('Home relay start time', [
+    ['histogram_quantile(0.5, sum by (le) (increase(eiok_home_start_seconds_bucket[6h])))', 'p50'],
+    ['histogram_quantile(0.95, sum by (le) (increase(eiok_home_start_seconds_bucket[6h])))', 'p95'],
+  ], { w: 8, unit: 's', min: 0, description: 'Play → first playlist with a segment from the Optiplex, 6 h windows.' }));
+  p.push(series('Credits spent per day, by use', [[ev('credits', '1d'), '{{key}}']], { w: 8, stack: true, min: 0,
+    description: 'playback = /create for visitors, captions = transcripts, probe = the speed probe, test = test slot refills. Rolling 24 h.' }));
+  p.push(series('Search sources (per 6 h)', [[ev('search_source'), '{{key}}'], ['max(eiok_youtube_api_units_today)', 'Data API units today']], { w: 8, stack: false, min: 0,
+    description: 'worker = the Optiplex relay, local = InnerTube from the Linode, api = the YouTube Data API (quota).' }));
+  p.push(series('Captions (per 6 h)', [
+    ['sum by (metric) (increase(eiok_events_total{metric=~"cc_list|cc_track",key=""}[6h]))', '{{metric}}'],
+    [ev('cc_via'), 'via {{key}}'], [ev('cc_words'), 'words {{key}}'], [ev('cc_unavailable'), 'unavailable: {{key}}'],
+  ], { w: 8, min: 0, description: 'Track lists and tracks served, which source answered (worker, local yt-dlp, Tunelio), word timing real or estimated, and why none was available.' }));
+  p.push(series('Rooms active (shards with a request, per hour)', [
+    ['count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)', 'rooms'],
+  ], { w: 12, min: 0, decimals: 0, description: 'Distinct shards that saw a request in the past hour (from the hourly shard table).' }));
+  p.push(series('Room quality picks and tablet warm-ups (per 6 h)', [[ev('quality_pick'), 'pick {{key}}'],
+    ['sum(increase(eiok_events_total{metric="warm"}[6h]))', 'warm builds'], ['sum(increase(eiok_events_total{metric="warm_played"}[6h]))', 'warm then played']], { w: 12, min: 0 }));
+
   p.push(row('Channels and flash checks'));
   p.push({
     type: 'table', id: ++id, title: 'Slots', datasource: DS, gridPos: place(14, 12),

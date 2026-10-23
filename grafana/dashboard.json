@@ -1588,7 +1588,7 @@
   {
    "type": "row",
    "id": 26,
-   "title": "Channels and flash checks",
+   "title": "Playback plans, home relay, captions",
    "collapsed": false,
    "gridPos": {
     "x": 0,
@@ -1599,9 +1599,10 @@
    "panels": []
   },
   {
-   "type": "table",
+   "type": "timeseries",
    "id": 27,
-   "title": "Slots",
+   "title": "Playback plans (per 6 h)",
+   "description": "Which plan each video got (src/adaptive.js): plan_direct = 1080p at once, plan_adaptive = 720p then 1080p, plan_start = the 360p first rung, plan_lower = 720p only; paced_off = kept at 720p by the credit pacer.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1609,6 +1610,675 @@
    "gridPos": {
     "x": 0,
     "y": 49,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (key) (increase(eiok_events_total{metric=\"adaptive\",key=~\"plan_.*|paced_off\"}[6h]))",
+     "legendFormat": "{{key}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 30,
+      "stacking": {
+       "mode": "normal"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "timeseries",
+   "id": 28,
+   "title": "Adaptive steps and Quest tickets (per 6 h)",
+   "description": "master = adaptive playlists served, upgrade / upgrade_served / upgrade_failed = 1080p step-ups started, played, failed; hls_ticket = .m3u8 tickets (the world’s Android build); android_progressive = Quest players sent progressive; defer = resolver told to wait. A freeze after a switch is not visible here (the player does not report it).",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 49,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (key) (increase(eiok_events_total{metric=\"adaptive\",key!~\"plan_.*|paced_off\"}[6h]))",
+     "legendFormat": "{{key}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "timeseries",
+   "id": 29,
+   "title": "Ticket requests by client (per 6 h)",
+   "description": "string = the tablet’s status checks, ytdlp = VRChat’s resolver, avpro = the player. Per request, not per play.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 16,
+    "y": 49,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (key) (increase(eiok_events_total{metric=\"ticket_client\"}[6h]))",
+     "legendFormat": "{{key}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 30,
+      "stacking": {
+       "mode": "normal"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "stat",
+   "id": 30,
+   "title": "Home relay today",
+   "description": "What the Optiplex downloaded for home relay plays today (Chicago day) against HOME_DAILY_MB, and the media workers connected now. Set every minute by the search service.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 57,
+    "w": 8,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_home_today{key=\"mb\"}) / 1000",
+     "legendFormat": "GB",
+     "instant": true
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_home_today{key=\"cap_mb\"}) / 1000",
+     "legendFormat": "cap GB",
+     "instant": true
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_home_today{key=\"builds\"})",
+     "legendFormat": "videos",
+     "instant": true
+    },
+    {
+     "refId": "D",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_home_today{key=\"workers\"})",
+     "legendFormat": "workers",
+     "instant": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "graphMode": "none",
+    "textMode": "value_and_name"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "decimals": 1,
+     "mappings": [],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#7aa2f7",
+        "value": null
+       }
+      ]
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "timeseries",
+   "id": 31,
+   "title": "Home relay (per 6 h)",
+   "description": "Sessions started / ready / failed / capped (refused by the daily cap) / timeout, and why a play went home (long video, Tunelio off or failed, the pacer).",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 57,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (key) (increase(eiok_events_total{metric=\"home\"}[6h]))",
+     "legendFormat": "{{key}}"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (key) (increase(eiok_events_total{metric=\"home_why\"}[6h]))",
+     "legendFormat": "why: {{key}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "timeseries",
+   "id": 32,
+   "title": "Home relay start time",
+   "description": "Play → first playlist with a segment from the Optiplex, 6 h windows.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 16,
+    "y": 57,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "histogram_quantile(0.5, sum by (le) (increase(eiok_home_start_seconds_bucket[6h])))",
+     "legendFormat": "p50"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_home_start_seconds_bucket[6h])))",
+     "legendFormat": "p95"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "timeseries",
+   "id": 33,
+   "title": "Credits spent per day, by use",
+   "description": "playback = /create for visitors, captions = transcripts, probe = the speed probe, test = test slot refills. Rolling 24 h.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 65,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (key) (increase(eiok_events_total{metric=\"credits\"}[1d]))",
+     "legendFormat": "{{key}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 30,
+      "stacking": {
+       "mode": "normal"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "timeseries",
+   "id": 34,
+   "title": "Search sources (per 6 h)",
+   "description": "worker = the Optiplex relay, local = InnerTube from the Linode, api = the YouTube Data API (quota).",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 65,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (key) (increase(eiok_events_total{metric=\"search_source\"}[6h]))",
+     "legendFormat": "{{key}}"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_youtube_api_units_today)",
+     "legendFormat": "Data API units today"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "timeseries",
+   "id": 35,
+   "title": "Captions (per 6 h)",
+   "description": "Track lists and tracks served, which source answered (worker, local yt-dlp, Tunelio), word timing real or estimated, and why none was available.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 16,
+    "y": 65,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (metric) (increase(eiok_events_total{metric=~\"cc_list|cc_track\",key=\"\"}[6h]))",
+     "legendFormat": "{{metric}}"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (key) (increase(eiok_events_total{metric=\"cc_via\"}[6h]))",
+     "legendFormat": "via {{key}}"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (key) (increase(eiok_events_total{metric=\"cc_words\"}[6h]))",
+     "legendFormat": "words {{key}}"
+    },
+    {
+     "refId": "D",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (key) (increase(eiok_events_total{metric=\"cc_unavailable\"}[6h]))",
+     "legendFormat": "unavailable: {{key}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "timeseries",
+   "id": 36,
+   "title": "Rooms active (shards with a request, per hour)",
+   "description": "Distinct shards that saw a request in the past hour (from the hourly shard table).",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 73,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)",
+     "legendFormat": "rooms"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "decimals": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "timeseries",
+   "id": 37,
+   "title": "Room quality picks and tablet warm-ups (per 6 h)",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 73,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (key) (increase(eiok_events_total{metric=\"quality_pick\"}[6h]))",
+     "legendFormat": "pick {{key}}"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum(increase(eiok_events_total{metric=\"warm\"}[6h]))",
+     "legendFormat": "warm builds"
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum(increase(eiok_events_total{metric=\"warm_played\"}[6h]))",
+     "legendFormat": "warm then played"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "row",
+   "id": 38,
+   "title": "Channels and flash checks",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 81,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "type": "table",
+   "id": 39,
+   "title": "Slots",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 82,
     "w": 14,
     "h": 12
    },
@@ -1816,7 +2486,7 @@
   },
   {
    "type": "timeseries",
-   "id": 28,
+   "id": 40,
    "title": "Flash checks (per 6 h)",
    "datasource": {
     "type": "prometheus",
@@ -1824,7 +2494,7 @@
    },
    "gridPos": {
     "x": 14,
-    "y": 49,
+    "y": 82,
     "w": 10,
     "h": 6
    },
@@ -1864,7 +2534,7 @@
   },
   {
    "type": "timeseries",
-   "id": 29,
+   "id": 41,
    "title": "Check queue",
    "datasource": {
     "type": "prometheus",
@@ -1872,7 +2542,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 61,
+    "y": 94,
     "w": 10,
     "h": 6
    },
@@ -1922,12 +2592,12 @@
   },
   {
    "type": "row",
-   "id": 30,
+   "id": 42,
    "title": "Hosts",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 67,
+    "y": 100,
     "w": 24,
     "h": 1
    },
@@ -1935,7 +2605,7 @@
   },
   {
    "type": "timeseries",
-   "id": 31,
+   "id": 43,
    "title": "CPU busy",
    "datasource": {
     "type": "prometheus",
@@ -1943,7 +2613,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 68,
+    "y": 101,
     "w": 8,
     "h": 8
    },
@@ -1984,7 +2654,7 @@
   },
   {
    "type": "timeseries",
-   "id": 32,
+   "id": 44,
    "title": "Memory available",
    "datasource": {
     "type": "prometheus",
@@ -1992,7 +2662,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 68,
+    "y": 101,
     "w": 8,
     "h": 8
    },
@@ -2033,7 +2703,7 @@
   },
   {
    "type": "timeseries",
-   "id": 33,
+   "id": 45,
    "title": "Disk free (/)",
    "datasource": {
     "type": "prometheus",
@@ -2041,7 +2711,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 68,
+    "y": 101,
     "w": 8,
     "h": 8
    },
@@ -2082,7 +2752,7 @@
   },
   {
    "type": "timeseries",
-   "id": 34,
+   "id": 46,
    "title": "Public endpoints",
    "datasource": {
     "type": "prometheus",
@@ -2090,7 +2760,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 76,
+    "y": 109,
     "w": 12,
     "h": 8
    },
@@ -2139,7 +2809,7 @@
   },
   {
    "type": "timeseries",
-   "id": 35,
+   "id": 47,
    "title": "Failed units",
    "description": "japharsworld-yt units, bgutil-pot and caddy in the failed state.",
    "datasource": {
@@ -2148,7 +2818,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 76,
+    "y": 109,
     "w": 12,
     "h": 8
    },
@@ -2188,12 +2858,12 @@
   },
   {
    "type": "row",
-   "id": 36,
+   "id": 48,
    "title": "Versions and deploys",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 84,
+    "y": 117,
     "w": 24,
     "h": 1
    },
@@ -2201,7 +2871,7 @@
   },
   {
    "type": "state-timeline",
-   "id": 37,
+   "id": 49,
    "title": "World version over time",
    "datasource": {
     "type": "prometheus",
@@ -2209,7 +2879,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 85,
+    "y": 118,
     "w": 24,
     "h": 4
    },
@@ -2261,7 +2931,7 @@
   },
   {
    "type": "table",
-   "id": 38,
+   "id": 50,
    "title": "World uploads and releases",
    "description": "VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.",
    "datasource": {
@@ -2270,7 +2940,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 89,
+    "y": 122,
     "w": 12,
     "h": 6
    },
@@ -2334,7 +3004,7 @@
   },
   {
    "type": "table",
-   "id": 39,
+   "id": 51,
    "title": "Deploys of main",
    "description": "Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.",
    "datasource": {
@@ -2343,7 +3013,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 89,
+    "y": 122,
     "w": 12,
     "h": 6
    },

@@ -19,6 +19,13 @@ function fixtures() {
     ['2026-10-19', 'search_ms', '1000', 4], ['2026-10-19', 'search_ms', '3000', 1], ['2026-10-19', 'search_ms', 'inf', 1],
   ]) put.run(d, m, k, v);
   db.prepare('INSERT INTO gauges (day, metric, key, value, at) VALUES (?, ?, ?, ?, ?)').run('2026-10-19', 'credits_remaining', '', 4000, NOW);
+  for (const [d, k, v] of [['2026-10-19', 'mb', 9000], ['2026-10-20', 'mb', 2500], ['2026-10-20', 'workers', 1]]) {
+    db.prepare('INSERT INTO gauges (day, metric, key, value, at) VALUES (?, ?, ?, ?, ?)').run(d, 'home_today', k, v, NOW);
+  }
+  for (const [h, k] of [['2026-10-20T09', '3'], ['2026-10-20T10', '3'], ['2026-10-20T10', '0']]) {
+    db.prepare('INSERT INTO hourly (hour, metric, key, value) VALUES (?, ?, ?, 1)').run(h, 'shard', k);
+  }
+  put.run('2026-10-19', 'home_start_s', '5', 2);
   recordPoll(db, { ts: NOW - 60_000, source: 'world:prod', values: { visits: 1040, occupants: 2 } });
   recordPoll(db, { ts: NOW - 3600_000, source: 'world:prod', values: { visits: 1000 } });
   db.prepare('INSERT INTO releases (source, version, at, detected) VALUES (?, ?, ?, ?)').run('world:prod', '104', NOW - 86400_000, NOW);
@@ -62,6 +69,12 @@ test('exporter: usage counters, histograms, polls, slots, flash checks, jobs, he
     has('eiok_search_seconds_bucket{le="+Inf"} 6');
     has('eiok_search_seconds_count 6');
     has('eiok_credits_remaining 4000');
+    has('eiok_home_today{key="mb"} 2500');
+    has('eiok_home_today{key="workers"} 1');
+    assert.ok(!text.includes('eiok_home_today{key="mb"} 9000'), 'only the latest day');
+    has('eiok_shard_active_hours_total{shard="3"} 2');
+    has('eiok_shard_active_hours_total{shard="0"} 1');
+    has('eiok_home_start_seconds_bucket{le="5"} 2');
     has('eiok_poll{source="world:prod",metric="visits"} 1040');
     has('eiok_release_timestamp_seconds{source="world:prod",version="104"} ' + (NOW - 86400_000) / 1000);
     has('eiok_slot_hidden{slot="jack-retro",kind="live",category="games",reason="flash"} 1');

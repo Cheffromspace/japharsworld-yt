@@ -87,6 +87,8 @@ export const METRICS = {
   home: ['daily', oneOf('start', 'ready', 'failed', 'capped', 'defer', 'timeout')],
   home_why: ['daily', oneOf('tunelio_off', 'long', 'pacer', 'tunelio_failed')],
   home_start_s: ['daily', isSBucket],
+  // Today's home relay use against its cap and the media workers connected, set every minute (numbers only).
+  home_today: ['gauge', oneOf('mb', 'builds', 'cap_mb', 'workers')],
   // Playback plans (src/adaptive.js): which plan each video got, masters served, 1080p upgrades started / served /
   // failed, plays the pacer kept at 720p, resolvers sent on to the player. plan_start: adaptive from a 360p first rung.
   adaptive: ['daily', oneOf('plan_lower', 'plan_direct', 'plan_adaptive', 'plan_start', 'master', 'upgrade', 'upgrade_served', 'upgrade_failed', 'paced_off', 'defer', 'android_progressive', 'hls_ticket')],

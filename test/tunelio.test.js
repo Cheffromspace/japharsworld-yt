@@ -138,6 +138,18 @@ test('alerts are throttled per kind', () => {
   assert.deepEqual(sent, ['one', 'three', 'four']);
 });
 
+test('an alert is resolved once, only after it fired; the next failure alerts at once', () => {
+  const sent = [];
+  const alert = makeAlert({ webhook: 'https://example/hook', fetcher: async (u, o) => sent.push(JSON.parse(o.body).content), now: () => 0 });
+  assert.equal(alert.resolve('a', 'a ok'), false); // never fired: nothing to clear
+  alert('a', 'a down');
+  alert('a', 'a still down');                      // throttled, still open
+  assert.equal(alert.resolve('a', 'a ok'), true);
+  assert.equal(alert.resolve('a', 'a ok'), false);
+  assert.equal(alert('a', 'a down again'), true);  // within the quiet period, but after an all-clear
+  assert.deepEqual(sent, ['a down', 'a ok', 'a down again']);
+});
+
 const raw = [
   { code: 'en', auto: true }, { code: 'en', auto: false }, { code: 'de-DE', auto: false }, { code: 'ja', auto: false },
   { code: 'ar', auto: false }, { code: 'hi', auto: false }, { code: 'zh-Hant', auto: false }, { code: 'iw', auto: false }, { code: 'ja', auto: false },

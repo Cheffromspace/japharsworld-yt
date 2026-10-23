@@ -76,6 +76,11 @@ export async function pollVRChat(cfg, { state, alert, now = Date.now(), fetcher 
     for (const [name, id] of cfg.worlds) rows.push({ source: `world:${name}`, values: worldValues(await vr.world(id, { allowLogin })) });
     if (cfg.groupId) rows.push({ source: 'group', values: groupValues(await vr.group(cfg.groupId, { allowLogin })) });
     if (state.loginFailedAt) delete state.loginFailedAt;
+    // The matching all-clear (owner, 2026-10-23: a login failure on 10-22 was fixed but never reported as fixed).
+    if (state.loginAlertAt) {
+      delete state.loginAlertAt;
+      alert('vrchat_login_ok', 'Metrics: VRChat login works again; VRChat numbers resume.', 0);
+    }
     state.backoffMinutes = 0;
   } catch (err) {
     log({ event: 'vrchat_error', status: err.status, code: err.code, message: String(err.message).slice(0, 200) });

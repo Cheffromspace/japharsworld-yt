@@ -33,7 +33,8 @@ Counted in memory and written to SQLite every minute and at shutdown (SIGTERM). 
 | `credits` | `playback` (10 per successful `/create`), `captions` (6 per `/transcript`), `probe` (the speed probe below), `test` (player test slot refills, `src/slots.js`) | Tunelio credits spent |
 | `join` / `join_lang` | – / VRChat language | the bare search address the world loads once after join (answered `400 empty_query`). Only visitors who **allow untrusted URLs** send it: the closest thing to a per-language join count |
 
-`gauges`: `credits_remaining` (the last `X-Credits-Remaining` seen each day).
+`gauges`: `credits_remaining` (the last `X-Credits-Remaining` seen each day); `home_today` with keys `mb` `builds`
+`cap_mb` `workers` (the home relay's use today, its cap and the media workers connected; set every minute, numbers only).
 `hourly`: `shard`, one row per hour and shard (0–7) that saw any request. Instances pick a shard at random, so the
 number of rows in an hour roughly counts busy instances; two instances on one shard count once (a lower bound).
 

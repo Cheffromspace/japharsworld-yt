@@ -10,6 +10,8 @@
 //   GET /hls/<token>.m3u8, /hls/<token>/<q>.m3u8          adaptive playlists a played ticket leads to (src/adaptive.js)
 //   GET /home/<token>/index.m3u8, /home/<token>/seg<n>.ts  home relay playback (src/home.js; uploads: PUT /relay/media/...)
 //   GET /v1/<shard>/cc/<i>[?l=<lang>]                  track i of that list (the tablet's caption picker)
+//   GET /v1/<shard>/cc[?l=<lang>]                      the track list alone, named in <lang>; free sources only, so it
+//                                                        never spends credits (the picker opens onto it)
 //   GET /healthz
 //   GET /relay/next, POST /relay/done                  search relay workers only (bearer RELAY_TOKEN; see relay.js)
 //   GET /stats, /stats.json, /stats/export.csv         usage metrics (bearer or ?token= STATS_TOKEN; see stats.js)
@@ -624,15 +626,17 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
 
   async function caption(req, res, shard, raw, url) {
     const byTrack = /^\d+$/.test(raw);
-    // "Show captions" (the list, in the visitor's language) vs a track picked on the tablet.
+    const listOnly = raw === ''; // the picker's list (free sources only; Everything is OK #76)
+    // The list with the visitor's own track ("captions on"), the list alone, or a track picked on the tablet.
     if (byTrack) metrics.inc('cc_track');
+    else if (listOnly) metrics.inc('cc_tracks');
     else { metrics.inc('cc_list'); metrics.inc('cc_list_lang', raw === 'native' ? 'native' : normalizeLang(raw)); }
-    if (byTrack && typeof captions.track !== 'function') { metrics.inc('cc_unavailable', 'no_tracks'); return fail(res, 404, 'no_tracks', 'Caption tracks are not available.'); }
-    const lang = byTrack ? normalizeLang(url.searchParams.get('l')) : raw === 'native' ? 'native' : (LANGS[raw] ? raw : normalizeLang(raw));
+    if ((byTrack && typeof captions.track !== 'function') || (listOnly && typeof captions.tracks !== 'function')) { metrics.inc('cc_unavailable', 'no_tracks'); return fail(res, 404, 'no_tracks', 'Caption tracks are not available.'); }
+    const lang = byTrack || listOnly ? normalizeLang(url.searchParams.get('l')) : raw === 'native' ? 'native' : (LANGS[raw] ? raw : normalizeLang(raw));
     const last = store.lastPlayed(shard);
     if (!last) { metrics.inc('cc_unavailable', 'nothing_playing'); return fail(res, 404, 'nothing_playing', 'Nothing from search has played here yet.'); }
     try {
-      const c = byTrack ? await captions.track(last.videoId, Number(raw), lang) : await captions.get(last.videoId, lang);
+      const c = byTrack ? await captions.track(last.videoId, Number(raw), lang) : listOnly ? await captions.tracks(last.videoId, lang) : await captions.get(last.videoId, lang);
       if (!c.available) metrics.inc('cc_unavailable', c.reason ?? 'none');
       else if (byTrack) metrics.inc('cc_track_lang', String(c.key ?? '').replace(/-orig$/, ''));
       return json(res, 200, { v: API, shard, t: last.n, ...c });
@@ -740,13 +744,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         res.writeHead(200, { 'content-type': PAGES[pagePath][1], 'content-length': buf.length, 'cache-control': 'public, max-age=3600' });
         return res.end(req.method === 'HEAD' ? undefined : buf);
       }
-      const m = url.pathname.match(/^\/v1\/(\d+)\/(s|q(?:\/(?:\d{3,4}|auto))?|cc\/(?:[A-Za-z-]+|\d{1,3})|\d+(?:\.m3u8)?)\/?$/);
+      const m = url.pathname.match(/^\/v1\/(\d+)\/(s|q(?:\/(?:\d{3,4}|auto))?|cc(?:\/(?:[A-Za-z-]+|\d{1,3}))?|\d+(?:\.m3u8)?)\/?$/);
       if (!m) return fail(res, 404, 'not_found', 'Unknown path.');
       const shard = Number(m[1]);
       if (!store.validShard(shard)) return fail(res, 404, 'bad_shard', 'Unknown shard.');
       metrics.shard(shard);
       if (m[2] === 's') { route = 'search'; return await search(req, res, shard, url); }
-      if (m[2].startsWith('cc/')) { route = 'captions'; return await caption(req, res, shard, m[2].slice(3), url); }
+      if (m[2] === 'cc' || m[2].startsWith('cc/')) { route = 'captions'; return await caption(req, res, shard, m[2].slice(3), url); }
       if (m[2] === 'q' || m[2].startsWith('q/')) { route = 'quality'; return quality(res, shard, m[2].slice(2)); }
       const hlsTicket = m[2].endsWith('.m3u8');
       const n = Number(hlsTicket ? m[2].slice(0, -5) : m[2]);

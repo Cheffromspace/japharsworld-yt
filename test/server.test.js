@@ -32,6 +32,7 @@ async function start(over = {}) {
   const captionCalls = [];
   const captions = {
     async get(id, lang) { captionCalls.push([id, lang]); return { id, lang, available: true, source: 'manual', lines: [[0, 1, 'hi']] }; },
+    async tracks(id, lang) { captionCalls.push([id, 'tracks', lang]); return { id, lang, available: true, tracks: [{ i: 0, code: 'en', name: 'English', auto: false }], track: -1 }; },
     warm(id) { this.get(id, 'native'); }, // the play route warms the free sources (src/captionchain.js)
   };
   const red = await sharp({ create: { width: 320, height: 180, channels: 3, background: '#f7768e' } }).jpeg().toBuffer();
@@ -89,6 +90,16 @@ test('search → tickets → redirect, sheet, next page, captions', async (t) =>
   assert.deepEqual(cc.body.lines, [[0, 1, 'hi']]);
   const none = await s.get('/v1/0/cc/ja');
   assert.equal(none.body.error, 'nothing_playing');
+
+  // The list alone (the tablet's CC popover), named in the visitor's language; no track is fetched for it.
+  const list = await s.get('/v1/1/cc?l=ja');
+  assert.equal(list.status, 200);
+  assert.equal(list.body.t, r.body.results[1].t);
+  assert.equal(list.body.track, -1);
+  assert.deepEqual(list.body.tracks.map((x) => x.code), ['en']);
+  assert.deepEqual(s.captionCalls.at(-1), [r.body.results[1].id, 'tracks', 'ja']);
+  const noList = await s.get('/v1/0/cc');
+  assert.equal(noList.body.error, 'nothing_playing');
 });
 
 test('pasted link goes first', async (t) => {

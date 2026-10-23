@@ -112,11 +112,12 @@ export const METRICS = {
   warm: ['daily', none],              // builds started by a tablet before Play (10 credits each)
   warm_played: ['daily', none],       // …of which a player then asked for the video
   cc_list: ['daily', none],
+  cc_tracks: ['daily', none],         // the picker's list alone (free sources only; the tablet's CC popover)
   cc_list_lang: ['daily', (k) => isLang(k) || k === 'native'],
   cc_track: ['daily', none],
   cc_track_lang: ['daily', isTrackLang],
   cc_unavailable: ['daily', oneOf('no_captions', 'no_track_in_language', 'temporarily_unavailable', 'translation_unavailable',
-    'nothing_playing', 'no_tracks', 'failed', 'none')],
+    'nothing_playing', 'no_tracks', 'list_unavailable', 'failed', 'none')],
   cc_via: ['daily', oneOf('worker', 'local', 'tunelio')],  // which caption source answered a fetch (src/captionchain.js)
   cc_words: ['daily', oneOf('real', 'estimated')],         // word timing in a served track: YouTube's, or spread by character
   credits: ['daily', oneOf('playback', 'captions', 'probe', 'test')],

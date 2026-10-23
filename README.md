@@ -54,7 +54,8 @@ This service works within that rule:
 | `GET /v1/<shard>/q` · `/v1/<shard>/q/<720|1080|auto>` | JSON `quality` (the room's playback quality for search videos), `pick` (`720p`/`1080p`/`auto`), `default`, `options`; the second form picks it (kept `QUALITY_HOURS`, 12; `auto` clears it: with playback plans on, 1080p when Tunelio is fast, else 720p). The tablet's ticket status carries it as `room` |
 | `GET /hls/<token>.m3u8` · `/hls/<token>/<360p|720p|1080p>.m3u8` | adaptive playlists a played ticket redirects to when its plan is adaptive (`ADAPTIVE_HLS`, src/adaptive.js); the tablet's ticket status then carries `plan` (`lower`/`direct`/`adaptive`/`start`: adaptive from a 360p first rung, `ADAPTIVE_START`) |
 | `GET /v1/<shard>/cc/<lang>` | JSON: `t`, `id`, `available`, `source` (`manual`/`auto`/`translated`), `lines` = `[[start, dur, text], …]`, `tracks` = `[{i, code, name, auto}]`, `track` (index shown, `-1` = none), `reason` when unavailable |
-| `GET /v1/<shard>/cc/<i>?l=<lang>` | the same for track *i* (Tunelio captions only) |
+| `GET /v1/<shard>/cc/<i>?l=<lang>` | the same for track *i* |
+| `GET /v1/<shard>/cc?l=<lang>` | the track list alone (`t`, `id`, `available`, `tracks`, `track: -1`), named in `<lang>`, from the free sources only: it never spends Tunelio credits. The tablet's caption popover opens onto it. `reason: list_unavailable` when no free source is up |
 | `GET /healthz` | `{"ok": true, "tunelio": bool, "credits": n, "workers": n, "lastSearchVia": "worker"/"local"/"api", "apiUnitsToday": n}` (credits as last reported by Tunelio) |
 
 Errors are JSON `{ "error": code, "message": … }` with codes `empty_query`, `rate_limited`, `youtube_failed`,

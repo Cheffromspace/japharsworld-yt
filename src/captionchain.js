@@ -7,7 +7,8 @@
 // however the list was learned, and the world sees `words: "real" | "estimated"` for what it is about to highlight.
 //
 // Public API as TunelioCaptions had it (server.js /cc routes): get(videoId, lang), track(videoId, i, uiLang), plus
-// warm(videoId) which the play route calls (only the free sources are used for warming).
+// tracks(videoId, uiLang) (the list alone, free sources only) and warm(videoId), which the play route calls (only the
+// free sources are used for warming).
 import { orderTracks, pickTrack, displayName, DEFAULT_SCRIPTS } from './transcripts.js';
 import { tracksFromInfo, codeOfKey, keyFor, linesFromCues, cuesFromLines } from './cues.js';
 import { chunksFromCues } from './blocks.js';
@@ -67,6 +68,25 @@ export class CaptionChain {
     });
   }
 
+  // The picker's list alone, never spending credits (Everything is OK #76: the CC popover opens straight onto Off and
+  // the video's languages, so this is asked for every search video someone opens the picker on). Usually already cached
+  // by warm(); otherwise the free sources are asked once. Without a free source it says so rather than paying Tunelio.
+  tracks(videoId, uiLang = 'en') {
+    return this.once(`${videoId}|tracks|${uiLang}`, async () => {
+      let tracks = this.list(videoId);
+      if (!tracks && this.free) {
+        const got = await this.resolve(videoId, null, { freeOnly: true });
+        tracks = this.list(videoId) ?? got?.tracks ?? null;
+      }
+      if (!tracks) return { id: videoId, lang: uiLang, available: false, reason: this.free ? 'temporarily_unavailable' : 'list_unavailable', tracks: [], track: -1 };
+      const lang = uiLang === 'native' ? 'en' : uiLang;
+      const list = tracks.map((t, n) => ({ i: n, code: t.code, name: displayName(t.code, lang), auto: t.auto }));
+      const autoTrack = tracks.find((t) => t.auto);
+      const base = { id: videoId, lang: uiLang, original: autoTrack ? lower(autoTrack.code).split('-')[0] : null, tracks: list, track: -1 };
+      return tracks.length ? { ...base, available: true } : { ...base, available: false, reason: 'no_captions' };
+    });
+  }
+
   // Captions that cost nothing are fetched as soon as a video plays, so they are there when someone taps CC.
   warm(videoId) {
     if (!this.free) return;
@@ -119,10 +139,10 @@ export class CaptionChain {
   // ---- the chain ----
   // want: { lang } | { code, auto } | null. Returns { tracks, track, cues, via, reason } from the first source that
   // answers, or null when none can right now. Whatever a source returns is cached before it is returned.
-  resolve(videoId, want) {
-    const k = `${videoId}|${JSON.stringify(want)}`;
+  resolve(videoId, want, { freeOnly = false } = {}) {
+    const k = `${videoId}|${JSON.stringify(want)}${freeOnly ? '|free' : ''}`;
     return this.once(`resolve|${k}`, async () => {
-      for (const [via, fetch] of this.sources(videoId, want)) {
+      for (const [via, fetch] of this.sources(videoId, want, freeOnly)) {
         const t0 = Date.now();
         try {
           const got = await fetch();
@@ -140,11 +160,11 @@ export class CaptionChain {
     });
   }
 
-  sources(videoId, want) {
+  sources(videoId, want, freeOnly = false) {
     const list = [];
     if (this.relay?.enabled && this.relay.online().length) list.push(['worker', () => this.fromRelay(videoId, want)]);
     if (this.local && !this.local.blocked) list.push(['local', () => this.fromLocal(videoId, want)]);
-    if (this.tunelio) list.push(['tunelio', () => this.fromTunelio(videoId, want)]);
+    if (this.tunelio && !freeOnly) list.push(['tunelio', () => this.fromTunelio(videoId, want)]);
     return list;
   }
 

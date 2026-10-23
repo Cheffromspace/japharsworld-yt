@@ -169,6 +169,31 @@ test('a cached list from one source keeps its numbering when another source fetc
   assert.deepEqual(auto.body.tracks.map((x) => [x.code, x.auto]), [['en', false], ['en', true]], 'the room keeps the list it already has');
 });
 
+test('tracks: the list alone comes from a free source and never from Tunelio', async (t) => {
+  const s = await start();
+  t.after(s.close);
+  // No free source up: it says so instead of paying for a transcript.
+  const dry = await s.chain.tracks('dQw4w9WgXcQ', 'ja');
+  assert.equal(dry.available, false);
+  assert.equal(dry.reason, 'list_unavailable');
+  assert.deepEqual(s.tunelio.calls, []);
+  const job = fakeCaptionsJob();
+  s.startWorker(job);
+  await s.waitOnline();
+  const list = await s.chain.tracks('dQw4w9WgXcQ', 'ja');
+  assert.equal(list.available, true);
+  assert.equal(list.track, -1);
+  assert.ok(list.tracks.length > 0);
+  assert.ok(list.tracks.every((x, i) => x.i === i && typeof x.name === 'string' && typeof x.auto === 'boolean'));
+  assert.equal(job.calls.length, 1);
+  assert.equal(job.calls[0].want, null);
+  assert.deepEqual(s.tunelio.calls, []);
+  // Cached: a second ask costs nothing more, and a track pick keeps the same numbering.
+  const again = await s.chain.tracks('dQw4w9WgXcQ', 'en');
+  assert.deepEqual(again.tracks.map((x) => x.code), list.tracks.map((x) => x.code));
+  assert.equal(job.calls.length, 1);
+});
+
 test('warm: the free source is asked when a video plays, Tunelio is not', async (t) => {
   const s = await start();
   t.after(s.close);

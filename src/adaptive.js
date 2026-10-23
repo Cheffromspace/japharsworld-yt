@@ -65,6 +65,24 @@ export class Adaptive {
     this.plans = new Map();    // video id → { mode, upgrade, until, promise }
     this.sessions = new Map(); // token → { token, data, lowerJob, served, fellBack }
     this.byVideo = new Map();  // video id → token
+    this.forced = new Map();   // video id → { mode, until }: test plans (force)
+  }
+
+  // A test plan for one video until `minutes` from now (POST /ops/plan, tools/ops.mjs plan): its plays get `mode`
+  // whatever the prediction, a room pick or the pacer say, so the test kit can play a given plan (e.g. `start`,
+  // 360p → 1080p) without hunting for a video Tunelio is slow on (2026-10-23, #104). Tunelio failures still fall back
+  // as usual. mode null clears it.
+  force(id, mode, minutes = 60) {
+    this.plans.delete(id);
+    if (!mode) { this.forced.delete(id); return null; }
+    const entry = { mode, until: this.now() + minutes * 60_000 };
+    this.forced.set(id, entry);
+    for (const [k, f] of this.forced) if (f.until < this.now()) this.forced.delete(k);
+    return entry;
+  }
+
+  forcedPlans() {
+    return [...this.forced].filter(([, f]) => f.until > this.now()).map(([id, f]) => ({ id, mode: f.mode, until: new Date(f.until).toISOString() }));
   }
 
   // 'lower' | 'direct' | 'adaptive' | 'start' for a video. upgrade: 'always' (the room picked 1080p) | 'never' (picked 720p) |
@@ -80,6 +98,8 @@ export class Adaptive {
   }
 
   async #decide(data, upgrade) {
+    const forced = this.forced.get(data.id);
+    if (forced?.until > this.now()) return this.#forcedPlan(data, forced.mode);
     if (upgrade === 'never') return this.#chose(data, 'lower', { why: 'room_720p' });
     if (upgrade === 'paced') {
       const p = this.pacer?.check() ?? { ok: true };
@@ -105,6 +125,21 @@ export class Adaptive {
       } catch { /* 720p /create failed: plain adaptive, whose 720p build asks again */ }
     }
     return this.#chose(data, 'adaptive', { mb, predicted });
+  }
+
+  async #forcedPlan(data, mode) {
+    if (mode === 'lower') return this.#chose(data, 'lower', { why: 'forced' });
+    let mb;
+    try { mb = await this.playback.size(data, this.upper); } catch (err) {
+      return this.#chose(data, 'lower', { why: 'create_failed', status: err?.status });
+    }
+    if (mode === 'start' && this.start) {
+      try {
+        const lowerMb = await this.playback.size(data, this.lower);
+        return this.#chose(data, 'start', { why: 'forced', mb, lowerMb });
+      } catch { /* as in #decide: plain adaptive */ }
+    }
+    return this.#chose(data, mode === 'direct' ? 'direct' : 'adaptive', { why: 'forced', mb });
   }
 
   #chose(data, mode, detail) {

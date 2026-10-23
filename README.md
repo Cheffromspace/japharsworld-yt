@@ -223,7 +223,10 @@ The VRPlayer TEST world bakes slots 01–11 (`/hls-test/7e570000000000NN.m3u8`; 
 `src/slots.js`; 08–11 are the Quest audio master variations). The slots are refilled with
 `POST /ops/slots/refill[?id=<video>&force=1]` (20 credits, `SLOT_REFILLS_PER_DAY` a day, refused while the links
 still have 2 hours left) and read with `GET /ops/slots`: `node tools/ops.mjs refill` starts one and waits for the
-builds, `node tools/ops.mjs slots` shows what the slots hold and when they expire.
+builds, `node tools/ops.mjs slots` shows what the slots hold and when they expire. Test plans: `POST
+/ops/plan?id=<video>&mode=<start|adaptive|direct|lower|clear>&minutes=<1-240>` (`node tools/ops.mjs plan --id <video>
+--mode start`; `GET /ops/plan` lists them) gives that video's plays the plan whatever the prediction, the room's pick
+or the pacer say, so a test can play the 360p `start` plan on demand. The plan is held in memory, and a restart clears it.
 
 ## Development
 

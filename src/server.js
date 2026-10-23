@@ -17,6 +17,7 @@
 //   GET /stats, /stats.json, /stats/export.csv         usage metrics (bearer or ?token= STATS_TOKEN; see stats.js)
 //   GET /ops/state, /ops/events                        read-only operator view, redacted (STATS_TOKEN; see ops.js)
 //   GET /ops/slots, POST /ops/slots/refill             player test slots: what they hold, refill them (src/slots.js)
+//   GET /ops/plan, POST /ops/plan                      test plans: force a video's play plan for up to 4 h (src/adaptive.js)
 //   GET /hls-test/<hex>.m3u8                           player test kit: test playlists and slots (yt-dlp gets a "not a video" page)
 //   GET /hls-test/<hex>/<file>                         player test kit: hand-copied segments and playlists (missing segments held 10 s)
 //   GET /, /privacy, /logo.png                         home page and privacy policy (public/)
@@ -96,7 +97,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   try {
     const db = metricsDb();
     for (const r of db?.prepare(`SELECT p.ts, p.value mbps FROM polls p WHERE p.source IN ('tunelio:progressive', 'tunelio:hls') AND p.metric = 'mb_per_s' AND p.ts > ? ORDER BY p.ts`).all(Date.now() - 2 * 3600_000) ?? []) {
-      playback.speeds?.push({ at: r.ts, mbps: r.mbps });
+      if (r.mbps <= 120) playback.speeds?.push({ at: r.ts, mbps: r.mbps }); // faster: a file Tunelio already had (cachedBuild)
     }
   } catch (err) { logJson({ event: 'speed_seed_failed', message: String(err?.message ?? err).slice(0, 200) }); }
   const today = () => dayOf(Date.now(), config.metricsTz);
@@ -727,7 +728,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         route = 'stats';
         return statsRoute(req, res, url, { token: config.statsToken, metricsPath: config.metricsPath, monitorDb: config.monitorDb, tz: config.metricsTz, renewDay: config.tunelioRenewsDay, metrics });
       }
-      if (url.pathname.startsWith('/ops/')) { route = 'ops'; return opsRoute(req, res, url, { token: config.statsToken, ring, state: opsState, slots }); }
+      if (url.pathname.startsWith('/ops/')) { route = 'ops'; return opsRoute(req, res, url, { token: config.statsToken, ring, state: opsState, slots, adaptive }); }
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
       if (url.pathname.startsWith('/hls-test/')) { route = 'hls-test'; return await hlsTest(req, res, url); }
       if (url.pathname.startsWith('/hls/')) { route = 'hls'; return await hlsRoute(req, res, url); }

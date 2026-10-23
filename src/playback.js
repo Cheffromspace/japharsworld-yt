@@ -24,6 +24,11 @@ const watch = (id) => `https://www.youtube.com/watch?v=${id}`;
 // are per format: seconds per MB, plus a fixed part. Learned from every finished build (EWMA).
 const RATE_PRIOR = { progressive: 0.017, hls: 0.03 };
 const FIXED_PRIOR = { progressive: 2, hls: 3 };
+// A build this quick was already at Tunelio (another visitor's, or ours a little earlier) and says nothing about how
+// fast Tunelio builds: 2026-10-23, 3FJctU--OxI's builds again at 0.5–2 s (456–751 MB, "46–1600 MB/s") made the median of
+// the last five ~260 MB/s, so the next fresh video (rI9x6DvOaao, 613 MB) was predicted 12 s and took 84 s. The quickest
+// fresh builds seen took 3.4 s (30 MB at 360p); the fastest real speed seen was ~82 MB/s.
+export const cachedBuild = (mb, buildMs) => buildMs < 3000 || mb / (buildMs / 1000) > 120;
 
 export class Playback {
   constructor({ tunelio, quality = '1080p', lowerQuality = '720p', maxMbForQuality = 1500, progressiveMaxMb = 1800,
@@ -135,7 +140,7 @@ export class Playback {
   // Learn from a finished build (visitors' and the speed probe's): split the time into a fixed part and a per-MB
   // part, nudging both toward this build.
   learn(format, mb, buildMs) {
-    if (!(mb > 0) || !(buildMs > 500) || !this.rate[format]) return;
+    if (!(mb > 0) || !(buildMs > 500) || !this.rate[format] || cachedBuild(mb, buildMs)) return;
     this.speed(mb, buildMs);
     const fixed = this.fixed[format], rate = this.rate[format];
     const k = Math.min(3, Math.max(0.3, buildMs / 1000 / Math.max(1, fixed + rate * mb))); // > 1: slower than predicted
@@ -201,7 +206,8 @@ export class Playback {
     job.reason = reason;
     const buildMs = job.endedMs - job.startedMs;
     if (ok) this.learn(job.format, job.mb, buildMs);
-    this.log({ event: ok ? 'tunelio_link' : 'build_failed', id: job.id, quality: job.quality, hls: job.format === 'hls', mb: job.mb, buildMs, seconds: job.seconds, reason });
+    this.log({ event: ok ? 'tunelio_link' : 'build_failed', id: job.id, quality: job.quality, hls: job.format === 'hls', mb: job.mb, buildMs, seconds: job.seconds, reason,
+      ...(ok && cachedBuild(job.mb, buildMs) ? { cached: true } : {}) });
     try { this.onBuild({ id: job.id, format: job.format, quality: job.quality, seconds: job.seconds, mb: job.mb, buildMs, ok }); } catch { /* metrics only */ }
     return job;
   }

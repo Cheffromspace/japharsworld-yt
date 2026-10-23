@@ -241,6 +241,39 @@ test('speed estimate: the median of recent builds wins over the long-run average
   assert.equal(Math.round(p.predict('progressive', 300)), 7, 'two hours later the slow builds no longer count');
 });
 
+test('speed estimate: builds Tunelio already had (seconds for hundreds of MB) teach nothing', () => {
+  const p = new Playback({ tunelio: { enabled: true } });
+  p.learn('hls', 170, 33_000); p.learn('hls', 613, 84_000); // fresh: ~5 and ~7 MB/s
+  const before = { predicted: p.predict('hls', 600), rate: p.rate.hls, fixed: p.fixed.hls };
+  // 2026-10-23, 3FJctU--OxI played again: 751 MB in 1.8 s, 456 MB in 1.7 s, 93 MB in 2 s, 751 MB in 0.47 s.
+  p.learn('hls', 751, 1829); p.learn('hls', 456, 1735); p.learn('hls', 93, 2036); p.learn('hls', 751, 471);
+  p.learn('hls', 900, 4000); // over 120 MB/s
+  assert.deepEqual({ predicted: p.predict('hls', 600), rate: p.rate.hls, fixed: p.fixed.hls }, before);
+  assert.ok(before.predicted > 60, `still predicts a slow build (${before.predicted} s)`);
+});
+
+test('forced plan: a test plan for one video wins over the prediction, a room pick and the pacer, until it expires', async () => {
+  let now = Date.now();
+  const f = fakes();
+  const no = { check: () => ({ ok: false, allowance: 0, spent: 5 }) };
+  const events = [];
+  const a = new Adaptive({ playback: f.playback, pacer: no, start: '360p', now: () => now, log: (o) => events.push(o) });
+  assert.equal(await a.plan({ id: 'fjords20000', seconds: 1211 }), 'lower', 'the pacer says no');
+  a.force('fjords20000', 'start', 30);
+  assert.equal(await a.plan({ id: 'fjords20000', seconds: 1211 }), 'start', 'fast Tunelio, no budget: forced anyway');
+  assert.equal(await a.plan({ id: 'fjords20000', seconds: 1211 }, 'never'), 'start', 'and over a room pick');
+  assert.deepEqual(events.at(-1), { event: 'play_plan', id: 'fjords20000', mode: 'start', seconds: 1211, why: 'forced', mb: 400, lowerMb: 200 });
+  assert.deepEqual(a.forcedPlans().map((x) => [x.id, x.mode]), [['fjords20000', 'start']]);
+  assert.equal(await a.plan({ id: 'otherVideo1', seconds: 1211 }), 'lower', 'other videos as usual');
+  now += 31 * 60_000;
+  assert.deepEqual(a.forcedPlans(), []);
+  assert.equal(await a.plan({ id: 'fjords20000', seconds: 1211 }), 'lower', 'expired: back to the pacer');
+  a.force('fjords20000', 'direct', 30);
+  assert.equal(await a.plan({ id: 'fjords20000', seconds: 1211 }), 'direct');
+  a.force('fjords20000', null);
+  assert.equal(await a.plan({ id: 'fjords20000', seconds: 1211 }), 'lower', 'cleared');
+});
+
 test('a plain HLS build (a video over 3 hours) reached through the redirect goes to our copy with absolute links', async (t) => {
   const f = fakes();
   const long = { id: 'LongRain001', title: 't', channel: 'c', length: '10:00:00', seconds: 36000, views: '', age: '', live: false };

@@ -66,6 +66,21 @@ test('ops routes: token required, state and redacted events', async (t) => {
   const all = JSON.stringify((await get('/ops/events')).body) + JSON.stringify(st.body);
   assert.doesNotMatch(all, /AbCdEfGh1jK|sig=y|NSPlayer/, 'no video IDs, link signatures or User-Agents');
 
+  // Test plans: POST sets one (token required), GET lists them.
+  const post = async (qs, token = 'secret') => {
+    const r = await fetch(`${url}/ops/plan?${qs}`, { method: 'POST', headers: token ? { authorization: `Bearer ${token}` } : {} });
+    return { status: r.status, body: await r.json().catch(() => null) };
+  };
+  assert.equal((await post('id=AbCdEfGh1jK&mode=start', null)).status, 401);
+  assert.equal((await post('id=nope&mode=start')).status, 400);
+  assert.equal((await post('id=AbCdEfGh1jK&mode=fast')).status, 400);
+  const set = await post('id=AbCdEfGh1jK&mode=start&minutes=999');
+  assert.equal(set.status, 200);
+  assert.deepEqual(set.body.forced.map((x) => [x.id, x.mode]), [['AbCdEfGh1jK', 'start']]);
+  assert.ok(Date.parse(set.body.forced[0].until) - Date.now() <= 240 * 60_000 + 1000, 'at most 4 hours');
+  assert.equal((await get('/ops/plan')).body.forced.length, 1);
+  assert.deepEqual((await post('id=AbCdEfGh1jK&mode=clear')).body.forced, []);
+
   // Without a token configured the routes don't exist.
   const off = createApp({ config: { ...config, statsToken: '' }, store, youtube, tunelio, log: () => {} });
   const res = { writeHead(s) { this.status = s; return this; }, end() {} , on() {} };

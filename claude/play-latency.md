@@ -153,6 +153,12 @@ in under the 1080p link when the 1080p fails, is AV1 on a Quest, or isn't built 
 after the first master load (`adaptive`/`start_step_lower`; the player then stays on 720p, since a VOD variant playlist
 is read once). `ADAPTIVE_START_MID=on` lists the 720p again.
 
+The first real retest of that (rI9x6DvOaao, 18:29 UTC) got `adaptive`. The plan predicted 12.4 s for a 613 MB 1080p;
+the builds took 33 s (720p HLS, 170 MB) and 84 s (1080p). The median of the last five build speeds had come from
+3FJctU--OxI played again, which Tunelio already had: 456–751 MB in 0.5–2 s, "46–1600 MB/s". Builds under 3 s or over
+120 MB/s no longer teach the estimate (src/playback.js `cachedBuild`; `tunelio_link` logs `cached: true`). For tests
+that need a given plan, `node tools/ops.mjs plan --id <video> --mode start` forces it (README, player test kit).
+
 ## Home relay playback (2026-10-22/23)
 
 Owner: add the home connection to the serving chain, "as part of our adaptive credit spending, preferring Tunelio",

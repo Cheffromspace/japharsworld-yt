@@ -21,7 +21,7 @@ ffmpeg -hide_banner -version | head -1
 
 say "yt-dlp ($VENV)"
 [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
-"$VENV/bin/pip" install -q -U pip "yt-dlp[default]"
+"$VENV/bin/pip" install -q -U pip "yt-dlp[default,curl-cffi]"
 "$VENV/bin/yt-dlp" --version
 
 say "SSH key ($STATE)"

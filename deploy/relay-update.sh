@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # Run by japharsworld-yt-relay-update.timer on the Optiplex every 5 minutes (as root).
 # Pulls origin/main; restarts the worker when something it runs changed (relay/, src/, packages, its units).
-# Once a day also updates the flash-check worker's yt-dlp (when that worker is set up).
+# Once a day also updates the flash-check worker's yt-dlp (when that worker is set up), which the relay worker runs too;
+# at once when curl_cffi is missing (#15: yt-dlp's browser impersonation needs it; without it every run warned
+# "no impersonate target is available").
 set -euo pipefail
 # Wrapped in main() so bash has read the whole script before git reset can rewrite this file.
 main() {
 APP=/opt/japharsworld-yt-relay
 VENV=/opt/japharsworld-yt-slotworker-venv
 STAMP=/var/lib/japharsworld-yt-slotworker/.ytdlp-updated
-if [ -x "$VENV/bin/pip" ] && { [ ! -f "$STAMP" ] || [ -n "$(find "$STAMP" -mmin +1440)" ]; }; then
+if [ -x "$VENV/bin/pip" ] && { [ ! -f "$STAMP" ] || [ -n "$(find "$STAMP" -mmin +1440)" ] || ! "$VENV/bin/python" -c 'import curl_cffi' 2>/dev/null; }; then
   before=$("$VENV/bin/yt-dlp" --version)
-  "$VENV/bin/pip" install -q -U "yt-dlp[default]" && touch "$STAMP"
+  "$VENV/bin/pip" install -q -U "yt-dlp[default,curl-cffi]" && touch "$STAMP"
   after=$("$VENV/bin/yt-dlp" --version)
   [ "$before" = "$after" ] || echo "yt-dlp $before -> $after"
 fi

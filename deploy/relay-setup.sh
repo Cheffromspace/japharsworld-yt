@@ -17,7 +17,7 @@ say "Box"
 
 say "Packages"
 export DEBIAN_FRONTEND=noninteractive
-need=""; for p in git curl ca-certificates; do dpkg -s "$p" >/dev/null 2>&1 || need="$need $p"; done
+need=""; for p in git curl ca-certificates ffmpeg; do dpkg -s "$p" >/dev/null 2>&1 || need="$need $p"; done
 [ -z "$need" ] || { apt-get update -qq; apt-get install -y -qq $need >/dev/null; }
 node_ok() { command -v node >/dev/null && command -v npm >/dev/null && node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=13)?0:1)'; }
 # The distro's Node when it is new enough (Ubuntu 26.04 ships 22.22), NodeSource otherwise.

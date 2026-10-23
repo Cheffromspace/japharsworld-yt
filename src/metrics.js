@@ -81,7 +81,12 @@ export const METRICS = {
   more: ['daily', none],
   more_fail: ['daily', isStatus],
   play: ['daily', none],
-  play_route: ['daily', oneOf('tunelio-progressive', 'tunelio-hls', 'tunelio-adaptive', 'youtube-live', 'youtube-fallback')],
+  play_route: ['daily', oneOf('tunelio-progressive', 'tunelio-hls', 'tunelio-adaptive', 'home', 'youtube-live', 'youtube-fallback')],
+  // Home relay (src/home.js): sessions started / ready / failed, new sessions refused by the daily cap, and why a play
+  // started home (Tunelio off, a long video, the credit pacer, Tunelio's build failed), counted once per session.
+  home: ['daily', oneOf('start', 'ready', 'failed', 'capped', 'defer', 'timeout')],
+  home_why: ['daily', oneOf('tunelio_off', 'long', 'pacer', 'tunelio_failed')],
+  home_start_s: ['daily', isSBucket],
   // Playback plans (src/adaptive.js): which plan each video got, masters served, 1080p upgrades started / served /
   // failed, plays the pacer kept at 720p, resolvers sent on to the player. plan_start: adaptive from a 360p first rung.
   adaptive: ['daily', oneOf('plan_lower', 'plan_direct', 'plan_adaptive', 'plan_start', 'master', 'upgrade', 'upgrade_served', 'upgrade_failed', 'paced_off', 'defer', 'android_progressive')],

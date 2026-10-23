@@ -8,6 +8,7 @@
 //                                                      src/blocks.js), from the first source in src/captionchain.js that answers
 //   GET /v1/<shard>/q[/<720|1080>]                    the room's playback quality for search videos (read, or pick on the tablet)
 //   GET /hls/<token>.m3u8, /hls/<token>/<q>.m3u8          adaptive playlists a played ticket leads to (src/adaptive.js)
+//   GET /home/<token>/index.m3u8, /home/<token>/seg<n>.ts  home relay playback (src/home.js; uploads: PUT /relay/media/...)
 //   GET /v1/<shard>/cc/<i>[?l=<lang>]                  track i of that list (the tablet's caption picker)
 //   GET /healthz
 //   GET /relay/next, POST /relay/done                  search relay workers only (bearer RELAY_TOKEN; see relay.js)
@@ -40,6 +41,7 @@ import { Adaptive, Pacer } from './adaptive.js';
 import { TunelioProbe } from './probe.js';
 import { EventRing, opsRoute, gitHead } from './ops.js';
 import { TestSlots } from './slots.js';
+import { Home } from './home.js';
 import { statsRoute, latestCredits, billingPeriod, daysBetween } from './stats.js';
 
 const API = 1;
@@ -60,7 +62,7 @@ function page(path) {
   return buf;
 }
 
-export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, adaptive, slots, log = console.log } = {}) {
+export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, adaptive, slots, home, log = console.log } = {}) {
   // Recent events for /ops/events, redacted as they are kept.
   const ring = new EventRing();
   const rawLog = log;
@@ -107,6 +109,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }),
   });
   relay ??= new Relay({ token: config.relayToken, log: logJson });
+  home ??= new Home({ relay, dir: join(dirname(config.dbPath), 'home'), base: `${config.publicUrl}/home`, enabled: config.homeRelay && relay.enabled,
+    dailyBuilds: config.homeDailyBuilds, dailyMb: config.homeDailyMb, keepHours: config.homeKeepHours, maxGb: config.homeMaxGb, readyMs: config.homeReadyMs,
+    log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
+  if (home.enabled) setInterval(() => home.sweep(), 10 * 60_000).unref();
   // Captions: relay worker → yt-dlp here (when turned on, or when there is no Tunelio) → Tunelio (src/captionchain.js).
   captions ??= new CaptionChain({ store, relay, metrics, log: logJson, cacheDays: config.captionCacheDays, scripts: config.captionScripts,
     relayWaitMs: config.relayCaptionWaitMs,
@@ -311,6 +317,20 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return res.end(req.method === 'HEAD' ? undefined : body);
   }
 
+  // Home relay playback (src/home.js). Like /hls/, a resolver that gets here is told "not a video" for the playlist.
+  function homeRoute(req, res, url) {
+    const m = url.pathname.match(/^\/home\/([a-f0-9]{18})\/([\w.-]{1,32})$/);
+    if (m && m[2] === 'index.m3u8' && clientKind(req.headers['user-agent']) === 'ytdlp') {
+      const page = Buffer.from('<!doctype html><title>Video</title><p>Not a video page.</p>');
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': page.length, 'cache-control': 'no-store' });
+      return res.end(page);
+    }
+    const f = m ? home.file(m[1], m[2]) : null;
+    if (!f) return fail(res, 404, 'not_found', 'Unknown path.');
+    res.writeHead(200, { 'content-type': f.type, 'content-length': f.body.length, 'cache-control': 'no-store' });
+    return res.end(req.method === 'HEAD' ? undefined : f.body);
+  }
+
   // /ops/state: what is in flight right now, without video IDs.
   function opsState() {
     const now = Date.now();
@@ -326,6 +346,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           .map((j) => ({ at: new Date(j.endedMs).toISOString(), state: j.state, reason: j.reason, format: j.format, quality: j.quality, mb: j.mb, seconds: j.seconds, buildS: Math.round((j.endedMs - j.startedMs) / 100) / 10 })),
         learned: { rate: playback.rate, fixed: playback.fixed } },
       relay: { enabled: relay.enabled, workers: relay.online(), idleS: Math.round(relay.idleMs() / 1000) },
+      home: home.state(),
       search: { lastVia: searcher.state.lastVia, apiUnitsToday: api.unitsToday },
       plans: {
         on: config.adaptiveHls, shards: config.adaptiveShards, directSeconds: config.adaptiveDirectSeconds,
@@ -373,6 +394,35 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return json(res, 200, { v: API, shard, quality: roomQuality(shard), pick: pick ?? 'auto', default: config.tunelioQuality, options: config.tunelioQualities });
   }
 
+  // Whether a play goes to the home relay (src/home.js), and why; null = the Tunelio path. Tunelio comes first while
+  // today's credits are within the pacer's allowance (owner, 2026-10-23); live streams stay on youtube.com. A session
+  // already there (late joiners, replays) is reused whatever the reason.
+  function homeWhy(data, quality) {
+    if (!home.enabled || data.live) return null;
+    const s = home.peek(data, quality);
+    if (s && s.state !== 'failed') return 'reuse';
+    if (!home.worker()) return null;
+    if (!tunelio.enabled || Date.now() < (playback.pausedUntil ?? 0)) return 'tunelio_off';
+    if ((data.seconds ?? 0) >= config.homeLongMinutes * 60) return 'long';
+    const p = adaptive.pacer?.check?.();
+    if (p && !p.ok) return 'pacer';
+    return null;
+  }
+  // A home session for this play, counted once by why it went home (a session that is already there is just used).
+  function startHome(data, quality, why) {
+    const s = home.start(data, quality);
+    if (s && !s.why) { s.why = why; metrics.inc('home_why', why); }
+    return s;
+  }
+  // The tablet's view of a home session (the fields of playback.status). A home stream starts in ~5 s (2026-10-23).
+  function homeStatus(s) {
+    if (s.state === 'ready') return { state: 'ready', format: 'hls', quality: s.quality, plan: 'home', elapsed: Math.round((s.readyMs - s.startedMs) / 1000) };
+    const elapsed = (Date.now() - s.startedMs) / 1000;
+    const eta = Math.max(2, Math.round(6 - elapsed));
+    return { state: 'building', format: 'hls', quality: s.quality, plan: 'home', elapsed: Math.round(elapsed), eta,
+      progress: Math.round(Math.min(0.95, elapsed / (elapsed + eta)) * 100) / 100 };
+  }
+
   async function ticket(req, res, shard, n) {
     const t = store.get(shard, n);
     if (!t) return fail(res, 404, 'unknown_ticket', 'Nothing here yet. Search again.');
@@ -381,6 +431,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       metrics.inc('ticket_client', kind);
       // The tablet asking (a row selected, or watching a build): start the build, report it, never redirect.
       if (kind === 'string') {
+        const hq = roomQuality(shard);
+        const hw = homeWhy(t.data, hq);
+        const hs = hw ? startHome(t.data, hq, hw) : null;
+        if (hs && hs.state !== 'failed') return json(res, 200, { v: API, shard, t: n, room: hq, ...homeStatus(hs) });
         const c = await choice(shard, t.data);
         const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
         const st = playback.status(t.data, { quality: c.quality, hls: c.hls });
@@ -391,36 +445,66 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // A player (VRChat's resolver, then AVPro). The resolver gives up after 20 s, so it is held only briefly and
       // then told "this is not a video" (a plain page), which makes VRChat hand the URL straight to AVPro.
       const resolver = kind === 'ytdlp';
-      let c = await choice(shard, t.data);
-      // Android players can't open HLS behind a ticket (src/playback.js isAndroidPlayer): the progressive build of the
-      // default quality instead. The PC players in the same room keep the adaptive plan. Videos too long for a
-      // progressive build still get HLS, which an Android player can't play.
-      if (c.hls && !resolver && isAndroidPlayer(req.headers['user-agent'])) {
-        c = { quality: adaptive.lower, hls: false, mode: 'android' };
-        metrics.inc('adaptive', 'android_progressive');
-      }
-      if (c.hls && resolver) {
-        // yt-dlp would pick one variant of the master and hand AVPro only that: send it on at once, start the build.
-        playback.start(t.data, c.quality, { hls: true });
-        metrics.inc('adaptive', 'defer');
-        logJson({ event: 'play_defer', shard, n, id: t.data.id, held: 0, adaptive: true });
-        const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
-        return res.end(body);
-      }
+      const android = isAndroidPlayer(req.headers['user-agent']);
       const started = Date.now();
-      holding++;
-      let where;
-      try {
-        where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs,
-          quality: c.quality, hls: c.hls });
-      } finally { holding--; }
-      if (c.hls && where.ready && where.via === 'tunelio') {
-        where = { ...where, location: adaptive.url(adaptive.session(t.data, playback.peek(t.data, c.quality, { hls: true }))) };
-      } else if (!resolver && where.ready && where.via === 'tunelio' && /[?&]hls=1$/.test(where.location)) {
-        // A plain HLS build reached through the redirect: our copy with absolute links (see src/adaptive.js).
-        const job = playback.peek(t.data, c.quality, { hls: c.hls });
-        if (job?.url === where.location) where = { ...where, location: adaptive.single(t.data, job) };
+      let where = null;
+      // Home relay first when it applies. HLS only, so never for Android players (f331bcc). The resolver is sent on at
+      // once (it would only pick the playlist apart); the player waits for the first segments.
+      const hq = roomQuality(shard);
+      const why = android ? null : homeWhy(t.data, hq);
+      const hs = why ? startHome(t.data, hq, why) : null;
+      if (hs && hs.state !== 'failed') {
+        if (resolver) {
+          metrics.inc('home', 'defer');
+          logJson({ event: 'play_defer', shard, n, id: t.data.id, held: 0, home: true });
+          const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+          return res.end(body);
+        }
+        holding++;
+        try { await home.wait(hs, config.homeReadyMs); } finally { holding--; }
+        if (hs.state === 'ready') where = { location: home.url(hs), via: 'home', reason: hs.why, ready: true };
+        else metrics.inc('home', 'timeout');
+      }
+      if (!where) {
+        let c = await choice(shard, t.data);
+        // Android players can't open HLS behind a ticket (src/playback.js isAndroidPlayer): the progressive build of the
+        // default quality instead. The PC players in the same room keep the adaptive plan. Videos too long for a
+        // progressive build still get HLS, which an Android player can't play.
+        if (c.hls && !resolver && android) {
+          c = { quality: adaptive.lower, hls: false, mode: 'android' };
+          metrics.inc('adaptive', 'android_progressive');
+        }
+        if (c.hls && resolver) {
+          // yt-dlp would pick one variant of the master and hand AVPro only that: send it on at once, start the build.
+          playback.start(t.data, c.quality, { hls: true });
+          metrics.inc('adaptive', 'defer');
+          logJson({ event: 'play_defer', shard, n, id: t.data.id, held: 0, adaptive: true });
+          const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+          return res.end(body);
+        }
+        holding++;
+        try {
+          where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs,
+            quality: c.quality, hls: c.hls });
+        } finally { holding--; }
+        if (c.hls && where.ready && where.via === 'tunelio') {
+          where = { ...where, location: adaptive.url(adaptive.session(t.data, playback.peek(t.data, c.quality, { hls: true }))) };
+        } else if (!resolver && where.ready && where.via === 'tunelio' && /[?&]hls=1$/.test(where.location)) {
+          // A plain HLS build reached through the redirect: our copy with absolute links (see src/adaptive.js).
+          const job = playback.peek(t.data, c.quality, { hls: c.hls });
+          if (job?.url === where.location) where = { ...where, location: adaptive.single(t.data, job) };
+        }
+        // Tunelio's build failed: home before youtube.com's 360p, for a PC player when a worker is free.
+        if (!resolver && !android && where.ready && where.via === 'youtube' && /^(tunelio_failed|build_failed)$/.test(where.reason ?? '') && home.worker()) {
+          const fallback = startHome(t.data, hq, 'tunelio_failed');
+          if (fallback && fallback.state !== 'failed') {
+            holding++;
+            try { await home.wait(fallback, config.homeReadyMs); } finally { holding--; }
+            if (fallback.state === 'ready') where = { location: home.url(fallback), via: 'home', reason: fallback.why, ready: true };
+          }
+        }
       }
       const held = Date.now() - started;
       metrics.latency('ticket_hold_ms', held);
@@ -499,12 +583,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (roomPlays.size > 5000) for (const [k, t] of roomPlays) if (now - t >= ROOM_PLAY_MS) roomPlays.delete(k);
     metrics.inc('play');
     metrics.inc('play_length', lengthBucket(data));
-    if (where.via === 'tunelio') metrics.inc('play_route', /\/hls\/[a-f0-9]+\.m3u8$/.test(where.location) ? 'tunelio-adaptive' : /[?&]hls=1|\/hls\/[a-f0-9]+\/\d+p\.m3u8$/.test(where.location) ? 'tunelio-hls' : 'tunelio-progressive');
+    if (where.via === 'home') metrics.inc('play_route', 'home');
+    else if (where.via === 'tunelio') metrics.inc('play_route', /\/hls\/[a-f0-9]+\.m3u8$/.test(where.location) ? 'tunelio-adaptive' : /[?&]hls=1|\/hls\/[a-f0-9]+\/\d+p\.m3u8$/.test(where.location) ? 'tunelio-hls' : 'tunelio-progressive');
     else if (where.reason === 'live') metrics.inc('play_route', 'youtube-live');
     else { metrics.inc('play_route', 'youtube-fallback'); metrics.inc('play_fallback', where.reason); }
   }
 
-  async function readJson(req, max = 1 << 20) {
+  async function readBody(req, max) {
     let size = 0;
     const chunks = [];
     for await (const c of req) {
@@ -512,17 +597,19 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (size > max) throw new Error('body too large');
       chunks.push(c);
     }
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    return Buffer.concat(chunks);
   }
+  async function readJson(req, max = 1 << 20) { return JSON.parse((await readBody(req, max)).toString('utf8')); }
 
   async function relayRoute(req, res, url) {
     if (!relay.authorized(req.headers.authorization)) return fail(res, 401, 'unauthorized', 'Bad relay token.');
     if (url.pathname === '/relay/next' && req.method === 'GET') {
       const name = (url.searchParams.get('worker') ?? '').slice(0, 64) || 'worker';
       const version = (url.searchParams.get('version') ?? '').slice(0, 64);
+      const caps = (url.searchParams.get('caps') ?? '').split(',').map((c) => c.trim()).filter((c) => /^[a-z]{1,16}$/.test(c)).slice(0, 8);
       const gone = new AbortController();
       res.on('close', () => gone.abort());
-      const job = await relay.next(name, version, gone.signal);
+      const job = await relay.next(name, version, gone.signal, caps);
       if (!job) { res.writeHead(204, { 'cache-control': 'no-store' }); return res.end(); }
       return json(res, 200, { job });
     }
@@ -530,6 +617,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       let body;
       try { body = await readJson(req); } catch { return fail(res, 400, 'bad_body', 'Expected JSON.'); }
       return json(res, 200, { ok: true, accepted: relay.done(body) });
+    }
+    const m = url.pathname.match(/^\/relay\/media\/([a-f0-9]{18})\/([\w.-]{1,32})$/);
+    if (m && req.method === 'PUT') {
+      let body;
+      try { body = await readBody(req, 64 << 20); } catch { return fail(res, 413, 'too_large', 'Too large.'); }
+      const status = home.put(m[1], m[2], body);
+      if (status === 204) { res.writeHead(204); return res.end(); }
+      return fail(res, status, status === 410 ? 'gone' : status === 413 ? 'too_large' : 'bad_file', 'Not stored.');
     }
     return fail(res, 404, 'not_found', 'Unknown path.');
   }
@@ -552,6 +647,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
       if (url.pathname.startsWith('/hls-test/')) { route = 'hls-test'; return await hlsTest(req, res, url); }
       if (url.pathname.startsWith('/hls/')) { route = 'hls'; return await hlsRoute(req, res, url); }
+      if (url.pathname.startsWith('/home/')) { route = 'home'; return homeRoute(req, res, url); }
       if (url.pathname === '/healthz') {
         route = 'health';
         return json(res, 200, { ok: true, v: API, tunelio: tunelio.enabled, credits: tunelio.credits,

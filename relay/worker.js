@@ -1,21 +1,23 @@
-// Search and caption relay worker (runs at home, on the owner's Optiplex). It never listens on a port: it long-polls
-// RELAY_URL/relay/next over HTTPS for jobs, runs them from this residential connection (search through InnerTube,
-// src/youtube.js, so videos come out exactly as on the server; captions through yt-dlp, relay/captions.js) and posts
-// the results to RELAY_URL/relay/done.
+// Search, caption and media relay worker (runs at home, on the owner's Optiplex). It never listens on a port: it
+// long-polls RELAY_URL/relay/next over HTTPS for jobs, runs them from this residential connection (search through
+// InnerTube, src/youtube.js, so videos come out exactly as on the server; captions through yt-dlp, relay/captions.js;
+// media through yt-dlp and ffmpeg, relay/media.js) and posts the results to RELAY_URL/relay/done.
 // Settings (environment, /etc/japharsworld-yt-relay.env): RELAY_URL, RELAY_TOKEN, WORKER_NAME, RELAY_POLLS (3),
-// YTDLP (found in the flash-check venv or PATH when unset), YTDLP_ARGS (--js-runtimes node).
+// YTDLP (found in the flash-check venv or PATH when unset), YTDLP_ARGS (--js-runtimes node), FFMPEG (ffmpeg),
+// RELAY_MEDIA (on; off = never announce media jobs), RELAY_MEDIA_MAX (2 streams at once).
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { youtube as defaultYoutube, resetClient } from '../src/youtube.js';
 import { captionsJob, findYtdlp, ytdlpArgs } from './captions.js';
+import { mediaJob } from './media.js';
 
 const CONT_MINUTES = 30;
 const MAX_CONTS = 2000;
 const is403 = (err) => /status code 403\b/.test(String(err?.message ?? err));
 
 export function createWorker({ url, token, name = 'worker', version = '', polls = 3, youtube = defaultYoutube, reset = resetClient,
-  captions = null, ytdlp = null, ytdlpExtraArgs = ytdlpArgs(),
+  captions = null, ytdlp = null, ytdlpExtraArgs = ytdlpArgs(), media = null, caps = [], mediaMax = 2, ffmpeg = 'ffmpeg',
   fetcher = fetch, log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o })), now = () => Date.now(),
   sleep = (ms, signal) => new Promise((r) => { const t = setTimeout(r, ms); signal?.addEventListener('abort', () => { clearTimeout(t); r(); }); }) }) {
   // Caption jobs: an injected function (tests) or yt-dlp, found once on first use.
@@ -26,6 +28,18 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
   });
   const base = String(url).replace(/\/+$/, '');
   const headers = { authorization: `Bearer ${token}` };
+  // Media jobs: an injected function (tests) or relay/media.js, at most mediaMax streams at once.
+  let streaming = 0;
+  const runMedia = media ?? (async (job) => {
+    ytdlpPath ??= await findYtdlp();
+    const upload = async (file, body, type) => {
+      const res = await fetcher(`${base}/relay/media/${job.token}/${file}`, { method: 'PUT', headers: { ...headers, 'content-type': type }, body,
+        signal: AbortSignal.timeout(60_000) });
+      try { await res.body?.cancel(); } catch { /* ignore */ }
+      return res.status;
+    };
+    return mediaJob(job, { ytdlp: ytdlpPath, ffmpeg, extraArgs: ytdlpExtraArgs, upload, log: (o) => log({ ...o, quality: job.quality }) });
+  });
   const conts = new Map(); // id → { more, at }
   const stopping = new AbortController();
 
@@ -52,6 +66,17 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
     const started = now();
     try {
       let page;
+      if (job.kind === 'media') {
+        if (!/^[a-f0-9]{18}$/.test(String(job.token ?? ''))) return { id: job.id, ok: false, error: 'bad token' };
+        if (streaming >= mediaMax) return { id: job.id, ok: false, error: 'busy' };
+        streaming++;
+        let first;
+        try { first = await runMedia(job); } catch (err) { streaming--; throw err; }
+        // The stream goes on uploading after this answer; its slot frees when it ends.
+        Promise.resolve(first.done).finally(() => streaming--);
+        log({ event: 'job', kind: job.kind, ms: now() - started, segments: first.segments });
+        return { id: job.id, ok: true, media: { ready: true, segments: first.segments } };
+      }
       if (job.kind === 'captions') {
         const captions = await runCaptions(job);
         log({ event: 'job', kind: job.kind, ms: now() - started, cues: captions.cues?.length ?? 0, reason: captions.reason });
@@ -75,7 +100,7 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
 
   async function loop(n) {
     let backoff = 1000;
-    const q = new URLSearchParams({ worker: name, version });
+    const q = new URLSearchParams({ worker: name, version, ...(caps.length ? { caps: caps.join(',') } : {}) });
     while (!stopping.signal.aborted) {
       try {
         const res = await fetcher(`${base}/relay/next?${q}`, { headers, signal: AbortSignal.any([stopping.signal, AbortSignal.timeout(40_000)]) });
@@ -99,7 +124,7 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
   }
 
   return {
-    handle, conts,
+    handle, conts, get streaming() { return streaming; },
     start() { log({ event: 'start', worker: name, version, relay: base, polls }); return Promise.all(Array.from({ length: polls }, (_, i) => loop(i))); },
     stop() { stopping.abort(); },
   };
@@ -111,9 +136,15 @@ function gitVersion() {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  const { RELAY_URL, RELAY_TOKEN, WORKER_NAME = 'worker', RELAY_POLLS = '3' } = process.env;
+  const { RELAY_URL, RELAY_TOKEN, WORKER_NAME = 'worker', RELAY_POLLS = '3', FFMPEG = 'ffmpeg', RELAY_MEDIA = 'on', RELAY_MEDIA_MAX = '2' } = process.env;
   if (!RELAY_URL || !RELAY_TOKEN) { console.error('Set RELAY_URL and RELAY_TOKEN.'); process.exit(2); }
-  const worker = createWorker({ url: RELAY_URL, token: RELAY_TOKEN, name: WORKER_NAME, version: gitVersion(), polls: Number(RELAY_POLLS) || 3 });
+  // Media jobs only when this ffmpeg can make range requests (FFmpeg 7.1+, relay/media.js: without them YouTube
+  // throttles the stream to about real time); the server sends them only to workers that announce caps=media.
+  let hasFfmpeg = false;
+  try { hasFfmpeg = /request_size/.test(execFileSync(FFMPEG, ['-hide_banner', '-h', 'protocol=http'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })); } catch { /* no ffmpeg */ }
+  const caps = RELAY_MEDIA !== 'off' && hasFfmpeg ? ['media'] : [];
+  const worker = createWorker({ url: RELAY_URL, token: RELAY_TOKEN, name: WORKER_NAME, version: gitVersion(), polls: Number(RELAY_POLLS) || 3,
+    caps, ffmpeg: FFMPEG, mediaMax: Number(RELAY_MEDIA_MAX) || 2 });
   for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { worker.stop(); setTimeout(() => process.exit(0), 500).unref(); });
   worker.start();
 }

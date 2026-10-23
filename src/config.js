@@ -89,6 +89,19 @@ export const config = {
   relayWaitMs: int('RELAY_WAIT_MS', 8000),
   // Minutes without any worker before the "no search worker" alert.
   relayIdleAlertMinutes: int('RELAY_IDLE_ALERT_MINUTES', 10),
+  // Home relay playback (src/home.js, relay/media.js): a relay worker with ffmpeg streams the video from the home
+  // connection as HLS. Tunelio stays first while today's credits are within the pacer's allowance; home serves when they
+  // aren't, when Tunelio is off or failing, and for videos of HOME_LONG_MINUTES and longer (Tunelio's build time grows
+  // with the file and fails at ~115 s; home starts in seconds whatever the length). PC players only: Android can't open
+  // HLS behind a ticket. HOME_DAILY_BUILDS / HOME_DAILY_MB cap what the home IP downloads a day (YouTube may flag it).
+  homeRelay: (process.env.HOME_RELAY ?? 'off') === 'on',
+  homeLongMinutes: int('HOME_LONG_MINUTES', 30),
+  homeDailyBuilds: int('HOME_DAILY_BUILDS', 40),
+  homeDailyMb: int('HOME_DAILY_MB', 10_000),
+  homeKeepHours: int('HOME_KEEP_HOURS', 12),
+  homeMaxGb: int('HOME_MAX_GB', 6),
+  // How long a new session may take to its first playlist (yt-dlp ~3 s + the first segments, 2026-10-23).
+  homeReadyMs: int('HOME_READY_SECONDS', 30) * 1000,
   // YouTube Data API v3: last fallback for search. Empty = never used.
   youtubeApiKey: process.env.YOUTUBE_API_KEY ?? '',
   youtubeApiDailyUnits: int('YOUTUBE_API_DAILY_UNITS', 10000),

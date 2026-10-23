@@ -1,8 +1,10 @@
 // Search relay: workers on residential connections (the owner's Optiplex) long-poll this server over HTTPS for
 // search jobs and post the results back. Nothing on the worker's side accepts connections.
-//   GET  /relay/next?worker=<name>&version=<v>   held up to pollMs; 204 (nothing) or 200 {"job": {...}}
-//   POST /relay/done                             {id, ok, page: {videos, cont}, error}
-// Jobs: {id, kind: "search", query, limit} or {id, kind: "more", cont} (sent to the worker that holds `cont`).
+//   GET  /relay/next?worker=<name>&version=<v>&caps=<a,b>   held up to pollMs; 204 (nothing) or 200 {"job": {...}}
+//   POST /relay/done                             {id, ok, page: {videos, cont} | captions | media, error}
+//   PUT  /relay/media/<token>/<file>             a media job's segments and playlist (src/home.js)
+// Jobs: {id, kind: "search", query, limit}, {id, kind: "more", cont} (sent to the worker that holds `cont`),
+// {kind: "captions", ...}, {kind: "media", videoId, quality, token} (only to a worker that announced caps=media).
 import { randomUUID, createHash, timingSafeEqual } from 'node:crypto';
 
 export class RelayError extends Error {
@@ -23,7 +25,7 @@ export class Relay {
     this.onlineMs = onlineMs;
     this.now = now;
     this.log = log;
-    this.workers = new Map(); // name → { seen, version, polling }
+    this.workers = new Map(); // name → { seen, version, caps, polling }
     this.waiting = []; // { worker, give(job) }
     this.queue = []; // { job, worker|null }
     this.inflight = new Map(); // id → { resolve, reject, timer, worker }
@@ -38,22 +40,25 @@ export class Relay {
     return Boolean(w) && (w.polling > 0 || this.now() - w.seen < this.onlineMs);
   }
   online() { return [...this.workers.keys()].filter((n) => this.isOnline(n)); }
+  // Online workers that announced this capability (`media`: ffmpeg is there, relay/media.js).
+  capable(cap) { return this.online().filter((n) => this.workers.get(n).caps?.includes(cap)); }
   idleMs() { return this.online().length ? 0 : this.now() - this.lastSeenAny; }
 
-  #seen(name, version) {
+  #seen(name, version, caps) {
     const t = this.now();
     let w = this.workers.get(name);
     if (!w || !this.isOnline(name)) this.log({ event: 'relay_worker_online', worker: name, version });
     if (!w) this.workers.set(name, (w = { seen: t, version, polling: 0 }));
     w.seen = t;
     if (version) w.version = version;
+    if (caps) w.caps = caps;
     this.lastSeenAny = t;
     return w;
   }
 
   // A worker's long poll. Resolves with a job, or null after pollMs (or when `signal` aborts).
-  next(name, version, signal) {
-    const w = this.#seen(name, version);
+  next(name, version, signal, caps = null) {
+    const w = this.#seen(name, version, caps);
     const i = this.queue.findIndex((q) => q.worker == null || q.worker === name);
     if (i >= 0) return Promise.resolve(this.#hand(this.queue.splice(i, 1)[0].job, name));
     return new Promise((resolve) => {
@@ -89,6 +94,7 @@ export class Relay {
     clearTimeout(f.timer);
     if (result.ok && result.page && Array.isArray(result.page.videos)) f.resolve({ ...result.page, worker: f.worker });
     else if (result.ok && result.captions && typeof result.captions === 'object') f.resolve({ ...result.captions, worker: f.worker });
+    else if (result.ok && result.media && typeof result.media === 'object') f.resolve({ ...result.media, worker: f.worker });
     else f.reject(new RelayError(result.error === 'expired' ? 'expired' : 'worker_failed', String(result.error ?? 'worker failed')));
     return true;
   }

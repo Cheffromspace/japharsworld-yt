@@ -18,7 +18,10 @@ Counted in memory and written to SQLite every minute and at shutdown (SIGTERM). 
 | `search_ms` | latency bucket (ms upper bound) | for p50/p95; buckets merge across restarts |
 | `more` / `more_fail` | – / status | "More results" loads |
 | `play` | – | videos played, **once per room**: the first load of a video in a shard counts; the other players in the instance, late joiners and replays don't, until 3 hours after it was counted (held in memory only) |
-| `play_route` | `tunelio-progressive` `tunelio-hls` `youtube-live` `youtube-fallback` | |
+| `play_route` | `tunelio-progressive` `tunelio-hls` `tunelio-adaptive` `home` `youtube-live` `youtube-fallback` | `home`: streamed from the owner's home connection (README, "Home relay playback") |
+| `home` | `start` `ready` `failed` `capped` `defer` `timeout` | home relay sessions (src/home.js): started, first segments in, failed; new sessions refused by the daily cap; resolvers sent on; players that waited `HOME_READY_SECONDS` and went to Tunelio instead |
+| `home_why` | `tunelio_off` `long` `pacer` `tunelio_failed` | why a session went home, once per session |
+| `home_start_s` | seconds bucket | session start to its first playlist |
 | `play_fallback` | `disabled` `paused` `tunelio_failed` | why a video went to YouTube at 360p |
 | `play_length` | `lt10m` `lt1h` `lt3h` `longer` `live` `unknown` | length bucket of the played video |
 | `tunelio_create_ms` | latency bucket | Tunelio `/create` |

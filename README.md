@@ -103,6 +103,39 @@ It runs `japharsworld-yt-relay.service` as user `jytrelay` from `/opt/japharswor
 pulls `main` every 5 minutes and restarts the worker when `relay/`, `src/` or the packages changed. Logs:
 `journalctl -u japharsworld-yt-relay -f`. Commits that only touch `relay/` don't restart the Linode service.
 
+## Home relay playback
+
+A relay worker with ffmpeg (`relay/media.js`) can also serve videos from the home connection (owner, 2026-10-23:
+Tunelio first while the credits allow, home for longer videos, with a daily cap). Off unless `HOME_RELAY=on`.
+
+**When a play goes home** (`src/server.js` `homeWhy`), for PC players only (Android players can't open HLS behind a
+ticket, f331bcc) and never for live streams:
+1. a home session for the video is already there (late joiners, replays, a tablet warm),
+2. Tunelio is off or paused (no key, out of credits),
+3. the video is `HOME_LONG_MINUTES` (30) or longer: Tunelio's build time grows with the file and fails at ~115 s,
+   while home starts in seconds whatever the length,
+4. today's Tunelio spend is past the credit pacer's allowance (`src/adaptive.js` `Pacer`),
+5. Tunelio's build failed (before youtube.com's 360p).
+
+Only while a worker that announced `caps=media` is online and today's `HOME_DAILY_BUILDS` / `HOME_DAILY_MB` aren't used
+up (YouTube may flag an IP that downloads a lot). Otherwise, or when the first segments don't arrive within
+`HOME_READY_SECONDS`, the play takes the Tunelio path as before.
+
+**How:** the server sends the worker `{kind: "media", videoId, quality, token}`. The worker has yt-dlp resolve the
+H.264 + AAC stream URLs (they only work from the IP that resolved them) and ffmpeg read them in 10 MB range requests
+(`-request_size`, FFmpeg 7.1+: YouTube throttles a plain read to about real time) and cut 4 s MPEG-TS segments without
+re-encoding. It PUTs each segment and the growing playlist to `/relay/media/<token>/<file>` (relay token) and answers
+the job once the first ones are up. Players get `302` to `/home/<token>/index.m3u8`, an EVENT playlist with absolute
+links that starts at 0 and gets `#EXT-X-ENDLIST` when the upload ends; the resolver gets the "not a video" page. Files
+are kept `HOME_KEEP_HOURS` (oldest finished first out above `HOME_MAX_GB`) and dropped on restart.
+
+Measured 2026-10-23: ~4 s from Play to the first segments (yt-dlp ~3 s), a 22-minute 720p video (216 MB) in 9 s on
+this machine; uploads from home run ~12.6 MB/s. `/ops/state` shows `home` (workers, today's use, sessions).
+
+The worker needs ffmpeg 7.1 or newer on the Optiplex (`relay-setup.sh` installs the distro's; `ffmpeg -h
+protocol=http | grep request_size` shows whether it is new enough). Without it the worker doesn't announce `media`.
+`RELAY_MEDIA=off` in `/etc/japharsworld-yt-relay.env` turns it off at home.
+
 ## Channels link monitor
 
 `monitor/` is a separate small Python service (systemd timer every 15 minutes) that keeps the world's Channels tab

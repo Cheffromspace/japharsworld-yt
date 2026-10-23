@@ -23,7 +23,7 @@ Counted in memory and written to SQLite every minute and at shutdown (SIGTERM). 
 | `play_length` | `lt10m` `lt1h` `lt3h` `longer` `live` `unknown` | length bucket of the played video |
 | `tunelio_create_ms` | latency bucket | Tunelio `/create` |
 | `quality_pick` | `720p` `1080p` `auto` | a room picked a playback quality (or Auto) on its tablet |
-| `adaptive` | `plan_lower` `plan_direct` `plan_adaptive` `master` `upgrade` `upgrade_served` `upgrade_failed` `paced_off` `defer` | playback plans (src/adaptive.js): the plan each video got, adaptive masters served, 1080p upgrades started / served / failed, plays the pacer kept at 720p, resolvers sent on |
+| `adaptive` | `plan_lower` `plan_direct` `plan_adaptive` `plan_start` `master` `upgrade` `upgrade_served` `upgrade_failed` `paced_off` `defer` | playback plans (src/adaptive.js): the plan each video got (`plan_start`: adaptive from a 360p first rung), adaptive masters served, upgrades (720p/1080p rungs) started / served / failed, plays the pacer kept at 720p, resolvers sent on |
 | `cc_list` / `cc_list_lang` | – / VRChat language or `native` | "Show captions" (list loads) |
 | `cc_track` / `cc_track_lang` | – / track language (`en`, `pt-BR`, `zh-Hans`) | tracks picked on the tablet |
 | `cc_unavailable` | reason (`no_captions`, `no_track_in_language`, `temporarily_unavailable`, `nothing_playing`, `failed`, …) | "not available" answers |

@@ -51,6 +51,10 @@ export const config = {
   // Play 1080p at once (no adaptive playlist) when its build is predicted to take at most this long (~15–18 s to the
   // picture with VRChat's own ~5–8 s).
   adaptiveDirectSeconds: int('ADAPTIVE_DIRECT_SECONDS', 10),
+  // A quick first rung for adaptive plays (e.g. 360p; empty = off): used when the 720p HLS build is predicted to take
+  // more than ADAPTIVE_START_SECONDS, so the picture starts on the small build and steps up (10 more credits per play).
+  adaptiveStart: /^\d{3,4}p$/.test(process.env.ADAPTIVE_START ?? '') ? process.env.ADAPTIVE_START : null,
+  adaptiveStartSeconds: int('ADAPTIVE_START_SECONDS', 10),
   // This service's public address, for links it hands out (the adaptive master playlist).
   publicUrl: (process.env.PUBLIC_URL ?? 'https://yt.japharsworld.com').replace(/\/$/, ''),
   // Build time follows file size (~17 ms per MB, 2026-10-19). A 1080p file above TUNELIO_MAX_MB is made again at

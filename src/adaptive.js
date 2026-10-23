@@ -10,6 +10,11 @@
 //   adaptive — 720p first, stepping up to 1080p when that is built: a played ticket leads to our master playlist,
 //              /hls/<token>.m3u8, listing our 720p and 1080p playlists (Tunelio's, with absolute segment links). 20
 //              credits (the 1080p /create made for the size is reused).
+//   start    — adaptive with a quick first rung (`start`, 360p): when the 720p HLS build itself is predicted to take more
+//              than `startSeconds`, the player starts on a 360p HLS build (a much smaller file, so a few seconds) and
+//              steps up to 720p and 1080p as they are built. 30 credits; the 720p /create made for the prediction is
+//              reused. 360p through Tunelio rather than VRChat's free youtube.com path, because only a Tunelio link can be
+//              a variant in our playlist (googlevideo links are single mp4s, bound to the IP that resolved them).
 //
 // Adaptive HLS was tested in VRChat on PC on 2026-10-22 (AVPro, Media Foundation): playback starts on the first variant;
 // the player asks for the other one ~2 s in and switches without a stutter; a variant answering 404 is retried (about
@@ -40,22 +45,23 @@ export class Pacer {
   }
 }
 
-const RES = { '720p': '1280x720', '1080p': '1920x1080' };
-// AVC levels high enough for 60 fps at each size (the strings the 2026-10-22 test used).
-const CODECS = { '720p': 'avc1.4d4020,mp4a.40.2', '1080p': 'avc1.64002a,mp4a.40.2' };
+const RES = { '360p': '640x360', '720p': '1280x720', '1080p': '1920x1080' };
+// AVC levels high enough for 60 fps at each size (the strings the 2026-10-22 test used; 360p: YouTube's Main 3.0).
+const CODECS = { '360p': 'avc1.4d401e,mp4a.40.2', '720p': 'avc1.4d4020,mp4a.40.2', '1080p': 'avc1.64002a,mp4a.40.2' };
 const PLAN_MS = 30 * 60_000;
 
 export class Adaptive {
   constructor({ playback, pacer, fetcher = fetch, log = () => {}, onEvent = () => {}, lower = '720p', upper = '1080p',
-    holdMs = 8000, maxUpperMb = 1500, directSeconds = 10, now = () => Date.now(), base = 'https://yt.japharsworld.com/hls', switching = true }) {
-    Object.assign(this, { playback, pacer, fetch: fetcher, log, onEvent, lower, upper, holdMs, maxUpperMb, directSeconds, now, base, switching });
+    holdMs = 8000, maxUpperMb = 1500, directSeconds = 10, now = () => Date.now(), base = 'https://yt.japharsworld.com/hls', switching = true,
+    start = null, startSeconds = 10 }) {
+    Object.assign(this, { playback, pacer, fetch: fetcher, log, onEvent, lower, upper, holdMs, maxUpperMb, directSeconds, now, base, switching, start, startSeconds });
     this.byJob = new WeakMap(); // build job → its session
     this.plans = new Map();    // video id → { mode, upgrade, until, promise }
     this.sessions = new Map(); // token → { token, data, lowerJob, served, fellBack }
     this.byVideo = new Map();  // video id → token
   }
 
-  // 'lower' | 'direct' | 'adaptive' for a video. upgrade: 'always' (the room picked 1080p) | 'never' (picked 720p) |
+  // 'lower' | 'direct' | 'adaptive' | 'start' for a video. upgrade: 'always' (the room picked 1080p) | 'never' (picked 720p) |
   // 'paced' (no pick). Concurrent callers share one decision.
   plan(data, upgrade = 'paced') {
     const hit = this.plans.get(data.id);
@@ -84,6 +90,14 @@ export class Adaptive {
     // in 2 of 4 tries on 2026-10-22, with segments and timestamps aligned; so a slow 1080p means 720p for this video.
     // A room that picked 1080p gets it anyway, slower to start.
     if (!this.switching) return this.#chose(data, upgrade === 'always' ? 'direct' : 'lower', { why: 'slow', mb, predicted });
+    if (this.start) {
+      // The 720p /create is the one the 720p build makes anyway, so asking for its size costs nothing extra.
+      try {
+        const lowerMb = await this.playback.size(data, this.lower);
+        const lowerPredicted = Math.round(this.playback.predict('hls', lowerMb) * 10) / 10;
+        if (lowerPredicted > this.startSeconds) return this.#chose(data, 'start', { mb, predicted, lowerMb, lowerPredicted });
+      } catch { /* 720p /create failed: plain adaptive, whose 720p build asks again */ }
+    }
     return this.#chose(data, 'adaptive', { mb, predicted });
   }
 
@@ -94,11 +108,13 @@ export class Adaptive {
   }
 
   // The session for a ready HLS build, shared by everyone who plays it while that build's links last (a rebuild, hours
-  // later, starts a new session). Adaptive sessions are on the 720p HLS build; single ones on a plain HLS build.
+  // later, starts a new session). Adaptive sessions are on the 720p HLS build (or the 360p one for a `start` plan, which
+  // then has three rungs); single ones on a plain HLS build.
   session(data, job = this.playback.peek(data, this.lower, { hls: true }), { single = false } = {}) {
     let s = this.byJob.get(job);
     if (!s) {
-      s = { token: randomBytes(9).toString('hex'), data, lowerJob: job, single, started: false };
+      const rungs = this.start && job.requested === this.start ? [this.start, this.lower, this.upper] : [this.lower, this.upper];
+      s = { token: randomBytes(9).toString('hex'), data, lowerJob: job, rungs, single, started: false, served: new Set() };
       this.byJob.set(job, s);
       this.sessions.set(s.token, s);
       if (this.sessions.size > 2000) this.sessions.delete(this.sessions.keys().next().value);
@@ -110,25 +126,33 @@ export class Adaptive {
   url(s) { return s.single ? `${this.base}/${s.token}/${s.lowerJob.quality}.m3u8` : `${this.base}/${s.token}.m3u8`; }
   single(data, job) { return this.url(this.session(data, job, { single: true })); }
 
-  #lowerJob(s) { return s.lowerJob; }
-  #upperJob(s) { return this.playback.peek(s.data, this.upper, { hls: true }); }
+  // The build behind a rung: the session's own for the first, the shared HLS builds above it.
+  #job(s, quality) { return quality === s.rungs[0] ? s.lowerJob : this.playback.peek(s.data, quality, { hls: true }); }
 
   bandwidth(job, factor = 1) {
     const bps = job?.mb > 0 && job.seconds > 0 ? (job.mb * 8e6) / job.seconds : 0;
     return Math.round((bps || 3_000_000) * factor * 1.1);
   }
 
-  // The master playlist, or null for an unknown token. The first load starts the 1080p HLS build.
+  // The master playlist, or null for an unknown token. The first load starts the HLS builds of the rungs above the first
+  // (1080p only up to maxUpperMb). Players start on the first variant listed, which is the one already built.
   master(token) {
     const s = this.sessions.get(token);
     if (!s || s.single) return null;
-    if (!s.started) { s.started = true; this.playback.start(s.data, this.upper, { hls: true, maxMb: this.maxUpperMb }); this.onEvent('upgrade'); }
-    const low = this.#lowerJob(s), up = this.#upperJob(s);
+    if (!s.started) {
+      s.started = true;
+      for (const q of s.rungs.slice(1)) this.playback.start(s.data, q, { hls: true, maxMb: q === this.upper ? this.maxUpperMb : 0 });
+      this.onEvent('upgrade');
+    }
     this.onEvent('master');
-    return `${['#EXTM3U', '#EXT-X-INDEPENDENT-SEGMENTS',
-      `#EXT-X-STREAM-INF:BANDWIDTH=${this.bandwidth(low)},RESOLUTION=${RES[this.lower]},CODECS="${CODECS[this.lower]}"`, `${this.base}/${token}/${this.lower}.m3u8`,
-      `#EXT-X-STREAM-INF:BANDWIDTH=${up?.state === 'ready' ? this.bandwidth(up) : this.bandwidth(low, 1.8)},RESOLUTION=${RES[this.upper]},CODECS="${CODECS[this.upper]}"`, `${this.base}/${token}/${this.upper}.m3u8`,
-    ].join('\n')}\n`;
+    const lines = ['#EXTM3U', '#EXT-X-INDEPENDENT-SEGMENTS'];
+    s.rungs.forEach((q, i) => {
+      // Before a rung's /create answers its size is unknown: guess from the first rung's.
+      const job = this.#job(s, q);
+      const bw = i === 0 || job?.mb > 0 ? this.bandwidth(job) : this.bandwidth(s.lowerJob, 1.8 ** i);
+      lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bw},RESOLUTION=${RES[q]},CODECS="${CODECS[q]}"`, `${this.base}/${token}/${q}.m3u8`);
+    });
+    return `${lines.join('\n')}\n`;
   }
 
   // A variant playlist: Tunelio's, with its segment links made absolute. Null = not (yet) available (404).
@@ -136,18 +160,21 @@ export class Adaptive {
     const s = this.sessions.get(token);
     if (!s) return null;
     if (s.single) return quality === s.lowerJob.quality ? this.#playlist(s.lowerJob) : null;
-    if (quality !== this.lower && quality !== this.upper) return null;
-    if (quality === this.lower) return this.#playlist(this.#lowerJob(s));
-    let up = this.#upperJob(s);
+    const i = s.rungs.indexOf(quality);
+    if (i < 0) return null;
+    if (i === 0) return this.#playlist(s.lowerJob);
+    let up = this.#job(s, quality);
     if (!up) return null;
     if (up.state === 'building') up = await this.playback.wait(up, this.holdMs);
     if (up.state === 'building') return null;
     if (up.state === 'failed') {
-      if (!s.fellBack) { s.fellBack = true; this.onEvent('upgrade_failed'); this.log({ event: 'adaptive_upgrade_failed', id: s.data.id, reason: up.reason }); }
-      return this.#playlist(this.#lowerJob(s));
+      // The best ready rung below it, which ends the player's retries of this one.
+      if (!s.served.has(`failed:${quality}`)) { s.served.add(`failed:${quality}`); this.onEvent('upgrade_failed'); this.log({ event: 'adaptive_upgrade_failed', id: s.data.id, quality, reason: up.reason }); }
+      const below = s.rungs.slice(0, i).map((q) => this.#job(s, q)).filter((j) => j?.state === 'ready').at(-1);
+      return this.#playlist(below ?? s.lowerJob);
     }
     const text = await this.#playlist(up);
-    if (text && !s.served) { s.served = true; this.onEvent('upgrade_served'); this.log({ event: 'adaptive_upgrade_served', id: s.data.id, mb: up.mb, buildMs: up.endedMs - up.startedMs }); }
+    if (text && !s.served.has(quality)) { s.served.add(quality); this.onEvent('upgrade_served'); this.log({ event: 'adaptive_upgrade_served', id: s.data.id, quality, mb: up.mb, buildMs: up.endedMs - up.startedMs }); }
     return text;
   }
 

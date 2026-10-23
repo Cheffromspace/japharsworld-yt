@@ -7,25 +7,27 @@ import { Store } from '../src/store.js';
 import { createApp } from '../src/server.js';
 import { config as base } from '../src/config.js';
 
-const SIZES = { '720p': 200e6, '1080p': 400e6 };
+const SIZES = { '360p': 50e6, '720p': 200e6, '1080p': 400e6 };
 const playlist = '#EXTM3U\n#EXT-X-MAP:URI="tunnel?id=x&hls=data",BYTERANGE="1394@0"\n#EXTINF:4.8,\n#EXT-X-BYTERANGE:100@1394\ntunnel?id=x&hls=data\n';
 
-// Tunelio and its builds, with the 1080p HLS build released by hand.
-function fakes({ sizes = SIZES } = {}) {
+// Tunelio and its builds, with the 1080p HLS build (and the 720p one, with hold720) released by hand.
+function fakes({ sizes = SIZES, hold720 = false } = {}) {
   const created = [];
-  let releaseUpper, failUpper = false;
+  let releaseUpper, release720, failUpper = false;
   const upperBuilt = new Promise((r) => { releaseUpper = r; });
+  const built720 = new Promise((r) => { release720 = r; });
   const tunelio = { enabled: true, credits: 90_000, async create(id, q) {
     created.push([id, q]);
     return { url: `https://tunelio.dev/tunnel?id=${id}-${q}&exp=1&sig=s`, expires: 9e9, quality: q, fileSize: sizes[q] };
   } };
   const probe = async (url) => {
     if (/1080p.*hls=1/.test(url)) { await upperBuilt; return { ok: !failUpper, refused: false }; }
+    if (hold720 && /720p.*hls=1/.test(url)) await built720;
     return { ok: true, refused: false };
   };
   const playback = new Playback({ tunelio, quality: '720p', probe });
   const fetcher = async () => new Response(playlist, { status: 200 });
-  return { tunelio, playback, created, fetcher, releaseUpper: (fail = false) => { failUpper = fail; releaseUpper(); } };
+  return { tunelio, playback, created, fetcher, releaseUpper: (fail = false) => { failUpper = fail; releaseUpper(); }, release720 };
 }
 
 test('pacer: an even share of what is left until renewal, minus the reserve', () => {
@@ -54,13 +56,13 @@ test('plans: 720p pick or no budget → lower without the 1080p /create; fast �
   assert.equal(await new Adaptive({ playback: f.playback, pacer: pacerNo }).plan({ id: 'always00001', seconds: 1200 }, 'always'), 'adaptive');
 });
 
-async function server(over = {}) {
+async function server(over = {}, opts = {}) {
   const f = fakes(over);
   const store = new Store({ path: ':memory:', shards: 4, pool: 100, pinHours: 24 });
   const youtube = { async search() { return { videos: [{ id: 'AbCdEfGh1jK', title: 't', channel: 'c', length: '20:00', seconds: 1200, views: '', age: '', live: false }], more: null }; }, thumbnailUrl: () => '' };
   const config = { ...base, shards: 4, pool: 100, metricsPath: '', tunelioKey: '', tunelioQuality: '720p', tunelioQualities: ['720p', '1080p'],
     adaptiveHls: true, adaptiveShards: [3], adaptiveHoldMs: 200, publicUrl: 'http://pub.example' };
-  const adaptive = new Adaptive({ playback: f.playback, pacer: { check: () => ({ ok: true }) }, fetcher: f.fetcher, holdMs: 200, base: 'http://pub.example/hls' });
+  const adaptive = new Adaptive({ playback: f.playback, pacer: { check: () => ({ ok: true }) }, fetcher: f.fetcher, holdMs: 200, base: 'http://pub.example/hls', ...opts });
   const app = createApp({ config, store, youtube, tunelio: f.tunelio, playback: f.playback, adaptive, captions: { async get() { return { available: false }; } }, log: () => {} });
   const srv = http.createServer(app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -178,4 +180,46 @@ test('switching off: a room that picked 1080p still gets 1080p when it is slow',
   f.playback.rate.progressive = 0.1;
   const a = new Adaptive({ playback: f.playback, pacer: { check: () => ({ ok: true }) }, switching: false });
   assert.equal(await a.plan({ id: 'slowPicked1', seconds: 1200 }, 'always'), 'direct');
+});
+
+test('start rung: a slow 720p build starts on 360p; no 360p when 720p is quick or the rung is off', async () => {
+  const f = fakes();
+  const ok = { check: () => ({ ok: true }) };
+  f.playback.rate.progressive = 0.1; // 1080p 400 MB ≈ 42 s: adaptive
+  const a = new Adaptive({ playback: f.playback, pacer: ok, start: '360p', startSeconds: 10 });
+  // Two recent builds at 10 MB/s: 720p HLS 200 MB ≈ 23 s > 10 s.
+  f.playback.speed(100, 10_000); f.playback.speed(100, 10_000);
+  assert.equal(await a.plan({ id: 'slow720p001', seconds: 1200 }), 'start');
+  assert.deepEqual(f.created.map(([, q]) => q), ['1080p', '720p'], 'decided on the 1080p and 720p /creates; no 360p yet');
+  f.playback.speeds = [{ at: Date.now(), mbps: 80 }, { at: Date.now(), mbps: 80 }]; // 720p ≈ 5.5 s
+  assert.equal(await new Adaptive({ playback: f.playback, pacer: ok, start: '360p', directSeconds: 1 }).plan({ id: 'quick720p01', seconds: 1200 }), 'adaptive');
+  f.playback.speeds = [];
+  assert.equal(await new Adaptive({ playback: f.playback, pacer: ok }).plan({ id: 'noStartRung', seconds: 1200 }), 'adaptive', 'off without ADAPTIVE_START');
+});
+
+test('start rung play: player → master with 360p first, 720p and 1080p held until built', async (t) => {
+  const s = await server({ hold720: true }, { start: '360p', startSeconds: 10 });
+  t.after(() => s.srv.close());
+  s.playback.rate.progressive = 0.1;
+  s.playback.rate.hls = 0.2; // 720p HLS 200 MB ≈ 43 s
+  const n = await s.ticket(3);
+  assert.equal((await (await s.get(`/v1/3/${n}`, 'UnityPlayer/2022')).json()).plan, 'start');
+  assert.match((await s.get(`/v1/3/${n}`, YTDLP)).headers.get('content-type'), /text\/html/);
+  const p = await s.get(`/v1/3/${n}`);
+  assert.equal(p.status, 302);
+  const path = new URL(p.headers.get('location')).pathname;
+  const m = await (await s.get(path)).text();
+  const order = [...m.matchAll(/\/(\d+p)\.m3u8/g)].map((x) => x[1]);
+  assert.deepEqual(order, ['360p', '720p', '1080p'], 'the built 360p first');
+  assert.match(m, /RESOLUTION=640x360,CODECS="avc1\.4d401e/);
+  assert.equal((await s.get(path.replace('.m3u8', '/360p.m3u8'))).status, 200);
+  assert.equal((await s.get(path.replace('.m3u8', '/720p.m3u8'))).status, 404, '720p still building');
+  s.release720();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal((await s.get(path.replace('.m3u8', '/720p.m3u8'))).status, 200);
+  assert.equal((await s.get(path.replace('.m3u8', '/1080p.m3u8'))).status, 404, '1080p still building');
+  s.releaseUpper(true);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal((await s.get(path.replace('.m3u8', '/1080p.m3u8'))).status, 200, 'failed 1080p: the 720p playlist ends the retries');
+  assert.deepEqual(s.created.map(([, q]) => q).sort(), ['1080p', '360p', '720p'], 'one /create per quality: 30 credits');
 });

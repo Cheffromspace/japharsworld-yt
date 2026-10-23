@@ -96,7 +96,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const today = () => dayOf(Date.now(), config.metricsTz);
   adaptive ??= new Adaptive({
     playback, log: logJson, onEvent: (k) => metrics.inc('adaptive', k), holdMs: config.adaptiveHoldMs, directSeconds: config.adaptiveDirectSeconds,
-    base: `${config.publicUrl}/hls`, switching: config.adaptiveSwitch,
+    base: `${config.publicUrl}/hls`, switching: config.adaptiveSwitch, start: config.adaptiveStart, startSeconds: config.adaptiveStartSeconds,
     lower: config.tunelioQuality, upper: config.tunelioQualities.at(-1) ?? '1080p', maxUpperMb: config.tunelioMaxMb,
     pacer: new Pacer({
       reserve: config.adaptiveReserve,
@@ -331,6 +331,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const mode = await adaptive.plan(data, upgradeMode(shard));
     if (mode === 'direct') return { quality: adaptive.upper, hls: false, mode };
     if (mode === 'adaptive') return { quality: adaptive.lower, hls: true, mode };
+    if (mode === 'start') return { quality: adaptive.start, hls: true, mode };
     return { quality: adaptive.lower, hls: false, mode };
   }
   function quality(res, shard, raw) {
@@ -369,7 +370,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const c = await choice(shard, t.data);
       if (c.hls && resolver) {
         // yt-dlp would pick one variant of the master and hand AVPro only that: send it on at once, start the build.
-        playback.start(t.data, adaptive.lower, { hls: true });
+        playback.start(t.data, c.quality, { hls: true });
         metrics.inc('adaptive', 'defer');
         logJson({ event: 'play_defer', shard, n, id: t.data.id, held: 0, adaptive: true });
         const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
@@ -384,7 +385,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           quality: c.quality, hls: c.hls });
       } finally { holding--; }
       if (c.hls && where.ready && where.via === 'tunelio') {
-        where = { ...where, location: adaptive.url(adaptive.session(t.data)) };
+        where = { ...where, location: adaptive.url(adaptive.session(t.data, playback.peek(t.data, c.quality, { hls: true }))) };
       } else if (!resolver && where.ready && where.via === 'tunelio' && /[?&]hls=1$/.test(where.location)) {
         // A plain HLS build reached through the redirect: our copy with absolute links (see src/adaptive.js).
         const job = playback.peek(t.data, c.quality, { hls: c.hls });

@@ -26,7 +26,8 @@ function fakes({ sizes = SIZES, hold720 = false } = {}) {
     return { ok: true, refused: false };
   };
   const playback = new Playback({ tunelio, quality: '720p', probe });
-  const fetcher = async () => new Response(playlist, { status: 200 });
+  // Says which build it is (a comment line players ignore), for tests that check which rung stood in.
+  const fetcher = async (url) => new Response(`${playlist}#BUILD:${String(url).match(/\d+p/)?.[0]}\n`, { status: 200 });
   return { tunelio, playback, created, fetcher, releaseUpper: (fail = false) => { failUpper = fail; releaseUpper(); }, release720 };
 }
 
@@ -294,9 +295,8 @@ test('start rung: a slow 720p build starts on 360p; no 360p when 720p is quick o
   assert.equal(await new Adaptive({ playback: f.playback, pacer: ok }).plan({ id: 'noStartRung', seconds: 1200 }), 'adaptive', 'off without ADAPTIVE_START');
 });
 
-test('start rung play: player → master with 360p first, 720p and 1080p held until built', async (t) => {
-  const s = await server({ hold720: true }, { start: '360p', startSeconds: 10 });
-  t.after(() => s.srv.close());
+async function startPlay(opts = {}) {
+  const s = await server({ hold720: true }, { start: '360p', startSeconds: 10, ...opts });
   s.playback.rate.progressive = 0.1;
   s.playback.rate.hls = 0.2; // 720p HLS 200 MB ≈ 43 s
   const n = await s.ticket(3);
@@ -306,18 +306,55 @@ test('start rung play: player → master with 360p first, 720p and 1080p held un
   assert.equal(p.status, 302);
   const path = new URL(p.headers.get('location')).pathname;
   const m = await (await s.get(path)).text();
-  const order = [...m.matchAll(/\/(\d+p)\.m3u8/g)].map((x) => x[1]);
-  assert.deepEqual(order, ['360p', '720p', '1080p'], 'the built 360p first');
-  assert.match(m, /RESOLUTION=640x360$/m);
-  assert.doesNotMatch(m, /CODECS/, 'no CODECS: Quest plays a master that lists mp4a muted');
-  assert.equal((await s.get(path.replace('.m3u8', '/360p.m3u8'))).status, 200);
-  assert.equal((await s.get(path.replace('.m3u8', '/720p.m3u8'))).status, 404, '720p still building');
+  const rung = (q, ua) => s.get(path.replace('.m3u8', `/${q}.m3u8`), ua);
+  return { ...s, m, order: [...m.matchAll(/\/(\d+p)\.m3u8/g)].map((x) => x[1]), rung };
+}
+const settle = () => new Promise((r) => setTimeout(r, 20));
+
+test('start rung play: master with 360p and 1080p only (one switch), the unlisted 720p built for a failed 1080p', async (t) => {
+  const s = await startPlay();
+  t.after(() => s.srv.close());
+  assert.deepEqual(s.order, ['360p', '1080p'], 'the built 360p first, no 720p step (#104)');
+  assert.match(s.m, /RESOLUTION=640x360$/m);
+  assert.doesNotMatch(s.m, /CODECS/, 'no CODECS: Quest plays a master that lists mp4a muted');
+  assert.equal((await s.rung('360p')).status, 200);
+  assert.equal((await s.rung('720p')).status, 404, 'not a rung of this master');
+  assert.equal((await s.rung('1080p')).status, 404, '1080p still building');
   s.release720();
-  await new Promise((r) => setTimeout(r, 20));
-  assert.equal((await s.get(path.replace('.m3u8', '/720p.m3u8'))).status, 200);
-  assert.equal((await s.get(path.replace('.m3u8', '/1080p.m3u8'))).status, 404, '1080p still building');
+  await settle();
+  assert.equal((await s.rung('1080p')).status, 404, 'a ready 720p is not served before ADAPTIVE_START_STEP_SECONDS');
   s.releaseUpper(true);
-  await new Promise((r) => setTimeout(r, 20));
-  assert.equal((await s.get(path.replace('.m3u8', '/1080p.m3u8'))).status, 200, 'failed 1080p: the 720p playlist ends the retries');
+  await settle();
+  const r = await s.rung('1080p');
+  assert.equal(r.status, 200, 'failed 1080p: the 720p playlist ends the retries');
+  assert.match(await r.text(), /#BUILD:720p/, 'the 720p build, not the 360p one');
   assert.deepEqual(s.created.map(([, q]) => q).sort(), ['1080p', '360p', '720p'], 'one /create per quality: 30 credits');
+});
+
+test('start rung play: a 1080p still building ADAPTIVE_START_STEP_SECONDS after the start gets the ready 720p in its place', async (t) => {
+  let now = Date.now();
+  const events = [];
+  const s = await startPlay({ now: () => now, startStepSeconds: 30, onEvent: (k) => events.push(k) });
+  t.after(() => s.srv.close());
+  now += 31_000;
+  assert.equal((await s.rung('1080p')).status, 404, '720p not ready either: keep waiting');
+  s.release720();
+  await settle();
+  const r = await s.rung('1080p');
+  assert.equal(r.status, 200);
+  assert.match(await r.text(), /#BUILD:720p/);
+  assert.deepEqual(events.filter((k) => k === 'start_step_lower'), ['start_step_lower']);
+  s.releaseUpper();
+  await settle();
+  assert.match(await (await s.rung('1080p')).text(), /#BUILD:1080p/, 'once built, later players get 1080p');
+});
+
+test('start rung play with ADAPTIVE_START_MID=on: 360p, 720p, 1080p', async (t) => {
+  const s = await startPlay({ startMid: true });
+  t.after(() => s.srv.close());
+  assert.deepEqual(s.order, ['360p', '720p', '1080p']);
+  assert.equal((await s.rung('720p')).status, 404, '720p still building');
+  s.release720();
+  await settle();
+  assert.equal((await s.rung('720p')).status, 200);
 });

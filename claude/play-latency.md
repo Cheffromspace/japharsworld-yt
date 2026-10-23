@@ -147,6 +147,12 @@ Cost estimate from 10-19..10-22 daily build buckets: 1–16 builds a day over ~1
 speed probe's ~520–720. Not yet measured: a real 360p /create (size, build time) and whether AVPro steps 360p → 720p →
 1080p without the freeze seen 10-22.
 
+2026-10-23 (#104/#91), PC: 360p → 720p at +7 s → 1080p at +17 s stuttered in that window; 360p → 1080p at +11 s didn't.
+Owner: one switch. The master of a start play now lists only 360p and 1080p; the 720p HLS build is still made and stands
+in under the 1080p link when the 1080p fails, is AV1 on a Quest, or isn't built `ADAPTIVE_START_STEP_SECONDS` (30)
+after the first master load (`adaptive`/`start_step_lower`; the player then stays on 720p, since a VOD variant playlist
+is read once). `ADAPTIVE_START_MID=on` lists the 720p again.
+
 ## Home relay playback (2026-10-22/23)
 
 Owner: add the home connection to the serving chain, "as part of our adaptive credit spending, preferring Tunelio",

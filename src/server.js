@@ -100,7 +100,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const today = () => dayOf(Date.now(), config.metricsTz);
   adaptive ??= new Adaptive({
     playback, log: logJson, onEvent: (k) => metrics.inc('adaptive', k), holdMs: config.adaptiveHoldMs, directSeconds: config.adaptiveDirectSeconds,
-    base: `${config.publicUrl}/hls`, switching: config.adaptiveSwitch, start: config.adaptiveStart, startSeconds: config.adaptiveStartSeconds, androidNoAv1: config.homeAndroid,
+    base: `${config.publicUrl}/hls`, switching: config.adaptiveSwitch, start: config.adaptiveStart, startSeconds: config.adaptiveStartSeconds,
+    startMid: config.adaptiveStartMid, startStepSeconds: config.adaptiveStartStepSeconds, androidNoAv1: config.homeAndroid,
     lower: config.tunelioQuality, upper: config.tunelioQualities.at(-1) ?? '1080p', maxUpperMb: config.tunelioMaxMb,
     pacer: new Pacer({
       reserve: config.adaptiveReserve,

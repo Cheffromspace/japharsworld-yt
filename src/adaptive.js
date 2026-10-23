@@ -87,7 +87,7 @@ export class Adaptive {
       const job = x?.id && this.playback.peek?.(data, x.quality, { hls: x.hls });
       if (!job || !/^[a-f0-9]{18}$/.test(x.token) || !Array.isArray(x.rungs) || !Array.isArray(x.ladder)) continue;
       const s = { token: x.token, data, lowerJob: job, rungs: x.rungs, ladder: x.ladder, single: !!x.single, started: !!x.started,
-        served: new Set(x.served ?? []), viewers: new Map() };
+        served: new Set(x.served ?? []), viewers: new Map(), best: x.ladder.includes(x.best) ? x.best : undefined };
       this.byJob.set(job, s);
       this.sessions.set(s.token, s);
     }
@@ -99,7 +99,7 @@ export class Adaptive {
     for (const s of this.sessions.values()) {
       if (s.lowerJob.state === 'failed') continue;
       sessions.push({ token: s.token, id: s.data.id, seconds: s.data.seconds, quality: s.lowerJob.requested, hls: s.lowerJob.fixed,
-        rungs: s.rungs, ladder: s.ladder, single: s.single, started: s.started, served: [...s.served] });
+        rungs: s.rungs, ladder: s.ladder, single: s.single, started: s.started, served: [...s.served], best: s.best ?? null });
     }
     try {
       writeFileSync(`${this.stateFile}.tmp`, JSON.stringify({ sessions: sessions.slice(-500), forced: Object.fromEntries(this.forced) }));
@@ -260,6 +260,31 @@ export class Adaptive {
     return `${lines.join('\n')}\n`;
   }
 
+  // What a session's players have been given so far, for the tablet's ticket status (owner, 2026-10-23, #104: AVPro
+  // reports the top variant's size from the start, so the world can't tell the real rung itself).
+  //   rung: the highest build actually served to the session's players ('360p' | '720p' | '1080p'), null before any;
+  //         a fallback counts as what it is (a failed 1080p answered with the 720p is '720p')
+  //   top:  'served' (the top rung's own build went out) | 'failed' (its build failed, or is AV1 for a Quest: it won't
+  //         come) | 'pending'
+  // Null for a job without an adaptive session (progressive and plain HLS plays).
+  progress(job) {
+    const s = job && this.byJob.get(job);
+    if (!s || s.single) return null;
+    const top = s.rungs.at(-1);
+    return {
+      rung: s.best ?? null,
+      top: s.served.has(top) ? 'served' : s.served.has(`failed:${top}`) || s.served.has(`av1:${top}`) ? 'failed' : 'pending',
+    };
+  }
+
+  // Records the build a session's player was just given (progress).
+  #gave(s, job, text) {
+    if (!text || !job) return text;
+    const q = job.requested;
+    if (s.best == null || s.ladder.indexOf(q) > s.ladder.indexOf(s.best)) s.best = q;
+    return text;
+  }
+
   // A variant playlist: Tunelio's, with its segment links made absolute. Null = not (yet) available (404).
   // android: the player is Quest's (src/playback.js isAndroidPlayer). With androidNoAv1 (HOME_ANDROID=on), a higher rung
   // whose build is AV1, which the Quest 2 can't decode, is answered like a failed one: with the best rung below that
@@ -271,7 +296,7 @@ export class Adaptive {
     if (s.single) return quality === s.lowerJob.quality ? this.#playlist(s.lowerJob) : null;
     const i = s.rungs.indexOf(quality);
     if (i < 0) return null;
-    if (i === 0) return this.#playlist(s.lowerJob);
+    if (i === 0) return this.#gave(s, s.lowerJob, await this.#playlist(s.lowerJob));
     let up = this.#job(s, quality);
     if (!up) return null;
     // Every build below this rung, listed or not (a `start` session's 720p).
@@ -281,15 +306,17 @@ export class Adaptive {
     if (up.state === 'failed') {
       // The best ready build below it, which ends the player's retries of this one.
       if (!s.served.has(`failed:${quality}`)) { s.served.add(`failed:${quality}`); this.onEvent('upgrade_failed'); this.log({ event: 'adaptive_upgrade_failed', id: s.data.id, quality, reason: up.reason }); }
-      return this.#playlist(under.filter((j) => j?.state === 'ready').at(-1) ?? s.lowerJob);
+      const got = under.filter((j) => j?.state === 'ready').at(-1) ?? s.lowerJob;
+      return this.#gave(s, got, await this.#playlist(got));
     }
     if (android && this.androidNoAv1 && await this.codec(up) === 'av1') {
       if (!s.served.has(`av1:${quality}`)) { s.served.add(`av1:${quality}`); this.onEvent('android_av1_rung'); this.log({ event: 'android_av1', id: s.data.id, quality, rung: i }); }
       const below = [];
       for (const j of under) if (j?.state === 'ready' && await this.codec(j) !== 'av1') below.push(j);
-      return this.#playlist(below.at(-1) ?? s.lowerJob);
+      const got = below.at(-1) ?? s.lowerJob;
+      return this.#gave(s, got, await this.#playlist(got));
     }
-    const text = await this.#playlist(up);
+    const text = this.#gave(s, up, await this.#playlist(up));
     const v = viewer && s.viewers.get(viewer);
     if (text && v) v.upgraded = true;
     if (text && !s.served.has(quality)) { s.served.add(quality); this.onEvent('upgrade_served'); this.log({ event: 'adaptive_upgrade_served', id: s.data.id, quality, mb: up.mb, buildMs: up.endedMs - up.startedMs }); }

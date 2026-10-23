@@ -229,6 +229,11 @@ test('.m3u8 ticket on an adaptive plan: the master, without CODECS', async (t) =
   const m = await (await s.get(new URL(p.headers.get('location')).pathname, QUEST)).text();
   assert.match(m, /RESOLUTION=1280x720\n/);
   assert.doesNotMatch(m, /CODECS/);
+  // The tablet's status on the .m3u8 ticket reports the rung like a PC play's.
+  const base = new URL(p.headers.get('location')).pathname;
+  await s.get(base.replace('.m3u8', '/720p.m3u8'), QUEST);
+  const st = await (await s.get(`/v1/3/${n}.m3u8`, 'UnityPlayer/2022')).json();
+  assert.deepEqual([st.plan, st.rung, st.top], ['adaptive', '720p', 'pending']);
 });
 
 test('speed estimate: the median of recent builds wins over the long-run average, old ones expire', () => {
@@ -399,7 +404,8 @@ async function startPlay(opts = {}, mbps = 20) {
   const path = new URL(p.headers.get('location')).pathname;
   const m = await (await s.get(path)).text();
   const rung = (q, ua) => s.get(path.replace('.m3u8', `/${q}.m3u8`), ua);
-  return { ...s, m, order: [...m.matchAll(/\/(\d+p)\.m3u8/g)].map((x) => x[1]), rung };
+  const status = async () => { const j = await (await s.get(`/v1/3/${n}`, 'UnityPlayer/2022')).json(); return { plan: j.plan, rung: j.rung, top: j.top }; };
+  return { ...s, m, order: [...m.matchAll(/\/(\d+p)\.m3u8/g)].map((x) => x[1]), rung, status };
 }
 const settle = () => new Promise((r) => setTimeout(r, 20));
 
@@ -422,6 +428,7 @@ test('start rung play, 1080p due soon: master with 360p and 1080p only (one swit
   const r = await s.rung('1080p');
   assert.equal(r.status, 200, 'failed 1080p: the 720p playlist ends the retries');
   assert.match(await r.text(), /#BUILD:720p/, 'the 720p build, not the 360p one');
+  assert.deepEqual(await s.status(), { plan: 'start', rung: '720p', top: 'failed' }, 'the fallback counts as what it is');
   assert.deepEqual(s.created.map(([, q]) => q).sort(), ['1080p', '360p', '720p'], 'one /create per quality: 30 credits');
 });
 
@@ -431,14 +438,20 @@ test('start rung play, 1080p predicted over ADAPTIVE_START_STEP_SECONDS: 360p, 7
   t.after(() => s.srv.close());
   assert.deepEqual(s.order, ['360p', '720p', '1080p']);
   assert.ok(events.includes('start_mid'));
+  // The tablet's ticket status follows what the players were actually given (AVPro reports the top size from the start).
+  assert.deepEqual(await s.status(), { plan: 'start', rung: null, top: 'pending' }, 'master loaded, no variant yet');
+  assert.equal((await s.rung('360p')).status, 200);
+  assert.deepEqual(await s.status(), { plan: 'start', rung: '360p', top: 'pending' });
   assert.equal((await s.rung('720p')).status, 404, '720p still building');
   s.release720();
   await settle();
   assert.match(await (await s.rung('720p')).text(), /#BUILD:720p/);
+  assert.deepEqual(await s.status(), { plan: 'start', rung: '720p', top: 'pending' });
   assert.equal((await s.rung('1080p')).status, 404, '1080p still building');
   s.releaseUpper();
   await settle();
   assert.match(await (await s.rung('1080p')).text(), /#BUILD:1080p/);
+  assert.deepEqual(await s.status(), { plan: 'start', rung: '1080p', top: 'served' });
 });
 
 test('start rung play with no measured builds (after a restart): two steps, whatever the prior says', async (t) => {

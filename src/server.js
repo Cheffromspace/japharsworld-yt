@@ -480,6 +480,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
         const st = playback.status(t.data, { quality: c.quality, hls: c.hls });
         if (c.mode) st.plan = c.mode;
+        // Adaptive and start plays: the rung their players have reached (src/adaptive.js progress). Both fields are
+        // always there for those plans: rung null and top 'pending' before the session's master is first loaded.
+        if (c.hls && !c.single && (c.mode === 'adaptive' || c.mode === 'start')) {
+          Object.assign(st, adaptive.progress(playback.peek?.(t.data, c.quality, { hls: true })) ?? { rung: null, top: 'pending' });
+        }
         if (st.state === 'building' && before !== 'building') { metrics.inc('warm'); warmed.add(`${shard}:${t.data.id}`); }
         return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...st });
       }

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { Tunelio } from '../src/tunelio.js';
-import { Playback, clientKind } from '../src/playback.js';
+import { Playback, clientKind, isAndroidPlayer } from '../src/playback.js';
 import { TunelioCaptions, orderTracks, pickTrack, displayName } from '../src/transcripts.js';
 import { makeAlert } from '../src/alert.js';
 import { Store } from '../src/store.js';
@@ -330,4 +330,14 @@ test('room quality: q/auto clears the pick', async () => {
   assert.equal(store.quality(1, 3600_000), '1080p');
   store.setQuality(1, null);
   assert.equal(store.quality(1, 3600_000), null);
+});
+
+test('isAndroidPlayer: the Quest players (seen 2026-10-22), not the PC player, the resolver or the tablet', () => {
+  assert.equal(isAndroidPlayer('AVProMobileVideo/2026.3.3p2-1921-15c4a824b2-Release (Linux;Android 14) ExoPlayer'), true);
+  assert.equal(isAndroidPlayer('stagefright/1.2 (Linux;Android 14)'), true);
+  assert.equal(isAndroidPlayer('NSPlayer/12.00.26100.1234 WMFSDK/12.00.26100.1234'), false);
+  assert.equal(isAndroidPlayer('Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36'), false);
+  assert.equal(isAndroidPlayer('UnityPlayer/2022.3.22f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV) Android'), false);
+  assert.equal(isAndroidPlayer(''), false);
+  assert.equal(isAndroidPlayer(undefined), false);
 });

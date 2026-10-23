@@ -263,6 +263,14 @@ export function linkProbe({ fetcher = fetch, timeoutMs = 150_000 } = {}) {
 //   string — VRChat's string/image downloader (UnityWebRequest): the tablet warming or watching a build
 //   ytdlp  — VRChat's resolver (a Chrome-like UA)
 //   avpro  — the AVPro / Media Foundation player itself (anything else that isn't a browser-like UA)
+// An Android video player: Quest's AVPro (ExoPlayer) or VizVid's fallback, Android's MediaPlayer ("stagefright"). Both
+// pick the format from the URL they were handed, before following redirects (Quest 2, 2026-10-22): a ticket has no
+// extension, so it opens as a progressive file and an HLS playlist behind it fails with "Loading failed".
+export function isAndroidPlayer(ua = '') {
+  const s = String(ua);
+  return /Android/i.test(s) && !/Mozilla\//i.test(s) && !/UnityPlayer|UnityWebRequest/i.test(s);
+}
+
 export function clientKind(ua = '') {
   const s = String(ua);
   if (/UnityPlayer|UnityWebRequest/i.test(s)) return 'string';

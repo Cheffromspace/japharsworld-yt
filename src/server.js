@@ -28,7 +28,7 @@ import { youtube as defaultYoutube } from './youtube.js';
 import { cachedSheet } from './sheet.js';
 import { Captions, errorLine } from './captions.js';
 import { Tunelio } from './tunelio.js';
-import { Playback, linkProbe, clientKind } from './playback.js';
+import { Playback, linkProbe, clientKind, isAndroidPlayer } from './playback.js';
 import { TunelioCaptions } from './transcripts.js';
 import { CaptionChain } from './captionchain.js';
 import { makeAlert } from './alert.js';
@@ -391,7 +391,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // A player (VRChat's resolver, then AVPro). The resolver gives up after 20 s, so it is held only briefly and
       // then told "this is not a video" (a plain page), which makes VRChat hand the URL straight to AVPro.
       const resolver = kind === 'ytdlp';
-      const c = await choice(shard, t.data);
+      let c = await choice(shard, t.data);
+      // Android players can't open HLS behind a ticket (src/playback.js isAndroidPlayer): the progressive build of the
+      // default quality instead. The PC players in the same room keep the adaptive plan. Videos too long for a
+      // progressive build still get HLS, which an Android player can't play.
+      if (c.hls && !resolver && isAndroidPlayer(req.headers['user-agent'])) {
+        c = { quality: adaptive.lower, hls: false, mode: 'android' };
+        metrics.inc('adaptive', 'android_progressive');
+      }
       if (c.hls && resolver) {
         // yt-dlp would pick one variant of the master and hand AVPro only that: send it on at once, start the build.
         playback.start(t.data, c.quality, { hls: true });

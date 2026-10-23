@@ -133,6 +133,39 @@ test('direct and off: a fast 1080p plays progressive; other shards keep the old 
   assert.equal(o.headers.get('location'), 'https://tunelio.dev/tunnel?id=AbCdEfGh1jK-720p&exp=1&sig=s&progressive=1', 'shard 0: plans off, the room default');
 });
 
+const QUEST = 'AVProMobileVideo/2026.3.3p2-1921-15c4a824b2-Release (Linux;Android 14) ExoPlayer';
+
+test('.m3u8 ticket (the world\'s Android build): always HLS, the plan\'s quality as a plain playlist', async (t) => {
+  const s = await server();
+  t.after(() => s.srv.close());
+  s.releaseUpper();
+  const n = await s.ticket(3); // fast: plan direct, 1080p
+  const st = await (await s.get(`/v1/3/${n}.m3u8`, 'UnityPlayer/2022')).json();
+  assert.equal(st.plan, 'direct');
+  assert.equal(st.format, 'hls', 'the tablet warms the HLS build the player will open');
+  const q = await s.get(`/v1/3/${n}.m3u8`, QUEST);
+  assert.equal(q.status, 302);
+  assert.match(q.headers.get('location'), /^http:\/\/pub\.example\/hls\/[a-f0-9]{18}\/1080p\.m3u8$/, 'a plain playlist, no master');
+  assert.match(await (await s.get(new URL(q.headers.get('location')).pathname, QUEST)).text(), /EXTINF/);
+  assert.match((await s.get(`/v1/3/${n}`, QUEST)).headers.get('location'), /&progressive=1$/, 'an extensionless ticket (older builds) stays progressive');
+  assert.match((await s.get(`/v1/3/${n}`)).headers.get('location'), /&progressive=1$/, 'the PC player keeps the mp4');
+  const n0 = await s.ticket(0); // plans off
+  assert.match((await s.get(`/v1/0/${n0}.m3u8`, QUEST)).headers.get('location'), /^http:\/\/pub\.example\/hls\/[a-f0-9]{18}\/720p\.m3u8$/);
+  assert.equal((await s.get(`/v1/0/${n0}.mp4`, QUEST)).status, 404);
+});
+
+test('.m3u8 ticket on an adaptive plan: the master, without CODECS', async (t) => {
+  const s = await server();
+  t.after(() => s.srv.close());
+  s.playback.rate.progressive = 0.1; // slow → adaptive
+  const n = await s.ticket(3);
+  const p = await s.get(`/v1/3/${n}.m3u8`, QUEST);
+  assert.match(p.headers.get('location'), /^http:\/\/pub\.example\/hls\/[a-f0-9]{18}\.m3u8$/);
+  const m = await (await s.get(new URL(p.headers.get('location')).pathname, QUEST)).text();
+  assert.match(m, /RESOLUTION=1280x720\n/);
+  assert.doesNotMatch(m, /CODECS/);
+});
+
 test('speed estimate: the median of recent builds wins over the long-run average, old ones expire', () => {
   let now = 10 * 3600_000;
   const p = new Playback({ tunelio: { enabled: true }, now: () => now });

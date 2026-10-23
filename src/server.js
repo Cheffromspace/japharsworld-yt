@@ -425,7 +425,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       progress: Math.round(Math.min(0.95, elapsed / (elapsed + eta)) * 100) / 100 };
   }
 
-  async function ticket(req, res, shard, n) {
+  // A ticket ending in .m3u8 (`hlsTicket`) is the world's Android build: Quest's player (ExoPlayer) picks the format from
+  // the URL's extension, so it opens an extensionless ticket as a file and fails on HLS behind it, and opens a .m3u8 one
+  // as HLS and fails on an mp4 behind it. So a .m3u8 ticket is always answered with HLS: the plan's master when it is
+  // adaptive, else a plain HLS build of the plan's quality (a separate build from a PC player's mp4 in the same room).
+  // The tablet's status requests on it report that HLS build, so its warm-up builds what the player will open.
+  const hlsChoice = (c) => (c.hls ? c : { ...c, hls: true, single: true });
+
+  async function ticket(req, res, shard, n, hlsTicket = false) {
     const t = store.get(shard, n);
     if (!t) return fail(res, 404, 'unknown_ticket', 'Nothing here yet. Search again.');
     if (t.kind === 'video') {
@@ -434,10 +441,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // The tablet asking (a row selected, or watching a build): start the build, report it, never redirect.
       if (kind === 'string') {
         const hq = roomQuality(shard);
-        const hw = homeWhy(t.data, hq);
+        const hw = hlsTicket ? null : homeWhy(t.data, hq);
         const hs = hw ? startHome(t.data, hq, hw) : null;
         if (hs && hs.state !== 'failed') return json(res, 200, { v: API, shard, t: n, room: hq, ...homeStatus(hs) });
-        const c = await choice(shard, t.data);
+        let c = await choice(shard, t.data);
+        if (hlsTicket) c = hlsChoice(c);
         const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
         const st = playback.status(t.data, { quality: c.quality, hls: c.hls });
         if (c.mode) st.plan = c.mode;
@@ -453,7 +461,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // Home relay first when it applies. HLS only, so never for Android players (f331bcc). The resolver is sent on at
       // once (it would only pick the playlist apart); the player waits for the first segments.
       const hq = roomQuality(shard);
-      const why = android ? null : homeWhy(t.data, hq);
+      const why = android || hlsTicket ? null : homeWhy(t.data, hq);
       const hs = why ? startHome(t.data, hq, why) : null;
       if (hs && hs.state !== 'failed') {
         if (resolver) {
@@ -472,8 +480,12 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         let c = await choice(shard, t.data);
         // Android players can't open HLS behind a ticket (src/playback.js isAndroidPlayer): the progressive build of the
         // default quality instead. The PC players in the same room keep the adaptive plan. Videos too long for a
-        // progressive build still get HLS, which an Android player can't play.
-        if (c.hls && !resolver && android) {
+        // progressive build still get HLS, which an Android player can't play. A .m3u8 ticket (the world's Android build)
+        // always gets HLS instead.
+        if (hlsTicket && !resolver) {
+          if (!c.hls) metrics.inc('adaptive', 'hls_ticket');
+          c = hlsChoice(c);
+        } else if (c.hls && !resolver && android) {
           c = { quality: adaptive.lower, hls: false, mode: 'android' };
           metrics.inc('adaptive', 'android_progressive');
         }
@@ -491,7 +503,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs,
             quality: c.quality, hls: c.hls });
         } finally { holding--; }
-        if (c.hls && where.ready && where.via === 'tunelio') {
+        if (c.hls && !c.single && where.ready && where.via === 'tunelio') {
           where = { ...where, location: adaptive.url(adaptive.session(t.data, playback.peek(t.data, c.quality, { hls: true }))) };
         } else if (!resolver && where.ready && where.via === 'tunelio' && /[?&]hls=1$/.test(where.location)) {
           // A plain HLS build reached through the redirect: our copy with absolute links (see src/adaptive.js).
@@ -499,7 +511,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           if (job?.url === where.location) where = { ...where, location: adaptive.single(t.data, job) };
         }
         // Tunelio's build failed: home before youtube.com's 360p, for a PC player when a worker is free.
-        if (!resolver && !android && where.ready && where.via === 'youtube' && /^(tunelio_failed|build_failed)$/.test(where.reason ?? '') && home.worker()) {
+        if (!resolver && !android && !hlsTicket && where.ready && where.via === 'youtube' && /^(tunelio_failed|build_failed)$/.test(where.reason ?? '') && home.worker()) {
           const fallback = startHome(t.data, hq, 'tunelio_failed');
           if (fallback && fallback.state !== 'failed') {
             holding++;
@@ -662,7 +674,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         res.writeHead(200, { 'content-type': PAGES[pagePath][1], 'content-length': buf.length, 'cache-control': 'public, max-age=3600' });
         return res.end(req.method === 'HEAD' ? undefined : buf);
       }
-      const m = url.pathname.match(/^\/v1\/(\d+)\/(s|q(?:\/(?:\d{3,4}|auto))?|cc\/(?:[A-Za-z-]+|\d{1,3})|\d+)\/?$/);
+      const m = url.pathname.match(/^\/v1\/(\d+)\/(s|q(?:\/(?:\d{3,4}|auto))?|cc\/(?:[A-Za-z-]+|\d{1,3})|\d+(?:\.m3u8)?)\/?$/);
       if (!m) return fail(res, 404, 'not_found', 'Unknown path.');
       const shard = Number(m[1]);
       if (!store.validShard(shard)) return fail(res, 404, 'bad_shard', 'Unknown shard.');
@@ -670,10 +682,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (m[2] === 's') { route = 'search'; return await search(req, res, shard, url); }
       if (m[2].startsWith('cc/')) { route = 'captions'; return await caption(req, res, shard, m[2].slice(3), url); }
       if (m[2] === 'q' || m[2].startsWith('q/')) { route = 'quality'; return quality(res, shard, m[2].slice(2)); }
-      const n = Number(m[2]);
+      const hlsTicket = m[2].endsWith('.m3u8');
+      const n = Number(hlsTicket ? m[2].slice(0, -5) : m[2]);
       if (!store.validTicket(n)) return fail(res, 404, 'unknown_ticket', 'Unknown ticket.');
       route = 'ticket';
-      return await ticket(req, res, shard, n);
+      return await ticket(req, res, shard, n, hlsTicket);
     } catch (err) {
       log(JSON.stringify({ at: new Date().toISOString(), event: 'error', route, message: String(err?.stack ?? err).slice(0, 500) }));
       if (!res.headersSent) fail(res, 500, 'server_error', 'Something went wrong.');

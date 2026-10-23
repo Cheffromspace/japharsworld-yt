@@ -211,7 +211,8 @@ test('start rung play: player → master with 360p first, 720p and 1080p held un
   const m = await (await s.get(path)).text();
   const order = [...m.matchAll(/\/(\d+p)\.m3u8/g)].map((x) => x[1]);
   assert.deepEqual(order, ['360p', '720p', '1080p'], 'the built 360p first');
-  assert.match(m, /RESOLUTION=640x360,CODECS="avc1\.4d401e/);
+  assert.match(m, /RESOLUTION=640x360$/m);
+  assert.doesNotMatch(m, /CODECS/, 'no CODECS: Quest plays a master that lists mp4a muted');
   assert.equal((await s.get(path.replace('.m3u8', '/360p.m3u8'))).status, 200);
   assert.equal((await s.get(path.replace('.m3u8', '/720p.m3u8'))).status, 404, '720p still building');
   s.release720();

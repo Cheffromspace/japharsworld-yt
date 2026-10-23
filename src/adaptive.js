@@ -46,8 +46,9 @@ export class Pacer {
 }
 
 const RES = { '360p': '640x360', '720p': '1280x720', '1080p': '1920x1080' };
-// AVC levels high enough for 60 fps at each size (the strings the 2026-10-22 test used; 360p: YouTube's Main 3.0).
-const CODECS = { '360p': 'avc1.4d401e,mp4a.40.2', '720p': 'avc1.4d4020,mp4a.40.2', '1080p': 'avc1.64002a,mp4a.40.2' };
+// No CODECS on the variants: on Quest (AVPro's ExoPlayer) a master whose CODECS lists mp4a, without an audio group,
+// plays muted, though the same variant playlists alone have sound. Measured 2026-10-23 with test slots 01/08-11
+// (src/slots.js): with CODECS muted (-64 dB, the room alone), without it -26 dB; PC (Media Foundation) has sound either way.
 const PLAN_MS = 30 * 60_000;
 
 export class Adaptive {
@@ -150,7 +151,7 @@ export class Adaptive {
       // Before a rung's /create answers its size is unknown: guess from the first rung's.
       const job = this.#job(s, q);
       const bw = i === 0 || job?.mb > 0 ? this.bandwidth(job) : this.bandwidth(s.lowerJob, 1.8 ** i);
-      lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bw},RESOLUTION=${RES[q]},CODECS="${CODECS[q]}"`, `${this.base}/${token}/${q}.m3u8`);
+      lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bw},RESOLUTION=${RES[q]}`, `${this.base}/${token}/${q}.m3u8`);
     });
     return `${lines.join('\n')}\n`;
   }

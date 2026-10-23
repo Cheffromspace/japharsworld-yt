@@ -1,5 +1,6 @@
 // Tunelio speed probe (owner, 2026-10-21: track Tunelio's performance over time to inform decisions; first hourly,
-// then every 20 minutes: "I'm paying for the service and I need it to be reliable"). On 2026-10-21 progressive builds of ~1 GB took 30–120 s, 2–6× slower than the
+// then every 20 minutes: "I'm paying for the service and I need it to be reliable"; hourly again from 2026-10-23, as
+// 20 minutes cost ~720 credits a day). On 2026-10-21 progressive builds of ~1 GB took 30–120 s, 2–6× slower than the
 // 2026-10-19 measurements (claude/play-latency.md), and visitors' builds alone are too few to show a trend.
 //
 // Once per interval (at least 20 minutes, plus a random quarter of it up to 10 minutes, never on the clock) and only while no visitor's

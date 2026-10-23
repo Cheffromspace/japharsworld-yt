@@ -40,8 +40,8 @@ number of rows in an hour roughly counts busy instances; two instances on one sh
 ### Tunelio speed probe (`src/probe.js`, inside the search service)
 
 Owner, 2026-10-21: track Tunelio's build speed over time (visitors' builds are too few to show a trend); first hourly,
-then every 20 minutes ("I'm paying for the service and I need it to be reliable"). Every `TUNELIO_PROBE_MINUTES`
-(default 20, at least 20, plus a random quarter of it, at most 10 min; 0 = off), only while no
+then every 20 minutes ("I'm paying for the service and I need it to be reliable"), hourly again from 2026-10-23 (20
+minutes cost ~720 credits a day). Every `TUNELIO_PROBE_MINUTES` (default 60, at least 20, plus a random quarter of it, at most 10 min; 0 = off), only while no
 visitor's build or held player is in flight: one search through the relay worker (never the Linode or the Data API),
 a random 12–30 min result this process hasn't probed, one `/create` at `TUNELIO_PROBE_QUALITY` (default 1080p;
 10 credits, `credits`/`probe`), then the first byte of the progressive mp4 or, on alternate runs, the HLS playlist and

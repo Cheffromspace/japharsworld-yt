@@ -74,7 +74,8 @@ export const config = {
   // Day of the month the Tunelio plan renews and its credits refresh (the credits forecast counts from it).
   tunelioRenewsDay: int('TUNELIO_RENEWS_DAY', 1),
   // Minutes between Tunelio speed probes (src/probe.js; 10 credits each, at least 20, plus a random quarter). 0 = off.
-  tunelioProbeMinutes: int('TUNELIO_PROBE_MINUTES', 20),
+  // Hourly (owner, 2026-10-23): every 20 minutes cost ~720 credits a day, more than playback's 80–450.
+  tunelioProbeMinutes: int('TUNELIO_PROBE_MINUTES', 60),
   // The probe's own quality (2026-10-22: it followed TUNELIO_QUALITY, so it measured 720p while Auto decides whether
   // 1080p is fast enough).
   tunelioProbeQuality: process.env.TUNELIO_PROBE_QUALITY ?? '1080p',
@@ -97,7 +98,7 @@ export const config = {
   homeRelay: (process.env.HOME_RELAY ?? 'off') === 'on',
   homeLongMinutes: int('HOME_LONG_MINUTES', 30),
   homeDailyBuilds: int('HOME_DAILY_BUILDS', 40),
-  homeDailyMb: int('HOME_DAILY_MB', 10_000),
+  homeDailyMb: int('HOME_DAILY_MB', 50_000), // owner, 2026-10-23: 10 GB went in a few long videos (a 6 h mix is ~2.5 GB)
   homeKeepHours: int('HOME_KEEP_HOURS', 12),
   homeMaxGb: int('HOME_MAX_GB', 6),
   // How long a new session may take to its first playlist: yt-dlp ~3 s, then its stream URLs answer 403 for 0.1–2.6 s,

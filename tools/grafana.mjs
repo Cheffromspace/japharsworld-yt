@@ -142,7 +142,7 @@ export function dashboard() {
     ['sum(increase(eiok_events_total{metric="build",key="failed"}[3h]))', 'failed builds'],
     ['sum by (key) (increase(eiok_events_total{metric="play_fallback"}[3h]))', 'fallback: {{key}}'],
   ], { w: 8, min: 0, description: 'Per ticket request, so one slow video retried by the player counts several timeouts; plays count once per room.' }));
-  const probeNote = 'Speed probe every ~20 min (src/probe.js): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 45 min. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment).';
+  const probeNote = 'Speed probe about hourly (src/probe.js; every ~20 min before 2026-10-23): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 2–2.5 h. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment).';
   p.push(series('Tunelio probe: time to start', [
     ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="start_s"})', '{{source}}'],
     ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="create_s"})', '{{source}} /create'],

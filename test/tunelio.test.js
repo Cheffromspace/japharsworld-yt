@@ -241,7 +241,7 @@ test('server: played ticket redirects through playback; caption track by number'
   const r = await (await get('/v1/0/s?q=x')).json();
   const play = await get(`/v1/0/${r.results[0].t}`);
   assert.equal(play.headers.get('location'), 'https://tunelio.dev/tunnel?id=AAAAAAAAAAA&progressive=1');
-  assert.deepEqual(seen[0], { id: 'AAAAAAAAAAA', live: false, seconds: 60 });
+  assert.deepEqual(seen[0], { id: 'AAAAAAAAAAA', live: false, seconds: 60, title: 'a', channel: '', desc: '' });
   await get(`/v1/0/${r.results[1].t}`);
   assert.equal(seen[1].live, true);
   const cc = await (await get('/v1/0/cc/12?l=ja')).json();

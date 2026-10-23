@@ -163,8 +163,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   }
 
   // Binds a page of results to tickets: one per video, one for the sheet, one for the next page.
+  // A video ticket keeps its title, channel and the start of its description, so the tablet's status answer can show
+  // them to everyone in the room, not only to whoever pressed Play (Everything-is-OK#114).
+  const ticketData = (v) => ({ kind: 'video', data: { id: v.id, live: Boolean(v.live), seconds: v.seconds ?? 0, title: v.title ?? '', channel: v.channel ?? '', desc: (v.desc ?? '').slice(0, 240) } });
+  const meta = (data) => ({ title: data.title ?? '', channel: data.channel ?? '', desc: data.desc ?? '' });
+
   function publish(shard, page, extra = {}) {
-    const items = page.videos.map((v) => ({ kind: 'video', data: { id: v.id, live: Boolean(v.live), seconds: v.seconds ?? 0 } }));
+    const items = page.videos.map(ticketData);
     items.push({ kind: 'sheet', data: { ids: page.videos.map((v) => v.id) } });
     if (page.more) items.push({ kind: 'page', data: { page: extra.page ?? 1 } });
     const tickets = store.allocate(shard, items);
@@ -474,7 +479,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         const hq = roomQuality(shard);
         const hw = hlsTicket && !config.homeAndroid ? null : homeWhy(t.data, hq);
         const hs = hw ? startHome(t.data, hq, hw) : null;
-        if (hs && hs.state !== 'failed') return json(res, 200, { v: API, shard, t: n, room: hq, ...homeStatus(hs) });
+        if (hs && hs.state !== 'failed') return json(res, 200, { v: API, shard, t: n, room: hq, ...homeStatus(hs), ...meta(t.data) });
         let c = await choice(shard, t.data);
         if (hlsTicket) c = hlsChoice(c);
         const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
@@ -486,7 +491,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           Object.assign(st, adaptive.progress(playback.peek?.(t.data, c.quality, { hls: true })) ?? { rung: null, top: 'pending' });
         }
         if (st.state === 'building' && before !== 'building') { metrics.inc('warm'); warmed.add(`${shard}:${t.data.id}`); }
-        return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...st });
+        return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...st, ...meta(t.data) });
       }
       // A player (VRChat's resolver, then AVPro). The resolver gives up after 20 s, so it is held only briefly and
       // then told "this is not a video" (a plain page), which makes VRChat hand the URL straight to AVPro.

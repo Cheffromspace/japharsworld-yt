@@ -46,7 +46,7 @@ async function start(over = {}) {
     const body = type.includes('json') ? await res.json() : Buffer.from(await res.arrayBuffer());
     return { status: res.status, headers: res.headers, body };
   };
-  return { server, get, youtube, captionCalls, store };
+  return { server, get, youtube, captionCalls, store, base: `http://127.0.0.1:${port}` };
 }
 
 test('search → tickets → redirect, sheet, next page, captions', async (t) => {
@@ -109,6 +109,22 @@ test('pasted link goes first', async (t) => {
   assert.equal(r.body.pasted, true);
   assert.equal(r.body.results[0].id, 'AbCdEfGhIjK');
   assert.deepEqual(s.youtube.calls, ['AbCdEfGhIjK']);
+});
+
+test('ticket status carries the title, channel and description (Everything-is-OK#114); other links are searched as before', async (t) => {
+  const s = await start();
+  t.after(() => s.server.close());
+  const tablet = async (path) => (await fetch(`${s.base}${path}`, { headers: { 'user-agent': 'UnityPlayer/2022.3 (UnityWebRequest/1.0)' } })).json();
+  const r = await s.get(`/v1/0/s?q=${encodeURIComponent('Search → rain')}`);
+  const st = await tablet(`/v1/0/${r.body.results[0].t}`);
+  assert.equal(st.t, r.body.results[0].t, 'the world matches answers by t');
+  assert.deepEqual([st.title, st.channel, st.desc], [r.body.results[0].title, 'Ch', '']);
+
+  // A non-YouTube link is searched as text, as before (owner, 2026-10-23: no redirects to other sites).
+  const l = await s.get(`/v1/0/s?q=${encodeURIComponent('Search → https://cdn.example.org/clip.mp4')}`);
+  assert.equal(l.status, 200);
+  assert.deepEqual(s.youtube.calls, ['rain', 'https://cdn.example.org/clip.mp4']);
+  assert.equal(l.body.results[0].link, undefined);
 });
 
 test('errors are JSON with codes', async (t) => {

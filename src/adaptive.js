@@ -204,11 +204,45 @@ export class Adaptive {
   // The video codec of a ready HLS build: 'av1' | 'h264' | 'hevc' | 'vp9', or null when unknown. Read from the sample
   // entry in its init segment (the EXT-X-MAP file, a few KB), once per build. The Quest 2 can't decode AV1, and
   // Tunelio's builds sometimes are (Everything-is-OK #101), so an Android play of one goes home instead (server.js).
-  async codec(job) {
-    if (!job || job.state !== 'ready') return null;
-    if (job.codec !== undefined) return job.codec;
-    const text = await this.#playlist(job);
-    const map = text?.match(/#EXT-X-MAP:[^\n]*URI="([^"]+)"/)?.[1];
+  // Only the playlist's head is read for the EXT-X-MAP line (2026-10-23, Quest: a fresh 1080p HLS playlist took over
+  // 15 s to arrive whole, and the play waited for it), and concurrent asks for the same build share one read.
+  codec(job) {
+    if (!job || job.state !== 'ready') return Promise.resolve(null);
+    if (job.codec !== undefined) return Promise.resolve(job.codec);
+    job.codecRead ??= this.#readCodec(job).finally(() => { job.codecRead = null; });
+    return job.codecRead;
+  }
+
+  // The init segment's URL from the first lines of a build's playlist (absolute), or null.
+  async #mapUrl(job) {
+    const find = (text) => text.match(/#EXT-X-MAP:[^\n]*URI="([^"]+)"/)?.[1];
+    if (job.playlist) return find(job.playlist) ?? null; // already absolute
+    try {
+      const res = await this.fetch(job.url, { signal: AbortSignal.timeout(15_000) });
+      if (res.status !== 200) { try { await res.body?.cancel(); } catch { /* ignore */ } return null; }
+      let head = '';
+      const reader = res.body?.getReader?.();
+      if (!reader) head = await res.text();
+      else {
+        const dec = new TextDecoder();
+        // Up to the first segment line, the MAP line with its end, or 64 KB.
+        while (head.length < 65536 && !/#EXT-X-MAP:[^\n]*\n/.test(head) && !/\n[^#\s][^\n]*\n/.test(head)) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          head += dec.decode(value, { stream: true });
+        }
+        try { await reader.cancel(); } catch { /* ignore */ }
+      }
+      const u = find(head);
+      return u ? new URL(u, job.url).href : null;
+    } catch (err) {
+      this.log({ event: 'adaptive_codec_error', id: job.id, quality: job.quality, message: String(err?.message ?? err).slice(0, 200) });
+      return null;
+    }
+  }
+
+  async #readCodec(job) {
+    const map = await this.#mapUrl(job);
     if (!map) return null; // TS segments or no playlist: not known (not cached, so a later play asks again)
     try {
       const res = await this.fetch(map, { headers: { range: 'bytes=0-65535' }, signal: AbortSignal.timeout(10_000) });

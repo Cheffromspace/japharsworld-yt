@@ -26,6 +26,8 @@ export function redact(o) {
   const out = {};
   for (const [k, v] of Object.entries(o)) {
     if (!FIELDS.has(k)) continue;
+    // Event names are the code's own snake_case constants, never data; some are ID-shaped (android_av1, 2026-10-23).
+    if (k === 'event' && typeof v === 'string' && /^[a-z][a-z0-9_]{0,40}$/.test(v)) { out[k] = v; continue; }
     out[k] = typeof v === 'string' ? mask(v).slice(0, 300) : (v === null || typeof v !== 'object' ? v : undefined);
   }
   return out;

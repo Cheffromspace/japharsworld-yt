@@ -152,6 +152,25 @@ test('Quest and an AV1 1080p rung: the Quest gets the 720p playlist (H.264) inst
   assert.equal(events.filter((k) => k === 'android_av1_rung').length, 1);
 });
 
+test('codec: read from the playlist head and the init segment, without waiting for the whole playlist; one read per build', async () => {
+  let playlistFetches = 0;
+  const fetcher = async (u) => {
+    if (u.includes('init')) return new Response('....stsd....av01....', { status: 206 });
+    playlistFetches++;
+    // The head arrives, the rest never does (a fresh 1080p playlist that took over 15 s, 2026-10-23).
+    const body = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4,\nseg0.m4s\n')); } });
+    return new Response(body, { status: 200 });
+  };
+  const a = new Adaptive({ playback: {}, fetcher });
+  const job = { id: 'x', quality: '1080p', state: 'ready', url: 'https://tunelio.dev/t?id=x&hls=1' };
+  const [c1, c2] = await Promise.all([a.codec(job), a.codec(job)]);
+  assert.equal(c1, 'av1');
+  assert.equal(c2, 'av1');
+  assert.equal(playlistFetches, 1, 'concurrent asks share one read');
+  assert.equal(await a.codec(job), 'av1');
+  assert.equal(playlistFetches, 1, 'cached on the build');
+});
+
 test('adaptive play: a failed 1080p build serves the 720p playlist (ends the retries)', async (t) => {
   const s = await server();
   t.after(() => s.srv.close());

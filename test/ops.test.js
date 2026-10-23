@@ -15,6 +15,8 @@ test('ops redaction: allowlisted fields only, IDs and query strings masked', () 
   assert.deepEqual(Object.keys(e).sort(), ['at', 'event', 'held', 'message', 'via']);
   assert.doesNotMatch(JSON.stringify(e), /dQw4w9WgXcQ|sig=|Mozilla/);
   assert.equal(mask('video unavailable Information'), 'video unavailable Information', 'ordinary words stay');
+  assert.equal(redact({ event: 'android_av1' }).event, 'android_av1', 'an ID-shaped event name stays');
+  assert.equal(redact({ event: 'dQw4w9WgXcQ' }).event, '…', 'an event field that holds an ID is still masked');
   const ring = new EventRing(3);
   for (let i = 0; i < 5; i++) ring.push(JSON.stringify({ at: new Date(1000 + i).toISOString(), event: i % 2 ? 'a' : 'b', i }));
   ring.push('{"route":"ticket","status":302}'); // request lines are not events

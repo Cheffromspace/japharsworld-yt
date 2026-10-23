@@ -87,6 +87,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   playback ??= new Playback({ tunelio, quality: config.tunelioQuality, lowerQuality: config.tunelioLowerQuality, maxMbForQuality: config.tunelioMaxMb,
     progressiveMaxMb: config.progressiveMaxMb, progressiveMaxSeconds: config.progressiveMaxSeconds,
     probe: tunelio.enabled ? linkProbe() : null, alert, log: logJson,
+    // Next to metrics.db (tests run without one, so they write nothing).
+    stateFile: config.metricsPath ? join(dirname(config.metricsPath), 'build-speeds.json') : null,
     onBuild: ({ format, quality, seconds, mb, buildMs, ok }) => {
       metrics.inc('build', ok ? 'ok' : 'failed');
       if (ok) { metrics.inc(format === 'hls' ? 'build_s_hls' : 'build_s_progressive', secondsBucket(buildMs)); metrics.inc('build_length', lengthBucket({ seconds })); metrics.inc('build_size', sizeBucket(mb)); metrics.inc('build_quality', quality); }
@@ -96,9 +98,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // Seed the speed estimate with the probe's builds of the last two hours, so a restart doesn't forget a slow period.
   try {
     const db = metricsDb();
-    for (const r of db?.prepare(`SELECT p.ts, p.value mbps FROM polls p WHERE p.source IN ('tunelio:progressive', 'tunelio:hls') AND p.metric = 'mb_per_s' AND p.ts > ? ORDER BY p.ts`).all(Date.now() - 2 * 3600_000) ?? []) {
-      if (r.mbps <= 120) playback.speeds?.push({ at: r.ts, mbps: r.mbps }); // faster: a file Tunelio already had (cachedBuild)
-    }
+    const rows = db?.prepare(`SELECT p.ts, p.value mbps FROM polls p WHERE p.source IN ('tunelio:progressive', 'tunelio:hls') AND p.metric = 'mb_per_s' AND p.ts > ? ORDER BY p.ts`).all(Date.now() - 2 * 3600_000) ?? [];
+    playback.seedSpeeds?.(rows.map((r) => ({ at: r.ts, mbps: r.mbps })));
   } catch (err) { logJson({ event: 'speed_seed_failed', message: String(err?.message ?? err).slice(0, 200) }); }
   const today = () => dayOf(Date.now(), config.metricsTz);
   adaptive ??= new Adaptive({

@@ -171,6 +171,12 @@ the builds took 33 s (720p HLS, 170 MB) and 84 s (1080p). The median of the last
 120 MB/s no longer teach the estimate (src/playback.js `cachedBuild`; `tunelio_link` logs `cached: true`). For tests
 that need a given plan, `node tools/ops.mjs plan --id <video> --mode start` forces it (README, player test kit).
 
+The fb404f1 deploy then showed the other half: a restart dropped the recent speeds and the learned rates, and the
+restart seed (the probe's builds of the last 2 h) held nothing usable (only pair rows), so the plans fell back to the
+priors (~33 MB/s at HLS: 580 MB ≈ 20 s, one switch) on a day of 3–7 MB/s. Now the recent speeds and learned rates are
+kept in `build-speeds.json` next to metrics.db and loaded on start (speeds and rates only, no video IDs), and a start
+master with fewer than two measured builds to go on lists the 720p (`Playback.measured()`).
+
 ## Home relay playback (2026-10-22/23)
 
 Owner: add the home connection to the serving chain, "as part of our adaptive credit spending, preferring Tunelio",

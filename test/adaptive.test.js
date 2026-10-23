@@ -252,6 +252,29 @@ test('speed estimate: builds Tunelio already had (seconds for hundreds of MB) te
   assert.ok(before.predicted > 60, `still predicts a slow build (${before.predicted} s)`);
 });
 
+test('speed estimate survives a restart (stateFile); old or impossible speeds are dropped on load', async (t) => {
+  const { mkdtempSync, rmSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'speeds-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stateFile = join(dir, 'build-speeds.json');
+  const a = new Playback({ tunelio: { enabled: true }, stateFile });
+  assert.equal(a.measured(), false);
+  a.learn('hls', 170, 33_000); a.learn('hls', 613, 84_000);
+  const b = new Playback({ tunelio: { enabled: true }, stateFile });
+  assert.equal(b.measured(), true, 'the deploy kept the two slow builds');
+  assert.equal(b.predict('hls', 580), a.predict('hls', 580));
+  assert.ok(b.predict('hls', 580) > 60);
+  assert.deepEqual(b.rate, a.rate);
+  writeFileSync(stateFile, JSON.stringify({ speeds: [{ at: Date.now() - 3 * 3600_000, mbps: 5 }, { at: Date.now(), mbps: 900 }], rate: { hls: -1 } }));
+  const c = new Playback({ tunelio: { enabled: true }, stateFile });
+  assert.deepEqual(c.speeds, []);
+  assert.equal(c.rate.hls, 0.03, 'a bad rate keeps the prior');
+  writeFileSync(stateFile, 'not json');
+  assert.equal(new Playback({ tunelio: { enabled: true }, stateFile }).measured(), false);
+});
+
 test('forced plan: a test plan for one video wins over the prediction, a room pick and the pacer, until it expires', async () => {
   let now = Date.now();
   const f = fakes();
@@ -328,12 +351,13 @@ test('start rung: a slow 720p build starts on 360p; no 360p when 720p is quick o
   assert.equal(await new Adaptive({ playback: f.playback, pacer: ok }).plan({ id: 'noStartRung', seconds: 1200 }), 'adaptive', 'off without ADAPTIVE_START');
 });
 
-// hls: the learned HLS rate. 0.05: 720p 200 MB ≈ 13 s (> 10 s: a start plan), 1080p 400 MB ≈ 23 s (≤ 30 s: one
-// switch). 0.2: 720p ≈ 43 s, 1080p ≈ 83 s (two steps).
-async function startPlay(opts = {}, hls = 0.05) {
+// mbps: two recent measured builds at this speed (null: none). 20: 720p HLS 200 MB ≈ 13 s (> 10 s: a start plan),
+// 1080p 400 MB ≈ 23 s (≤ 30 s: one switch). 5: 720p ≈ 43 s, 1080p ≈ 83 s (two steps).
+async function startPlay(opts = {}, mbps = 20) {
   const s = await server({ hold720: true }, { start: '360p', startSeconds: 10, ...opts });
   s.playback.rate.progressive = 0.1;
-  s.playback.rate.hls = hls;
+  s.playback.rate.hls = 0.2;
+  if (mbps) s.playback.speeds = [{ at: Date.now(), mbps }, { at: Date.now(), mbps }];
   const n = await s.ticket(3);
   assert.equal((await (await s.get(`/v1/3/${n}`, 'UnityPlayer/2022')).json()).plan, 'start');
   assert.match((await s.get(`/v1/3/${n}`, YTDLP)).headers.get('content-type'), /text\/html/);
@@ -370,7 +394,7 @@ test('start rung play, 1080p due soon: master with 360p and 1080p only (one swit
 
 test('start rung play, 1080p predicted over ADAPTIVE_START_STEP_SECONDS: 360p, 720p, 1080p (two steps, reaches 1080p)', async (t) => {
   const events = [];
-  const s = await startPlay({ startStepSeconds: 30, onEvent: (k) => events.push(k) }, 0.2);
+  const s = await startPlay({ startStepSeconds: 30, onEvent: (k) => events.push(k) }, 5);
   t.after(() => s.srv.close());
   assert.deepEqual(s.order, ['360p', '720p', '1080p']);
   assert.ok(events.includes('start_mid'));
@@ -382,6 +406,12 @@ test('start rung play, 1080p predicted over ADAPTIVE_START_STEP_SECONDS: 360p, 7
   s.releaseUpper();
   await settle();
   assert.match(await (await s.rung('1080p')).text(), /#BUILD:1080p/);
+});
+
+test('start rung play with no measured builds (after a restart): two steps, whatever the prior says', async (t) => {
+  const s = await startPlay({}, null);
+  t.after(() => s.srv.close());
+  assert.deepEqual(s.order, ['360p', '720p', '1080p']);
 });
 
 test('start rung play with ADAPTIVE_START_MID=on: 360p, 720p, 1080p', async (t) => {

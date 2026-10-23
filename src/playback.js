@@ -16,6 +16,8 @@
 // (measured) and only then hands the raw URL to AVPro, which waits on the same build again. So a ticket answer that
 // takes longer than ~18 s costs the visitor the whole wait twice. `location()` therefore holds for at most `holdMs`.
 
+import { readFileSync, writeFileSync, renameSync } from 'node:fs';
+
 const watch = (id) => `https://www.youtube.com/watch?v=${id}`;
 
 // Build time follows the file size, not the length: Tunelio pulls the media at roughly 60 MB/s (2026-10-19:
@@ -33,7 +35,7 @@ export const cachedBuild = (mb, buildMs) => buildMs < 3000 || mb / (buildMs / 10
 export class Playback {
   constructor({ tunelio, quality = '1080p', lowerQuality = '720p', maxMbForQuality = 1500, progressiveMaxMb = 1800,
     progressiveMaxSeconds = 3 * 3600, marginSeconds = 20 * 60,
-    pauseMinutes = 10, alert = () => {}, log = () => {}, now = () => Date.now(), probe = null, onBuild = () => {} }) {
+    pauseMinutes = 10, alert = () => {}, log = () => {}, now = () => Date.now(), probe = null, onBuild = () => {}, stateFile = null }) {
     this.tunelio = tunelio;
     this.quality = quality;
     // A file above maxMbForQuality MB at `quality` is made again at lowerQuality (10 more credits, roughly half the
@@ -60,6 +62,40 @@ export class Playback {
     // Learned build speed per format: seconds of build per second of video, and the fixed part. EWMA over builds.
     this.rate = { ...RATE_PRIOR };
     this.fixed = { ...FIXED_PRIOR };
+    // What was learned survives a restart (every deploy is one): before 2026-10-23 a restart dropped the recent speeds
+    // and went back to the priors (~33 MB/s at HLS, when that day's real builds ran at 3–7 MB/s), so the first plays
+    // after a deploy were planned as if Tunelio were fast. Speeds and learned rates only: no video IDs.
+    this.stateFile = stateFile;
+    this.#load();
+  }
+
+  #load() {
+    if (!this.stateFile) return;
+    let st;
+    try { st = JSON.parse(readFileSync(this.stateFile, 'utf8')); } catch { return; }
+    const since = this.now() - 2 * 3600_000;
+    this.speeds = (Array.isArray(st.speeds) ? st.speeds : [])
+      .filter((x) => Number.isFinite(x?.at) && x.at >= since && x.mbps > 0 && x.mbps <= 120).slice(-50);
+    for (const f of Object.keys(RATE_PRIOR)) {
+      if (st.rate?.[f] > 0) this.rate[f] = st.rate[f];
+      if (st.fixed?.[f] > 0) this.fixed[f] = st.fixed[f];
+    }
+  }
+
+  #save() {
+    if (!this.stateFile) return;
+    try {
+      writeFileSync(`${this.stateFile}.tmp`, JSON.stringify({ speeds: this.speeds, rate: this.rate, fixed: this.fixed }));
+      renameSync(`${this.stateFile}.tmp`, this.stateFile);
+    } catch (err) { this.log({ event: 'speed_state_failed', message: String(err?.message ?? err).slice(0, 200) }); }
+  }
+
+  // More measured speeds from elsewhere (server.js: the probe's stored builds), merged in time order.
+  seedSpeeds(rows) {
+    const have = new Set(this.speeds.map((x) => x.at));
+    for (const r of rows) if (r.mbps > 0 && r.mbps <= 120 && !have.has(r.at)) this.speeds.push({ at: r.at, mbps: r.mbps });
+    this.speeds.sort((a, b) => a.at - b.at);
+    if (this.speeds.length > 50) this.speeds.splice(0, this.speeds.length - 50);
   }
 
   // Static answers that need no build: live streams, Tunelio off or paused.
@@ -130,10 +166,18 @@ export class Playback {
   // 00:45 UTC, 4–6 MB/s for every build from 01:28 to 01:42), so the median speed of the last few builds within two hours
   // (visitors' and the probe's) beats the long-run average; with fewer than two, the learned average.
   predict(format, mb) {
-    const since = this.now() - 2 * 3600_000;
-    const recent = this.speeds.filter((x) => x.at >= since).slice(-5).map((x) => x.mbps).sort((a, b) => a - b);
+    const recent = this.#recent();
     if (recent.length >= 2) return this.fixed[format] + Math.max(0, mb) / recent[Math.floor(recent.length / 2)];
     return this.fixed[format] + this.rate[format] * Math.max(0, mb);
+  }
+
+  // Whether predict() rests on measured builds (two or more in the last two hours) rather than the learned average,
+  // which after a restart is the prior, ~33 MB/s at HLS (2026-10-23: real builds that day were 3–7 MB/s).
+  measured() { return this.#recent().length >= 2; }
+
+  #recent() {
+    const since = this.now() - 2 * 3600_000;
+    return this.speeds.filter((x) => x.at >= since).slice(-5).map((x) => x.mbps).sort((a, b) => a - b);
   }
 
   // A measured build speed (MB/s): small files are mostly fixed overhead, so only 20 MB and up count.
@@ -152,6 +196,7 @@ export class Playback {
     const k = Math.min(3, Math.max(0.3, buildMs / 1000 / Math.max(1, fixed + rate * mb))); // > 1: slower than predicted
     this.rate[format] = Math.max(0.0005, rate * (0.7 + 0.3 * k));
     this.fixed[format] = Math.max(1, fixed * (0.7 + 0.3 * k));
+    this.#save();
   }
 
   async #create(job, quality) {

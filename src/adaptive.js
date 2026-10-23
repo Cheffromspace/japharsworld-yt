@@ -198,9 +198,10 @@ export class Adaptive {
     if (!s.started) {
       s.started = true;
       if (s.rungs.length < s.ladder.length) {
-        // One switch only when the 1080p build (starting now) should be ready soon; unknown size counts as slow.
+        // One switch only when the 1080p build (starting now) should be ready soon. An unknown size, or no measured
+        // builds to predict from, counts as slow: reaching 1080p matters more than the one switch.
         const mb = this.playback.knownMb(s.data.id, this.upper);
-        const predicted = mb == null ? null : Math.round(this.playback.predict('hls', mb) * 10) / 10;
+        const predicted = mb == null || !this.playback.measured() ? null : Math.round(this.playback.predict('hls', mb) * 10) / 10;
         if (predicted == null || predicted > this.startStepSeconds) s.rungs = s.ladder;
         this.onEvent(s.rungs.length === s.ladder.length ? 'start_mid' : 'start_one_step');
         this.log({ event: 'adaptive_start_rungs', id: s.data.id, rungs: s.rungs.length, mb, predicted });

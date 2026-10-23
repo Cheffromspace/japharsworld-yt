@@ -353,3 +353,12 @@ test('isAndroidPlayer: the Quest players (seen 2026-10-22), not the PC player, t
   assert.equal(isAndroidPlayer(''), false);
   assert.equal(isAndroidPlayer(undefined), false);
 });
+
+test('Tunelio /create gives up after createTimeoutMs and remembers when', async () => {
+  const hang = (u, o) => new Promise((_, rej) => o.signal.addEventListener('abort', () => rej(Object.assign(new Error('timeout'), { name: 'TimeoutError' }))));
+  const t = new Tunelio({ key: 'k', fetcher: hang, timeoutMs: 5000, createTimeoutMs: 50, now: () => 1234 });
+  const t0 = Date.now();
+  await assert.rejects(t.create('dQw4w9WgXcQ', '720p'), (e) => e.code === 'timeout');
+  assert.ok(Date.now() - t0 < 1000, 'the short /create timeout');
+  assert.equal(t.timedOutAt, 1234);
+});

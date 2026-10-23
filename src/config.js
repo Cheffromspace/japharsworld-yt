@@ -76,6 +76,9 @@ export const config = {
   // Minutes between Tunelio speed probes (src/probe.js; 10 credits each, at least 20, plus a random quarter). 0 = off.
   // Hourly (owner, 2026-10-23): every 20 minutes cost ~720 credits a day, more than playback's 80–450.
   tunelioProbeMinutes: int('TUNELIO_PROBE_MINUTES', 60),
+  // Tunelio's /create timeout, and how long after a Tunelio timeout plays go home (when they can) instead of to Tunelio.
+  tunelioCreateTimeoutMs: int('TUNELIO_CREATE_TIMEOUT_SECONDS', 6) * 1000,
+  tunelioSuspectMs: int('TUNELIO_SUSPECT_SECONDS', 120) * 1000,
   // The probe's own quality (2026-10-22: it followed TUNELIO_QUALITY, so it measured 720p while Auto decides whether
   // 1080p is fast enough).
   tunelioProbeQuality: process.env.TUNELIO_PROBE_QUALITY ?? '1080p',
@@ -96,6 +99,8 @@ export const config = {
   // with the file and fails at ~115 s; home starts in seconds whatever the length). PC players only: Android can't open
   // HLS behind a ticket. HOME_DAILY_BUILDS / HOME_DAILY_MB cap what the home IP downloads a day (YouTube may flag it).
   homeRelay: (process.env.HOME_RELAY ?? 'off') === 'on',
+  // Hold a player up to this long for a home session's playlist to finish when it is due that soon (src/home.js settle).
+  homeSettleMs: int('HOME_SETTLE_SECONDS', 10) * 1000,
   // The home relay for .m3u8 tickets too (the world's Android build: Quest opens HLS behind those), by the same rules
   // as a PC player, and for an AV1 Tunelio build, which the Quest 2 can't decode (home is always H.264). Off until
   // verified on the Quest (2026-10-23).

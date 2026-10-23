@@ -73,7 +73,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const logJson = (o) => log(JSON.stringify({ at: new Date().toISOString(), ...o }));
   metrics ??= config.metricsPath ? new Metrics({ path: config.metricsPath, tz: config.metricsTz, log: logJson }).start() : noMetrics;
   alert ??= makeAlert({ webhook: config.alertWebhook, log: logJson });
-  tunelio ??= new Tunelio({ key: config.tunelioKey, onCredits: (left) => {
+  tunelio ??= new Tunelio({ key: config.tunelioKey, createTimeoutMs: config.tunelioCreateTimeoutMs, onCredits: (left) => {
     metrics.gauge('credits_remaining', '', left);
     if (left < config.lowCredits) alert('credits_low', `Tunelio credits are running low: ${left} left this month.`, 24 * 60);
   }, onCall: ({ path, ok, ms }) => {
@@ -418,10 +418,21 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (s && s.state !== 'failed') return 'reuse';
     if (!home.worker()) return null;
     if (!tunelio.enabled || Date.now() < (playback.pausedUntil ?? 0)) return 'tunelio_off';
+    if (tunelioSlow()) return 'tunelio_slow';
     if ((data.seconds ?? 0) >= config.homeLongMinutes * 60) return 'long';
     const p = adaptive.pacer?.check?.();
     if (p && !p.ok) return 'pacer';
     return null;
+  }
+  // Tunelio timed out within the last TUNELIO_SUSPECT_SECONDS: another /create would likely time out too.
+  const tunelioSlow = () => tunelio.enabled && Date.now() - (tunelio.timedOutAt || -Infinity) < config.tunelioSuspectMs;
+  // A ready home session for a player: wait for its playlist to finish when that is due within HOME_SETTLE_SECONDS
+  // (src/home.js settle), then where to send the player.
+  async function homeWhere(s) {
+    if (s.state !== 'ready') return null;
+    holding++;
+    try { await home.settle?.(s, config.homeSettleMs); } finally { holding--; }
+    return { location: home.url(s), via: 'home', reason: s.why, ready: true };
   }
   // A home session for this play, counted once by why it went home (a session that is already there is just used).
   function startHome(data, quality, why) {
@@ -489,11 +500,29 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         }
         holding++;
         try { await home.wait(hs, config.homeReadyMs); } finally { holding--; }
-        if (hs.state === 'ready') where = { location: home.url(hs), via: 'home', reason: hs.why, ready: true };
+        if (hs.state === 'ready') where = await homeWhere(hs);
         else metrics.inc('home', 'timeout');
       }
+      let c = null;
       if (!where) {
-        let c = await choice(shard, t.data);
+        c = await choice(shard, t.data);
+        // The plan's own /create (or another play's) just timed out: home now, not another /create that would likely
+        // time out too (2026-10-23: two 12 s timeouts in a row, 48 s from pick to picture).
+        const slow = homeOk && !hs && tunelioSlow() && home.worker() ? startHome(t.data, hq, 'tunelio_slow') : null;
+        if (slow && slow.state !== 'failed') {
+          if (resolver) {
+            metrics.inc('home', 'defer');
+            logJson({ event: 'play_defer', shard, n, id: t.data.id, held: Date.now() - started, home: true });
+            const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+            res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+            return res.end(body);
+          }
+          holding++;
+          try { await home.wait(slow, config.homeReadyMs); } finally { holding--; }
+          if (slow.state === 'ready') where = await homeWhere(slow);
+        }
+      }
+      if (!where) {
         // Android players can't open HLS behind a ticket (src/playback.js isAndroidPlayer): the progressive build of the
         // default quality instead. The PC players in the same room keep the adaptive plan. Videos too long for a
         // progressive build still get HLS, which an Android player can't play. A .m3u8 ticket (the world's Android build)
@@ -545,7 +574,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           if (fallback && fallback.state !== 'failed') {
             holding++;
             try { await home.wait(fallback, config.homeReadyMs); } finally { holding--; }
-            if (fallback.state === 'ready') where = { location: home.url(fallback), via: 'home', reason: fallback.why, ready: true };
+            if (fallback.state === 'ready') where = await homeWhere(fallback);
           }
         }
       }

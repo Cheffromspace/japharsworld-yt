@@ -60,7 +60,8 @@ export class Home {
   #session(f) {
     return { token: f.token, id: f.id, quality: f.quality, seconds: f.seconds ?? 0, worker: f.worker ?? null, state: 'building',
       startedMs: f.startedMs ?? this.now(), readyMs: 0, endedMs: 0, lastPutMs: f.lastPutMs ?? 0, ended: false, mb: 0, segments: 0,
-      listed: [], stored: new Set(), reason: null, waiters: [], segmentWaiters: new Map() };
+      listed: [], listedSeconds: 0, stored: new Set(), reason: null, waiters: [], endWaiters: [], segmentWaiters: new Map(),
+      firstSegmentMs: 0, firstServed: null };
   }
 
   #saveMeta(s) {
@@ -121,7 +122,36 @@ export class Home {
     this.#wake(s);
   }
 
-  #wake(s) { for (const w of s.waiters) w(); s.waiters = []; }
+  #wake(s) { for (const w of s.waiters) w(); s.waiters = []; if (s.state === 'failed') { for (const w of s.endWaiters) w(); s.endWaiters = []; } }
+
+  // When the rest of a ready session's growing playlist is due (ms, at its upload rate so far), or null when not known.
+  eta(s) {
+    if (s.state !== 'ready' || s.endlist || !s.seconds || !s.firstSegmentMs || !s.listedSeconds) return s.endlist ? 0 : null;
+    const elapsed = this.now() - s.firstSegmentMs;
+    if (s.segments < 8 || elapsed < 1000) return null; // too little to tell a rate from
+    const rate = s.listedSeconds / elapsed; // video seconds uploaded per ms
+    return Math.max(0, (s.seconds - s.listedSeconds) / rate);
+  }
+
+  // A player is about to get a session that is ready but whose playlist is still growing. A growing (EVENT) playlist
+  // is opened as live by Media Foundation, at its end and with the clock from 0 (2026-10-23, Everything-is-OK#111:
+  // "Sleep Is Your Superpower" opened with 101 of 251 segments listed, picture ~7 min ahead of the captions, ENDLIST
+  // 6 s later). So when the rest is due within maxMs, wait for it: the player then gets the finished playlist, plays
+  // from 0 and has the seek bar. → true when the session ended by then.
+  async settle(s, maxMs) {
+    if (s.ended || s.endlist || s.state !== 'ready' || !(maxMs > 0)) return s.ended;
+    const eta = this.eta(s);
+    if (eta == null || eta > maxMs) return false;
+    const started = this.now();
+    await new Promise((resolve) => {
+      const timer = setTimeout(done, Math.min(maxMs, eta * 1.5 + 2000));
+      function done() { clearTimeout(timer); resolve(); }
+      s.endWaiters.push(done);
+    });
+    this.onEvent(s.ended ? 'settled' : 'settle_timeout');
+    this.log({ event: 'home_settle', id: s.id, quality: s.quality, ms: this.now() - started, ended: s.ended, eta: Math.round(eta) });
+    return s.ended;
+  }
 
   // Resolves when the session is ready or failed, or after holdMs.
   wait(s, holdMs = Infinity) {
@@ -140,6 +170,7 @@ export class Home {
   #playlist(s, text) {
     const lines = text.split(/\r?\n/).filter(Boolean);
     s.listed = lines.filter((l) => !l.startsWith('#'));
+    s.listedSeconds = lines.reduce((a, l) => a + (Number(/^#EXTINF:([\d.]+)/.exec(l)?.[1]) || 0), 0);
     s.segments = s.listed.length;
     s.endlist = lines.includes('#EXT-X-ENDLIST');
     if (s.state === 'building' && s.segments > 0 && s.stored.size > 0) {
@@ -153,6 +184,8 @@ export class Home {
     if (s.ended || !s.endlist || !s.listed.every((f) => s.stored.has(f))) return;
     s.ended = true;
     s.endedMs = this.now();
+    for (const w of s.endWaiters) w();
+    s.endWaiters = [];
     if (!this.loading) this.log({ event: 'home_done', id: s.id, quality: s.quality, ms: s.endedMs - s.startedMs, mb: Math.round(s.mb), segments: s.segments });
     // Segments a player is still waiting for that the final playlist doesn't list will not come.
     for (const [file, ws] of s.segmentWaiters) if (!s.stored.has(file)) { for (const w of ws) w(); s.segmentWaiters.delete(file); }
@@ -186,6 +219,7 @@ export class Home {
     this.#write(s, file, body);
     if (!s.stored.has(file)) {
       s.stored.add(file);
+      s.firstSegmentMs ||= this.now();
       s.mb += body.length / 1e6;
       const d = this.#today();
       if (s.cached) d.cacheMb = (d.cacheMb ?? 0) + body.length / 1e6; else d.mb += body.length / 1e6;
@@ -229,7 +263,11 @@ export class Home {
     }
     let body;
     try { body = readFileSync(join(this.dir, s.token, file)); } catch { return null; }
-    if (file !== 'index.m3u8') return { body, type: 'video/mp2t' };
+    if (file !== 'index.m3u8') {
+      // Which segment a session's first player started on (seg0 = from the start; Everything-is-OK#111).
+      if (!s.firstServed) { s.firstServed = file; this.log({ event: 'home_first_segment', id: s.id, quality: s.quality, file, ended: s.ended }); }
+      return { body, type: 'video/mp2t' };
+    }
     const text = body.toString('utf8').split(/\r?\n/)
       .map((l) => (l && !l.startsWith('#') ? `${this.base}/${s.token}/${l}` : l))
       .join('\n').replace('#EXTM3U', '#EXTM3U\n#EXT-X-START:TIME-OFFSET=0');

@@ -441,3 +441,40 @@ test('home: uploads from the worker cache count as a cache hit, not against the 
     assert.ok(events.includes('cache_hit'));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('home settle: a player waits for a growing playlist that is about to end, not for one that is far off (#111)', async (t) => {
+  const dir = tmp(t);
+  let now = 1_000_000;
+  const home = new Home({ relay: fakeRelay(), dir, base: 'https://yt/home', enabled: true, now: () => now });
+  const grow = (n) => `#EXTM3U\n#EXT-X-PLAYLIST-TYPE:EVENT\n${Array.from({ length: n }, (_, i) => `#EXTINF:4.0,\nseg${i}.ts\n`).join('')}`;
+  // 40 s of a 60 s video uploaded in 4 s: the remaining 20 s are due in ~2 s.
+  const s = home.start({ id: 'aaaaaaaaaaa', seconds: 60 }, '720p');
+  for (let i = 0; i < 10; i++) home.put(s.token, `seg${i}.ts`, Buffer.from('ts'));
+  now += 4000;
+  home.put(s.token, 'index.m3u8', Buffer.from(grow(10)));
+  assert.equal(s.state, 'ready');
+  assert.ok(home.eta(s) > 1000 && home.eta(s) < 3000, `eta ${home.eta(s)}`);
+  const settled = home.settle(s, 10_000);
+  for (let i = 10; i < 15; i++) home.put(s.token, `seg${i}.ts`, Buffer.from('ts'));
+  home.put(s.token, 'index.m3u8', Buffer.from(`${grow(15)}#EXT-X-ENDLIST\n`));
+  assert.equal(await settled, true, 'the player gets the finished playlist');
+
+  // A 2 h video at the same rate: due in ~12 min, so no wait.
+  const far = home.start({ id: 'bbbbbbbbbbb', seconds: 7200 }, '720p');
+  for (let i = 0; i < 10; i++) home.put(far.token, `seg${i}.ts`, Buffer.from('ts'));
+  now += 4000;
+  home.put(far.token, 'index.m3u8', Buffer.from(grow(10)));
+  const t0 = Date.now();
+  assert.equal(await home.settle(far, 10_000), false);
+  assert.ok(Date.now() - t0 < 100, 'returned at once');
+  assert.equal(await home.settle(far, 0), false, 'off');
+});
+
+test('ticket → home: right after a Tunelio timeout a PC play goes home (tunelio_slow) without another /create', async (t) => {
+  let creates = 0;
+  const tunelio = { enabled: true, timedOutAt: Date.now(), credits: 1, async create() { creates++; throw new Error('should not be asked'); } };
+  const app = await homeApp(t, { tunelio });
+  const r = await app.play('NSPlayer/12.00.26100 WMFSDK/12.00', '');
+  assert.match(r.headers.get('location'), /\/home\/[a-f0-9]{18}\/index\.m3u8$/);
+  assert.equal(creates, 0);
+});

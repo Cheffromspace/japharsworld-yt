@@ -116,7 +116,10 @@ one, f331bcc) and never for live streams:
 3. the video is `HOME_LONG_MINUTES` (30) or longer: Tunelio's build time grows with the file and fails at ~115 s,
    while home starts in seconds whatever the length,
 4. today's Tunelio spend is past the credit pacer's allowance (`src/adaptive.js` `Pacer`),
-5. Tunelio's build failed (before youtube.com's 360p),
+5. Tunelio's build failed (before youtube.com's 360p), or a Tunelio call timed out in the last
+   `TUNELIO_SUSPECT_SECONDS` (120; `tunelio_slow`): `/create` normally answers in under 2 s and gives up after
+   `TUNELIO_CREATE_TIMEOUT_SECONDS` (6), and when it doesn't answer it rarely does on the next try either
+   (2026-10-23: two 12 s timeouts in a row, 48 s from pick to picture),
 6. on a `.m3u8` ticket with `HOME_ANDROID=on`: Tunelio's HLS build is AV1 (read from its init segment), which the
    Quest 2 can't decode; home is always H.264 + AAC. Counted as `adaptive`/`android_av1` whether or not the flag is on.
    A higher rung of an adaptive master that turns out AV1 is answered, for a Quest player, with the best H.264 rung
@@ -135,7 +138,11 @@ resolver gets the "not a video" page. VizVid shows a playlist that is still grow
 for the whole play, so when the first 8 segments are all the same length (an encode with evenly spaced keyframes, like
 long mixes) the worker uploads the whole playlist, `#EXT-X-ENDLIST` included, at once, and a segment asked for before
 it arrives is held up to `HOME_SEGMENT_HOLD_SECONDS` (20). Other videos (keyframes at scene cuts) get the growing
-playlist: no seek bar on the first play, one for replays and late joiners once the upload is done. Sessions are saved
+playlist: no seek bar on the first play, one for replays and late joiners once the upload is done. Media Foundation
+opens a growing playlist as live, at its end, with the clock from 0 (2026-10-23, Everything-is-OK#111: picture ~7 min
+ahead of the captions), so a player is held up to `HOME_SETTLE_SECONDS` (10) when the upload rate says the rest is due
+by then, and gets the finished playlist (`home`/`settled`; `home_first_segment` logs where each session's first
+player started). Sessions are saved
 next to their files and reloaded on restart (a deploy doesn't cut plays off, and the worker retries its uploads through
 it); the day's use is saved too. Files are kept `HOME_KEEP_HOURS`, oldest finished first out above `HOME_MAX_GB`.
 

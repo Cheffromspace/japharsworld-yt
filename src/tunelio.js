@@ -13,11 +13,17 @@ export class TunelioError extends Error {
 }
 
 export class Tunelio {
-  constructor({ key, base = 'https://tunelio.dev', fetcher = fetch, timeoutMs = 12_000, onCredits = () => {}, onCall = () => {} }) {
+  // createTimeoutMs: /create answers in under 2 s (2026-10-19..23); when it doesn't, it usually doesn't at all (two 12 s
+  // timeouts in a row cost one play 24 s, 2026-10-23), so it gives up sooner than the other calls. timedOutAt: when a
+  // call last timed out (server.js sends plays home for a while after).
+  constructor({ key, base = 'https://tunelio.dev', fetcher = fetch, timeoutMs = 12_000, createTimeoutMs = timeoutMs, onCredits = () => {}, onCall = () => {}, now = () => Date.now() }) {
     this.key = key;
     this.base = base.replace(/\/$/, '');
     this.fetch = fetcher;
     this.timeoutMs = timeoutMs;
+    this.createTimeoutMs = createTimeoutMs;
+    this.now = now;
+    this.timedOutAt = 0;
     this.onCredits = onCredits;
     this.onCall = onCall; // ({ path, ok, status, ms }) after every call (metrics)
     this.credits = null; // last X-Credits-Remaining seen
@@ -25,7 +31,7 @@ export class Tunelio {
 
   get enabled() { return Boolean(this.key); }
 
-  async call(path, params) {
+  async call(path, params, timeoutMs = this.timeoutMs) {
     if (!this.key) throw new TunelioError(0, 'no_key', 'Tunelio is not configured');
     const qs = new URLSearchParams(params).toString();
     const started = Date.now();
@@ -34,10 +40,11 @@ export class Tunelio {
     try {
       res = await this.fetch(`${this.base}${path}?${qs}`, {
         headers: { authorization: `Bearer ${this.key}` },
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
       done(false, 0);
+      if (err?.name === 'TimeoutError') this.timedOutAt = this.now();
       throw new TunelioError(0, err?.name === 'TimeoutError' ? 'timeout' : 'network', String(err?.message ?? err));
     }
     const left = Number.parseInt(res.headers.get('x-credits-remaining') ?? '', 10);
@@ -54,7 +61,7 @@ export class Tunelio {
 
   // → { url, expires (unix seconds), quality, fileSize }
   async create(videoId, quality) {
-    const b = await this.call('/create', { url: `https://www.youtube.com/watch?v=${videoId}`, quality });
+    const b = await this.call('/create', { url: `https://www.youtube.com/watch?v=${videoId}`, quality }, this.createTimeoutMs);
     if (!b.url) throw new TunelioError(200, 'bad_response', 'no url in /create answer');
     return { url: b.url, expires: Number(b.expires) || 0, quality: b.quality, fileSize: b.file_size ?? 0 };
   }

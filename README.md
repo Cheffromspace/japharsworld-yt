@@ -119,6 +119,8 @@ one, f331bcc) and never for live streams:
 5. Tunelio's build failed (before youtube.com's 360p),
 6. on a `.m3u8` ticket with `HOME_ANDROID=on`: Tunelio's HLS build is AV1 (read from its init segment), which the
    Quest 2 can't decode; home is always H.264 + AAC. Counted as `adaptive`/`android_av1` whether or not the flag is on.
+   A higher rung of an adaptive master that turns out AV1 is answered, for a Quest player, with the best H.264 rung
+   below it (`android_av1_rung`), so the play tops out lower instead of failing at the step up.
 
 Only while a worker that announced `caps=media` is online and today's `HOME_DAILY_BUILDS` / `HOME_DAILY_MB` aren't used
 up (YouTube may flag an IP that downloads a lot). Otherwise, or when the first segments don't arrive within

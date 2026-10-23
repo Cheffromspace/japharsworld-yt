@@ -127,6 +127,31 @@ test('freeze proxy: the same player loading the master again counts as a reload,
   assert.deepEqual(reloads(), ['reload_before_upgrade', 'reload_after_upgrade']);
 });
 
+test('Quest and an AV1 1080p rung: the Quest gets the 720p playlist (H.264) instead; PC players and HOME_ANDROID off get 1080p', async (t) => {
+  const events = [];
+  // Each build's playlist names its own init segment; the 1080p one is AV1.
+  const fetcher = async (u) => {
+    if (u.includes('init-')) return new Response(`....ftyp....moov....stsd....${u.includes('init-1080p') ? 'av01' : 'avc1'}....`, { status: 206 });
+    const q = u.match(/-(\d+p)&/)?.[1];
+    return new Response(`#EXTM3U\n#EXT-X-MAP:URI="init-${q}.mp4"\n#EXTINF:4.8,\nseg-${q}.m4s\n`, { status: 200 });
+  };
+  const QUEST = 'AVProMobileVideo/2026.3.3p2 (Linux;Android 14) ExoPlayer';
+  for (const [androidNoAv1, ua, expect] of [[true, QUEST, '720p'], [true, 'NSPlayer/12.00', '1080p'], [false, QUEST, '1080p']]) {
+    const s = await server({}, { onEvent: (k) => events.push(k), fetcher, androidNoAv1 });
+    t.after(() => s.srv.close());
+    s.playback.rate.progressive = 0.1;
+    const n = await s.ticket(3);
+    const path = new URL((await s.get(`/v1/3/${n}`)).headers.get('location')).pathname;
+    await s.get(path, ua);
+    s.releaseUpper();
+    await new Promise((r) => setTimeout(r, 20));
+    const v = await s.get(path.replace('.m3u8', '/1080p.m3u8'), ua);
+    assert.equal(v.status, 200);
+    assert.match(await v.text(), new RegExp(`seg-${expect}\\.m4s`), `${ua}, androidNoAv1=${androidNoAv1}`);
+  }
+  assert.equal(events.filter((k) => k === 'android_av1_rung').length, 1);
+});
+
 test('adaptive play: a failed 1080p build serves the 720p playlist (ends the retries)', async (t) => {
   const s = await server();
   t.after(() => s.srv.close());

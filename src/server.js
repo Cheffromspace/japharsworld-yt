@@ -100,7 +100,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const today = () => dayOf(Date.now(), config.metricsTz);
   adaptive ??= new Adaptive({
     playback, log: logJson, onEvent: (k) => metrics.inc('adaptive', k), holdMs: config.adaptiveHoldMs, directSeconds: config.adaptiveDirectSeconds,
-    base: `${config.publicUrl}/hls`, switching: config.adaptiveSwitch, start: config.adaptiveStart, startSeconds: config.adaptiveStartSeconds,
+    base: `${config.publicUrl}/hls`, switching: config.adaptiveSwitch, start: config.adaptiveStart, startSeconds: config.adaptiveStartSeconds, androidNoAv1: config.homeAndroid,
     lower: config.tunelioQuality, upper: config.tunelioQualities.at(-1) ?? '1080p', maxUpperMb: config.tunelioMaxMb,
     pacer: new Pacer({
       reserve: config.adaptiveReserve,
@@ -272,7 +272,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }
     // Which player this is, only to tell a reload from a new player (src/adaptive.js master); never stored or logged.
     const viewer = createHash('sha256').update(`${clientIp(req)} ${req.headers['user-agent'] ?? ''}`).digest('hex').slice(0, 16);
-    const body = m[2] ? await adaptive.variant(m[1], m[2], viewer) : adaptive.master(m[1], viewer);
+    const body = m[2] ? await adaptive.variant(m[1], m[2], viewer, { android: isAndroidPlayer(req.headers['user-agent']) }) : adaptive.master(m[1], viewer);
     if (body == null) return fail(res, 404, 'not_found', m[2] ? 'Not ready.' : 'Unknown path.');
     const buf = Buffer.from(body);
     res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'content-length': buf.length, 'cache-control': 'no-store' });

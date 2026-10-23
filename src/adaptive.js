@@ -54,8 +54,8 @@ const PLAN_MS = 30 * 60_000;
 export class Adaptive {
   constructor({ playback, pacer, fetcher = fetch, log = () => {}, onEvent = () => {}, lower = '720p', upper = '1080p',
     holdMs = 8000, maxUpperMb = 1500, directSeconds = 10, now = () => Date.now(), base = 'https://yt.japharsworld.com/hls', switching = true,
-    start = null, startSeconds = 10 }) {
-    Object.assign(this, { playback, pacer, fetch: fetcher, log, onEvent, lower, upper, holdMs, maxUpperMb, directSeconds, now, base, switching, start, startSeconds });
+    start = null, startSeconds = 10, androidNoAv1 = false }) {
+    Object.assign(this, { playback, pacer, fetch: fetcher, log, onEvent, lower, upper, holdMs, maxUpperMb, directSeconds, now, base, switching, start, startSeconds, androidNoAv1 });
     this.byJob = new WeakMap(); // build job → its session
     this.plans = new Map();    // video id → { mode, upgrade, until, promise }
     this.sessions = new Map(); // token → { token, data, lowerJob, served, fellBack }
@@ -167,7 +167,11 @@ export class Adaptive {
   }
 
   // A variant playlist: Tunelio's, with its segment links made absolute. Null = not (yet) available (404).
-  async variant(token, quality, viewer) {
+  // android: the player is Quest's (src/playback.js isAndroidPlayer). With androidNoAv1 (HOME_ANDROID=on), a higher rung
+  // whose build is AV1, which the Quest 2 can't decode, is answered like a failed one: with the best rung below that
+  // isn't, so the play tops out lower instead of failing at the step up. (The master can't leave it out: when it is
+  // served, the higher builds have only just started.) A first rung that is AV1 goes home instead (server.js).
+  async variant(token, quality, viewer, { android = false } = {}) {
     const s = this.sessions.get(token);
     if (!s) return null;
     if (s.single) return quality === s.lowerJob.quality ? this.#playlist(s.lowerJob) : null;
@@ -183,6 +187,12 @@ export class Adaptive {
       if (!s.served.has(`failed:${quality}`)) { s.served.add(`failed:${quality}`); this.onEvent('upgrade_failed'); this.log({ event: 'adaptive_upgrade_failed', id: s.data.id, quality, reason: up.reason }); }
       const below = s.rungs.slice(0, i).map((q) => this.#job(s, q)).filter((j) => j?.state === 'ready').at(-1);
       return this.#playlist(below ?? s.lowerJob);
+    }
+    if (android && this.androidNoAv1 && i > 0 && await this.codec(up) === 'av1') {
+      if (!s.served.has(`av1:${quality}`)) { s.served.add(`av1:${quality}`); this.onEvent('android_av1_rung'); this.log({ event: 'android_av1', id: s.data.id, quality, rung: i }); }
+      const below = [];
+      for (const q of s.rungs.slice(0, i)) { const j = this.#job(s, q); if (j?.state === 'ready' && await this.codec(j) !== 'av1') below.push(j); }
+      return this.#playlist(below.at(-1) ?? s.lowerJob);
     }
     const text = await this.#playlist(up);
     const v = viewer && s.viewers.get(viewer);

@@ -15,6 +15,7 @@
 //   GET /ops/state, /ops/events                        read-only operator view, redacted (STATS_TOKEN; see ops.js)
 //   GET /ops/slots, POST /ops/slots/refill             player test slots: what they hold, refill them (src/slots.js)
 //   GET /hls-test/<hex>.m3u8                           temporary adaptive-HLS test playlist (yt-dlp gets a "not a video" page)
+//   GET /hls-test/<hex>/<file>                         temporary home streaming test: segments and playlists (missing segments held 10 s)
 //   GET /, /privacy, /logo.png                         home page and privacy policy (public/)
 import http from 'node:http';
 import { readFileSync, statSync } from 'node:fs';
@@ -262,7 +263,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // hand into <db dir>/hls-test/<random name>.m3u8; see claude/play-latency.md). VRChat's yt-dlp would pick one variant
   // from a master playlist and hand AVPro only that, so it gets the "not a video" page like a ticket, and AVPro gets the
   // master itself. The unguessable name is the only protection: the playlist holds signed links for a few hours.
-  function hlsTest(req, res, url) {
+  async function hlsTest(req, res, url) {
+    const f = url.pathname.match(/^\/hls-test\/([a-f0-9]{16,64})\/([\w-]{1,64}\.(m3u8|m4s|mp4|ts))$/);
+    if (f) return hlsTestFile(req, res, url, f);
     const m = url.pathname.match(/^\/hls-test\/([a-f0-9]{16,64})\.m3u8$/);
     let body = null;
     if (m) { try { body = readFileSync(join(dirname(config.dbPath), 'hls-test', `${m[1]}.m3u8`)); } catch { body = null; } }
@@ -284,6 +287,27 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       return res.end(page);
     }
     res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'content-length': body.length, 'cache-control': 'no-store' });
+    return res.end(req.method === 'HEAD' ? undefined : body);
+  }
+
+  // Temporary (2026-10-23): home streaming test. Segments and a growing playlist copied by hand into
+  // <db dir>/hls-test/<name>/ while ffmpeg writes them, to see whether AVPro plays an EVENT playlist from the start with a
+  // seek bar (home relay design, claude/play-latency.md). A segment that isn't there yet is held up to 10 s, which also
+  // tests the other design: a finished playlist published up front, segments held until they arrive.
+  async function hlsTestFile(req, res, url, [, name, file, ext]) {
+    const path = join(dirname(config.dbPath), 'hls-test', name, file);
+    const kind = clientKind(req.headers['user-agent']);
+    if (ext === 'm3u8' && kind === 'ytdlp' && url.searchParams.get('resolve') !== '1') return fail(res, 404, 'not_found', 'Not for the resolver.');
+    let body = null;
+    const until = Date.now() + (ext === 'm3u8' ? 0 : 10_000);
+    for (;;) {
+      try { body = readFileSync(path); break; } catch { if (Date.now() >= until) break; }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    logJson({ event: 'hls_test_file', name: name.slice(0, 6), file, client: kind, found: Boolean(body) });
+    if (!body) return fail(res, 404, 'not_found', 'Not there.');
+    const type = { m3u8: 'application/vnd.apple.mpegurl', m4s: 'video/iso.segment', mp4: 'video/mp4', ts: 'video/mp2t' }[ext];
+    res.writeHead(200, { 'content-type': type, 'content-length': body.length, 'cache-control': 'no-store' });
     return res.end(req.method === 'HEAD' ? undefined : body);
   }
 
@@ -519,7 +543,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       }
       if (url.pathname.startsWith('/ops/')) { route = 'ops'; return opsRoute(req, res, url, { token: config.statsToken, ring, state: opsState, slots }); }
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
-      if (url.pathname.startsWith('/hls-test/')) { route = 'hls-test'; return hlsTest(req, res, url); }
+      if (url.pathname.startsWith('/hls-test/')) { route = 'hls-test'; return await hlsTest(req, res, url); }
       if (url.pathname.startsWith('/hls/')) { route = 'hls'; return await hlsRoute(req, res, url); }
       if (url.pathname === '/healthz') {
         route = 'health';

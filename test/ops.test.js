@@ -179,3 +179,32 @@ test('ops slot routes: refill is POST only and answers 202; the slots answer wha
   assert.equal((await (await go('/ops/slots')).json()).refillsToday, 0);
   assert.equal((await go('/search', 'POST')).status, 405, 'other routes stay GET only');
 });
+
+test('hls-test files: segments and playlists from a folder; a missing segment is held until it arrives', async (t) => {
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'hls-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const folder = join(dir, 'hls-test', '0123456789abcdef');
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, 'index.m3u8'), '#EXTM3U\n#EXT-X-PLAYLIST-TYPE:EVENT\n');
+  const store = new Store({ path: ':memory:', shards: 2, pool: 100, pinHours: 24 });
+  const app = createApp({ config: { ...config, dbPath: join(dir, 'tickets.db') }, store, tunelio: { enabled: false }, log: () => {} });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}/hls-test/0123456789abcdef/`;
+  const get = (p, ua = 'NSPlayer/12.00') => fetch(base + p, { headers: { 'user-agent': ua } });
+  const list = await get('index.m3u8');
+  assert.equal(list.headers.get('content-type'), 'application/vnd.apple.mpegurl');
+  assert.match(await list.text(), /EVENT/);
+  assert.equal((await get('index.m3u8', 'Mozilla/5.0 (Windows NT 10.0) Chrome/149.0 Safari/537.36')).status, 404);
+  const late = get('seg3.m4s');
+  setTimeout(() => writeFileSync(join(folder, 'seg3.m4s'), 'abc'), 400);
+  const seg = await late;
+  assert.equal(seg.status, 200);
+  assert.equal(seg.headers.get('content-type'), 'video/iso.segment');
+  assert.equal(await seg.text(), 'abc');
+  assert.equal((await get('..%2F..%2Ftickets.db')).status, 404);
+});

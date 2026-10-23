@@ -12,7 +12,7 @@ import { createWorker } from '../relay/worker.js';
 import { config as base } from '../src/config.js';
 
 const TOKEN = 'secret-token';
-const config = { ...base, shards: 2, pool: 200, relayToken: TOKEN, relayWaitMs: 1500, relayCaptionWaitMs: 1500 };
+const config = { ...base, shards: 2, pool: 200, relayToken: TOKEN, relayWaitMs: 1500, relayCaptionWaitMs: 5000 }; // the fake worker answers in ms; 1.5 s failed once under load (2026-10-23)
 const fixture = (name) => readFileSync(new URL(`./fixtures/captions/${name}`, import.meta.url), 'utf8');
 const summary = JSON.parse(fixture('info-summary.json'));
 

@@ -119,7 +119,7 @@ test('hls-test slots: #REDIRECT files answer 302; ?resolve=1 lets the resolver t
   assert.match(await (await get('7e57000000000002.m3u8', chrome)).text(), /Not a video/);
 });
 
-test('test slots: refill writes the seven slots, caps a day and refuses while the links are fresh', async (t) => {
+test('test slots: refill writes the slots (seven, plus the Quest audio masters 08-11), caps a day and refuses while the links are fresh', async (t) => {
   const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
@@ -143,6 +143,10 @@ test('test slots: refill writes the seven slots, caps a day and refuses while th
   assert.match(read(2), /URI="https:\/\/tunelio\.dev\/init\.mp4"/);
   assert.match(read(1), /RESOLUTION=1280x720[^\n]*\nhttps:\/\/yt\/hls-test\/7e57000000000002\.m3u8\?resolve=1/);
   assert.match(read(4), /RESOLUTION=1920x1080[^\n]*\nhttps:\/\/yt\/hls-test\/7e57000000000003\.m3u8\?resolve=1/);
+  assert.match(read(8), /RESOLUTION=1280x720\nhttps:\/\/yt\/hls-test\/7e57000000000002\.m3u8\?resolve=1\n#EXT-X-STREAM-INF:BANDWIDTH=5400000,RESOLUTION=1920x1080\n/, '08: no CODECS');
+  assert.match(read(9), /#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",[^\n]*CHANNELS="2"\n#EXT-X-STREAM-INF:[^\n]*CODECS="avc1\.4d4020,mp4a\.40\.2",AUDIO="a"\n/, '09: muxed audio declared');
+  assert.equal(read(10).match(/#EXT-X-STREAM-INF/g).length, 1, '10: one variant');
+  assert.doesNotMatch(read(11), /CODECS/, '11: one variant, no CODECS');
   assert.equal(read(5), '#REDIRECT https://tunelio.dev/tunnel?id=720p&progressive=1\n');
   assert.equal(read(7), '#REDIRECT https://tunelio.dev/tunnel?id=720p&hls=1\n');
   const st = slots.status();

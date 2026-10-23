@@ -246,6 +246,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       tunelio: new Tunelio({ key: config.tunelioKey, timeoutMs: 30_000, onCredits: (left) => metrics.gauge('credits_remaining', '', left),
         onCall: ({ path, ok }) => { if (ok && path === '/create') metrics.inc('credits', 'test', 10); } }),
     });
+    try { slots.writeMasters(); } catch (err) { logJson({ event: 'test_slots_masters_failed', message: String(err?.message ?? err).slice(0, 200) }); }
   }
 
   // Adaptive playlists (src/adaptive.js). Only a player gets here (through a ticket's redirect); a resolver that does

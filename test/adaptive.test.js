@@ -143,6 +143,7 @@ test('.m3u8 ticket (the world\'s Android build): always HLS, the plan\'s quality
   const st = await (await s.get(`/v1/3/${n}.m3u8`, 'UnityPlayer/2022')).json();
   assert.equal(st.plan, 'direct');
   assert.equal(st.format, 'hls', 'the tablet warms the HLS build the player will open');
+  assert.match(await (await s.get(`/v1/3/${n}.m3u8`, YTDLP)).text(), /being prepared/, 'the resolver is sent on, so AVPro opens the .m3u8 ticket itself');
   const q = await s.get(`/v1/3/${n}.m3u8`, QUEST);
   assert.equal(q.status, 302);
   assert.match(q.headers.get('location'), /^http:\/\/pub\.example\/hls\/[a-f0-9]{18}\/1080p\.m3u8$/, 'a plain playlist, no master');

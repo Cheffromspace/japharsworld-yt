@@ -481,9 +481,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         // Android players can't open HLS behind a ticket (src/playback.js isAndroidPlayer): the progressive build of the
         // default quality instead. The PC players in the same room keep the adaptive plan. Videos too long for a
         // progressive build still get HLS, which an Android player can't play. A .m3u8 ticket (the world's Android build)
-        // always gets HLS instead.
-        if (hlsTicket && !resolver) {
-          if (!c.hls) metrics.inc('adaptive', 'hls_ticket');
+        // always gets HLS instead. Its resolver request is sent on at once like an adaptive one below, so VRChat hands the
+        // .m3u8 ticket itself to AVPro (2026-10-23, Quest: the resolver got the finished mp4 link and AVPro hung loading).
+        if (hlsTicket) {
+          if (!c.hls && !resolver) metrics.inc('adaptive', 'hls_ticket');
           c = hlsChoice(c);
         } else if (c.hls && !resolver && android) {
           c = { quality: adaptive.lower, hls: false, mode: 'android' };

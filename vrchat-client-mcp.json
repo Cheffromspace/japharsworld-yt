@@ -1,0 +1,8 @@
+{
+  "launcher": "launch",
+  "markerPrefix": "[TEST]",
+  "extraNoisePatterns": [],
+  "defaultWorldId": "wrld_471c100d-251f-4526-a1b3-5de45b36cc17",
+  "defaultLaunchArgs": [],
+  "osc": { "host": "127.0.0.1", "port": 9000 }
+}

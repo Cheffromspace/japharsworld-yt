@@ -35,7 +35,7 @@ export const cachedBuild = (mb, buildMs) => buildMs < 3000 || mb / (buildMs / 10
 export class Playback {
   constructor({ tunelio, quality = '1080p', lowerQuality = '720p', maxMbForQuality = 1500, progressiveMaxMb = 1800,
     progressiveMaxSeconds = 3 * 3600, marginSeconds = 20 * 60,
-    pauseMinutes = 10, alert = () => {}, log = () => {}, now = () => Date.now(), probe = null, onBuild = () => {}, stateFile = null }) {
+    pauseMinutes = 10, alert = () => {}, log = () => {}, now = () => Date.now(), probe = null, onBuild = () => {}, stateFile = null, liveFile = null }) {
     this.tunelio = tunelio;
     this.quality = quality;
     // A file above maxMbForQuality MB at `quality` is made again at lowerQuality (10 more credits, roughly half the
@@ -67,6 +67,48 @@ export class Playback {
     // after a deploy were planned as if Tunelio were fast. Speeds and learned rates only: no video IDs.
     this.stateFile = stateFile;
     this.#load();
+    // The paid /create links and the builds, so a restart (every deploy) neither pays again nor strands players: an
+    // adaptive session's upper builds were held only here, and the 19:22 deploy on 2026-10-23 left a play on 360p for
+    // the rest of the video. Builds that were in flight start again on the same link (no new /create). Stays on the
+    // server, next to tickets.db, which holds video IDs too.
+    this.liveFile = liveFile;
+    this.#loadLive();
+  }
+
+  #loadLive() {
+    if (!this.liveFile) return;
+    let st;
+    try { st = JSON.parse(readFileSync(this.liveFile, 'utf8')); } catch { return; }
+    const now = this.now();
+    for (const [key, made] of Object.entries(st.creates ?? {})) {
+      if (made?.url && made.expires * 1000 - this.marginMs > now) this.creates.set(key, { made, promise: Promise.resolve(made) });
+    }
+    for (const j of Array.isArray(st.jobs) ? st.jobs : []) {
+      if (!j?.id || !j.requested) continue;
+      const data = { id: j.id, seconds: j.seconds };
+      if (j.state === 'ready' && j.url && j.expiresMs - this.marginMs > now) {
+        this.jobs.set(this.#key(data, j.requested, j.fixed), { ...j, waiters: [], promise: Promise.resolve() });
+      } else if (j.state === 'building' && this.creates.has(`${j.id}@${j.requested}`)) {
+        this.start(data, j.requested, { hls: j.fixed, maxMb: j.maxMb });
+      }
+    }
+  }
+
+  #saveLive() {
+    if (!this.liveFile) return;
+    const now = this.now();
+    const creates = {};
+    for (const [key, e] of this.creates) if (e.made?.url && e.made.expires * 1000 > now) creates[key] = e.made;
+    const jobs = [];
+    for (const j of this.jobs.values()) {
+      if (j.state === 'failed' || (j.state === 'ready' && j.expiresMs <= now)) continue;
+      const { waiters, promise, codecRead, ...rest } = j;
+      jobs.push(rest);
+    }
+    try {
+      writeFileSync(`${this.liveFile}.tmp`, JSON.stringify({ creates, jobs }));
+      renameSync(`${this.liveFile}.tmp`, this.liveFile);
+    } catch (err) { this.log({ event: 'live_state_failed', message: String(err?.message ?? err).slice(0, 200) }); }
   }
 
   #load() {
@@ -134,6 +176,7 @@ export class Playback {
     job = { id, seconds, format, fixed: hls, maxMb, mb: 0, requested: quality, quality, state: 'building', startedMs: now, endedMs: 0, url: null, expiresMs: 0, reason: null, waiters: [] };
     job.promise = this.#build(job).finally(() => { for (const w of job.waiters) w(); job.waiters = []; });
     this.jobs.set(key, job);
+    this.#saveLive();
     return job;
   }
 
@@ -150,7 +193,7 @@ export class Playback {
     const hit = this.creates.get(key);
     if (hit && (!hit.made || hit.made.expires * 1000 - this.marginMs > this.now())) return hit.promise;
     const entry = { made: null };
-    entry.promise = this.tunelio.create(id, quality).then((m) => { entry.made = m; return m; }, (err) => { this.creates.delete(key); throw err; });
+    entry.promise = this.tunelio.create(id, quality).then((m) => { entry.made = m; this.#saveLive(); return m; }, (err) => { this.creates.delete(key); throw err; });
     this.creates.set(key, entry);
     if (this.creates.size > 4000) for (const [k, e] of this.creates) if (e.made && e.made.expires * 1000 < this.now()) this.creates.delete(k);
     return entry.promise;
@@ -261,6 +304,7 @@ export class Playback {
     job.reason = reason;
     const buildMs = job.endedMs - job.startedMs;
     if (ok) this.learn(job.format, job.mb, buildMs);
+    this.#saveLive();
     this.log({ event: ok ? 'tunelio_link' : 'build_failed', id: job.id, quality: job.quality, hls: job.format === 'hls', mb: job.mb, buildMs, seconds: job.seconds, reason,
       ...(ok && cachedBuild(job.mb, buildMs) ? { cached: true } : {}), ...(status !== undefined ? { status } : {}), ...(error ? { error } : {}) });
     try { this.onBuild({ id: job.id, format: job.format, quality: job.quality, seconds: job.seconds, mb: job.mb, buildMs, ok }); } catch { /* metrics only */ }

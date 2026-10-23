@@ -11,7 +11,7 @@ const SIZES = { '360p': 50e6, '720p': 200e6, '1080p': 400e6 };
 const playlist = '#EXTM3U\n#EXT-X-MAP:URI="tunnel?id=x&hls=data",BYTERANGE="1394@0"\n#EXTINF:4.8,\n#EXT-X-BYTERANGE:100@1394\ntunnel?id=x&hls=data\n';
 
 // Tunelio and its builds, with the 1080p HLS build (and the 720p one, with hold720) released by hand.
-function fakes({ sizes = SIZES, hold720 = false } = {}) {
+function fakes({ sizes = SIZES, hold720 = false, pbOpts = {} } = {}) {
   const created = [];
   let releaseUpper, release720, failUpper = false;
   const upperBuilt = new Promise((r) => { releaseUpper = r; });
@@ -25,10 +25,10 @@ function fakes({ sizes = SIZES, hold720 = false } = {}) {
     if (hold720 && /720p.*hls=1/.test(url)) await built720;
     return { ok: true, refused: false };
   };
-  const playback = new Playback({ tunelio, quality: '720p', probe });
+  const playback = new Playback({ tunelio, quality: '720p', probe, ...pbOpts });
   // Says which build it is (a comment line players ignore), for tests that check which rung stood in.
   const fetcher = async (url) => new Response(`${playlist}#BUILD:${String(url).match(/\d+p/)?.[0]}\n`, { status: 200 });
-  return { tunelio, playback, created, fetcher, releaseUpper: (fail = false) => { failUpper = fail; releaseUpper(); }, release720 };
+  return { tunelio, probe, playback, created, fetcher, releaseUpper: (fail = false) => { failUpper = fail; releaseUpper(); }, release720 };
 }
 
 test('pacer: an even share of what is left until renewal, minus the reserve', () => {
@@ -273,6 +273,39 @@ test('speed estimate survives a restart (stateFile); old or impossible speeds ar
   assert.equal(c.rate.hls, 0.03, 'a bad rate keeps the prior');
   writeFileSync(stateFile, 'not json');
   assert.equal(new Playback({ tunelio: { enabled: true }, stateFile }).measured(), false);
+});
+
+test('a restart mid-play keeps the session, its builds and the paid links: the player steps up afterwards', async (t) => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'live-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const liveFile = join(dir, 'playback-live.json'), stateFile = join(dir, 'adaptive-live.json');
+  const f = fakes({ pbOpts: { liveFile } });
+  const opts = { fetcher: f.fetcher, holdMs: 50, base: 'http://pub/hls', start: '360p', stateFile };
+  const a = new Adaptive({ playback: f.playback, ...opts });
+  const data = { id: 'restart0001', seconds: 1200 };
+  a.force(data.id, 'start', 30);
+  const job = f.playback.start(data, '360p', { hls: true });
+  await f.playback.wait(job);
+  const s = a.session(data, job);
+  assert.ok(a.master(s.token));
+  assert.equal(await a.variant(s.token, '1080p'), null, '1080p building');
+  const paid = f.created.length;
+
+  // The deploy: a new process with the same files. The 1080p build was in flight, so it starts again on the same link.
+  const p2 = new Playback({ tunelio: f.tunelio, quality: '720p', probe: f.probe, liveFile });
+  const b = new Adaptive({ playback: p2, ...opts });
+  assert.deepEqual(b.forcedPlans().map((x) => x.mode), ['start'], 'the test plan too');
+  assert.ok(b.master(s.token), 'the token still works');
+  assert.equal(p2.peek(data, '360p', { hls: true }).state, 'ready');
+  assert.equal(p2.peek(data, '1080p', { hls: true }).state, 'building');
+  f.releaseUpper();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.match(await b.variant(s.token, '1080p'), /#BUILD:1080p/, 'and the step up still comes');
+  assert.equal(f.created.length, paid, 'no /create paid again');
+  assert.equal(await b.variant('0123456789abcdef01', '1080p'), null, 'unknown tokens stay unknown');
 });
 
 test('forced plan: a test plan for one video wins over the prediction, a room pick and the pacer, until it expires', async () => {

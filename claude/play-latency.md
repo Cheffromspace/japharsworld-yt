@@ -177,6 +177,13 @@ priors (~33 MB/s at HLS: 580 MB ≈ 20 s, one switch) on a day of 3–7 MB/s. No
 kept in `build-speeds.json` next to metrics.db and loaded on start (speeds and rates only, no video IDs), and a start
 master with fewer than two measured builds to go on lists the 720p (`Playback.measured()`).
 
+A deploy restart (19:22:29 UTC, 39a4b34) dropped the adaptive sessions and their in-flight builds: the player's
+upper-rung requests became instant 404s, so it would have stayed at its first rung for the rest of the video.
+Now `playback-live.json` (the paid /create links, ready and in-flight builds) and `adaptive-live.json` (sessions,
+forced test plans) are kept next to metrics.db and loaded on start; in-flight builds start again on the same link
+(no new credits). That play (dahs-TRr9os) had already lost its 720p and 1080p four seconds earlier: both failed after
+62.87 s, as Croatia's 1080p did (62.875 s), so something cuts builds off at a fixed ~60 s (status logged since 39a4b34).
+
 ## Home relay playback (2026-10-22/23)
 
 Owner: add the home connection to the serving chain, "as part of our adaptive credit spending, preferring Tunelio",

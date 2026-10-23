@@ -89,6 +89,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     probe: tunelio.enabled ? linkProbe() : null, alert, log: logJson,
     // Next to metrics.db (tests run without one, so they write nothing).
     stateFile: config.metricsPath ? join(dirname(config.metricsPath), 'build-speeds.json') : null,
+    liveFile: config.metricsPath ? join(dirname(config.metricsPath), 'playback-live.json') : null,
     onBuild: ({ format, quality, seconds, mb, buildMs, ok }) => {
       metrics.inc('build', ok ? 'ok' : 'failed');
       if (ok) { metrics.inc(format === 'hls' ? 'build_s_hls' : 'build_s_progressive', secondsBucket(buildMs)); metrics.inc('build_length', lengthBucket({ seconds })); metrics.inc('build_size', sizeBucket(mb)); metrics.inc('build_quality', quality); }
@@ -105,7 +106,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   adaptive ??= new Adaptive({
     playback, log: logJson, onEvent: (k) => metrics.inc('adaptive', k), holdMs: config.adaptiveHoldMs, directSeconds: config.adaptiveDirectSeconds,
     base: `${config.publicUrl}/hls`, switching: config.adaptiveSwitch, start: config.adaptiveStart, startSeconds: config.adaptiveStartSeconds,
-    startMid: config.adaptiveStartMid, startStepSeconds: config.adaptiveStartStepSeconds, androidNoAv1: config.homeAndroid,
+    startMid: config.adaptiveStartMid, startStepSeconds: config.adaptiveStartStepSeconds,
+    stateFile: config.metricsPath ? join(dirname(config.metricsPath), 'adaptive-live.json') : null, androidNoAv1: config.homeAndroid,
     lower: config.tunelioQuality, upper: config.tunelioQualities.at(-1) ?? '1080p', maxUpperMb: config.tunelioMaxMb,
     pacer: new Pacer({
       reserve: config.adaptiveReserve,

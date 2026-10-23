@@ -34,6 +34,7 @@
 // and AVPro failed with "Loading failed"). The same goes for a plain HLS build (videos over 3 hours): the ticket
 // redirects to our copy of its playlist, `single()`, not to Tunelio's.
 import { randomBytes } from 'node:crypto';
+import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 
 // Allows the extra credits of an adaptive play while today's spend stays under an even share of what is left until the
 // plan renews, minus a reserve. remaining: () => credits left (null = unknown: allow); spentToday: () => spent today.
@@ -60,7 +61,7 @@ const PLAN_MS = 30 * 60_000;
 export class Adaptive {
   constructor({ playback, pacer, fetcher = fetch, log = () => {}, onEvent = () => {}, lower = '720p', upper = '1080p',
     holdMs = 8000, maxUpperMb = 1500, directSeconds = 10, now = () => Date.now(), base = 'https://yt.japharsworld.com/hls', switching = true,
-    start = null, startSeconds = 10, startMid = false, startStepSeconds = 30, androidNoAv1 = false }) {
+    start = null, startSeconds = 10, startMid = false, startStepSeconds = 30, androidNoAv1 = false, stateFile = null }) {
     Object.assign(this, { playback, pacer, fetch: fetcher, log, onEvent, lower, upper, holdMs, maxUpperMb, directSeconds, now, base, switching, start, startSeconds, startMid, androidNoAv1 });
     this.startStepSeconds = startStepSeconds;
     this.byJob = new WeakMap(); // build job → its session
@@ -68,6 +69,41 @@ export class Adaptive {
     this.sessions = new Map(); // token → { token, data, lowerJob, served, fellBack }
     this.byVideo = new Map();  // video id → token
     this.forced = new Map();   // video id → { mode, until }: test plans (force)
+    // Sessions and test plans survive a restart (with Playback's liveFile for the builds behind them): a player keeps
+    // asking for its session's rungs by token for the whole video, and an unknown token is a 404 for good.
+    this.stateFile = stateFile;
+    this.#load();
+  }
+
+  #load() {
+    if (!this.stateFile) return;
+    let st;
+    try { st = JSON.parse(readFileSync(this.stateFile, 'utf8')); } catch { return; }
+    const now = this.now();
+    for (const [id, f] of Object.entries(st.forced ?? {})) if (f?.until > now) this.forced.set(id, f);
+    for (const x of Array.isArray(st.sessions) ? st.sessions : []) {
+      const data = { id: x?.id, seconds: x?.seconds };
+      const job = x?.id && this.playback.peek?.(data, x.quality, { hls: x.hls });
+      if (!job || !/^[a-f0-9]{18}$/.test(x.token) || !Array.isArray(x.rungs) || !Array.isArray(x.ladder)) continue;
+      const s = { token: x.token, data, lowerJob: job, rungs: x.rungs, ladder: x.ladder, single: !!x.single, started: !!x.started,
+        served: new Set(x.served ?? []), viewers: new Map() };
+      this.byJob.set(job, s);
+      this.sessions.set(s.token, s);
+    }
+  }
+
+  #save() {
+    if (!this.stateFile) return;
+    const sessions = [];
+    for (const s of this.sessions.values()) {
+      if (s.lowerJob.state === 'failed') continue;
+      sessions.push({ token: s.token, id: s.data.id, seconds: s.data.seconds, quality: s.lowerJob.requested, hls: s.lowerJob.fixed,
+        rungs: s.rungs, ladder: s.ladder, single: s.single, started: s.started, served: [...s.served] });
+    }
+    try {
+      writeFileSync(`${this.stateFile}.tmp`, JSON.stringify({ sessions: sessions.slice(-500), forced: Object.fromEntries(this.forced) }));
+      renameSync(`${this.stateFile}.tmp`, this.stateFile);
+    } catch (err) { this.log({ event: 'adaptive_state_failed', message: String(err?.message ?? err).slice(0, 200) }); }
   }
 
   // A test plan for one video until `minutes` from now (POST /ops/plan, tools/ops.mjs plan): its plays get `mode`
@@ -76,10 +112,11 @@ export class Adaptive {
   // as usual. mode null clears it.
   force(id, mode, minutes = 60) {
     this.plans.delete(id);
-    if (!mode) { this.forced.delete(id); return null; }
+    if (!mode) { this.forced.delete(id); this.#save(); return null; }
     const entry = { mode, until: this.now() + minutes * 60_000 };
     this.forced.set(id, entry);
     for (const [k, f] of this.forced) if (f.until < this.now()) this.forced.delete(k);
+    this.#save();
     return entry;
   }
 
@@ -164,6 +201,7 @@ export class Adaptive {
       this.byJob.set(job, s);
       this.sessions.set(s.token, s);
       if (this.sessions.size > 2000) this.sessions.delete(this.sessions.keys().next().value);
+      this.#save();
     }
     return s;
   }
@@ -207,6 +245,7 @@ export class Adaptive {
         this.log({ event: 'adaptive_start_rungs', id: s.data.id, rungs: s.rungs.length, mb, predicted });
       }
       for (const q of s.ladder.slice(1)) this.playback.start(s.data, q, { hls: true, maxMb: q === this.upper ? this.maxUpperMb : 0 });
+      this.#save();
       this.onEvent('upgrade');
     }
     this.onEvent('master');

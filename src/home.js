@@ -92,6 +92,20 @@ export class Home {
     return s;
   }
 
+  // A usable session for the same video at another quality, ready ones first: what a play keeps when the room's new
+  // quality can't be built at home (Everything-is-OK#127, 2026-10-24: the room went to 1080p during a 3.5 h home play,
+  // the worker answered "busy", and the player was held 91 s for a 4 GB Tunelio build, then sent to youtube.com).
+  other(data, quality) {
+    let best = null;
+    for (const s of this.sessions.values()) {
+      if (s.id !== data.id || s.quality === quality) continue;
+      const p = this.peek(data, s.quality);
+      if (!p || p.state === 'failed') continue;
+      if (!best || (p.state === 'ready' && best.state !== 'ready')) best = p;
+    }
+    return best;
+  }
+
   // The session for a video, started if there is none (and a worker is free and under the cap); null otherwise.
   start(data, quality) {
     const hit = this.peek(data, quality);

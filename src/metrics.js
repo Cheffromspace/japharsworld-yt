@@ -85,7 +85,7 @@ export const METRICS = {
   play_route: ['daily', oneOf('tunelio-progressive', 'tunelio-hls', 'tunelio-adaptive', 'home', 'youtube-live', 'youtube-fallback')],
   // Home relay (src/home.js): sessions started / ready / failed, new sessions refused by the daily cap, and why a play
   // started home (Tunelio off, a long video, the credit pacer, Tunelio's build failed), counted once per session.
-  home: ['daily', oneOf('start', 'ready', 'failed', 'capped', 'defer', 'timeout', 'cache_hit', 'settled', 'settle_timeout')],
+  home: ['daily', oneOf('start', 'ready', 'failed', 'capped', 'defer', 'timeout', 'cache_hit', 'settled', 'settle_timeout', 'other_quality')],
   home_why: ['daily', oneOf('tunelio_off', 'long', 'pacer', 'tunelio_failed', 'av1', 'tunelio_slow')],
   home_start_s: ['daily', isSBucket],
   // Today's home relay use against its cap and the media workers connected, set every minute (numbers only).

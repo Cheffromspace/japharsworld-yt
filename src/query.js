@@ -17,6 +17,35 @@ export function parseQuery(raw) {
   return text.slice(0, MAX_QUERY);
 }
 
+// The world's prompts before the arrow (EverythingIsOKYouTubeBake.cs Prompts and LinkPrompts, 2026-10-24), for queryShape.
+const PROMPTS = ['Type to search', 'Tapez pour chercher', 'Escribe para buscar', 'Scrivi per cercare', '검색어 입력',
+  'Suchbegriff eingeben', '検索ワードを入力', 'Wpisz, aby wyszukać', 'Введите запрос', 'Digite para pesquisar', '输入搜索内容',
+  '輸入搜尋內容', 'הקלידו לחיפוש', 'o sitelen e alasa', 'Введіть запит', 'พิมพ์เพื่อค้นหา', 'YouTube link', 'Lien YouTube',
+  'Enlace de YouTube', 'Link YouTube', 'YouTube 링크', 'YouTube-Link', 'YouTubeリンク', 'Ссылка YouTube', 'Link do YouTube',
+  'YouTube 链接', 'YouTube 連結', 'קישור YouTube', 'nasin YouTube', 'Посилання YouTube', 'ลิงก์ YouTube'];
+const CONTROL = /[\u0000-\u001f\u007f]/;
+const fold = (s) => s.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+
+// What a search's q looked like, without its text (Everything-is-OK#143: Quest searches found nothing, and the logs keep
+// no search text): lengths, which arrow it was cut at, whether a prompt was still in it, and the character classes.
+export function queryShape(raw) {
+  const text = typeof raw === 'string' ? raw : '';
+  let cut = -1, arrow = 'none';
+  for (const a of ARROWS) {
+    const i = text.lastIndexOf(a);
+    if (i > cut) { cut = i; arrow = a; }
+  }
+  const after = fold(cut >= 0 ? text.slice(cut + arrow.length) : text);
+  const query = after.slice(0, MAX_QUERY);
+  const nonAscii = /[^\x00-\x7f]/.test(query), ascii = /[\x20-\x7e]/.test(query);
+  return {
+    qLen: text.length, pad: text.length - text.trimStart().length, arrow, before: cut >= 0 ? fold(text.slice(0, cut)).length : 0,
+    prompt: PROMPTS.some((p) => text.includes(p)), after: after.length, len: query.length,
+    chars: !query ? 'empty' : nonAscii && ascii ? 'mixed' : nonAscii ? 'non-ascii' : 'ascii',
+    control: CONTROL.test(text),
+  };
+}
+
 // A pasted YouTube link (or bare 11-char id after a "v=") is played directly instead of searched.
 const ID = /^[A-Za-z0-9_-]{11}$/;
 export function youtubeIdFrom(text) {

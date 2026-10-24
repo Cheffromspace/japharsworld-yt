@@ -318,7 +318,7 @@ test('ticket → home: a PC player gets the home playlist when Tunelio is off; t
 });
 
 // The home app of the test above, with a home worker connected; over: config and createApp overrides.
-async function homeApp(t, { config: c = {}, ...over } = {}) {
+async function homeApp(t, { config: c = {}, media = null, ...over } = {}) {
   const dir = tmp(t);
   const config = { ...base, shards: 2, pool: 50, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub', metricsPath: '', ...c };
   const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
@@ -332,6 +332,7 @@ async function homeApp(t, { config: c = {}, ...over } = {}) {
   const worker = createWorker({ url, token: TOKEN, name: 'home', polls: 1, caps: ['media'], log: () => {},
     media: async (job) => {
       jobs.push(job);
+      if (media) await media(job);
       const put = (file, body) => fetch(`${url}/relay/media/${job.token}/${file}`, { method: 'PUT', headers: { authorization: `Bearer ${TOKEN}` }, body });
       await put('seg0.ts', 'ts0');
       await put('index.m3u8', PL1);
@@ -342,7 +343,7 @@ async function homeApp(t, { config: c = {}, ...over } = {}) {
   while (!relay.capable('media').length) await new Promise((r) => setTimeout(r, 20));
   const [n] = store.allocate(0, [{ kind: 'video', data: { id: 'aaaaaaaaaaa', title: 'T', seconds: 600, live: false } }]);
   const play = (ua, ext = '.m3u8') => fetch(`${url}/v1/0/${n}${ext}`, { redirect: 'manual', headers: { 'user-agent': ua } });
-  return { play, jobs };
+  return { play, jobs, store, url, n };
 }
 const QUEST = 'AVProMobileVideo/2026.3.3p2 (Linux;Android 14) ExoPlayer';
 
@@ -482,4 +483,32 @@ test('ticket → home: right after a Tunelio timeout a PC play goes home (tuneli
   const r = await app.play('NSPlayer/12.00.26100 WMFSDK/12.00', '');
   assert.match(r.headers.get('location'), /\/home\/[a-f0-9]{18}\/index\.m3u8$/);
   assert.equal(creates, 0);
+});
+
+test('ticket → home: the room switching quality mid-play keeps the home session when the new one can\'t be built (#127)', async (t) => {
+  const app = await homeApp(t, { media: async (job) => { if (job.quality === '1080p') throw new Error('busy'); } });
+  const PC = 'NSPlayer/12.00.26100 WMFSDK/12.00';
+  const first = (await app.play(PC, '')).headers.get('location');
+  assert.match(first, /\/home\/[a-f0-9]{18}\/index\.m3u8$/);
+  app.store.setQuality(0, '1080p');
+  const again = await app.play(PC, '');
+  assert.equal(again.headers.get('location'), first, 'the 720p home stream, not a Tunelio hold or youtube.com');
+  const tablet = await (await fetch(`${app.url}/v1/0/${app.n}`, { headers: { 'user-agent': 'UnityPlayer/2022.3 (UnityWebRequest/1.0)' } })).json();
+  assert.equal(tablet.plan, 'home');
+  assert.equal(tablet.quality, '720p');
+  assert.equal(tablet.room, '1080p');
+  assert.deepEqual(app.jobs.map((j) => j.quality), ['720p', '1080p']);
+});
+
+test('home route: each request logs its segment, the token cut to 4 characters (#128)', async (t) => {
+  const lines = [];
+  const app = await homeApp(t, { log: (l) => lines.push(l) });
+  const loc = (await app.play('NSPlayer/12.00.26100 WMFSDK/12.00', '')).headers.get('location');
+  const path = loc.replace('http://pub', '');
+  await fetch(app.url + path.replace('index.m3u8', 'seg0.ts'), { headers: { range: 'bytes=0-' } });
+  const gets = lines.map((l) => JSON.parse(l)).filter((e) => e.event === 'home_get');
+  assert.deepEqual(gets.map((e) => [e.file, e.seg, e.found, e.range]), [['seg0.ts', '0', true, true]]);
+  const token = path.split('/')[2];
+  assert.equal(gets[0].ses, token.slice(0, 4));
+  assert.ok(!lines.some((l) => l.includes(token)), 'the full token is never logged');
 });

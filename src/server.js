@@ -28,7 +28,7 @@ import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { config as defaults } from './config.js';
 import { Store } from './store.js';
-import { parseQuery, youtubeIdFrom, normalizeLang, LANGS } from './query.js';
+import { parseQuery, queryShape, youtubeIdFrom, normalizeLang, LANGS } from './query.js';
 import { youtube as defaultYoutube } from './youtube.js';
 import { cachedSheet } from './sheet.js';
 import { Captions, errorLine } from './captions.js';
@@ -206,6 +206,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (rateLimited(clientIp(req))) { metrics.inc('search_fail', '429'); return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.'); }
     const lang = normalizeLang(url.searchParams.get('l'));
     const query = parseQuery(url.searchParams.get('q') ?? '');
+    const ua = String(req.headers['user-agent'] ?? '');
+    logJson({ event: 'search_shape', lang, device: /Android|Quest|Oculus/i.test(ua) ? 'android' : /UnityPlayer/i.test(ua) ? 'unity' : ua ? 'other' : 'none',
+      ...queryShape(url.searchParams.get('q') ?? '') });
     // The world loads the bare search address once after join (visitors who allow untrusted URLs).
     if (!query) { metrics.inc('join'); metrics.inc('join_lang', lang); return fail(res, 400, 'empty_query', 'Type something after the arrow.'); }
     metrics.inc('search');
@@ -352,7 +355,12 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': page.length, 'cache-control': 'no-store' });
       return res.end(page);
     }
+    const asked = Date.now();
     const f = m ? await home.file(m[1], m[2]) : null;
+    // Which segment each player asks for (#128, 2026-10-24: a late joiner stayed at 0:00 and the log couldn't show
+    // whether its seek ever reached us). The token cut to 4 characters, enough to tell sessions apart in one play.
+    if (m) logJson({ event: 'home_get', ses: m[1].slice(0, 4), file: m[2], seg: /^seg(\d+)\.ts$/.exec(m[2])?.[1] ?? null,
+      found: Boolean(f), range: Boolean(req.headers.range), ms: Date.now() - asked });
     if (!f) return fail(res, 404, 'not_found', 'Unknown path.');
     res.writeHead(200, { 'content-type': f.type, 'content-length': f.body.length, 'cache-control': 'no-store' });
     return res.end(req.method === 'HEAD' ? undefined : f.body);
@@ -428,7 +436,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (!home.enabled || data.live) return null;
     const s = home.peek(data, quality);
     if (s && s.state !== 'failed') return 'reuse';
-    if (!home.worker()) return null;
+    // No worker for this quality: the video's session at another quality, if it has one (homeKeep), else Tunelio.
+    if (!home.worker()) return home.other?.(data, quality) ? 'reuse' : null;
     if (!tunelio.enabled || Date.now() < (playback.pausedUntil ?? 0)) return 'tunelio_off';
     if (tunelioSlow()) return 'tunelio_slow';
     if ((data.seconds ?? 0) >= config.homeLongMinutes * 60) return 'long';
@@ -451,6 +460,16 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const s = home.start(data, quality);
     if (s && !s.why) { s.why = why; metrics.inc('home_why', why); }
     return s;
+  }
+  // A home play whose quality can't be built (the worker busy or failing, or no worker): the video's session at another
+  // quality instead of the Tunelio path (src/home.js other; #127). Otherwise the session as it was.
+  function homeKeep(data, quality, s) {
+    if (s && s.state !== 'failed') return s;
+    const alt = home.other?.(data, quality);
+    if (!alt) return s;
+    metrics.inc('home', 'other_quality');
+    logJson({ event: 'home_other_quality', id: data.id, quality, from: alt.quality });
+    return alt;
   }
   // The tablet's view of a home session (the fields of playback.status). A home stream starts in ~5 s (2026-10-23).
   function homeStatus(s) {
@@ -478,7 +497,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (kind === 'string') {
         const hq = roomQuality(shard);
         const hw = hlsTicket && !config.homeAndroid ? null : homeWhy(t.data, hq);
-        const hs = hw ? startHome(t.data, hq, hw) : null;
+        const hs = hw ? homeKeep(t.data, hq, startHome(t.data, hq, hw)) : null;
         if (hs && hs.state !== 'failed') return json(res, 200, { v: API, shard, t: n, room: hq, ...homeStatus(hs), ...meta(t.data) });
         let c = await choice(shard, t.data);
         if (hlsTicket) c = hlsChoice(c);
@@ -506,7 +525,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const hq = roomQuality(shard);
       const homeOk = hlsTicket ? config.homeAndroid : !android;
       const why = homeOk ? homeWhy(t.data, hq) : null;
-      const hs = why ? startHome(t.data, hq, why) : null;
+      let hs = why ? homeKeep(t.data, hq, startHome(t.data, hq, why)) : null;
       if (hs && hs.state !== 'failed') {
         if (resolver) {
           metrics.inc('home', 'defer');
@@ -517,6 +536,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         }
         holding++;
         try { await home.wait(hs, config.homeReadyMs); } finally { holding--; }
+        if (hs.state === 'failed') hs = homeKeep(t.data, hq, hs); // the worker said "busy" only now
         if (hs.state === 'ready') where = await homeWhere(hs);
         else metrics.inc('home', 'timeout');
       }

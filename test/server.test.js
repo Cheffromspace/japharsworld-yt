@@ -127,6 +127,22 @@ test('ticket status carries the title, channel and description (Everything-is-OK
   assert.equal(l.body.results[0].link, undefined);
 });
 
+test('searches log their shape, never their text (#143)', async (t) => {
+  const lines = [];
+  const s = await start({ log: (l) => lines.push(l) });
+  t.after(() => s.server.close());
+  const q = encodeURIComponent(' '.repeat(240) + 'Type to search → rain secretword');
+  await fetch(`${s.base}/v1/0/s?l=en&q=${q}`, { headers: { 'user-agent': 'UnityPlayer/2022.3 (UnityWebRequest/1.0; Android)' } });
+  await s.get('/v1/0/s?q=' + encodeURIComponent('Search →  '));
+  const shapes = lines.map((l) => JSON.parse(l)).filter((e) => e.event === 'search_shape');
+  assert.equal(shapes.length, 2);
+  assert.equal(shapes[0].device, 'android');
+  assert.equal(shapes[0].arrow, '→');
+  assert.equal(shapes[0].len, 15);
+  assert.equal(shapes[1].chars, 'empty');
+  assert.ok(!lines.some((l) => l.includes('secretword')));
+});
+
 test('errors are JSON with codes', async (t) => {
   const s = await start();
   t.after(() => s.server.close());

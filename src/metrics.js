@@ -89,6 +89,7 @@ export const METRICS = {
   home_why: ['daily', oneOf('tunelio_off', 'long', 'pacer', 'tunelio_failed', 'av1', 'tunelio_slow')],
   home_start_s: ['daily', isSBucket],
   // Today's home relay use against its cap and the media workers connected, set every minute (numbers only).
+  channel: ['daily', oneOf('redirect', 'unavailable', 'unknown')], // /v1/ch/<key> (src/channels.js)
   transfer: ['daily', oneOf('linode', 'home')], // MB sent by each host (src/net.js)
   home_today: ['gauge', oneOf('mb', 'builds', 'cap_mb', 'workers', 'cache_mb')],
   // Playback plans (src/adaptive.js): which plan each video got, masters served, 1080p upgrades started / served /

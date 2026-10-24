@@ -7,6 +7,8 @@
 //                                                      `lines` (cue timing) and `chunks` (readable lines with word timing,
 //                                                      src/blocks.js), from the first source in src/captionchain.js that answers
 //   GET /v1/<shard>/q[/<720|1080>]                    the room's playback quality for search videos (read, or pick on the tablet)
+//   GET /v1/ch/<key>                                  a Channels slot (key from channels.json): 302 to its current
+//                                                      youtube.com/watch link, for Quest (src/channels.js)
 //   GET /hls/<token>.m3u8, /hls/<token>/<q>.m3u8          adaptive playlists a played ticket leads to (src/adaptive.js)
 //   GET /home/<token>/index.m3u8, /home/<token>/seg<n>.ts  home relay playback (src/home.js; uploads: PUT /relay/media/...)
 //   GET /v1/<shard>/cc/<i>[?l=<lang>]                  track i of that list (the tablet's caption picker)
@@ -47,6 +49,7 @@ import { EventRing, opsRoute, gitHead } from './ops.js';
 import { TestSlots } from './slots.js';
 import { Home } from './home.js';
 import { txBytes, TxDelta } from './net.js';
+import { ChannelSlots } from './channels.js';
 import { statsRoute, latestCredits, billingPeriod, daysBetween } from './stats.js';
 
 const API = 1;
@@ -67,7 +70,7 @@ function page(path) {
   return buf;
 }
 
-export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, adaptive, slots, home, log = console.log } = {}) {
+export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, adaptive, slots, home, channels, log = console.log } = {}) {
   // Recent events for /ops/events, redacted as they are kept.
   const ring = new EventRing();
   const rawLog = log;
@@ -123,6 +126,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     segmentHoldMs: config.homeSegmentHoldMs,
     log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
   if (home.enabled) setInterval(() => home.sweep(), 10 * 60_000).unref();
+  channels ??= new ChannelSlots({ monitorDb: config.monitorDb });
   // The Linode's own bytes sent, every minute (the transfer alerts, src/net.js).
   const txDelta = new TxDelta();
   if (txBytes() != null) {
@@ -791,6 +795,18 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (url.pathname.startsWith('/hls-test/')) { route = 'hls-test'; return await hlsTest(req, res, url); }
       if (url.pathname.startsWith('/hls/')) { route = 'hls'; return await hlsRoute(req, res, url); }
       if (url.pathname.startsWith('/home/')) { route = 'home'; return await homeRoute(req, res, url); }
+      if (url.pathname.startsWith('/v1/ch/')) {
+        // A Channels slot for Quest (src/channels.js): 302 to its current watch link, which VRChat resolves itself.
+        route = 'channel';
+        const r = channels.lookup(url.pathname.slice(7).replace(/\/$/, ''));
+        metrics.inc('channel', r.id ? 'redirect' : r.error === 'unknown_channel' ? 'unknown' : 'unavailable');
+        if (!r.id) {
+          if (r.error === 'unknown_channel') return fail(res, 404, 'unknown_channel', 'No such channel.');
+          return fail(res, 503, 'channel_unavailable', 'This channel is not playing right now.');
+        }
+        res.writeHead(302, { location: `https://www.youtube.com/watch?v=${r.id}`, 'cache-control': 'no-store' });
+        return res.end();
+      }
       if (url.pathname === '/healthz') {
         route = 'health';
         return json(res, 200, { ok: true, v: API, tunelio: tunelio.enabled, credits: tunelio.credits,

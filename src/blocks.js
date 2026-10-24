@@ -22,7 +22,8 @@ export function layoutFor(code) {
   const script = scriptOf(code) ?? 'Latn';
   if (script === 'Jpan' || script === 'Hans' || script === 'Hant') return { maxChars: 16, units: 'chars', join: '' };
   if (script === 'Kore') return { maxChars: 20, units: 'words', join: ' ' };
-  if (script === 'Thai') return { maxChars: 42, units: 'chars', join: '' };
+  // Thai breaks anywhere (chars), but keeps its spaces, which mark phrases (#129).
+  if (script === 'Thai') return { maxChars: 42, units: 'chars', join: ' ' };
   return { maxChars: 42, units: 'words', join: ' ' };
 }
 
@@ -84,15 +85,27 @@ function split(text, units) {
     while ((m = re.exec(text))) out.push({ w: m[2], sp: m[1].length > 0 });
     return out;
   }
-  let space = false;
+  let space = false, lead = false;
   for (const ch of Array.from(text.replace(/\s+/g, ' '))) {
-    if (ch === ' ') { space = out.length > 0; continue; }
-    if (/[。！？…、，；：」』）】,.!?;:'"）]/.test(ch) && out.length) { out[out.length - 1].w += ch; continue; }
+    if (ch === ' ') { space = out.length > 0; lead = false; continue; }
+    // A unit never starts with a combining mark or a following vowel: they stay on the character before them, as
+    // trailing punctuation does, and a Thai leading vowel takes the consonant after it (Everything-is-OK#129: a line
+    // started with the ี of ดี, and the spoken-word highlight coloured marks apart from their base).
+    if ((/[。！？…、，；：」』）】,.!?;:'"）]/.test(ch) || ATTACHED.test(ch) || lead) && out.length && !space) {
+      out[out.length - 1].w += ch;
+      lead = false;
+      continue;
+    }
     out.push({ w: ch, sp: space });
     space = false;
+    lead = THAI_LEADING.test(ch);
   }
   return out;
 }
+// Combining marks (Latin, Hebrew points and cantillation, Thai vowel and tone marks) and Thai's spacing following vowels
+// (ะ า ำ) and repetition mark ๆ; Thai's leading vowels (เ แ โ ใ ไ) are written before the consonant they follow in speech.
+const ATTACHED = /[̀-֑ͯ-ׇֽֿׁׂׅׄะ-ฺๅ-๎]/;
+const THAI_LEADING = /[เ-ไ]/;
 
 // How strongly the text wants a break after word i (0..3), from its punctuation and the silence that follows it.
 export function breakAfter(words, i) {

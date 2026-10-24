@@ -156,3 +156,19 @@ test('track keys: variant ids and -orig fold to the language code; the key to do
   assert.deepEqual(tracksFromInfo({ language: 'ja', manual: ['en'], auto: ['ja', 'en'] }), [{ code: 'en', key: 'en', auto: false }, { code: 'ja', key: 'ja', auto: true }]);
   assert.deepEqual(tracksFromInfo({ language: null, manual: [], auto: [] }), []);
 });
+
+test('Thai captions: no unit starts with a mark or a following vowel, leading vowels take their consonant, spaces kept (#129)', () => {
+  const src = 'สวัสดีครับ ยินดีต้อนรับสู่ห้องนอนที่สงบ ฝันดีนะ';
+  const { chunks } = chunksFromCues(cuesFromLines([[0, 2.5, src]]), 'th');
+  const texts = chunks.map((c) => c[2]);
+  for (const [text, offs] of chunks.map((c) => [c[2], c[4]])) {
+    assert.match(text, /^[^ะ-ฺๅ-๎]/, text);
+    const starts = offs.split(',').map((o) => Number(o.split(':')[1]));
+    for (const i of starts) assert.match(text.slice(i), /^[^ะ-ฺๅ-๎ ]/, `unit at ${i} of ${text}`);
+    for (const i of starts) assert.doesNotMatch(text[i - 1] ?? '', /[เ-ไ]/, `a leading vowel left alone before ${i} in ${text}`);
+  }
+  // The source's text: here the break falls inside ฝัน (Thai has no word spaces to break at), so the lines joined
+  // straight are the source, its phrase spaces kept.
+  assert.ok(texts.length >= 2, 'long enough to wrap');
+  assert.equal(texts.join(''), src);
+});

@@ -1,6 +1,7 @@
-# Tunelio support case: draft (2026-10-24)
+# Tunelio support case (2026-10-24)
 
-The owner sends this; nothing has been sent. Sources: the search service's journal on the Linode (events
+Sent by the owner from their Gmail to support@tunelio.dev at about 2026-10-24 23:20 UTC. The draft message below went
+unchanged except the sign-off ("Jonathan, Everything is OK"). The reply goes to the owner's inbox. Sources: the search service's journal on the Linode (events
 `tunelio_link`, `tunelio_probe`, `build_failed`, `tunelio_error`, `play`; detailed build logging starts 2026-10-19 and
 the hourly probe 2026-10-22) and `metrics.db`. All times UTC, with Chicago time (CDT, UTC-5) where it matters. The
 example video IDs are from our own speed probe, which picks public videos from generic searches ("documentary",

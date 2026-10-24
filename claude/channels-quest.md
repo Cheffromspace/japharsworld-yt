@@ -1,65 +1,77 @@
-# Channels on Quest (Everything-is-OK#145): design proposal, 2026-10-24
+# Channels on Quest (Everything-is-OK#145): design, 2026-10-24
 
-Status: proposal for the owner, no code yet.
+Status: proposal; the owner confirms the scope before code.
 
-## The problem
+## Problem
 
-The Channels tab bakes one URL per slot (`monitor/channels.json`): the slot's unlisted playlist on the owner's account
-(`https://www.youtube.com/playlist?list=PL…`, whose first item the monitor keeps on a live stream), or the stream's
-watch URL for a slot without one. On PC, VRChat's yt-dlp resolves those. On Quest the world hands the raw youtube.com
-URL to AVPro, which fails (`AndroidVideoMedia OpenExtractor -10000`, TEST 3737730). A Quest player needs an HLS
-URL it can open, and the world can't build one at runtime, so it has to be baked: one service URL per slot.
+Each of the 74 Channels slots bakes `https://www.youtube.com/playlist?list=PL…`: the owner's unlisted playlist, whose
+first item the link monitor keeps pointed at the slot's stream. PC resolves it with VRChat's yt-dlp. Quest hands the
+raw URL to AVPro, which fails (`OpenExtractor -10000`). Quest needs a baked service URL that answers with HLS.
 
-## Entry kinds
+The monitor's DB (`slots`, 2026-10-24) has 71 slots of kind `live`, 3 `video` and 1 `removed`. In practice this
+feature is live streams.
 
-| Kind | Today | What playing it needs |
+## Endpoint
+
+`GET https://yt.japharsworld.com/v1/ch/<key>.m3u8`, where `key` is the slot's stable key from `channels.json`.
+
+- **Player** (AVPro, Quest): `302` to an HLS playlist for the slot's current video, or a status error.
+- **Tablet** (`UnityPlayer` UA): JSON `{ v, key, state: building|ready|failed, plan, live, title, channel, error? }`,
+  like a ticket status call.
+- **Current video:** `slots.current_video` from `/var/lib/japharsworld-yt-monitor/monitor.db` (read-only; the
+  playlist's first item, kept up to date by the monitor's swaps), else the video in the slot's baked `url`. A slot
+  that is `auto_hidden` or `removed` answers `failed` with `error: "channel_down"`.
+
+## How each kind resolves
+
+| Kind | Resolves to | Plays as |
 |---|---|---|
-| Playlist (every visible slot) | unlisted playlist, first item a 24/7 **live** stream | the current item, then as for that item |
-| Live stream (a slot without a playlist) | watch URL of a live stream | live HLS (below) |
-| Channel (`/channel/<id>/live`) | not used; the monitor uses it to find replacements | the channel's current live stream, then live HLS |
-| A VOD in a playlist (not used today) | – | the same as a search `.m3u8` ticket: Tunelio HLS, or home (#105) |
+| Single video (`kind=video`) | its video ID | a search `.m3u8` ticket does today: Tunelio HLS, or home with HOME_ANDROID |
+| Playlist (every slot) | `current_video` (its first item), then by that video's kind | as for that video |
+| Channel (`/channel/<id>/live`, not baked today) | the channel's live video (the monitor's Live-tab lookup) | live |
+| Live (`kind=live`, 71 slots) | its video ID | live HLS, below |
 
-So in practice the whole feature is live streams: every Channels slot is a 24/7 stream by the list's own rule.
+## Live: what it needs, and is it feasible now
 
-## Proposed URL
+YouTube's live HLS manifest and its segments only work from the IP address that resolved them. So the Quest can't be
+sent to them, and Tunelio doesn't do live. The one workable route is the **home live relay**:
 
-`https://yt.japharsworld.com/v1/ch/<key>.m3u8`, one per slot `key` (stable by design: the status file and the monitor
-already refer to slots by key), hidden spares included so the status file can switch them on without a re-upload.
-Example: `/v1/ch/lofi-sleep-chill.m3u8`.
+- The Optiplex worker resolves the live manifest (yt-dlp). ffmpeg copies it (`-c copy`: H.264 + AAC, 720p, no
+  re-encode) into a sliding-window HLS stream (the last 6 segments) and uploads it to the Linode as home VOD plays do
+  now. The Linode serves `/home/<token>/index.m3u8` as a live playlist.
+- **One session per slot, shared by every viewer.** It stops when no player has fetched the playlist for 60 s.
+- **Cost:** home upload of about 1.5–2 GB an hour per watched channel (2.5–4 Mbit/s), for as long as anyone watches.
+  It needs its own cap, separate from HOME_DAILY_MB, plus a limit on the number of live channels at once.
+- **Work:** a live mode in `relay/media.js`; a live session kind in `src/home.js` (no end, idle stop, no cache); the
+  `/v1/ch/` route; tests. About a day, then a Quest check (AVPro live HLS through ExoPlayer, and whether the latency
+  and stalls are acceptable).
 
-- **Player** (AVPro on Quest): `302` to an HLS playlist for the slot's current video.
-- **Tablet** (`UnityPlayer` user agent, as for tickets): JSON status `{ state, plan, title, channel, live: true }`.
-- **Video lookup:** the slot's current video ID read from the monitor's DB (`/var/lib/japharsworld-yt-monitor/monitor.db`,
-  read-only), falling back to the slot's baked URL. A swapped stream needs no re-upload.
-- **PC** keeps today's youtube.com URLs, which work.
+**Feasible, but not today.** Today's walk also showed open problems with home on Quest:
 
-Adding these URLs changes the baked URL set, so it needs a world re-upload, like any URL shape change.
+- the MPEG-TS warnings (`PesReader: Unexpected start code prefix`);
+- the worker refusing a second stream with "busy".
 
-## Live HLS: the options
+Both need fixing before live channels can lean on home.
 
-YouTube's live HLS manifest and its segments are bound to the IP address that resolved them (`ip=` in the URL), like
-the VOD stream URLs behind the home relay. So:
+## What the world bakes
 
-- **A. Home live relay (recommended).** The Optiplex worker runs yt-dlp for the live manifest, and ffmpeg copies it
-  (`-c copy`, no re-encode, H.264 + AAC) into a sliding-window HLS stream: the last ~6 segments, older ones deleted.
-  The worker uploads each segment and the playlist to `/relay/media/<token>/`, as it does for VOD home plays, and the
-  Linode serves `/home/<token>/index.m3u8` as a live playlist (no ENDLIST, which is correct here).
-  - **One session per slot**, shared by every viewer. It stops when no player has fetched the playlist for ~60 s.
-  - **Cost:** home upload for as long as anyone watches: about 1.5–2 GB an hour at 720p (2.5–4 Mbit/s). It should
-    count against `HOME_DAILY_MB` (50 GB/day today), or get its own cap.
-  - **Limits:** the worker's media slots (`mediaMax`) are shared with VOD home plays. Two live channels plus a long VOD
-    would refuse the next one ("busy", as on 2026-10-24), so it may need its own limit or a second worker.
-  - **Work:** a live mode in `relay/media.js` (sliding window, no whole-playlist prediction, restart on a manifest
-    error); a live session kind in `src/home.js` (no ended state, idle stop, no disk cache); the `/v1/ch/` route. About
-    a day plus a Quest check.
-- **B. The Linode fetches the live stream itself.** Linode IPs get YouTube's bot checks, which is why search and
-  home already go through the Optiplex. Not recommended.
-- **C. Redirect the Quest to a manifest resolved elsewhere.** It is IP-locked, so it fails on the visitor's IP. Not possible.
-- **D. Tunelio.** Doesn't do live (the service already skips `data.live`).
+74 URLs, one per slot including the hidden spares, built from `channels.json` keys:
+`https://yt.japharsworld.com/v1/ch/<key>.m3u8`.
 
-## Questions for the owner
+- **Example:** `https://yt.japharsworld.com/v1/ch/lofi-sleep-chill.m3u8`.
+- **Android build only.** PC keeps today's playlist URLs.
+- **Adding a slot later** needs a re-upload, as it does today. Swaps inside a slot don't, because the key stays the same.
 
-1. Live through the home connection (option A), with what cap: per day, and the number of live channels at once?
-2. Which slots: all of them, or a Quest subset?
-3. When the cap is reached, or no worker is online: show "Channels unavailable on Quest right now" (a status error
-   code the world localizes), or fall back to the raw URL as today?
+## If live isn't in this release
+
+- **Recommended:** the Android build shows the Channels tab with a localized notice, "Channels play on PC for now",
+  and no rows. Every slot is live, so hiding individual rows would leave the tab empty anyway.
+- **Alternative:** remove the tab from the Android build.
+
+The `.m3u8` URLs can still be baked now. The service would then answer `error: "channel_unavailable"` until live
+exists, so turning it on later needs no re-upload.
+
+## Owner decisions
+
+1. Live through the home connection: yes or no, with an hourly or daily cap and a limit on channels at once.
+2. This release: the notice (recommended) or no tab, and whether to bake the `/v1/ch/` URLs now.

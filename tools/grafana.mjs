@@ -280,6 +280,10 @@ export function alertRules(dsUid) {
     rule('eiok-home-worker', 'Home relay has no worker', 'max(eiok_home_today{key="workers"}) < 1', { forM: 15, summary: 'No media worker (the Optiplex relay) connected for 15 minutes: home relay plays fall back to Tunelio or youtube.com.' }),
     // Renewal on the 1st (TUNELIO_RENEWS_DAY's default): the last 3 days' spend per day times the days left, minus the credits left.
     rule('eiok-credits-pace', 'Credits run out before renewal', '(sum(increase(eiok_events_total{metric="credits"}[3d])) / 3) * (days_in_month() - day_of_month() + 1) - max(eiok_credits_remaining) > 0', { forM: 60, summary: 'At the last 3 days’ spend, the Tunelio credits run out before the plan renews on the 1st (the pacer then keeps plays at 720p; at 0 they go to youtube.com).' }),
+    // Transfer (owner, 2026-10-24): metrics.db counts from src/net.js; months are Chicago calendar months.
+    rule('eiok-home-egress-day', 'Home sent over 50 GB today', 'max(eiok_transfer_bytes{host="home",period="today"}) > 50e9', { forM: 5, summary: 'The Optiplex has sent over 50 GB today (home relay uploads and everything else on the box).' }),
+    rule('eiok-home-egress-month', 'Home sent over 500 GB this month', 'max(eiok_transfer_bytes{host="home",period="month"}) > 500e9', { forM: 5, summary: 'The Optiplex has sent over 500 GB this month.' }),
+    rule('eiok-linode-egress-month', 'Linode sent over 700 GB this month', 'max(eiok_transfer_bytes{host="linode",period="month"}) > 700e9', { forM: 5, summary: 'The Linode has sent over 700 GB this month, of its 1 TB transfer (overage about $5 per TB).' }),
     rule('eiok-disk-low', 'Disk almost full', 'max by (host) (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) > 0.9', { forM: 15, summary: 'Under 10 % free on / of {{ $labels.host }}.' }),
   ];
 }

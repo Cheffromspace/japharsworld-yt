@@ -26,6 +26,7 @@ function fixtures() {
     db.prepare('INSERT INTO hourly (hour, metric, key, value) VALUES (?, ?, ?, 1)').run(h, 'shard', k);
   }
   put.run('2026-10-19', 'home_start_s', '5', 2);
+  for (const [d, k, v] of [['2026-10-20', 'linode', 1500], ['2026-10-19', 'linode', 500], ['2026-09-30', 'linode', 9999], ['2026-10-20', 'home', 40]]) put.run(d, 'transfer', k, v);
   recordPoll(db, { ts: NOW - 60_000, source: 'world:prod', values: { visits: 1040, occupants: 2 } });
   recordPoll(db, { ts: NOW - 3600_000, source: 'world:prod', values: { visits: 1000 } });
   db.prepare('INSERT INTO releases (source, version, at, detected) VALUES (?, ?, ?, ?)').run('world:prod', '104', NOW - 86400_000, NOW);
@@ -67,6 +68,10 @@ test('exporter: usage counters, histograms, polls, slots, flash checks, jobs, he
     has('eiok_search_seconds_bucket{le="1"} 4');
     has('eiok_search_seconds_bucket{le="3"} 5');
     has('eiok_search_seconds_bucket{le="+Inf"} 6');
+    has('eiok_transfer_bytes{host="linode",period="today"} 1500000000');
+    has('eiok_transfer_bytes{host="linode",period="month"} 2000000000'); // September's row is not this month
+    has('eiok_transfer_bytes{host="home",period="today"} 40000000');
+    has('eiok_transfer_bytes{host="home",period="month"} 40000000');
     has('eiok_search_seconds_count 6');
     has('eiok_credits_remaining 4000');
     has('eiok_home_today{key="mb"} 2500');

@@ -331,7 +331,7 @@ async function homeApp(t, { config: c = {}, media = null, playlist = PL1, ...ove
   t.after(() => server.close());
   const url = `http://127.0.0.1:${server.address().port}`;
   const jobs = [];
-  const worker = createWorker({ url, token: TOKEN, name: 'home', polls: 1, caps: ['media'], log: () => {},
+  const worker = createWorker({ url, token: TOKEN, name: 'home', polls: 1, caps: ['media'], log: () => {}, txBytes: () => null,
     media: async (job) => {
       jobs.push(job);
       if (media) await media(job);
@@ -537,4 +537,16 @@ test('ticket → home: a long play whose home playlist grows (uneven keyframes) 
   assert.match((await even.play(PC, '')).headers.get('location'), /\/home\/[a-f0-9]{18}\/index\.m3u8$/);
   const broke = await homeApp(t, make(false));
   assert.match((await broke.play(PC, '')).headers.get('location'), /\/home\/[a-f0-9]{18}\/index\.m3u8$/, 'over budget: home even when it grows');
+});
+
+test('relay polls: the worker\'s bytes-sent counter is counted as home transfer (src/net.js)', async (t) => {
+  const counts = [];
+  const metrics = { inc: (m, k, n = 1) => { if (m === 'transfer') counts.push([k, n]); }, gauge() {}, latency() {}, shard() {}, flush() { return 0; }, start() { return this; }, close() {} };
+  const app = await homeApp(t, { metrics });
+  const poll = (tx) => fetch(`${app.url}/relay/next?worker=w2&tx=${tx}`, { headers: { authorization: `Bearer ${TOKEN}` }, signal: AbortSignal.timeout(300) }).catch(() => {});
+  await poll(1_000_000_000);
+  await poll(1_300_000_000);
+  await poll('bogus');
+  const home = counts.filter(([k]) => k === 'home').map(([, n]) => n);
+  assert.deepEqual(home, [0, 300]);
 });

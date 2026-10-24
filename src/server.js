@@ -46,6 +46,7 @@ import { TunelioProbe } from './probe.js';
 import { EventRing, opsRoute, gitHead } from './ops.js';
 import { TestSlots } from './slots.js';
 import { Home } from './home.js';
+import { txBytes, TxDelta } from './net.js';
 import { statsRoute, latestCredits, billingPeriod, daysBetween } from './stats.js';
 
 const API = 1;
@@ -122,6 +123,12 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     segmentHoldMs: config.homeSegmentHoldMs,
     log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
   if (home.enabled) setInterval(() => home.sweep(), 10 * 60_000).unref();
+  // The Linode's own bytes sent, every minute (the transfer alerts, src/net.js).
+  const txDelta = new TxDelta();
+  if (txBytes() != null) {
+    txDelta.mb('self', txBytes());
+    setInterval(() => metrics.inc('transfer', 'linode', txDelta.mb('self', txBytes())), 60_000).unref();
+  }
   if (home.enabled) setInterval(() => {
     const s = home.state();
     metrics.gauge('home_today', 'mb', s.today.mb);
@@ -740,6 +747,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const name = (url.searchParams.get('worker') ?? '').slice(0, 64) || 'worker';
       const version = (url.searchParams.get('version') ?? '').slice(0, 64);
       const caps = (url.searchParams.get('caps') ?? '').split(',').map((c) => c.trim()).filter((c) => /^[a-z]{1,16}$/.test(c)).slice(0, 8);
+      // The home worker's bytes sent (src/net.js): its polls carry the counter, counted per worker name.
+      const tx = Number(url.searchParams.get('tx'));
+      if (/^\d{1,20}$/.test(url.searchParams.get('tx') ?? '')) metrics.inc('transfer', 'home', txDelta.mb(`w:${name}`, tx));
       const gone = new AbortController();
       res.on('close', () => gone.abort());
       const job = await relay.next(name, version, gone.signal, caps);

@@ -14,13 +14,14 @@ import { youtube as defaultYoutube, resetClient } from '../src/youtube.js';
 import { captionsJob, findYtdlp, ytdlpArgs } from './captions.js';
 import { mediaJob } from './media.js';
 import { MediaCache } from './cache.js';
+import { txBytes as defaultTxBytes } from '../src/net.js';
 
 const CONT_MINUTES = 30;
 const MAX_CONTS = 2000;
 const is403 = (err) => /status code 403\b/.test(String(err?.message ?? err));
 
 export function createWorker({ url, token, name = 'worker', version = '', polls = 3, youtube = defaultYoutube, reset = resetClient,
-  captions = null, ytdlp = null, ytdlpExtraArgs = ytdlpArgs(), media = null, caps = [], mediaMax = 2, ffmpeg = 'ffmpeg', cache = null,
+  txBytes = defaultTxBytes, captions = null, ytdlp = null, ytdlpExtraArgs = ytdlpArgs(), media = null, caps = [], mediaMax = 2, ffmpeg = 'ffmpeg', cache = null,
   fetcher = fetch, log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o })), now = () => Date.now(),
   sleep = (ms, signal) => new Promise((r) => { const t = setTimeout(r, ms); signal?.addEventListener('abort', () => { clearTimeout(t); r(); }); }) }) {
   // Caption jobs: an injected function (tests) or yt-dlp, found once on first use.
@@ -109,6 +110,9 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
     let backoff = 1000;
     const q = new URLSearchParams({ worker: name, version, ...(caps.length ? { caps: caps.join(',') } : {}) });
     while (!stopping.signal.aborted) {
+      // This host's bytes sent, for the server's transfer count (src/net.js).
+      const tx = txBytes();
+      if (Number.isFinite(tx)) q.set('tx', String(tx));
       try {
         const res = await fetcher(`${base}/relay/next?${q}`, { headers, signal: AbortSignal.any([stopping.signal, AbortSignal.timeout(40_000)]) });
         if (res.status === 204) { backoff = 1000; continue; }

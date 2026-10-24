@@ -8,7 +8,7 @@ import http from 'node:http';
 import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
-import { METRICS, MS_BUCKETS, S_BUCKETS } from '../src/metrics.js';
+import { METRICS, MS_BUCKETS, S_BUCKETS, dayOf } from '../src/metrics.js';
 
 // Daily bucket counters exported as Prometheus histograms (le in seconds), so histogram_quantile works.
 // metric → [exported name, bucket bounds, bound units per second]
@@ -50,7 +50,7 @@ function openRo(path) {
 }
 
 // Usage counters: every day summed, so they only ever grow (use increase()/rate() in Grafana).
-export function metricsDbSeries(db, o) {
+export function metricsDbSeries(db, o, now = Date.now()) {
   const totals = db.prepare("SELECT metric, key, SUM(value) v FROM daily GROUP BY metric, key").all();
   const hist = {};
   for (const r of totals) {
@@ -72,6 +72,14 @@ export function metricsDbSeries(db, o) {
   for (const r of db.prepare(`SELECT key, value FROM gauges WHERE metric = 'home_today'
       AND day = (SELECT MAX(day) FROM gauges WHERE metric = 'home_today')`).all()) {
     o.add('eiok_home_today', 'gauge', 'Home relay today (mb, builds, cap_mb) and media workers connected, set every minute.', { key: r.key }, r.value);
+  }
+  // Bytes each host sent today and this month (Chicago days, like every daily row), for the transfer alerts: Grafana
+  // Cloud keeps 14 days, too little for a month-to-date increase() (src/net.js).
+  const today = dayOf(now);
+  for (const host of ['linode', 'home']) {
+    const sum = (where, arg) => db.prepare(`SELECT COALESCE(SUM(value), 0) v FROM daily WHERE metric = 'transfer' AND key = ? AND ${where}`).get(host, arg).v;
+    o.add('eiok_transfer_bytes', 'gauge', 'Bytes sent by the host (linode, home) today and this month, from metrics.db.', { host, period: 'today' }, sum('day = ?', today) * 1e6);
+    o.add('eiok_transfer_bytes', 'gauge', 'Bytes sent by the host (linode, home) today and this month, from metrics.db.', { host, period: 'month' }, sum('day LIKE ?', `${today.slice(0, 7)}-%`) * 1e6);
   }
   // Rooms: one row per (hour, shard) that saw a request, so increase() over an hour = the shards active in it.
   for (const r of db.prepare("SELECT key, COUNT(*) n FROM hourly WHERE metric = 'shard' GROUP BY key").all()) {

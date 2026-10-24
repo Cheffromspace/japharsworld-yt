@@ -40,6 +40,7 @@ test('home: a session is ready at its first playlist with a segment; the playlis
   const pl = await home.file(s.token, 'index.m3u8');
   assert.equal(pl.type, 'application/vnd.apple.mpegurl');
   assert.match(pl.body.toString(), /^#EXTM3U\n#EXT-X-START:TIME-OFFSET=0\n/);
+  assert.match(pl.body.toString(), /#EXT-X-PLAYLIST-TYPE:EVENT\n/, 'still growing: EVENT');
   assert.match(pl.body.toString(), new RegExp(`\nhttps://yt/home/${s.token}/seg0\\.ts\n`));
   assert.equal((await home.file(s.token, 'seg0.ts')).body.toString(), 'ts0');
   assert.equal(s.ended, false);
@@ -47,6 +48,7 @@ test('home: a session is ready at its first playlist with a segment; the playlis
   assert.equal(s.ended, false, 'ENDLIST, but seg1 is not here yet');
   home.put(s.token, 'seg1.ts', Buffer.from('ts1'));
   assert.equal(s.ended, true);
+  assert.match((await home.file(s.token, 'index.m3u8')).body.toString(), /#EXT-X-PLAYLIST-TYPE:VOD\n/, 'finished: VOD, so Media Foundation seeks (#128)');
   assert.deepEqual(events, ['start', 'ready']);
 });
 
@@ -318,7 +320,7 @@ test('ticket → home: a PC player gets the home playlist when Tunelio is off; t
 });
 
 // The home app of the test above, with a home worker connected; over: config and createApp overrides.
-async function homeApp(t, { config: c = {}, media = null, ...over } = {}) {
+async function homeApp(t, { config: c = {}, media = null, playlist = PL1, ...over } = {}) {
   const dir = tmp(t);
   const config = { ...base, shards: 2, pool: 50, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub', metricsPath: '', ...c };
   const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
@@ -335,7 +337,7 @@ async function homeApp(t, { config: c = {}, media = null, ...over } = {}) {
       if (media) await media(job);
       const put = (file, body) => fetch(`${url}/relay/media/${job.token}/${file}`, { method: 'PUT', headers: { authorization: `Bearer ${TOKEN}` }, body });
       await put('seg0.ts', 'ts0');
-      await put('index.m3u8', PL1);
+      await put('index.m3u8', playlist);
       return { ready: true, segments: 1, done: Promise.resolve() };
     } });
   worker.start();
@@ -511,4 +513,28 @@ test('home route: each request logs its segment, the token cut to 4 characters (
   const token = path.split('/')[2];
   assert.equal(gets[0].ses, token.slice(0, 4));
   assert.ok(!lines.some((l) => l.includes(token)), 'the full token is never logged');
+});
+
+test('ticket → home: a long play whose home playlist grows (uneven keyframes) goes to Tunelio; even ones and over-budget plays stay home (#127 a)', async (t) => {
+  const { Adaptive } = await import('../src/adaptive.js');
+  const make = (pacerOk = true) => {
+    const job = { id: 'aaaaaaaaaaa', quality: '1080p', state: 'ready', url: 'https://tunelio.dev/t?id=x' };
+    const playback = { jobs: new Map(), peek: () => job, status: () => ({ state: 'ready' }), start() {},
+      async location() { return { location: job.url, via: 'tunelio', ready: true }; } };
+    const adaptive = new Adaptive({ playback, base: 'http://pub/hls' });
+    adaptive.pacer = { check: () => ({ ok: pacerOk }) };
+    return { playback, adaptive, tunelio: { enabled: true }, config: { homeLongMinutes: 5 } };
+  };
+  const PC = 'NSPlayer/12.00.26100 WMFSDK/12.00';
+  const uneven = await homeApp(t, make());
+  assert.doesNotMatch((await uneven.play(PC, '')).headers.get('location'), /\/home\//);
+  assert.doesNotMatch((await uneven.play(PC, '')).headers.get('location'), /\/home\//);
+  assert.equal(uneven.jobs.length, 1, 'remembered: the second play goes straight to Tunelio');
+  const tablet = await (await fetch(`${uneven.url}/v1/0/${uneven.n}`, { headers: { 'user-agent': 'UnityPlayer/2022.3 (UnityWebRequest/1.0)' } })).json();
+  assert.notEqual(tablet.plan, 'home');
+  const WHOLE = '#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:4.0,\nseg0.ts\n#EXTINF:4.0,\nseg1.ts\n#EXT-X-ENDLIST\n';
+  const even = await homeApp(t, { ...make(), playlist: WHOLE });
+  assert.match((await even.play(PC, '')).headers.get('location'), /\/home\/[a-f0-9]{18}\/index\.m3u8$/);
+  const broke = await homeApp(t, make(false));
+  assert.match((await broke.play(PC, '')).headers.get('location'), /\/home\/[a-f0-9]{18}\/index\.m3u8$/, 'over budget: home even when it grows');
 });

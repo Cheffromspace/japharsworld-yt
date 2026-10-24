@@ -440,7 +440,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (!home.worker()) return home.other?.(data, quality) ? 'reuse' : null;
     if (!tunelio.enabled || Date.now() < (playback.pausedUntil ?? 0)) return 'tunelio_off';
     if (tunelioSlow()) return 'tunelio_slow';
-    if ((data.seconds ?? 0) >= config.homeLongMinutes * 60) return 'long';
+    // Long, unless home already found its keyframes uneven (src/home.js giveUp): then Tunelio while the pacer allows.
+    if ((data.seconds ?? 0) >= config.homeLongMinutes * 60 && !home.isUneven?.(data)) return 'long';
     const p = adaptive.pacer?.check?.();
     if (p && !p.ok) return 'pacer';
     return null;
@@ -460,6 +461,19 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const s = home.start(data, quality);
     if (s && !s.why) { s.why = why; metrics.inc('home_why', why); }
     return s;
+  }
+  // A ready home session that went home only for being long and whose playlist grows (uneven keyframes, not due to
+  // finish within HOME_SETTLE_SECONDS): given up for Tunelio while the pacer allows (#127 a, owner 2026-10-24). Home
+  // keeps even-keyframe videos (their whole playlist goes up at once) and every play while over budget.
+  function leaveHome(s) {
+    if (s?.state === 'failed' && s.reason === 'uneven') return true; // another player of it gave it up meanwhile
+    if (s?.state !== 'ready' || s.why !== 'long' || s.ended || s.endlist) return false;
+    const eta = home.eta(s);
+    if (eta != null && eta <= config.homeSettleMs) return false;
+    const p = adaptive.pacer?.check?.();
+    if (p && !p.ok) return false;
+    home.giveUp(s, 'uneven');
+    return true;
   }
   // A home play whose quality can't be built (the worker busy or failing, or no worker): the video's session at another
   // quality instead of the Tunelio path (src/home.js other; #127). Otherwise the session as it was.
@@ -498,7 +512,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         const hq = roomQuality(shard);
         const hw = hlsTicket && !config.homeAndroid ? null : homeWhy(t.data, hq);
         const hs = hw ? homeKeep(t.data, hq, startHome(t.data, hq, hw)) : null;
-        if (hs && hs.state !== 'failed') return json(res, 200, { v: API, shard, t: n, room: hq, ...homeStatus(hs), ...meta(t.data) });
+        if (hs && hs.state !== 'failed' && !leaveHome(hs)) return json(res, 200, { v: API, shard, t: n, room: hq, ...homeStatus(hs), ...meta(t.data) });
         let c = await choice(shard, t.data);
         if (hlsTicket) c = hlsChoice(c);
         const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
@@ -539,6 +553,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         if (hs.state === 'failed') hs = homeKeep(t.data, hq, hs); // the worker said "busy" only now
         if (hs.state === 'ready') where = await homeWhere(hs);
         else metrics.inc('home', 'timeout');
+        if (where && leaveHome(hs)) where = null;
       }
       let c = null;
       if (!where) {

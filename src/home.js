@@ -34,6 +34,7 @@ export class Home {
     this.sessions = new Map(); // "videoId@quality" → session
     this.byToken = new Map();  // token → session
     this.day = { date: '', builds: 0, mb: 0 };
+    this.uneven = new Map(); // video id → until (ms): its home playlist grew, so long plays of it go to Tunelio (giveUp)
     if (dir && enabled) { this.loading = true; this.#load(); this.loading = false; }
   }
 
@@ -90,6 +91,25 @@ export class Home {
     if (s.state === 'failed' && this.now() - s.endedMs > RETRY_MS) return null;
     if (s.state !== 'failed' && this.now() - (s.lastPutMs || s.startedMs) > this.keepHours * 3600_000) return null;
     return s;
+  }
+
+  // A session given up for Tunelio because its playlist grows (keyframes at scene cuts): Media Foundation plays a growing
+  // playlist as live, reloading it every few seconds, for the minutes until it ends (#127, 2026-10-24: FRONTLINE PBS,
+  // 1 h 53 min, 137 s; 20 of 22 home streams since 2026-10-23 grew). The video is remembered for keepHours, so its next
+  // plays don't try home first. The worker stops at its next upload (410).
+  giveUp(s, reason = 'uneven') {
+    this.uneven.set(s.id, this.now() + this.keepHours * 3600_000);
+    s.state = 'failed';
+    s.reason = reason;
+    s.endedMs = this.now();
+    this.onEvent(reason);
+    this.log({ event: 'home_failed', id: s.id, quality: s.quality, reason, ms: s.endedMs - s.startedMs });
+    this.#wake(s);
+  }
+  isUneven(data) {
+    const until = this.uneven.get(data.id);
+    if (until && until < this.now()) this.uneven.delete(data.id);
+    return Boolean(until && until >= this.now());
   }
 
   // A usable session for the same video at another quality, ready ones first: what a play keeps when the room's new
@@ -282,9 +302,13 @@ export class Home {
       if (!s.firstServed) { s.firstServed = file; this.log({ event: 'home_first_segment', id: s.id, quality: s.quality, file, ended: s.ended }); }
       return { body, type: 'video/mp2t' };
     }
-    const text = body.toString('utf8').split(/\r?\n/)
+    // A finished growing playlist is served as VOD: ffmpeg keeps PLAYLIST-TYPE:EVENT after ENDLIST, and Media Foundation
+    // never seeks in it (2026-10-24, #128: a late joiner on a finished EVENT playlist snapped back to 0:00 at every sync
+    // seek, while ffmpeg seeks it fine: PTS and EXTINFs match). The predicted whole playlists are VOD already.
+    let text = body.toString('utf8').split(/\r?\n/)
       .map((l) => (l && !l.startsWith('#') ? `${this.base}/${s.token}/${l}` : l))
       .join('\n').replace('#EXTM3U', '#EXTM3U\n#EXT-X-START:TIME-OFFSET=0');
+    if (s.ended) text = text.replace('#EXT-X-PLAYLIST-TYPE:EVENT', '#EXT-X-PLAYLIST-TYPE:VOD');
     return { body: Buffer.from(text), type: 'application/vnd.apple.mpegurl' };
   }
 

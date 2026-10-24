@@ -1,9 +1,6 @@
 {
  "notice": "",
  "slots": {
-  "borneo-jungle-night": {
-   "hidden": true
-  },
   "fan-noise-black": {
    "hidden": true
   },
@@ -11,6 +8,9 @@
    "hidden": true
   },
   "jack-oblivion": {
+   "hidden": true
+  },
+  "osaka-loop-line": {
    "hidden": true
   }
  }

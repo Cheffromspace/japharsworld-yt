@@ -50,6 +50,7 @@ This service works within that rule:
 | Path | Returns |
 |---|---|
 | `GET /v1/<shard>/s?l=<lang>&q=<…> → <query>` | JSON: `results[]` (`t`, `id`, `title`, `channel`, `length`, `seconds`, `views`, `age`, `live`, `cc`, `desc` = up to 240 characters of the description), `sheet`, `sheetCols`, `sheetRows`, `cellW`, `cellH`, `next` (`-1` = none) |
+| `GET /s/<shard><letter>?q=<query>` | the same search, in a shorter address for Quest (see *Compact search address* below). The query may still carry a `<prompt> → ` before it |
 | `GET /v1/<shard>/<n>` | video: 302 to a Tunelio link or YouTube (from a `UnityPlayer` UA: JSON `t`, `state` = `building`/`ready`/`failed`/`live`/`youtube`, `format`, `quality`, `mb`, `elapsed`, `eta`, `progress`, and the video's `title`, `channel`, `desc` as stored when the results were published, `""` for older tickets; Everything-is-OK#114) · sheet: JPEG, cell *i* = result *i*, row-major · page: JSON like a search |
 | `GET /v1/<shard>/q` · `/v1/<shard>/q/<720|1080|auto>` | JSON `quality` (the room's playback quality for search videos), `pick` (`720p`/`1080p`/`auto`), `default`, `options`; the second form picks it (kept `QUALITY_HOURS`, 12; `auto` clears it: with playback plans on, 1080p when Tunelio is fast, else 720p). The tablet's ticket status carries it as `room` |
 | `GET /v1/ch/<key>` | a Channels slot by its `channels.json` key: `302` to `https://www.youtube.com/watch?v=<id>`, the slot's current video in the link monitor's DB (`slots.current_video`, so swaps apply), `no-store`. For Quest, where VRChat resolves watch links but not the PC's `playlist?list=` links (#145). `404 unknown_channel`; `503 channel_unavailable` for a spare without a video or a removed slot |
@@ -64,6 +65,27 @@ Errors are JSON `{ "error": code, "message": … }` with codes `empty_query`, `r
 localized text per code.
 
 Changing `SHARDS` or `POOL` changes the baked URLs: the world must be re-uploaded with regenerated URLs.
+
+### Compact search address
+
+On Quest, VRChat's Enter URL line shows only about the first 55 characters and never scrolls. The `/v1` search prefix
+`https://yt.japharsworld.com/v1/0/s?l=en&q=` takes 42 of them, so visitors can't see what they type
+(Everything-is-OK#143). `GET /s/<shard><letter>?q=<query>` is the same search, with the same results, tickets, next
+page, metrics and logs, at 35 characters, which saves 7 to 10. `<shard>` is one digit (`0`–`7` with `SHARDS` 8). The
+`<letter>` names the VRChat client language; without one, the language is `en`. The Link field uses the same address;
+a pasted YouTube link is played as on `/v1`.
+
+| Letter | Language | Letter | Language | Letter | Language | Letter | Language |
+|---|---|---|---|---|---|---|---|
+| `e` | en | `d` | de | `b` | pt-BR (Brasil) | `v` | he (ivrit) |
+| `f` | fr | `j` | ja | `c` | zh-CN (China) | `t` | tok |
+| `s` | es | `p` | pl | `h` | zh-HK (Hong Kong) | `u` | uk |
+| `i` | it | `r` | ru | `k` | ko | `a` | th (thai) |
+
+The letters are baked into the uploaded world: never change or reuse one, only add new ones (`SHORT_LANGS` in
+`src/query.js`; a test pins the table). The routes don't depend on the host name, so a shorter domain can serve the same
+addresses: add it to the Caddy site's address line (`yt.japharsworld.com, <short domain> { … }` in
+`/etc/caddy/sites/japharsworld-yt.caddy`) and reload Caddy, which gets its certificate.
 
 ## Status / kill switch
 

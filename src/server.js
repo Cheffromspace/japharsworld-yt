@@ -1,5 +1,6 @@
 // Routes (all under the baked shard prefix):
 //   GET /v1/<shard>/s?l=<lang>&q=<prompt> → <query>   search; JSON with ticket numbers
+//   GET /s/<shard><letter>?q=<query>                  the same search, compact (Quest; language letters in src/query.js)
 //   GET /v1/<shard>/<n>                                ticket: 302 to the video (Tunelio HD link, or YouTube), JPEG (thumbnail sheet),
 //                                                      JSON (next page)
 //   GET /v1/<shard>/cc/<lang>                          captions for the video last played in this shard (lang: VRChat code or
@@ -30,7 +31,7 @@ import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { config as defaults } from './config.js';
 import { Store } from './store.js';
-import { parseQuery, queryShape, youtubeIdFrom, normalizeLang, LANGS } from './query.js';
+import { parseQuery, queryShape, youtubeIdFrom, normalizeLang, LANGS, SHORT_LANGS } from './query.js';
 import { youtube as defaultYoutube } from './youtube.js';
 import { cachedSheet } from './sheet.js';
 import { Captions, errorLine } from './captions.js';
@@ -224,9 +225,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return remote;
   }
 
-  async function search(req, res, shard, url) {
+  // `lang`: from l= on /v1/<shard>/s, or from the compact address's language letter (/s/<shard><letter>, src/query.js).
+  async function search(req, res, shard, url, lang = normalizeLang(url.searchParams.get('l'))) {
     if (rateLimited(clientIp(req))) { metrics.inc('search_fail', '429'); return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.'); }
-    const lang = normalizeLang(url.searchParams.get('l'));
     const query = parseQuery(url.searchParams.get('q') ?? '');
     const ua = String(req.headers['user-agent'] ?? '');
     logJson({ event: 'search_shape', lang, device: /Android|Quest|Oculus/i.test(ua) ? 'android' : /UnityPlayer/i.test(ua) ? 'unity' : ua ? 'other' : 'none',
@@ -831,6 +832,17 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         const buf = page(pagePath);
         res.writeHead(200, { 'content-type': PAGES[pagePath][1], 'content-length': buf.length, 'cache-control': 'public, max-age=3600' });
         return res.end(req.method === 'HEAD' ? undefined : buf);
+      }
+      // The compact search address for Quest's short Enter URL line (Everything-is-OK#143): /s/<shard><language letter>?q=…
+      const c = url.pathname.match(/^\/s\/(\d)([a-z])?\/?$/);
+      if (c) {
+        const shard = Number(c[1]);
+        const lang = c[2] ? SHORT_LANGS[c[2]] : 'en';
+        if (!store.validShard(shard)) return fail(res, 404, 'bad_shard', 'Unknown shard.');
+        if (!lang) return fail(res, 404, 'not_found', 'Unknown path.');
+        metrics.shard(shard);
+        route = 'search';
+        return await search(req, res, shard, url, lang);
       }
       const m = url.pathname.match(/^\/v1\/(\d+)\/(s|q(?:\/(?:\d{3,4}|auto))?|cc(?:\/(?:[A-Za-z-]+|\d{1,3}))?|\d+(?:\.m3u8)?)\/?$/);
       if (!m) return fail(res, 404, 'not_found', 'Unknown path.');

@@ -5,6 +5,7 @@ import sharp from 'sharp';
 import { createApp } from '../src/server.js';
 import { Store } from '../src/store.js';
 import { config as base } from '../src/config.js';
+import { SHORT_LANGS, LANGS } from '../src/query.js';
 
 const config = { ...base, shards: 2, pool: 100, resultsPerPage: 3, searchesPerMinutePerIp: 5 };
 const video = (id) => ({ id, title: `Title ${id}`, channel: 'Ch', length: '1:00', seconds: 60, views: '1 view', age: '1 day ago', live: false, cc: true });
@@ -125,6 +126,34 @@ test('ticket status carries the title, channel and description (Everything-is-OK
   assert.equal(l.status, 200);
   assert.deepEqual(s.youtube.calls, ['rain', 'https://cdn.example.org/clip.mp4']);
   assert.equal(l.body.results[0].link, undefined);
+});
+
+// The compact search address for Quest (#143, 2026-10-25): /s/<shard><letter>?q=, the same search as /v1/<shard>/s.
+test('compact search /s/<shard><letter>: the same answer as /v1, with or without the arrow prompt', async (t) => {
+  const roomy = { config: { ...config, searchesPerMinutePerIp: 50 } };
+  const a = await start(roomy), b = await start(roomy);
+  t.after(() => { a.server.close(); b.server.close(); });
+  const old = await a.get(`/v1/1/s?l=ja&q=${encodeURIComponent('Type to search → rain sounds')}`);
+  const compact = await b.get(`/s/1j?q=${encodeURIComponent('rain sounds')}`);
+  assert.equal(compact.status, 200);
+  assert.deepEqual(compact.body, old.body);
+  assert.equal(compact.body.lang, 'ja');
+  assert.equal((await b.get(`/s/1j?q=${encodeURIComponent('Type to search → rain sounds')}`)).body.query, 'rain sounds');
+  const next = await b.get(`/v1/1/${compact.body.next}`); // tickets and continuation are the /v1 ones
+  assert.equal(next.status, 200);
+  assert.equal(next.body.page, 2);
+  assert.equal((await b.get(`/s/0b?q=${encodeURIComponent('https://youtu.be/AbCdEfGhIjK')}`)).body.results[0].id, 'AbCdEfGhIjK'); // the Link field
+  assert.equal((await b.get('/s/0?q=x')).body.lang, 'en');
+  assert.equal((await b.get('/s/0e')).body.error, 'empty_query');
+  assert.equal((await b.get('/s/0z?q=x')).body.error, 'not_found');
+  assert.equal((await b.get(`/s/${config.shards}e?q=x`)).body.error, 'bad_shard');
+  assert.equal((await b.get('/s/12e?q=x')).status, 404);
+});
+
+test('compact search letters: one per VRChat language, never changed (README, Compact search address)', () => {
+  assert.deepEqual(SHORT_LANGS, { e: 'en', f: 'fr', s: 'es', i: 'it', k: 'ko', d: 'de', j: 'ja', p: 'pl', r: 'ru', b: 'pt-BR',
+    c: 'zh-CN', h: 'zh-HK', v: 'he', t: 'tok', u: 'uk', a: 'th' });
+  assert.deepEqual(Object.values(SHORT_LANGS).sort(), Object.keys(LANGS).sort());
 });
 
 test('searches log their shape, never their text (#143)', async (t) => {

@@ -75,6 +75,20 @@ export const LANGS = {
   uk: ['uk'],
   th: ['th'],
 };
+// The compact search address /s/<shard><letter>?q=… (Everything-is-OK#143, 2026-10-25): Quest's Enter URL line shows
+// only about 55 characters and never scrolls, and the /v1 prefix took 42 of them. One lowercase letter for each VRChat
+// client language, chosen to read as the language where it can. Baked into the uploaded world: never change or reuse a
+// letter, only add new ones (README, "Compact search address").
+export const SHORT_LANGS = {
+  e: 'en', f: 'fr', s: 'es', i: 'it', k: 'ko', d: 'de', j: 'ja', p: 'pl', r: 'ru',
+  b: 'pt-BR', // Brasil
+  c: 'zh-CN', // China, Simplified
+  h: 'zh-HK', // Hong Kong, Traditional
+  v: 'he',    // ivrit (h is Hong Kong)
+  t: 'tok',
+  u: 'uk',
+  a: 'th',    // thai (t is toki pona)
+};
 export function normalizeLang(l) {
   if (!l) return 'en';
   if (LANGS[l]) return l;

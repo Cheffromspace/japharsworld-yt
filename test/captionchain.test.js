@@ -65,8 +65,8 @@ async function start({ tunelio = fakeTunelio() } = {}) {
   const url = `http://127.0.0.1:${server.address().port}`;
   const get = async (path) => { const res = await fetch(url + path); return { status: res.status, body: await res.json() }; };
   const workers = [];
-  const startWorker = (captions, name = 'optiplex') => {
-    const w = createWorker({ url, token: TOKEN, name, version: 'test', polls: 1, captions, log: () => {} });
+  const startWorker = (captions, name = 'optiplex', opts = {}) => {
+    const w = createWorker({ url, token: TOKEN, name, version: 'test', polls: 1, captions, log: () => {}, ...opts });
     workers.push(w); w.start(); return w;
   };
   const waitOnline = async () => { for (let i = 0; i < 100 && !relay.online().length; i++) await new Promise((r) => setTimeout(r, 10)); };
@@ -117,7 +117,9 @@ test('captions come from the worker with word timing; the picker lists uploader 
 test('a language the video lacks: no_track_in_language, and the list still shows', async (t) => {
   const s = await start();
   t.after(s.close);
-  s.startWorker(fakeCaptionsJob());
+  // No back-off here: the "th" track has no fixture, so its download fails (temporarily_unavailable, a `rate`
+  // refusal), which would pause the worker's captions and send the second video to Tunelio (test/relay.test.js).
+  s.startWorker(fakeCaptionsJob(), 'optiplex', { backoffMinutes: 0 });
   await s.waitOnline();
   s.store.markPlayed(0, 3, 'dQw4w9WgXcQ');
   const r = await s.get('/v1/0/cc/th');

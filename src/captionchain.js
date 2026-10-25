@@ -41,7 +41,7 @@ export class CaptionChain {
     return this.inflight.get(key);
   }
 
-  get free() { return Boolean((this.relay?.enabled && this.relay.online().length) || (this.local && !this.local.blocked)); }
+  get free() { return Boolean((this.relay?.enabled && this.relay.online('captions').length) || (this.local && !this.local.blocked)); }
 
   // ---- public ----
   get(videoId, lang) {
@@ -162,7 +162,7 @@ export class CaptionChain {
 
   sources(videoId, want, freeOnly = false) {
     const list = [];
-    if (this.relay?.enabled && this.relay.online().length) list.push(['worker', () => this.fromRelay(videoId, want)]);
+    if (this.relay?.enabled && this.relay.online('captions').length) list.push(['worker', () => this.fromRelay(videoId, want)]);
     if (this.local && !this.local.blocked) list.push(['local', () => this.fromLocal(videoId, want)]);
     if (this.tunelio && !freeOnly) list.push(['tunelio', () => this.fromTunelio(videoId, want)]);
     return list;

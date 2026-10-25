@@ -23,7 +23,7 @@ export function makeSearch({ relay, youtube, api, alert = () => {}, log = () => 
   async function search(query, limit) {
     const started = Date.now();
     const attempts = [];
-    if (relay?.enabled && relay.online().length) attempts.push(['worker', () => relay.search(query, limit, { timeoutMs: workerTimeoutMs })]);
+    if (relay?.enabled && relay.online('search').length) attempts.push(['worker', () => relay.search(query, limit, { timeoutMs: workerTimeoutMs })]);
     attempts.push(['local', () => local(query, limit)]);
     if (api?.enabled) attempts.push(['api', () => api.search(query, limit)]);
     let last;

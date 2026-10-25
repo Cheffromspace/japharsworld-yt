@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { createApp } from '../src/server.js';
 import { Store } from '../src/store.js';
-import { Relay, tokenMatches } from '../src/relay.js';
+import { Relay, tokenMatches, parsePaused } from '../src/relay.js';
 import { DataApi, mapApiVideo, parseDuration, lengthText, shortCount, ageText } from '../src/dataapi.js';
 import { createWorker } from '../relay/worker.js';
 import { config as base } from '../src/config.js';
@@ -34,13 +34,13 @@ function fakeYoutube(tag, { fail = 0, error = 'Request failed with status code 4
   };
 }
 
-async function start({ youtube = fakeYoutube('L'), api, alert, metrics } = {}) {
+async function start({ youtube = fakeYoutube('L'), api, alert, metrics, extra = {} } = {}) {
   const store = new Store({ path: ':memory:', shards: config.shards, pool: config.pool, pinHours: 24 });
   const logs = [];
   const red = await sharp({ create: { width: 32, height: 18, channels: 3, background: '#f7768e' } }).jpeg().toBuffer();
-  const relay = new Relay({ token: TOKEN, pollMs: 300 });
+  const relay = new Relay({ token: TOKEN, pollMs: 300, log: (o) => logs.push(o) });
   const captions = { async get() { return {}; } };
-  const app = createApp({ config, store, youtube, captions, relay, api, alert, metrics, sheetOpts: { fetcher: async () => red },
+  const app = createApp({ config: { ...config, ...extra }, store, youtube, captions, relay, api, alert, metrics, sheetOpts: { fetcher: async () => red },
     log: (l) => logs.push(JSON.parse(l)) });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -292,4 +292,86 @@ test('refusals: 3 bot/rate/potoken at the home relay in 15 minutes alert once; a
   s.app.refusals.last -= 61 * 60_000;
   s.app.checkWorkers();
   assert.deepEqual(alerts.at(-1), ['yt_refused_ok']);
+});
+
+// YouTube risk fix 3 (2026-10-25): back-off after a refusal, tested with fake refusals and a fake clock only.
+const WALL = 'ERROR: [youtube] abc: Sign in to confirm you’re not a bot. Use --cookies-from-browser';
+
+test('back-off: a bot wall pauses search 10 min, the next one 20, a success resets; nothing reaches YouTube while paused', async () => {
+  let t = 0;
+  const yt = fakeYoutube('W', { fail: 2, error: WALL });
+  const w = createWorker({ url: 'http://x', token: 't', youtube: yt, now: () => t, log: () => {} });
+  const search = (id) => w.handle({ id, kind: 'search', query: 'q', limit: 2 });
+  const first = await search('1');
+  assert.equal(first.refusal, 'bot');
+  assert.deepEqual(first.paused, ['search:600']);
+  t += 60_000;
+  assert.deepEqual(await search('2'), { id: '2', ok: false, error: 'paused', paused: ['search:540'] });
+  assert.equal(yt.calls.length, 1);
+  assert.deepEqual((await w.handle({ id: '3', kind: 'more', cont: 'x' })).error, 'paused'); // More results is a search too
+  t += 9 * 60_000;
+  assert.deepEqual(w.paused(), []);
+  assert.deepEqual((await search('4')).paused, ['search:1200']); // refused again after the pause: twice as long
+  t += 20 * 60_000;
+  const ok = await search('5');
+  assert.equal(ok.ok, true);
+  assert.equal(ok.paused, undefined);
+  yt.calls.length = 0;
+  const again = createWorker({ url: 'http://x', token: 't', youtube: fakeYoutube('W', { fail: 1, error: WALL }), now: () => t, log: () => {} });
+  assert.deepEqual((await again.handle({ id: '6', kind: 'search', query: 'q', limit: 2 })).paused, ['search:600']);
+});
+
+test('back-off: doubles up to 2 h; captions bot wall pauses media too; 403 pauses search 2 min; other errors none', async () => {
+  let t = 0;
+  const captions = async () => { throw Object.assign(new Error('yt-dlp exited 1'), { stderr: WALL }); };
+  const w = createWorker({ url: 'http://x', token: 't', youtube: fakeYoutube('W', { fail: 99 }), reset: () => {}, captions, now: () => t, log: () => {} });
+  const minutes = [];
+  for (let i = 0; i < 6; i++) {
+    const r = await w.handle({ id: `c${i}`, kind: 'captions', videoId: 'abcdefghijk' });
+    assert.equal(r.refusal, 'bot');
+    const left = Object.fromEntries(r.paused.map((p) => p.split(':')));
+    assert.equal(left.captions, left.media);
+    minutes.push(Number(left.captions) / 60);
+    t += Number(left.captions) * 1000;
+  }
+  assert.deepEqual(minutes, [10, 20, 40, 80, 120, 120]);
+  const s = await w.handle({ id: 's', kind: 'search', query: 'q', limit: 2 }); // 403 twice (once() resets and retries)
+  assert.equal(s.refusal, 'forbidden');
+  assert.deepEqual(s.paused, ['search:120']);
+  const quiet = createWorker({ url: 'http://x', token: 't', youtube: fakeYoutube('W', { fail: 1, error: 'boom' }), log: () => {} });
+  assert.equal((await quiet.handle({ id: 'o', kind: 'search', query: 'q', limit: 2 })).paused, undefined);
+});
+
+test('back-off: polls carry paused=; the server skips the worker for that kind only, at once, without a no_worker alert', async (t) => {
+  const alerts = [];
+  const s = await start({ alert: (k) => alerts.push(k), extra: { statsToken: 'ops-tok' } });
+  t.after(s.close);
+  const home = fakeYoutube('W', { fail: 1, error: WALL });
+  const w = s.startWorker(home);
+  await s.waitOnline();
+  assert.equal((await s.get('/v1/0/s?q=a')).body.results[0].id, 'L10xxxxxxxx'); // refused at home, served from the Linode
+  assert.deepEqual(s.relay.online('search'), []);
+  assert.deepEqual(s.relay.online('captions'), ['optiplex']);
+  assert.deepEqual(s.relay.online(), ['optiplex']);
+  const started = Date.now();
+  assert.equal((await s.get('/v1/0/s?q=b')).body.results[0].id, 'L10xxxxxxxx');
+  assert.ok(Date.now() - started < 1000, 'no wait for the paused worker');
+  assert.deepEqual(home.calls, ['a']);
+  assert.ok(s.logs.some((l) => l.event === 'relay_paused' && l.worker === 'optiplex' && l.kind === 'search'));
+  s.relay.lastSeenAny -= 60 * 60_000;
+  s.app.checkWorkers();
+  assert.deepEqual(alerts, []);
+  const st = (await s.get('/ops/state', { headers: { authorization: 'Bearer ops-tok' } })).body;
+  assert.ok(st.relay.paused.optiplex.search > 590 && st.relay.paused.optiplex.search <= 600);
+  // The poll is the worker's word: once it stops listing search, the server sends searches again.
+  w.stop();
+  await s.relay.next('optiplex', 'test', AbortSignal.timeout(10), null, '');
+  assert.deepEqual(s.relay.online('search'), ['optiplex']);
+  assert.deepEqual(s.relay.paused(), {});
+});
+
+test('back-off: parsePaused takes known kinds only, at most 2 h', () => {
+  assert.deepEqual(parsePaused('search:600,captions:99999,bogus:5,media:x', 0), { search: 600_000, captions: 7_200_000 });
+  assert.deepEqual(parsePaused(['media:10'], 1000), { media: 11_000 });
+  assert.deepEqual(parsePaused(undefined, 0), {});
 });

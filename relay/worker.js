@@ -5,7 +5,8 @@
 // Settings (environment, /etc/japharsworld-yt-relay.env): RELAY_URL, RELAY_TOKEN, WORKER_NAME, RELAY_POLLS (3),
 // YTDLP (found in the flash-check venv or PATH when unset), YTDLP_ARGS (--js-runtimes node), FFMPEG (ffmpeg),
 // RELAY_MEDIA (on; off = never announce media jobs), RELAY_MEDIA_MAX (2 streams at once), RELAY_CACHE_GB (40; 0 = no
-// cache of finished streams, relay/cache.js) in RELAY_CACHE_DIR (else systemd's CACHE_DIRECTORY).
+// cache of finished streams, relay/cache.js) in RELAY_CACHE_DIR (else systemd's CACHE_DIRECTORY), YT_BACKOFF_MINUTES (10)
+// and YT_BACKOFF_MAX_MINUTES (120): how long a kind of job pauses after YouTube refuses it (see refused() below).
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -20,10 +21,13 @@ import { refusalClass } from '../src/refusal.js';
 const CONT_MINUTES = 30;
 const MAX_CONTS = 2000;
 const is403 = (err) => /status code 403\b/.test(String(err?.message ?? err));
+// Kinds of job that pause on their own; `more` is a search.
+export const PAUSE_KINDS = ['search', 'captions', 'media'];
+const pauseKind = (kind) => (kind === 'more' ? 'search' : kind);
 
 export function createWorker({ url, token, name = 'worker', version = '', polls = 3, youtube = defaultYoutube, reset = resetClient,
   txBytes = defaultTxBytes, captions = null, ytdlp = null, ytdlpExtraArgs = ytdlpArgs(), media = null, caps = [], mediaMax = 2, ffmpeg = 'ffmpeg', cache = null,
-  fetcher = fetch, log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o })), now = () => Date.now(),
+  backoffMinutes = 10, backoffMaxMinutes = 120, fetcher = fetch, log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o })), now = () => Date.now(),
   sleep = (ms, signal) => new Promise((r) => { const t = setTimeout(r, ms); signal?.addEventListener('abort', () => { clearTimeout(t); r(); }); }) }) {
   // Caption jobs: an injected function (tests) or yt-dlp, found once on first use.
   let ytdlpPath = ytdlp;
@@ -50,6 +54,39 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
     return attempt().catch((err) => (/ffmpeg exited/.test(err?.message ?? '') ? attempt() : Promise.reject(err)));
   });
   const conts = new Map(); // id → { more, at }
+
+  // Back-off (YouTube risk fix 3, owner 2026-10-25), like the Linode's blockedUntil in src/captions.js: a bot, rate or
+  // potoken refusal pauses that kind for backoffMinutes, the next refusal after it (no success between) for twice as
+  // long, up to backoffMaxMinutes; a success ends the streak. A bot wall on captions or media pauses both (the same
+  // yt-dlp from the same IP). A 403 left after once()'s reset pauses search for 2 minutes only: InnerTube session
+  // trouble, not a verdict on the IP. Polls and answers carry `paused`, so the server skips this worker for that kind.
+  const pauses = new Map(); // kind → { until, minutes }
+  const pausedNow = (kind) => (pauses.get(kind)?.until ?? 0) > now();
+  function paused() {
+    const t = now();
+    return PAUSE_KINDS.filter(pausedNow).map((k) => `${k}:${Math.ceil((pauses.get(k).until - t) / 1000)}`);
+  }
+  function refused(kind, cls) {
+    const t = now();
+    if (cls === 'forbidden') {
+      if (kind !== 'search') return;
+      const p = pauses.get('search');
+      pauses.set('search', { until: Math.max(p?.until ?? 0, t + 2 * 60_000), minutes: p?.minutes ?? 0 });
+      log({ event: 'backoff', kind, refusal: cls, minutes: 2 });
+      return;
+    }
+    if (!['bot', 'rate', 'potoken'].includes(cls)) return;
+    for (const k of cls === 'bot' && kind !== 'search' ? ['captions', 'media'] : [kind]) {
+      const p = pauses.get(k);
+      if (p?.minutes && p.until > t) continue; // a job that was already running when the pause began
+      const minutes = p?.minutes ? Math.min(backoffMaxMinutes, p.minutes * 2) : backoffMinutes;
+      pauses.set(k, { until: t + minutes * 60_000, minutes });
+      log({ event: 'backoff', kind: k, refusal: cls, minutes });
+    }
+  }
+  function succeeded(kind) {
+    if (pauses.delete(kind)) log({ event: 'backoff_cleared', kind });
+  }
   const stopping = new AbortController();
 
   function keep(more) {
@@ -73,6 +110,17 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
   // Job → { id, ok, page: { videos, cont }, error } for search, { id, ok, captions, error } for captions; a failure (or a
 // caption track that failed after its list) adds refusal: the src/refusal.js class.
   async function handle(job) {
+    const kind = pauseKind(job.kind);
+    // Sent before the server learned of the pause: answered at once, and YouTube isn't asked.
+    if (PAUSE_KINDS.includes(kind) && pausedNow(kind)) return { id: job.id, ok: false, error: 'paused', paused: paused() };
+    const result = await run(job);
+    if (result.refusal) refused(kind, result.refusal);
+    else if (result.ok) succeeded(kind);
+    const p = paused();
+    return p.length ? { ...result, paused: p } : result;
+  }
+
+  async function run(job) {
     const started = now();
     try {
       let page;
@@ -114,6 +162,8 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
     let backoff = 1000;
     const q = new URLSearchParams({ worker: name, version, ...(caps.length ? { caps: caps.join(',') } : {}) });
     while (!stopping.signal.aborted) {
+      const p = paused();
+      if (p.length) q.set('paused', p.join(',')); else q.delete('paused');
       // This host's bytes sent, for the server's transfer count (src/net.js).
       const tx = txBytes();
       if (Number.isFinite(tx)) q.set('tx', String(tx));
@@ -139,7 +189,7 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
   }
 
   return {
-    handle, conts, get streaming() { return streaming; },
+    handle, conts, paused, get streaming() { return streaming; },
     start() { log({ event: 'start', worker: name, version, relay: base, polls, cacheGb: cache?.maxGb ?? 0, cacheDir: cache?.dir }); return Promise.all(Array.from({ length: polls }, (_, i) => loop(i))); },
     stop() { stopping.abort(); },
   };
@@ -152,7 +202,8 @@ function gitVersion() {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const { RELAY_URL, RELAY_TOKEN, WORKER_NAME = 'worker', RELAY_POLLS = '3', FFMPEG = 'ffmpeg', RELAY_MEDIA = 'on', RELAY_MEDIA_MAX = '2',
-    RELAY_CACHE_GB = '40', RELAY_CACHE_DIR = process.env.CACHE_DIRECTORY } = process.env;
+    RELAY_CACHE_GB = '40', RELAY_CACHE_DIR = process.env.CACHE_DIRECTORY,
+    YT_BACKOFF_MINUTES = '10', YT_BACKOFF_MAX_MINUTES = '120' } = process.env;
   if (!RELAY_URL || !RELAY_TOKEN) { console.error('Set RELAY_URL and RELAY_TOKEN.'); process.exit(2); }
   // Media jobs only when ffmpeg runs here; the server sends them only to workers that announce caps=media.
   let hasFfmpeg = false;
@@ -165,7 +216,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     catch (err) { log({ event: 'media_cache_off', message: String(err?.message ?? err).slice(0, 200) }); }
   }
   const worker = createWorker({ url: RELAY_URL, token: RELAY_TOKEN, name: WORKER_NAME, version: gitVersion(), polls: Number(RELAY_POLLS) || 3,
-    caps, ffmpeg: FFMPEG, mediaMax: Number(RELAY_MEDIA_MAX) || 2, cache });
+    caps, ffmpeg: FFMPEG, mediaMax: Number(RELAY_MEDIA_MAX) || 2, cache,
+    backoffMinutes: Number(YT_BACKOFF_MINUTES) || 10, backoffMaxMinutes: Number(YT_BACKOFF_MAX_MINUTES) || 120 });
   for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { worker.stop(); setTimeout(() => process.exit(0), 500).unref(); });
   worker.start();
 }

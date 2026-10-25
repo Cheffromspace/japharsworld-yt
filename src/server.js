@@ -272,7 +272,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       onCall: ({ path, ok }) => { if (ok && path === '/create') metrics.inc('credits', 'probe', 10); } });
     probe = new TunelioProbe({
       tunelio: probeTunelio, quality: config.tunelioProbeQuality, intervalMinutes: config.tunelioProbeMinutes, log: logJson,
-      search: (query, limit) => (relay.enabled && relay.online().length ? relay.search(query, limit, { timeoutMs: config.relayWaitMs }) : null),
+      search: (query, limit) => (relay.enabled && relay.online('search').length ? relay.search(query, limit, { timeoutMs: config.relayWaitMs }) : null),
       busy: () => busy() + (Date.now() < (playback.pausedUntil ?? 0) ? 1 : 0),
       record: (source, values) => {
         // The probe's builds teach the same speed estimate visitors' builds do (it plans "1080p at once" vs adaptive).
@@ -402,7 +402,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         recent: jobs.filter((j) => j.state !== 'building' && now - j.endedMs < 24 * 3600_000).sort((a, b) => a.endedMs - b.endedMs).slice(-30)
           .map((j) => ({ at: new Date(j.endedMs).toISOString(), state: j.state, reason: j.reason, format: j.format, quality: j.quality, mb: j.mb, seconds: j.seconds, buildS: Math.round((j.endedMs - j.startedMs) / 100) / 10 })),
         learned: { rate: playback.rate, fixed: playback.fixed } },
-      relay: { enabled: relay.enabled, workers: relay.online(), idleS: Math.round(relay.idleMs() / 1000) },
+      // paused: { worker: { kind: seconds left } }, the workers' back-off after a YouTube refusal (relay/worker.js).
+      relay: { enabled: relay.enabled, workers: relay.online(), idleS: Math.round(relay.idleMs() / 1000), paused: relay.paused() },
       home: home.state(),
       search: { lastVia: searcher.state.lastVia, apiUnitsToday: api.unitsToday },
       plans: {
@@ -767,7 +768,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (/^\d{1,20}$/.test(url.searchParams.get('tx') ?? '')) metrics.inc('transfer', 'home', txDelta.mb(`w:${name}`, tx));
       const gone = new AbortController();
       res.on('close', () => gone.abort());
-      const job = await relay.next(name, version, gone.signal, caps);
+      const job = await relay.next(name, version, gone.signal, caps, (url.searchParams.get('paused') ?? '').slice(0, 200));
       if (!job) { res.writeHead(204, { 'cache-control': 'no-store' }); return res.end(); }
       return json(res, 200, { job });
     }

@@ -183,6 +183,8 @@ export function dashboard() {
     ['sum by (metric) (increase(eiok_events_total{metric=~"cc_list|cc_track",key=""}[6h]))', '{{metric}}'],
     [ev('cc_via'), 'via {{key}}'], [ev('cc_words'), 'words {{key}}'], [ev('cc_unavailable'), 'unavailable: {{key}}'],
   ], { w: 8, min: 0, description: 'Track lists and tracks served, which source answered (worker, local yt-dlp, Tunelio), word timing real or estimated, and why none was available.' }));
+  p.push(series('YouTube refusals (per hour)', [[ev('yt_refusal', '1h'), '{{key}}']], { w: 8, stack: true, min: 0,
+    description: 'Failed YouTube lookups by where (home = the Optiplex relay, linode) and class: bot = "Sign in to confirm", rate = 429 / try again later / a caption track that failed after its list, forbidden = 403, potoken = PO token, other. Counted from 2026-10-25 (src/refusal.js).' }));
   p.push(series('Rooms active (shards with a request, per hour)', [
     ['count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)', 'rooms'],
   ], { w: 8, min: 0, decimals: 0, description: 'Distinct shards that saw a request in the past hour (from the hourly shard table).' }));
@@ -275,6 +277,12 @@ export function alertRules(dsUid) {
     rule('eiok-search-down', 'Search service down', 'max_over_time(eiok_search_up[5m]) < 1', { summary: 'The search service has not answered /healthz on the Linode for 5 minutes.' }),
     rule('eiok-public-down', 'yt.japharsworld.com unreachable', 'max_over_time(probe_success{job=~".*search-healthz.*"}[10m]) < 1', { forM: 5, summary: 'https://yt.japharsworld.com/healthz failed from outside for 10 minutes (Caddy, TLS or DNS).' }),
     // Owner, 2026-10-25: at 6 jobs a run the 14:00 UTC daily batch (~60 jobs) takes ~3.5 h, so it gets 5 h; other jobs 2 h.
+    // Owner, 2026-10-25 (YouTube risk fix 2): a home worker that is online but fails, which "no search worker" misses,
+    // and captions answered mostly by Tunelio.
+    rule('eiok-worker-not-serving', 'Searches not served by the home relay', '(1 - (sum(increase(eiok_events_total{metric="search_source",key="worker"}[30m])) or vector(0)) / sum(increase(eiok_events_total{metric="search_source"}[30m]))) > 0.5 and on() sum(increase(eiok_events_total{metric="search_source"}[30m])) >= 3 and on() max(eiok_relay_workers_online) > 0', { forM: 5, summary: 'The home relay worker is online, but over half of the last 30 minutes’ searches (3 or more) were served by the Linode or the Data API: YouTube may be refusing the home IP (see YouTube refusals).' }),
+    // Not cc_words estimated > real: manual tracks never carry word timing, so that held on normal days (10-24: 104
+    // estimated, 71 real, every track from the home worker). Tunelio answering instead of the free sources is the sign.
+    rule('eiok-captions-paid', 'Captions falling back to Tunelio', 'sum(increase(eiok_events_total{metric="cc_via",key="tunelio"}[6h])) - (sum(increase(eiok_events_total{metric="cc_via",key=~"worker|local"}[6h])) or vector(0)) > 0 and on() sum(increase(eiok_events_total{metric="cc_via",key="tunelio"}[6h])) >= 3', { forM: 30, summary: 'Over the last 6 hours Tunelio (credits, segment timing) answered more caption fetches than the free sources (home relay, yt-dlp): YouTube may be refusing caption requests (see YouTube refusals).' }),
     rule('eiok-checks-waiting', 'Flash checks waiting', 'max(eiok_jobs_oldest_pending_seconds{reason="other"}) > 7200 or max(eiok_jobs_oldest_pending_seconds{reason="daily"}) > 18000', { summary: 'A new/candidate/manual resolution or flash job has waited over 2 hours, or the daily batch over 5 hours; the Optiplex worker runs every 20 minutes, 6 jobs a run.' }),
     // Owner, 2026-10-23 (the dashboard audit): the home relay's cap and worker, and the credits lasting to renewal.
     rule('eiok-home-cap', 'Home relay near its daily cap', 'max(eiok_home_today{key="mb"}) / max(eiok_home_today{key="cap_mb"}) >= 0.9', { forM: 5, summary: 'The home relay has used 90 % of HOME_DAILY_MB today; at the cap, long videos go to Tunelio (credits) or youtube.com instead.' }),

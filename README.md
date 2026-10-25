@@ -84,7 +84,9 @@ YouTube answers many InnerTube searches from the Linode (a datacenter IP) with `
 
 **Nothing at home accepts connections.** The worker only makes outbound HTTPS requests to this server. It holds 3 long
 polls open on `GET /relay/next?worker=<name>&version=<sha>` (answered `204` after 25 s, or `200 {"job": …}`), runs the
-job and posts `{id, ok, page: {videos, cont}, error}` to `POST /relay/done`. Both routes need
+job and posts `{id, ok, page: {videos, cont}, error}` to `POST /relay/done`; a failed job adds `refusal`, the class of
+YouTube's refusal only (`bot`, `rate`, `forbidden`, `potoken`, `other`; src/refusal.js), which the server counts as
+`yt_refusal`. Both routes need
 `Authorization: Bearer $RELAY_TOKEN` (`401` otherwise); without `RELAY_TOKEN` the relay is off. Jobs are
 `{id, kind: "search", query, limit}` and `{id, kind: "more", cont}`. A worker counts as online when it polled in the
 last 30 s. "More results" for a worker's page goes to the same worker, which keeps continuations for 30 minutes

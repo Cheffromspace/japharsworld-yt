@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { LANGS } from './query.js';
 import { cuesFrom } from './cues.js';
 import { randomBytes } from 'node:crypto';
+import { refusalClass } from './refusal.js';
 
 const INFO_MAX_AGE_MS = 60 * 60_000; // signed caption URLs inside the info JSON expire after a few hours
 const MAX_LINES = 6000;
@@ -115,7 +116,7 @@ export function parseJson3(raw) {
 
 export class Captions {
   constructor({ store, ytdlp, extraArgs = [], attempts = DEFAULT_ATTEMPTS, dataDir = 'data', cacheDays = 7, runner = run,
-    sourcePrefix = '', blockedMinutes = 10, now = () => Date.now() }) {
+    sourcePrefix = '', blockedMinutes = 10, now = () => Date.now(), onRefusal = () => {} }) {
     // YouTube answers "Sign in to confirm you're not a bot" to some requests from datacenter IPv4.
     // Each attempt adds its own arguments to extraArgs; the one that last worked is tried first.
     this.attempts = attempts.length ? attempts : [[]];
@@ -126,7 +127,8 @@ export class Captions {
     this.infoDir = join(dataDir, 'info');
     this.subsDir = join(dataDir, 'subs');
     this.maxAgeMs = cacheDays * 86400_000;
-    this.run = runner;
+    // Every failed yt-dlp run is counted by class (yt_refusal linode:<class>, src/refusal.js).
+    this.run = (...a) => runner(...a).catch((err) => { onRefusal(refusalClass(err)); throw err; });
     this.inflight = new Map();
     this.recentMisses = new Map();
     // With a routed IPv6 range, every lookup goes out from a random address in it. The signed caption URLs

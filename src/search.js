@@ -1,10 +1,12 @@
 // Where a search runs, in order: a relay worker (residential IP), this server's own InnerTube session (retried once
 // with a fresh session after a 403), then the YouTube Data API (only with a key). Throws when all of them fail.
 // Every page carries `via` ("worker" | "local" | "api"); its `more` continues on the same path.
+import { refusalClass } from './refusal.js';
+
 const is403 = (err) => /status code 403\b/.test(String(err?.message ?? err));
 const short = (err) => String(err?.message ?? err).slice(0, 300);
 
-export function makeSearch({ relay, youtube, api, alert = () => {}, log = () => {}, workerTimeoutMs = 8000 }) {
+export function makeSearch({ relay, youtube, api, alert = () => {}, log = () => {}, workerTimeoutMs = 8000, refused = () => {} }) {
   const state = { lastVia: null };
 
   async function local(query, limit) {
@@ -35,6 +37,8 @@ export function makeSearch({ relay, youtube, api, alert = () => {}, log = () => 
         return { ...page, via };
       } catch (err) {
         last = err;
+        // The worker's own refusals arrive with its answer (src/server.js /relay/done); here only this server's.
+        if (via === 'local') refused('linode', refusalClass(err));
         log({ event: 'youtube_error', via, ms: Date.now() - t, message: short(err) });
       }
     }

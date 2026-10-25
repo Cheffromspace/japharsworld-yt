@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { LANGS } from './query.js';
+import { REFUSAL_CLASSES, REFUSAL_WHERE } from './refusal.js';
 
 export const SCHEMA = `
   CREATE TABLE IF NOT EXISTS daily (day TEXT NOT NULL, metric TEXT NOT NULL, key TEXT NOT NULL DEFAULT '',
@@ -123,6 +124,8 @@ export const METRICS = {
   cc_via: ['daily', oneOf('worker', 'local', 'tunelio')],  // which caption source answered a fetch (src/captionchain.js)
   cc_words: ['daily', oneOf('real', 'estimated')],         // word timing in a served track: YouTube's, or spread by character
   credits: ['daily', oneOf('playback', 'captions', 'probe', 'test')],
+  // YouTube refused a lookup (src/refusal.js): '<where>:<class>', the class only, never the message, query or video.
+  yt_refusal: ['daily', oneOf(...REFUSAL_WHERE.flatMap((w) => REFUSAL_CLASSES.map((c) => `${w}:${c}`)))],
   join: ['daily', none],
   join_lang: ['daily', isLang],
   credits_remaining: ['gauge', none],

@@ -15,6 +15,7 @@ import { captionsJob, findYtdlp, ytdlpArgs } from './captions.js';
 import { mediaJob } from './media.js';
 import { MediaCache } from './cache.js';
 import { txBytes as defaultTxBytes } from '../src/net.js';
+import { refusalClass } from '../src/refusal.js';
 
 const CONT_MINUTES = 30;
 const MAX_CONTS = 2000;
@@ -69,7 +70,8 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
     }
   }
 
-  // Job → { id, ok, page: { videos, cont }, error } for search, { id, ok, captions, error } for captions
+  // Job → { id, ok, page: { videos, cont }, error } for search, { id, ok, captions, error } for captions; a failure (or a
+// caption track that failed after its list) adds refusal: the src/refusal.js class.
   async function handle(job) {
     const started = now();
     try {
@@ -88,7 +90,8 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
       if (job.kind === 'captions') {
         const captions = await runCaptions(job);
         log({ event: 'job', kind: job.kind, ms: now() - started, cues: captions.cues?.length ?? 0, reason: captions.reason });
-        return { id: job.id, ok: true, captions };
+        // The track failed after its list worked: the usual sign of timedtext being rate-limited.
+        return { id: job.id, ok: true, captions, ...(captions.reason === 'temporarily_unavailable' ? { refusal: 'rate' } : {}) };
       }
       if (job.kind === 'search') page = await once(() => youtube.search(String(job.query ?? ''), Math.min(50, Number(job.limit) || 20)));
       else if (job.kind === 'more') {
@@ -101,8 +104,9 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
       return { id: job.id, ok: true, page: { videos: page.videos, cont: keep(page.more) } };
     } catch (err) {
       const message = String(err?.message ?? err).slice(0, 300);
-      log({ event: 'job_failed', kind: job.kind, ms: now() - started, message });
-      return { id: job.id, ok: false, error: message };
+      const refusal = refusalClass(err); // the server counts the class only (yt_refusal)
+      log({ event: 'job_failed', kind: job.kind, ms: now() - started, refusal, message });
+      return { id: job.id, ok: false, error: message, refusal };
     }
   }
 

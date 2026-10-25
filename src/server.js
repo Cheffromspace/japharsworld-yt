@@ -42,6 +42,7 @@ import { makeAlert } from './alert.js';
 import { Relay, RelayError } from './relay.js';
 import { DataApi } from './dataapi.js';
 import { makeSearch } from './search.js';
+import { RefusalWatch } from './refusal.js';
 import { Metrics, noMetrics, lengthBucket, secondsBucket, sizeBucket, recordPoll, getMeta, setMeta, dayOf } from './metrics.js';
 import { Adaptive, Pacer } from './adaptive.js';
 import { TunelioProbe } from './probe.js';
@@ -141,20 +142,30 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     metrics.gauge('home_today', 'workers', s.workers.length);
     metrics.gauge('home_today', 'cache_mb', s.today.cacheMb);
   }, 60_000).unref();
+  // YouTube refusals (src/refusal.js): counted by where and class; 3 or more bot/rate/potoken refusals at the home relay
+  // within 15 minutes alert Discord, and an hour without one sends the all-clear (checkWorkers).
+  const refusals = new RefusalWatch();
+  function refused(where, cls) {
+    metrics.inc('yt_refusal', `${where}:${cls}`);
+    if (where === 'home' && refusals.add(cls)) {
+      alert('yt_refused', `YouTube refused the home relay ${refusals.times.length} times in 15 minutes (${refusals.summary()}): searches go to the Linode, captions to Tunelio, home plays to Tunelio or youtube.com.`, 60);
+    }
+  }
   // Captions: relay worker → yt-dlp here (when turned on, or when there is no Tunelio) → Tunelio (src/captionchain.js).
   captions ??= new CaptionChain({ store, relay, metrics, log: logJson, cacheDays: config.captionCacheDays, scripts: config.captionScripts,
     relayWaitMs: config.relayCaptionWaitMs,
     local: config.captionLocalYtdlp || !tunelio.enabled ? new Captions({ store, ytdlp: config.ytdlp, extraArgs: config.ytdlpExtraArgs, cacheDays: config.captionCacheDays,
-      sourcePrefix: config.sourcePrefix, blockedMinutes: config.blockedMinutes }) : null,
+      sourcePrefix: config.sourcePrefix, blockedMinutes: config.blockedMinutes, onRefusal: (cls) => refused('linode', cls) }) : null,
     tunelio: tunelio.enabled ? new TunelioCaptions({ store, tunelio, cacheDays: config.captionCacheDays, scripts: config.captionScripts, alert, log: logJson }) : null });
   api ??= new DataApi({ key: config.youtubeApiKey, dailyUnits: config.youtubeApiDailyUnits, alert, log: logJson });
-  const searcher = makeSearch({ relay, youtube, api, alert, log: logJson, workerTimeoutMs: config.relayWaitMs });
+  const searcher = makeSearch({ relay, youtube, api, alert, log: logJson, workerTimeoutMs: config.relayWaitMs, refused });
   function checkWorkers() {
     if (relay.enabled && relay.idleMs() >= config.relayIdleAlertMinutes * 60_000) {
       alert('no_worker', `No search worker for ${config.relayIdleAlertMinutes} minutes: YouTube search runs from the Linode, which YouTube often blocks.`);
     } else if (relay.online().length) {
       alert.resolve?.('no_worker', 'Search worker is back: YouTube search runs through it again.');
     }
+    if (refusals.quiet()) alert.resolve?.('yt_refused', 'No YouTube refusals at the home relay for an hour.');
   }
   setInterval(checkWorkers, 60_000).unref();
   // `${shard}:${n}` → () => Promise<page>. For worker pages the function carries { via: "worker", worker, cont }
@@ -763,6 +774,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (url.pathname === '/relay/done' && req.method === 'POST') {
       let body;
       try { body = await readJson(req); } catch { return fail(res, 400, 'bad_body', 'Expected JSON.'); }
+      if (body?.refusal) refused('home', String(body.refusal));
       return json(res, 200, { ok: true, accepted: relay.done(body) });
     }
     const m = url.pathname.match(/^\/relay\/media\/([a-f0-9]{18})\/([\w.-]{1,32})$/);
@@ -838,7 +850,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       else res.end();
     }
   }
-  return Object.assign(handler, { relay, checkWorkers, metrics, probe });
+  return Object.assign(handler, { relay, checkWorkers, metrics, probe, refusals });
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

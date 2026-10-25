@@ -2150,6 +2150,56 @@
   {
    "type": "timeseries",
    "id": 36,
+   "title": "YouTube refusals (per hour)",
+   "description": "Failed YouTube lookups by where (home = the Optiplex relay, linode) and class: bot = \"Sign in to confirm\", rate = 429 / try again later / a caption track that failed after its list, forbidden = 403, potoken = PO token, other. Counted from 2026-10-25 (src/refusal.js).",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 73,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (key) (increase(eiok_events_total{metric=\"yt_refusal\"}[1h]))",
+     "legendFormat": "{{key}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 30,
+      "stacking": {
+       "mode": "normal"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "timeseries",
+   "id": 37,
    "title": "Rooms active (shards with a request, per hour)",
    "description": "Distinct shards that saw a request in the past hour (from the hourly shard table).",
    "datasource": {
@@ -2157,7 +2207,7 @@
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 0,
+    "x": 8,
     "y": 73,
     "w": 8,
     "h": 8
@@ -2200,7 +2250,7 @@
   },
   {
    "type": "timeseries",
-   "id": 37,
+   "id": 38,
    "title": "Plays by platform (per 6 h)",
    "description": "Once per room and platform (a room with PC and Quest players counts one of each), from the player’s User-Agent or a .m3u8 ticket. Counted from 2026-10-23.",
    "datasource": {
@@ -2208,7 +2258,7 @@
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 8,
+    "x": 16,
     "y": 73,
     "w": 8,
     "h": 8
@@ -2250,15 +2300,15 @@
   },
   {
    "type": "timeseries",
-   "id": 38,
+   "id": 39,
    "title": "Room quality picks and tablet warm-ups (per 6 h)",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 16,
-    "y": 73,
+    "x": 0,
+    "y": 81,
     "w": 8,
     "h": 8
    },
@@ -2317,12 +2367,12 @@
   },
   {
    "type": "row",
-   "id": 39,
+   "id": 40,
    "title": "Channels and flash checks",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 81,
+    "y": 89,
     "w": 24,
     "h": 1
    },
@@ -2330,7 +2380,7 @@
   },
   {
    "type": "table",
-   "id": 40,
+   "id": 41,
    "title": "Slots",
    "datasource": {
     "type": "prometheus",
@@ -2338,7 +2388,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 82,
+    "y": 90,
     "w": 14,
     "h": 12
    },
@@ -2546,7 +2596,7 @@
   },
   {
    "type": "timeseries",
-   "id": 41,
+   "id": 42,
    "title": "Flash checks (per 6 h)",
    "datasource": {
     "type": "prometheus",
@@ -2554,7 +2604,7 @@
    },
    "gridPos": {
     "x": 14,
-    "y": 82,
+    "y": 90,
     "w": 10,
     "h": 6
    },
@@ -2594,7 +2644,7 @@
   },
   {
    "type": "timeseries",
-   "id": 42,
+   "id": 43,
    "title": "Check queue",
    "datasource": {
     "type": "prometheus",
@@ -2602,7 +2652,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 94,
+    "y": 102,
     "w": 10,
     "h": 6
    },
@@ -2652,12 +2702,12 @@
   },
   {
    "type": "row",
-   "id": 43,
+   "id": 44,
    "title": "Hosts",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 100,
+    "y": 108,
     "w": 24,
     "h": 1
    },
@@ -2665,7 +2715,7 @@
   },
   {
    "type": "timeseries",
-   "id": 44,
+   "id": 45,
    "title": "CPU busy",
    "datasource": {
     "type": "prometheus",
@@ -2673,7 +2723,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 101,
+    "y": 109,
     "w": 8,
     "h": 8
    },
@@ -2714,7 +2764,7 @@
   },
   {
    "type": "timeseries",
-   "id": 45,
+   "id": 46,
    "title": "Memory available",
    "datasource": {
     "type": "prometheus",
@@ -2722,7 +2772,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 101,
+    "y": 109,
     "w": 8,
     "h": 8
    },
@@ -2763,7 +2813,7 @@
   },
   {
    "type": "timeseries",
-   "id": 46,
+   "id": 47,
    "title": "Disk free (/)",
    "datasource": {
     "type": "prometheus",
@@ -2771,7 +2821,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 101,
+    "y": 109,
     "w": 8,
     "h": 8
    },
@@ -2812,7 +2862,7 @@
   },
   {
    "type": "timeseries",
-   "id": 47,
+   "id": 48,
    "title": "Public endpoints",
    "datasource": {
     "type": "prometheus",
@@ -2820,7 +2870,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 109,
+    "y": 117,
     "w": 12,
     "h": 8
    },
@@ -2869,7 +2919,7 @@
   },
   {
    "type": "timeseries",
-   "id": 48,
+   "id": 49,
    "title": "Failed units",
    "description": "japharsworld-yt units, bgutil-pot and caddy in the failed state.",
    "datasource": {
@@ -2878,7 +2928,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 109,
+    "y": 117,
     "w": 12,
     "h": 8
    },
@@ -2918,12 +2968,12 @@
   },
   {
    "type": "row",
-   "id": 49,
+   "id": 50,
    "title": "Versions and deploys",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 117,
+    "y": 125,
     "w": 24,
     "h": 1
    },
@@ -2931,7 +2981,7 @@
   },
   {
    "type": "state-timeline",
-   "id": 50,
+   "id": 51,
    "title": "World version over time",
    "datasource": {
     "type": "prometheus",
@@ -2939,7 +2989,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 118,
+    "y": 126,
     "w": 24,
     "h": 4
    },
@@ -2991,7 +3041,7 @@
   },
   {
    "type": "table",
-   "id": 51,
+   "id": 52,
    "title": "World uploads and releases",
    "description": "VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.",
    "datasource": {
@@ -3000,7 +3050,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 122,
+    "y": 130,
     "w": 12,
     "h": 6
    },
@@ -3064,7 +3114,7 @@
   },
   {
    "type": "table",
-   "id": 52,
+   "id": 53,
    "title": "Deploys of main",
    "description": "Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.",
    "datasource": {
@@ -3073,7 +3123,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 122,
+    "y": 130,
     "w": 12,
     "h": 6
    },

@@ -34,13 +34,13 @@ function fakeYoutube(tag, { fail = 0, error = 'Request failed with status code 4
   };
 }
 
-async function start({ youtube = fakeYoutube('L'), api, alert } = {}) {
+async function start({ youtube = fakeYoutube('L'), api, alert, metrics } = {}) {
   const store = new Store({ path: ':memory:', shards: config.shards, pool: config.pool, pinHours: 24 });
   const logs = [];
   const red = await sharp({ create: { width: 32, height: 18, channels: 3, background: '#f7768e' } }).jpeg().toBuffer();
   const relay = new Relay({ token: TOKEN, pollMs: 300 });
   const captions = { async get() { return {}; } };
-  const app = createApp({ config, store, youtube, captions, relay, api, alert, sheetOpts: { fetcher: async () => red },
+  const app = createApp({ config, store, youtube, captions, relay, api, alert, metrics, sheetOpts: { fetcher: async () => red },
     log: (l) => logs.push(JSON.parse(l)) });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -255,4 +255,41 @@ test('shutdown: drain answers held polls with nothing at once, and later polls t
   assert.equal(await held, null);
   assert.equal(relay.waiting.length, 0);
   assert.equal(await relay.next('w', 'v'), null);
+});
+
+// YouTube risk fix 2 (2026-10-25): refusals are counted by class only, and 3 at the home relay in 15 minutes alert.
+test('refusals: the worker sends the class, the server counts home:<class> and linode:<class>, never the text', async (t) => {
+  const counted = [];
+  const metrics = { inc: (m, k) => m === 'yt_refusal' && counted.push(k), gauge() {}, latency() {}, shard() {}, flush() { return 0; }, start() { return this; }, close() {} };
+  const wall = 'ERROR: [youtube] abc: Sign in to confirm you’re not a bot. Use --cookies-from-browser';
+  const s = await start({ youtube: fakeYoutube('L', { fail: 1, error: 'Request failed with status code 429' }), metrics });
+  t.after(s.close);
+  s.startWorker(fakeYoutube('W', { fail: 1, error: wall }));
+  await s.waitOnline();
+  const r = await s.get('/v1/0/s?q=x');
+  assert.equal(r.body.error, 'youtube_failed'); // the worker hit the bot wall, the Linode a 429, and there's no Data API key
+  assert.deepEqual(counted.sort(), ['home:bot', 'linode:rate']);
+});
+
+test('refusals: 3 bot/rate/potoken at the home relay in 15 minutes alert once; an hour without one sends the all-clear', async (t) => {
+  const alerts = [];
+  const alert = (k, text) => { alerts.push([k, text]); return true; };
+  alert.resolve = (k) => alerts.push([`${k}_ok`]);
+  const s = await start({ alert });
+  t.after(s.close);
+  const done = (refusal) => fetch(`${s.url}/relay/done`, { method: 'POST', headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'gone', ok: false, error: 'x', refusal }) });
+  await done('bot');
+  await done('forbidden'); // not counted toward the alert
+  await done('rate');
+  assert.deepEqual(alerts, []);
+  await done('bot');
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0][0], 'yt_refused');
+  assert.match(alerts[0][1], /3 times in 15 minutes \(bot 2, rate 1\)/);
+  s.app.checkWorkers();
+  assert.equal(alerts.length, 1); // still within the hour
+  s.app.refusals.last -= 61 * 60_000;
+  s.app.checkWorkers();
+  assert.deepEqual(alerts.at(-1), ['yt_refused_ok']);
 });

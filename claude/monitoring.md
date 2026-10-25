@@ -45,7 +45,8 @@ Linode                                                  Optiplex
 Only what the services can't say about themselves, plus three the owner asked for on 2026-10-23 (home cap, home
 worker, credits pace). Each sends a "resolved" message too (the contact point has resolved messages on). The services'
 own Discord alerts send a matching all-clear since 2026-10-23: VRChat login, no search worker, Tunelio down / key /
-credits (`alert.resolve`, src/alert.js), and the monitor's quota and API warnings (`discord.resolve`). Notices with no
+credits, YouTube refusing the home relay (`yt_refused`: 3 or more bot/rate/PO-token refusals within 15 min, all-clear
+after an hour without one, src/refusal.js; since 2026-10-25) (`alert.resolve`, src/alert.js), and the monitor's quota and API warnings (`discord.resolve`). Notices with no
 failed state (credits low, Data API quota, plan renewals, reports) have none.
 
 | Alert | Fires when |
@@ -60,6 +61,8 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
 | Search service down | `/healthz` unanswered on the Linode for 5 min |
 | yt.japharsworld.com unreachable | the public `/healthz` probe fails for 10 min (Caddy, TLS, DNS) |
 | Flash checks waiting | a new, candidate or manual resolution/flash job has waited over 2 h, or the 14:00 UTC daily batch over 5 h (owner, 2026-10-25: at 6 jobs a run its ~60 jobs take ~3.5 h); the in-app "stalled" alert is at 36 h |
+| Searches not served by the home relay | the home worker is online (`eiok_relay_workers_online > 0`), but over half of the last 30 min's searches (at least 3) came from the Linode or the Data API, 5 min: a worker that answers but is refused, which `no_worker` misses (owner, 2026-10-25) |
+| Captions falling back to Tunelio | over 6 h, Tunelio answered more caption fetches (at least 3) than the home relay and local yt-dlp together, 30 min. Not "estimated timing above real": manual tracks never carry word timing, and that held on normal days (10-24: 104 estimated, 71 real) |
 | Disk almost full | under 10 % free on `/`, 15 min |
 
 ## Setup (once)

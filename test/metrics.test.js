@@ -67,6 +67,10 @@ test('keys outside each metric\'s allowed set are counted as "other"', () => {
   assert.equal(checkedKey('search', 'anything'), 'other');
   assert.equal(checkedKey('shard', '7'), '7');
   assert.equal(checkedKey('shard', '1234'), 'other');
+  assert.equal(checkedKey('yt_refusal', 'home:bot'), 'home:bot');
+  assert.equal(checkedKey('yt_refusal', 'linode:potoken'), 'linode:potoken');
+  assert.equal(checkedKey('yt_refusal', 'home:dQw4w9WgXcQ'), 'other'); // a worker can't send a video ID through it
+  assert.equal(checkedKey('yt_refusal', 'Sign in to confirm you are not a bot'), 'other');
   assert.throws(() => checkedKey('query_text', 'x'));
 });
 

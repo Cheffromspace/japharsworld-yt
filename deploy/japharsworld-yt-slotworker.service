@@ -20,6 +20,9 @@ Environment=SLOTMON_KNOWN_HOSTS=/var/lib/japharsworld-yt-slotworker/.ssh/known_h
 Environment=YTDLP=/opt/japharsworld-yt-slotworker-venv/bin/yt-dlp
 Environment="YTDLP_ARGS=--js-runtimes node"
 Environment=FFMPEG=/usr/bin/ffmpeg
+# Jobs claimed per run (worker default 12): 12 every 20 min was ~72 YouTube lookups an hour from the home IP at peak,
+# half the owner's 150/hour budget for it (owner, 2026-10-25).
+Environment=SLOTMON_MAX=6
 ExecStart=/usr/bin/python3 -m slotmon.worker
 TimeoutStartSec=50min
 Nice=10

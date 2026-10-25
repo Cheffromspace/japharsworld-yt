@@ -1,0 +1,7 @@
+# /etc/sudoers.d/yt-infra-check on the Linode
+# The only root actions the weekly check may take here: the maintenance in claude/monitoring.md ("Weekly infra
+# check"), which it runs only when / is 85 % used or more. No restarts (owner, 2026-10-25). ytcheck has no other sudo.
+Cmnd_Alias YT_SAFE = \
+  /usr/bin/journalctl --vacuum-size=500M, \
+  /usr/sbin/logrotate -f /etc/logrotate.conf
+ytcheck ALL=(root) NOPASSWD: YT_SAFE

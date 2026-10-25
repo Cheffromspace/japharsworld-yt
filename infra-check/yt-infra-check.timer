@@ -1,0 +1,10 @@
+[Unit]
+Description=Thursday mornings: YT Search infra check
+
+[Timer]
+OnCalendar=Thu *-*-* 06:52:00 America/Chicago
+Persistent=true
+RandomizedDelaySec=2m
+
+[Install]
+WantedBy=timers.target

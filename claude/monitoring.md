@@ -92,3 +92,44 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
   `alloy validate deploy/alloy/linode.alloy` (and `alloy fmt`).
 - **New exporter metric:** `metrics/exporter.js` and `test/exporter.test.js`; `update.sh` restarts the exporter when
   `metrics/exporter.js` or `src/metrics.js` changes.
+
+## Weekly infra check (Optiplex agent)
+
+A headless Claude Code run on the Optiplex every Thursday at 06:52 Chicago time (`infra-check/`: `run.sh`,
+`prompt.md`, the user timer and the sudoers files; installed in `~/yt-infra-check`, see `infra-check/README.md`). It
+checks both hosts and Grafana Cloud and reports on GitHub. **These rules are the agent's instructions** (owner,
+2026-10-25). It runs on another machine and can't see this PC's memory or sessions, so anything it must follow goes
+here, not in a session's memory. The prompt tells it to read this section from the Optiplex's checkout of `main`
+(`/opt/japharsworld-yt-relay/claude/monitoring.md`, updated every 5 minutes).
+
+**What it may do.** Read only: status, logs, metrics, `/healthz`, one test search, Grafana's API, and its own past
+reports. The only change it may make is the maintenance its sudoers rule allows, and only when a host's `/` is
+**85 % used or more**: `journalctl --vacuum-size=500M`, then `logrotate -f /etc/logrotate.conf` if that wasn't
+enough. It logs each with the command, the disk use before and after, and what was lost (journal history before a
+date).
+
+**What it never does,** even where its sudo rule would allow it: deploys, git commits or pushes, config or unit edits,
+service restarts, reboots, package installs or upgrades, deleting data, caches or media, channel list or credential
+changes, Tunelio settings, world uploads. A crashed service is a finding, not something to restart. Anything it
+wants done becomes an issue for the coordinator (the Everything is OK coordinating session) to triage.
+
+**Where it reports** (`Cheffromspace/japharsworld-yt`, with `gh` on the Optiplex):
+1. **Weekly report:** a comment on the standing issue #33 "Weekly infra check" (`area:monitoring`, `infra-check`;
+   never closed), with the full report. The Discord post from `run.sh` stays the short summary.
+2. **New finding** (something broken, degraded or trending the wrong way that no open issue covers): first search the
+   open issues (`gh issue list --label infra-check --state open`, and `gh issue list --search "<key words>"` by title)
+   for a duplicate. If one exists, comment there with this week's numbers. Otherwise open an issue titled with the
+   symptom, labelled `infra-check` plus one area label (`area:monitoring`, `area:flash-check`, … from
+   `gh label list`), with the evidence, since when, and a suggested fix. The weekly comment links it.
+3. **Recovered:** when an earlier finding has recovered, comment on its issue ("recovered as of <date>: <numbers>").
+   **It never closes an issue**; the coordinator does.
+4. Suggestions that aren't findings (cost savings, tuning) go in the weekly comment, not in new issues, unless they
+   need a decision from the owner.
+
+**Public repo:** reports and issues are public. No secrets, tokens or webhook URLs, no IP addresses or SSH account
+names, no visitor data (search text, video IDs from visitors' plays, VRChat user or instance IDs). Counts and
+timings are fine.
+
+**Its sudoers rules** (`infra-check/sudoers-*`) allow only the two maintenance commands. The copies installed on
+2026-10-24 also allowed service restarts (on the Linode including the owner's mediamtx). The rule above forbids those
+either way; the owner reinstalls the narrowed files.

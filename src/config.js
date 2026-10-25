@@ -18,6 +18,7 @@ export const config = {
   ytdlp: process.env.YTDLP ?? 'yt-dlp',
   ytdlpExtraArgs: (process.env.YTDLP_ARGS ?? '').split(' ').filter(Boolean),
   captionCacheDays: int('CAPTION_CACHE_DAYS', 7),
+  captionEmptyMinutes: int('CAPTION_EMPTY_MINUTES', 30), // a video's empty caption list is kept this long (src/captionchain.js)
   // Captions come from a chain of sources (src/captionchain.js): a relay worker's yt-dlp, then yt-dlp on this
   // server when CAPTION_LOCAL_YTDLP=on (YouTube usually bot-walls the Linode, and a refused attempt is slow), then
   // Tunelio. RELAY_CAPTION_WAIT_MS is how long a worker gets for one video (two yt-dlp runs).

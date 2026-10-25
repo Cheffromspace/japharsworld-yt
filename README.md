@@ -39,7 +39,10 @@ This service works within that rule:
   without a Tunelio key), then Tunelio's `/transcript` (6 credits per track, segment timing only). Every answer
   has the same shape: `lines` (cue timing, as before) and `chunks` (readable lines of about 42 characters, broken
   at sentences, clauses and pauses, each with the time and position of every word; `src/blocks.js`), plus
-  `words: "real" | "estimated"` and `via`. Results are cached 7 days per video and track; the picker's track
+  `words: "real" | "estimated"` and `via`. Results are cached 7 days per video and track, except an empty list:
+  YouTube sometimes answers with no captions for a video that has them, so a first empty list is looked up once
+  more on the next request, and a second is kept only `CAPTION_EMPTY_MINUTES` (30). The CC list waits for the
+  play's warm-up lookup instead of making its own. The picker's track
   numbers mean the same thing whichever source learned the list. YouTube's machine translations are not offered,
   tracks in scripts the world cannot draw (`CAPTION_SCRIPTS`) are left out, and Tunelio's silent English
   substitute for a missing language is detected and answered as unavailable. The free sources are warmed when a

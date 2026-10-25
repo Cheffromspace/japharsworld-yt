@@ -21,14 +21,21 @@ const same = (a, b) => lower(a.code) === lower(b.code) && Boolean(a.auto) === Bo
 // The yt-dlp key may carry a variant id or "-orig": match tracks by language code (then by its base) and kind.
 const matches = (a, b) => Boolean(a.auto) === Boolean(b.auto) && (lower(a.code) === lower(b.code) || lower(a.code).split('-')[0] === lower(b.code).split('-')[0]);
 
+// An empty list is suspect: YouTube sometimes answers the home IP with no captions at all and no error (2026-10-25: a
+// 100-minute video got 0 tracks in two lookups 2 s apart, then 176 auto tracks 25 minutes later). So the first empty
+// answer is only marked (EMPTY_KEY), the next request looks once more, and a second empty answer is kept for emptyMs.
+const EMPTY_KEY = 'tracks-empty';
+
 export class CaptionChain {
-  constructor({ store, relay = null, local = null, tunelio = null, cacheDays = 7, scripts = DEFAULT_SCRIPTS, relayWaitMs = 40_000,
-    metrics = null, log = () => {} }) {
+  constructor({ store, relay = null, local = null, tunelio = null, cacheDays = 7, emptyMinutes = 30, scripts = DEFAULT_SCRIPTS,
+    relayWaitMs = 40_000, metrics = null, log = () => {} }) {
     this.store = store;
     this.relay = relay;
     this.local = local;      // a Captions instance (yt-dlp on this server) or null
     this.tunelio = tunelio;  // a TunelioCaptions instance or null
     this.maxAgeMs = cacheDays * 86400_000;
+    this.emptyMs = emptyMinutes * 60_000;
+    this.looking = new Map(); // video id → its lookup in flight (any want), so the CC list can wait for the play's warm-up
     this.scripts = scripts;
     this.relayWaitMs = relayWaitMs;
     this.metrics = metrics;
@@ -74,6 +81,12 @@ export class CaptionChain {
   tracks(videoId, uiLang = 'en') {
     return this.once(`${videoId}|tracks|${uiLang}`, async () => {
       let tracks = this.list(videoId);
+      // The play's warm-up is usually still looking when the popover opens (2026-10-25: 2 s apart, two lookups): its
+      // answer has the list, so wait for it rather than asking YouTube again from the same IP.
+      if (!tracks && this.looking.has(videoId)) {
+        const got = await this.looking.get(videoId).catch(() => null);
+        tracks = this.list(videoId) ?? got?.tracks ?? null;
+      }
       if (!tracks && this.free) {
         const got = await this.resolve(videoId, null, { freeOnly: true });
         tracks = this.list(videoId) ?? got?.tracks ?? null;
@@ -115,7 +128,12 @@ export class CaptionChain {
   }
 
   // ---- cache ----
-  list(videoId) { return this.store.captionGet(videoId, 'tracks', this.maxAgeMs); }
+  // A confirmed empty list counts for emptyMs only; after that the video is looked up again.
+  list(videoId) {
+    const tracks = this.store.captionGet(videoId, 'tracks', this.maxAgeMs);
+    if (Array.isArray(tracks) && !tracks.length) return this.store.captionGet(videoId, 'tracks', this.emptyMs);
+    return tracks;
+  }
 
   // Cues for a track: ours, or lines Tunelio cached before the chain existed (segment timing, so estimated words).
   cached(videoId, t) {
@@ -128,7 +146,11 @@ export class CaptionChain {
 
   keep(videoId, got, want) {
     if (got.tracks?.length && !this.list(videoId)) this.store.captionPut(videoId, 'tracks', got.tracks);
-    if (got.tracks && !got.tracks.length && !this.list(videoId)) this.store.captionPut(videoId, 'tracks', []);
+    if (got.tracks && !got.tracks.length && !this.list(videoId)) {
+      // The first empty answer is only marked; the second within emptyMs is kept (see EMPTY_KEY).
+      if (this.store.captionGet(videoId, EMPTY_KEY, this.emptyMs)) this.store.captionPut(videoId, 'tracks', []);
+      else this.store.captionPut(videoId, EMPTY_KEY, true);
+    }
     if (!got.cues || !got.track) return;
     const value = { cues: got.cues, via: got.via };
     this.store.captionPut(videoId, cueKey(got.track), value);
@@ -141,7 +163,8 @@ export class CaptionChain {
   // answers, or null when none can right now. Whatever a source returns is cached before it is returned.
   resolve(videoId, want, { freeOnly = false } = {}) {
     const k = `${videoId}|${JSON.stringify(want)}${freeOnly ? '|free' : ''}`;
-    return this.once(`resolve|${k}`, async () => {
+    const first = !this.inflight.has(`resolve|${k}`);
+    const p = this.once(`resolve|${k}`, async () => {
       for (const [via, fetch] of this.sources(videoId, want, freeOnly)) {
         const t0 = Date.now();
         try {
@@ -158,6 +181,11 @@ export class CaptionChain {
       }
       return null;
     });
+    if (first) {
+      this.looking.set(videoId, p);
+      p.catch(() => {}).finally(() => { if (this.looking.get(videoId) === p) this.looking.delete(videoId); });
+    }
+    return p;
   }
 
   sources(videoId, want, freeOnly = false) {

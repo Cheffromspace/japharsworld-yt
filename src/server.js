@@ -153,7 +153,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }
   }
   // Captions: relay worker → yt-dlp here (when turned on, or when there is no Tunelio) → Tunelio (src/captionchain.js).
-  captions ??= new CaptionChain({ store, relay, metrics, log: logJson, cacheDays: config.captionCacheDays, scripts: config.captionScripts,
+  captions ??= new CaptionChain({ store, relay, metrics, log: logJson, cacheDays: config.captionCacheDays, emptyMinutes: config.captionEmptyMinutes, scripts: config.captionScripts,
     relayWaitMs: config.relayCaptionWaitMs,
     local: config.captionLocalYtdlp || !tunelio.enabled ? new Captions({ store, ytdlp: config.ytdlp, extraArgs: config.ytdlpExtraArgs, cacheDays: config.captionCacheDays,
       sourcePrefix: config.sourcePrefix, blockedMinutes: config.blockedMinutes, onRefusal: (cls) => refused('linode', cls) }) : null,

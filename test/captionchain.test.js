@@ -209,3 +209,57 @@ test('warm: the free source is asked when a video plays, Tunelio is not', async 
   for (let i = 0; i < 100 && job.calls.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
   assert.deepEqual(job.calls[0].want, { lang: 'native' });
 });
+
+// A relay stand-in that answers caption jobs from `answers` in turn (the last one repeats), after `delayMs`.
+function scriptedRelay(answers, delayMs = 0) {
+  const calls = [];
+  return {
+    calls, enabled: true, online: () => ['optiplex'],
+    async captions(videoId, want) {
+      calls.push(want);
+      await new Promise((r) => setTimeout(r, delayMs));
+      return answers[Math.min(calls.length - 1, answers.length - 1)];
+    },
+  };
+}
+const emptyInfo = { info: { language: null, manual: [], auto: [] }, track: null, cues: null, reason: 'no_captions' };
+const someInfo = { info: { language: 'en', manual: [], auto: ['en', 'de'] }, track: null, cues: null };
+
+test('an empty list is suspect: looked up once more, then kept for 30 minutes only (2026-10-25)', async () => {
+  let now = 1_000_000;
+  const store = new Store({ path: ':memory:', shards: 1, pool: 10, pinHours: 24, now: () => now });
+  const relay = scriptedRelay([emptyInfo, emptyInfo, someInfo]);
+  const chain = new CaptionChain({ store, relay, log: () => {} });
+  assert.equal((await chain.tracks('aaaaaaaaaaa')).reason, 'no_captions');
+  assert.equal(relay.calls.length, 1);
+  assert.equal((await chain.tracks('aaaaaaaaaaa')).reason, 'no_captions', 'the second request looks once more');
+  assert.equal(relay.calls.length, 2);
+  assert.equal((await chain.tracks('aaaaaaaaaaa')).reason, 'no_captions', 'twice empty: kept');
+  assert.equal(relay.calls.length, 2);
+  now += 31 * 60_000;
+  const later = await chain.tracks('aaaaaaaaaaa');
+  assert.equal(relay.calls.length, 3, 'looked up again after 30 minutes');
+  assert.equal(later.available, true);
+  assert.ok(later.tracks.length > 0);
+
+  // An empty answer and then the real list on the retry: the list is kept for the usual 7 days.
+  const flaky = scriptedRelay([emptyInfo, someInfo]);
+  const chain2 = new CaptionChain({ store, relay: flaky, log: () => {} });
+  assert.equal((await chain2.tracks('bbbbbbbbbbb')).reason, 'no_captions');
+  assert.equal((await chain2.tracks('bbbbbbbbbbb')).available, true);
+  now += 6 * 86400_000;
+  assert.equal((await chain2.tracks('bbbbbbbbbbb')).available, true);
+  assert.equal(flaky.calls.length, 2);
+});
+
+test('the CC list waits for the play\'s warm-up instead of a second lookup (2026-10-25)', async () => {
+  const store = new Store({ path: ':memory:', shards: 1, pool: 10, pinHours: 24 });
+  const relay = scriptedRelay([someInfo], 50);
+  const chain = new CaptionChain({ store, relay, log: () => {} });
+  chain.warm('ccccccccccc');
+  await new Promise((r) => setTimeout(r, 10));
+  const list = await chain.tracks('ccccccccccc');
+  assert.equal(list.available, true);
+  assert.ok(!relay.calls.includes(null), 'the list did not look up on its own');
+  assert.deepEqual(relay.calls[0], { lang: 'native' });
+});

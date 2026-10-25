@@ -39,7 +39,7 @@ function fixtures() {
     CREATE TABLE streams (video_id TEXT PRIMARY KEY, height INTEGER, flash_verdict TEXT, flash_max INTEGER, flash_at REAL, last_status TEXT, last_seen REAL);
     CREATE TABLE checks (id INTEGER PRIMARY KEY, ts REAL, slot_key TEXT, status TEXT, source TEXT);
     CREATE TABLE flash (id INTEGER PRIMARY KEY, ts REAL, verdict TEXT);
-    CREATE TABLE jobs (id INTEGER PRIMARY KEY, created REAL, video_id TEXT, claimed REAL, runner TEXT, done REAL);
+    CREATE TABLE jobs (id INTEGER PRIMARY KEY, created REAL, video_id TEXT, claimed REAL, runner TEXT, done REAL, reason TEXT);
     CREATE TABLE quota (day TEXT, ts REAL, units INTEGER, what TEXT);
     INSERT INTO slots VALUES ('lofi-study', 0, 'PL1', 'vidA', 'vidB', 'live', 'music', 't', 'c', 'UC', 0, 0, NULL);
     INSERT INTO slots VALUES ('jack-retro', 1, NULL, 'vidC', NULL, 'live', 'games', 't', 'c', 'UC', 0, 1, 'flash: 9/s');
@@ -48,7 +48,7 @@ function fixtures() {
     INSERT INTO checks (ts, slot_key, status, source) VALUES (1760970500, 'lofi-study', 'live', 'api');
     INSERT INTO flash (ts, verdict) VALUES (1, 'pass'), (2, 'pass'), (3, 'fail');
     INSERT INTO jobs (created, video_id, claimed, runner, done) VALUES (1760970000, 'vidB', 1760970100, 'optiplex', 1760970200);
-    INSERT INTO jobs (created, video_id) VALUES (${NOW / 1000 - 600}, 'vidD');
+    INSERT INTO jobs (created, video_id, reason) VALUES (${NOW / 1000 - 600}, 'vidD', 'new');
     INSERT INTO quota VALUES ('2026-10-20', 1, 66, 'daily');`);
   m.close();
   return { dir, metricsDb, monitorDb };
@@ -88,7 +88,8 @@ test('exporter: usage counters, histograms, polls, slots, flash checks, jobs, he
     has('eiok_slot_height{slot="lofi-study",kind="live",category="music"} 1080');
     has('eiok_flash_checks_total{verdict="fail"} 1');
     has('eiok_jobs_pending 1');
-    has('eiok_jobs_oldest_pending_seconds 600');
+    has('eiok_jobs_oldest_pending_seconds{reason="daily"} 0');
+    has('eiok_jobs_oldest_pending_seconds{reason="other"} 600');
     has('eiok_worker_last_done_timestamp_seconds{runner="optiplex"} 1760970200');
     has('eiok_youtube_quota_units{day="2026-10-20"} 66');
     has('eiok_search_up 1');

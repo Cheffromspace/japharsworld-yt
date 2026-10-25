@@ -221,7 +221,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "A resolution/flash job has waited over 2 hours; the Optiplex worker runs every 20 minutes."
+   "summary": "A new/candidate/manual resolution or flash job has waited over 2 hours, or the daily batch over 5 hours; the Optiplex worker runs every 20 minutes, 6 jobs a run."
   },
   "labels": {
    "project": "everything-is-ok"
@@ -239,7 +239,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max(eiok_jobs_oldest_pending_seconds) > 7200",
+     "expr": "max(eiok_jobs_oldest_pending_seconds{reason=\"other\"}) > 7200 or max(eiok_jobs_oldest_pending_seconds{reason=\"daily\"}) > 18000",
      "instant": true
     }
    },

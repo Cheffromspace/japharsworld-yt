@@ -86,7 +86,7 @@ export function dashboard() {
   p.push(stat('Credits left', 'max(eiok_credits_remaining)', { w: 3, thresholds: [{ color: BAD, value: null }, { color: WARN, value: 500 }, { color: OK, value: 1500 }] }));
   p.push(stat('Channels hidden', 'sum(eiok_slot_hidden * on(slot) (1 - eiok_slot_spare))', { w: 3, thresholds: [{ color: OK, value: null }, { color: WARN, value: 1 }, { color: BAD, value: 5 }] }));
   p.push(stat('Flash fails now', 'count(eiok_slot_flash_pass == 0) or vector(0)', { w: 3, thresholds: [{ color: OK, value: null }, { color: BAD, value: 1 }], description: 'Slots whose current stream failed its last flash check.' }));
-  p.push(stat('Oldest waiting check', 'max(eiok_jobs_oldest_pending_seconds)', { w: 3, unit: 's', thresholds: [{ color: OK, value: null }, { color: WARN, value: 3600 }, { color: BAD, value: 7200 }], description: 'Resolution + flash jobs wait for the Optiplex worker (every 20 min).' }));
+  p.push(stat('Oldest waiting check', 'max(eiok_jobs_oldest_pending_seconds{reason="other"})', { w: 3, unit: 's', thresholds: [{ color: OK, value: null }, { color: WARN, value: 3600 }, { color: BAD, value: 7200 }], description: 'New, candidate and manual resolution + flash jobs wait for the Optiplex worker (every 20 min); the daily batch is in Check queue.' }));
 
   const startupNote = 'Last 3 h, per ticket request: a slow video the player retries counts several timeouts. A timeout means the player waited 90 s and got youtube.com at 360p.';
   const noBuilds = [{ type: 'special', options: { match: 'nan', result: { text: 'no builds' } } }, { type: 'special', options: { match: 'null', result: { text: 'no builds' } } }];
@@ -219,7 +219,7 @@ export function dashboard() {
   p.push(series('Flash checks (per 6 h)', [['sum by (verdict) (increase(eiok_flash_checks_total[6h]))', '{{verdict}}']], { w: 10, h: 6, stack: true }));
   p.push(series('Check queue', [
     ['max(eiok_jobs_pending)', 'waiting'],
-    ['max(eiok_jobs_oldest_pending_seconds) / 60', 'oldest (min)'],
+    ['max by (reason) (eiok_jobs_oldest_pending_seconds) / 60', 'oldest {{reason}} (min)'],
   ], { w: 10, h: 6, min: 0 }));
 
   p.push(row('Hosts'));
@@ -274,7 +274,8 @@ export function alertRules(dsUid) {
     rule('eiok-optiplex-silent', 'Optiplex sends nothing', 'absent_over_time(node_time_seconds{host="optiplex"}[15m])', { summary: 'No metrics from the Optiplex for 15 minutes: searches fall back and flash checks wait.' }),
     rule('eiok-search-down', 'Search service down', 'max_over_time(eiok_search_up[5m]) < 1', { summary: 'The search service has not answered /healthz on the Linode for 5 minutes.' }),
     rule('eiok-public-down', 'yt.japharsworld.com unreachable', 'max_over_time(probe_success{job=~".*search-healthz.*"}[10m]) < 1', { forM: 5, summary: 'https://yt.japharsworld.com/healthz failed from outside for 10 minutes (Caddy, TLS or DNS).' }),
-    rule('eiok-checks-waiting', 'Flash checks waiting', 'max(eiok_jobs_oldest_pending_seconds) > 7200', { summary: 'A resolution/flash job has waited over 2 hours; the Optiplex worker runs every 20 minutes.' }),
+    // Owner, 2026-10-25: at 6 jobs a run the 14:00 UTC daily batch (~60 jobs) takes ~3.5 h, so it gets 5 h; other jobs 2 h.
+    rule('eiok-checks-waiting', 'Flash checks waiting', 'max(eiok_jobs_oldest_pending_seconds{reason="other"}) > 7200 or max(eiok_jobs_oldest_pending_seconds{reason="daily"}) > 18000', { summary: 'A new/candidate/manual resolution or flash job has waited over 2 hours, or the daily batch over 5 hours; the Optiplex worker runs every 20 minutes, 6 jobs a run.' }),
     // Owner, 2026-10-23 (the dashboard audit): the home relay's cap and worker, and the credits lasting to renewal.
     rule('eiok-home-cap', 'Home relay near its daily cap', 'max(eiok_home_today{key="mb"}) / max(eiok_home_today{key="cap_mb"}) >= 0.9', { forM: 5, summary: 'The home relay has used 90 % of HOME_DAILY_MB today; at the cap, long videos go to Tunelio (credits) or youtube.com instead.' }),
     rule('eiok-home-worker', 'Home relay has no worker', 'max(eiok_home_today{key="workers"}) < 1', { forM: 15, summary: 'No media worker (the Optiplex relay) connected for 15 minutes: home relay plays fall back to Tunelio or youtube.com.' }),

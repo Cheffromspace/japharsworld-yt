@@ -50,14 +50,20 @@ def main():
         fl = r.get("flash") or {}
         log("%s %s %s height=%s flash=%s/%s %s" % (j["reason"], j["video_id"], j.get("slot_key"), r.get("height"), fl.get("verdict"), fl.get("max_fps"), r.get("error") or ""))
         results.append(r)
-        if fl.get("verdict") == "fail":
-            break  # report a flash fail at once
+        # Report a flash fail at once (the slot hides), then run the rest: jobs claimed but never reported wait for the
+        # server's re-claim (gta-vice-city's fail on 2026-10-25 left two daily jobs claimed for 2 h and tripped the alert).
+        if fl.get("verdict") == "fail" and submit(results):
+            results = []
+    return 0 if not results or submit(results) else 1
+
+
+def submit(results):
     try:
         log(remote("submit --source %s" % RUNNER, json.dumps(results)).strip())
+        return True
     except Exception as e:
         log("submit failed: %s" % e)
-        return 1
-    return 0
+        return False
 
 
 if __name__ == "__main__":

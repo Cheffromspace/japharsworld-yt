@@ -123,7 +123,14 @@ export function monitorDbSeries(db, o, now = Date.now()) {
   }
   const q = db.prepare('SELECT COUNT(*) n, MIN(created) oldest FROM jobs WHERE done IS NULL').get();
   o.add('eiok_jobs_pending', 'gauge', 'Resolution + flash jobs waiting for a worker.', {}, q.n);
-  o.add('eiok_jobs_oldest_pending_seconds', 'gauge', 'Age of the oldest waiting job (0 when none).', {}, q.oldest ? Math.max(0, now / 1000 - q.oldest) : 0);
+  // By reason (owner, 2026-10-25): the 14:00 UTC daily batch (~60 jobs) takes ~3.5 h at 6 jobs a run, so it alerts
+  // later than new/candidate/manual checks.
+  const ages = db.prepare(`SELECT CASE WHEN reason = 'daily' THEN 'daily' ELSE 'other' END reason, MIN(created) oldest
+    FROM jobs WHERE done IS NULL GROUP BY 1`).all();
+  for (const reason of ['daily', 'other']) {
+    const oldest = ages.find((a) => a.reason === reason)?.oldest;
+    o.add('eiok_jobs_oldest_pending_seconds', 'gauge', 'Age of the oldest waiting job, daily batch or other (0 when none).', { reason }, oldest ? Math.max(0, now / 1000 - oldest) : 0);
+  }
   for (const r of db.prepare('SELECT runner, MAX(done) done FROM jobs WHERE done IS NOT NULL AND runner IS NOT NULL GROUP BY runner').all()) {
     o.add('eiok_worker_last_done_timestamp_seconds', 'gauge', 'When each worker (optiplex, pc, linode) last finished a job.', { runner: r.runner }, r.done);
   }

@@ -218,6 +218,38 @@ class Tests(Base):
         self.assertTrue(any(j["reason"] == "daily" for j in self.jobs()))
         self.assertTrue(any(t == "Daily summary" for _, t in self.alerts))
 
+    def test_unreported_claim_is_handed_out_again_after_an_hour(self):
+        self.check()
+        n = len(self.jobs())
+        self.assertEqual(len(core.claim_jobs(self.con, "optiplex", 12)), n)
+        self.assertEqual(core.claim_jobs(self.con, "optiplex", 12), [])  # still claimed
+        self.con.execute("UPDATE jobs SET claimed=?", (time.time() - core.CLAIM_SECONDS - 60,))
+        self.assertEqual(len(core.claim_jobs(self.con, "optiplex", 12)), n)
+
+
+class WorkerTests(unittest.TestCase):
+    def run_worker(self, verdicts):
+        from slotmon import worker
+        jobs = [{"id": i, "video_id": "V%d" % i, "slot_key": "s%d" % i, "reason": "daily", "flash": True} for i in range(len(verdicts))]
+        sent = []
+
+        def remote(args, stdin=None):
+            if args.startswith("claim"):
+                return json.dumps(jobs)
+            sent.append([r["id"] for r in json.loads(stdin)])
+            return "took %d results" % len(sent[-1])
+
+        run = lambda j, runner: {"id": j["id"], "video_id": j["video_id"], "flash": {"verdict": verdicts[j["id"]], "max_fps": 0}}
+        with mock.patch.object(worker, "remote", remote), mock.patch.object(worker.probe, "run_job", run), mock.patch.object(worker, "log", lambda m: None):
+            self.assertEqual(worker.main(), 0)
+        return sent
+
+    def test_flash_fail_is_sent_at_once_and_the_rest_still_run(self):
+        self.assertEqual(self.run_worker(["pass", "fail", "pass", "pass"]), [[0, 1], [2, 3]])
+
+    def test_fail_last_is_one_submit(self):
+        self.assertEqual(self.run_worker(["pass", "fail"]), [[0, 1]])
+
 
 if __name__ == "__main__":
     unittest.main()

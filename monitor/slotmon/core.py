@@ -283,9 +283,12 @@ def pull_from_playlist(con, api, row):
 
 # ---------- jobs ----------
 
+CLAIM_SECONDS = 3600  # a claim never reported is handed out again after this; a worker run times out at 50 min
+
+
 def claim_jobs(con, runner, limit):
     rows = con.execute("SELECT j.*, s.kind FROM jobs j LEFT JOIN streams s ON s.video_id=j.video_id WHERE j.done IS NULL AND (j.claimed IS NULL OR j.claimed < ?)",
-                       (now() - 7200,)).fetchall()
+                       (now() - CLAIM_SECONDS,)).fetchall()
     rows = sorted(rows, key=lambda r: (REASON_ORDER.get(r["reason"], 9), r["created"]))[:limit]
     for r in rows:
         con.execute("UPDATE jobs SET claimed=?, runner=? WHERE id=?", (now(), runner, r["id"]))

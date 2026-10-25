@@ -22,6 +22,7 @@ Publishes to GitHub Pages (`docs/` on `main`), committing only when something ch
 
 Jobs (resolution + flash) are queued for every new stream, for each candidate replacement, and once a day for each slot's stream.
 The Optiplex worker claims them over SSH (`slotmon claim --runner optiplex`), runs them and sends the results back (`slotmon submit`).
+A flash fail is sent at once and the rest of the run carries on; a claim never reported is handed out again after 1 h.
 Its key in the Linode's `/root/.ssh/authorized_keys` is `restrict,command="/usr/local/bin/slotmon-remote"`, so it can do nothing else.
 A flash fail hides the slot at once, empties its playlist so nothing plays, and pings Discord (urgent).
 While no worker is running, replacements wait hidden, and the daily summary says the checks are stalled.

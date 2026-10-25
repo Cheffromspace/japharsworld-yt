@@ -35,7 +35,7 @@ Linode                                                  Optiplex
 | `eiok_poll{source,metric}`, `eiok_poll_timestamp_seconds`, `eiok_release_timestamp_seconds{source,version}` (latest 50, value = when) | metrics.db `polls`, `releases` |
 | `eiok_deploy_timestamp_seconds{host,commit,outcome}` (value = when) | `deploy/deploy-record.sh`, run by `update.sh` / `relay-update.sh`, via Alloy's textfile collector (`/var/lib/japharsworld-yt-deploy`) on each host |
 | `eiok_slot_{hidden,spare,up,height,flash_max,flash_pass,flash_timestamp_seconds}` | monitor.db `slots` + current stream |
-| `eiok_flash_checks_total{verdict}`, `eiok_jobs_pending`, `eiok_jobs_oldest_pending_seconds`, `eiok_worker_last_done_timestamp_seconds{runner}` | monitor.db `flash`, `jobs` |
+| `eiok_flash_checks_total{verdict}`, `eiok_jobs_pending`, `eiok_jobs_oldest_pending_seconds{reason=daily|other}`, `eiok_worker_last_done_timestamp_seconds{runner}` | monitor.db `flash`, `jobs` |
 | `eiok_youtube_quota_units{day}`, `eiok_monitor_last_check_timestamp_seconds` | monitor.db `quota`, `checks` |
 | `eiok_search_up`, `eiok_relay_workers_online`, `eiok_tunelio_enabled`, `eiok_youtube_api_units_today` | `/healthz` |
 | `node_*`, `node_systemd_unit_state`, `probe_success` | Alloy (`deploy/alloy/*.alloy`) |
@@ -59,7 +59,7 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
 | Optiplex sends nothing | no host metrics from the Optiplex for 15 min |
 | Search service down | `/healthz` unanswered on the Linode for 5 min |
 | yt.japharsworld.com unreachable | the public `/healthz` probe fails for 10 min (Caddy, TLS, DNS) |
-| Flash checks waiting | a resolution/flash job has waited over 2 h (the in-app "stalled" alert is at 36 h) |
+| Flash checks waiting | a new, candidate or manual resolution/flash job has waited over 2 h, or the 14:00 UTC daily batch over 5 h (owner, 2026-10-25: at 6 jobs a run its ~60 jobs take ~3.5 h); the in-app "stalled" alert is at 36 h |
 | Disk almost full | under 10 % free on `/`, 15 min |
 
 ## Setup (once)

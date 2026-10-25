@@ -537,7 +537,7 @@
    "type": "stat",
    "id": 9,
    "title": "Oldest waiting check",
-   "description": "Resolution + flash jobs wait for the Optiplex worker (every 20 min).",
+   "description": "New, candidate and manual resolution + flash jobs wait for the Optiplex worker (every 20 min); the daily batch is in Check queue.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -555,7 +555,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_jobs_oldest_pending_seconds)",
+     "expr": "max(eiok_jobs_oldest_pending_seconds{reason=\"other\"})",
      "legendFormat": "",
      "instant": true
     }
@@ -2622,8 +2622,8 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_jobs_oldest_pending_seconds) / 60",
-     "legendFormat": "oldest (min)"
+     "expr": "max by (reason) (eiok_jobs_oldest_pending_seconds) / 60",
+     "legendFormat": "oldest {{reason}} (min)"
     }
    ],
    "options": {

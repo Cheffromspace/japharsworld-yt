@@ -14,7 +14,9 @@ ExecStart=/usr/bin/node /opt/japharsworld-yt-relay/relay/worker.js
 CacheDirectory=japharsworld-yt-relay
 Restart=always
 RestartSec=5
-MemoryMax=300M
+# The cgroup counts the page cache of the stream cache: 2026-10-25 at 300M it held 64 MB anon + 199 MB file, hit the
+# limit 35k times (memory.events max), throttled sockets 9k times and swapped 29 MB. The Optiplex has ~30 GB free.
+MemoryMax=1G
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

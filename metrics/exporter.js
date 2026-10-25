@@ -90,7 +90,7 @@ export function metricsDbSeries(db, o, now = Date.now()) {
     JOIN (SELECT source, metric, MAX(ts) ts FROM polls GROUP BY source, metric) m USING (source, metric, ts)`).all();
   const lastPoll = {};
   for (const p of polls) {
-    o.add('eiok_poll', 'gauge', 'Latest value the metrics poller recorded (VRChat, group, Tunelio, GitHub).', { source: p.source, metric: p.metric }, p.value);
+    o.add('eiok_poll', 'gauge', 'Latest value the metrics poller recorded (VRChat, group, Tunelio, GitHub, domain expiry in epoch seconds).', { source: p.source, metric: p.metric }, p.value);
     lastPoll[p.source] = Math.max(lastPoll[p.source] ?? 0, p.ts);
   }
   for (const [source, ts] of Object.entries(lastPoll)) o.add('eiok_poll_timestamp_seconds', 'gauge', 'When the poller last recorded this source.', { source }, ts / 1000);

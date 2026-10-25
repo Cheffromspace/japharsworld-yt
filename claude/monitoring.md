@@ -10,12 +10,12 @@ Linode                                                  Optiplex
   metrics/exporter.js  127.0.0.1:9464/metrics             Grafana Alloy: host metrics,
     reads metrics.db, monitor.db, /healthz                  japharsworld-yt-* unit states
   Grafana Alloy: scrapes it, host metrics, unit states,       |
-    probes https://yt.japharsworld.com/healthz and            |
-    the Pages sleep-list.json                                 |
+    probes https://yt.japharsworld.com/healthz,               |
+    https://eiok.cc/healthz and the Pages sleep-list.json     |
         \______________ remote_write (metrics only) _________/
                                    |
                          Grafana Cloud (Prometheus)
-                    dashboard "Everything is OK" + 6 alert rules -> Discord
+                    dashboard "Everything is OK" + 19 alert rules -> Discord
 ```
 
 - **Metrics only, no logs.** The privacy policy says logs stay on the server, so journald is not shipped. What leaves
@@ -60,10 +60,23 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
 | Optiplex sends nothing | no host metrics from the Optiplex for 15 min |
 | Search service down | `/healthz` unanswered on the Linode for 5 min |
 | yt.japharsworld.com unreachable | the public `/healthz` probe fails for 10 min (Caddy, TLS, DNS) |
+| eiok.cc unreachable | the same for `https://eiok.cc/healthz`, the short domain of the world's Quest search box (owner, 2026-10-25) |
+| TLS certificate expiring | under 14 days left on either probe's certificate (`probe_ssl_earliest_cert_expiry`), 1 h. Caddy renews at 30, so this means renewal is failing |
+| Domain expires within 30 days / 7 days | `eiok_poll{source="domain:<name>",metric="expires"}` (epoch seconds, from RDAP) minus now, 1 h. The 7-day rule is labelled `severity: critical`, the others `warning`. Domains: eiok.cc, japharsworld.com |
+| Domain expiry check failing | a domain's last good RDAP answer is over 3 days old, or there never was one, 1 h. Without it a broken check would hide an expiry |
 | Flash checks waiting | a new, candidate or manual resolution/flash job has waited over 2 h, or the 14:00 UTC daily batch over 5 h (owner, 2026-10-25: at 6 jobs a run its ~60 jobs take ~3.5 h); the in-app "stalled" alert is at 36 h |
 | Searches not served by the home relay | the home worker is online (`eiok_relay_workers_online > 0`), but over half of the last 30 min's searches (at least 3) came from the Linode or the Data API, 5 min: a worker that answers but is refused, which `no_worker` misses (owner, 2026-10-25) |
 | Captions falling back to Tunelio | over 6 h, Tunelio answered more caption fetches (at least 3) than the home relay and local yt-dlp together, 30 min. Not "estimated timing above real": manual tracks never carry word timing, and that held on normal days (10-24: 104 estimated, 71 real) |
 | Disk almost full | under 10 % free on `/`, 15 min |
+
+**eiok.cc** (owner, 2026-10-25) is the short domain for the Quest search box (README, "Compact search address"). Caddy
+serves it from the same site block as yt.japharsworld.com, with its own Let's Encrypt certificate, renewed by Caddy.
+The domain itself is the owner's to renew (auto-renew, several years ahead), because the public world bakes it.
+- Alloy probes `https://eiok.cc/healthz`, which also covers its certificate.
+- The metrics poller (`metrics/poll.js` `domainPass`) asks RDAP once a day for each domain's registration expiry, and
+  retries hourly when RDAP fails. It uses the registries' servers from IANA's bootstrap file:
+  `tld-rdap.verisign.com/cc/v1` (`rdap.verisign.com/cc` answers 400) and `rdap.verisign.com/com/v1`.
+- On 2026-10-25, eiok.cc expired 2027-10-25 (registered for one year, at Cloudflare) and japharsworld.com 2027-06-14.
 
 ## Setup (once)
 

@@ -43,3 +43,20 @@ export async function githubRepo({ repo, token = '', userAgent, fetcher = fetch 
   }
   return { repo: repo.split('/')[1], values, traffic, tags };
 }
+
+// Domain registrations (owner, 2026-10-25): the world bakes https://eiok.cc/s/… (Quest search) and
+// yt.japharsworld.com, so a lapsed registration breaks the public world until a re-upload. The registries' RDAP
+// servers (IANA's bootstrap, data.iana.org/rdap/dns.json; rdap.verisign.com/cc answers 400, tld-rdap is the .cc one).
+export const DOMAINS = { 'eiok.cc': 'https://tld-rdap.verisign.com/cc/v1', 'japharsworld.com': 'https://rdap.verisign.com/com/v1' };
+
+// → the registration's expiry, epoch ms. Throws when RDAP fails or carries no expiration event.
+export async function domainExpiry({ domain, base = DOMAINS[domain], userAgent, fetcher = fetch }) {
+  if (!base) throw new Error(`no RDAP server for ${domain}`);
+  const res = await fetcher(`${base}/domain/${encodeURIComponent(domain)}`, {
+    headers: { accept: 'application/rdap+json', ...(userAgent ? { 'user-agent': userAgent } : {}) }, signal: AbortSignal.timeout(15_000) });
+  if (!res.ok) throw new Error(`rdap ${domain} ${res.status}`);
+  const b = await res.json();
+  const at = Date.parse((b.events ?? []).find((e) => e.eventAction === 'expiration')?.eventDate ?? '');
+  if (!Number.isFinite(at)) throw new Error(`rdap ${domain}: no expiration event`);
+  return at;
+}

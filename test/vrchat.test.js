@@ -4,9 +4,9 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { totp, instanceType, worldValues, groupValues, VRChat } from '../metrics/vrchat.js';
-import { pollVRChat, updateEnvFile, settings, tunelioPass, renewalReminders, recordReleases, runOccupants, OCCUPANCY } from '../metrics/poll.js';
+import { pollVRChat, updateEnvFile, settings, tunelioPass, renewalReminders, recordReleases, runOccupants, OCCUPANCY, domainPass } from '../metrics/poll.js';
 import { openMetricsDb, getMeta } from '../src/metrics.js';
-import { githubRepo } from '../metrics/sources.js';
+import { githubRepo, domainExpiry, DOMAINS } from '../metrics/sources.js';
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'));
 const WORLD = fixture('vrchat-world.json');
@@ -264,4 +264,41 @@ test('per-minute pass: one request (the production world), occupancy and visits 
       assert.equal(db.prepare('SELECT COUNT(*) n FROM releases').get().n, 1);
     } finally { db.close(); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// Domain expiry (owner, 2026-10-25): RDAP once a day per domain, retried hourly when it fails.
+const rdap = (date) => ({ objectClassName: 'domain', ldhName: 'EIOK.CC', events: [{ eventAction: 'registration', eventDate: '2026-10-25T18:25:36Z' },
+  ...(date ? [{ eventAction: 'expiration', eventDate: date }] : [])] });
+
+test('domain expiry: RDAP expiration event → epoch ms; errors throw', async () => {
+  const seen = [];
+  const ok = async (url, o) => { seen.push([url, o.headers.accept]); return { ok: true, json: async () => rdap('2027-10-25T18:25:36Z') }; };
+  assert.equal(await domainExpiry({ domain: 'eiok.cc', fetcher: ok }), Date.parse('2027-10-25T18:25:36Z'));
+  assert.deepEqual(seen, [['https://tld-rdap.verisign.com/cc/v1/domain/eiok.cc', 'application/rdap+json']]);
+  await assert.rejects(domainExpiry({ domain: 'eiok.cc', fetcher: async () => ({ ok: false, status: 503 }) }), /503/);
+  await assert.rejects(domainExpiry({ domain: 'eiok.cc', fetcher: async () => ({ ok: true, json: async () => rdap(null) }) }), /no expiration/);
+  await assert.rejects(domainExpiry({ domain: 'example.org' }), /no RDAP server/);
+  assert.deepEqual(Object.keys(DOMAINS), ['eiok.cc', 'japharsworld.com']);
+});
+
+test('domain pass: records expires once a day; a failure retries after an hour, not every poll', async () => {
+  const db = openMetricsDb(':memory:');
+  const H = 3600_000;
+  let t = Date.parse('2026-10-25T19:00:00Z'), calls = 0, fail = true;
+  const fetcher = async () => { calls++; return fail ? { ok: false, status: 500 } : { ok: true, json: async () => rdap('2027-10-25T18:25:36Z') }; };
+  const cfg = { domains: { 'eiok.cc': 'https://rdap.test/cc/v1' }, tz: 'UTC' };
+  const expires = () => db.prepare("SELECT value FROM polls WHERE source = 'domain:eiok.cc' AND metric = 'expires'").all().map((r) => r.value);
+  await domainPass(db, cfg, { now: t, fetcher });
+  await domainPass(db, cfg, { now: t + 15 * 60_000, fetcher });
+  assert.equal(calls, 1);
+  assert.deepEqual(expires(), []);
+  fail = false;
+  t += H;
+  await domainPass(db, cfg, { now: t, fetcher });
+  assert.equal(calls, 2);
+  assert.deepEqual(expires(), [Date.parse('2027-10-25T18:25:36Z') / 1000]);
+  await domainPass(db, cfg, { now: t + 2 * H, fetcher });
+  assert.equal(calls, 2, 'a good answer holds for a day');
+  await domainPass(db, cfg, { now: t + 21 * H, fetcher });
+  assert.equal(calls, 3);
 });

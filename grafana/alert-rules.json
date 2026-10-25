@@ -12,7 +12,8 @@
    "summary": "No metrics from the Linode for 10 minutes: the server, Alloy or the exporter is down."
   },
   "labels": {
-   "project": "everything-is-ok"
+   "project": "everything-is-ok",
+   "severity": "warning"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"
@@ -65,7 +66,8 @@
    "summary": "No metrics from the Optiplex for 15 minutes: searches fall back and flash checks wait."
   },
   "labels": {
-   "project": "everything-is-ok"
+   "project": "everything-is-ok",
+   "severity": "warning"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"
@@ -118,7 +120,8 @@
    "summary": "The search service has not answered /healthz on the Linode for 5 minutes."
   },
   "labels": {
-   "project": "everything-is-ok"
+   "project": "everything-is-ok",
+   "severity": "warning"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"
@@ -171,7 +174,8 @@
    "summary": "https://yt.japharsworld.com/healthz failed from outside for 10 minutes (Caddy, TLS or DNS)."
   },
   "labels": {
-   "project": "everything-is-ok"
+   "project": "everything-is-ok",
+   "severity": "warning"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"
@@ -212,6 +216,276 @@
   ]
  },
  {
+  "uid": "eiok-short-down",
+  "title": "eiok.cc unreachable",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "5m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "https://eiok.cc/healthz failed from outside for 10 minutes (Caddy, TLS or DNS): Quest search in the world is down."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "max_over_time(probe_success{job=~\".*short-healthz.*\"}[10m]) < 1",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-cert-expiry",
+  "title": "TLS certificate expiring",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "60m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "A public certificate has under 14 days left ({{ $labels.job }}); Caddy should have renewed it at 30. Check `journalctl -u caddy` on the Linode."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "min by (job) (probe_ssl_earliest_cert_expiry{job=~\".*(search|short)-healthz.*\"} - time()) / 86400 < 14",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-domain-expiry",
+  "title": "Domain expires within 30 days",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "60m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "{{ $labels.source }} expires within 30 days. The world bakes it: renew it at the registrar (Cloudflare for eiok.cc)."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "min by (source) (eiok_poll{source=~\"domain:.*\",metric=\"expires\"} - time()) / 86400 < 30",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-domain-expiry-urgent",
+  "title": "Domain expires within 7 days",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "60m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "URGENT: {{ $labels.source }} expires within 7 days. When it lapses, the public world breaks until it is renewed."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "critical"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "min by (source) (eiok_poll{source=~\"domain:.*\",metric=\"expires\"} - time()) / 86400 < 7",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-domain-check-stale",
+  "title": "Domain expiry check failing",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "60m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "No good RDAP answer for a domain in 3 days (or never): the expiry alerts are blind. See `journalctl -u japharsworld-yt-metrics | grep domain_` on the Linode."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "(time() - max by (source) (eiok_poll_timestamp_seconds{source=~\"domain:.*\"})) > 3 * 86400 or absent(eiok_poll_timestamp_seconds{source=\"domain:eiok.cc\"}) or absent(eiok_poll_timestamp_seconds{source=\"domain:japharsworld.com\"})",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
   "uid": "eiok-worker-not-serving",
   "title": "Searches not served by the home relay",
   "folderUID": "everything-is-ok",
@@ -224,7 +498,8 @@
    "summary": "The home relay worker is online, but over half of the last 30 minutes’ searches (3 or more) were served by the Linode or the Data API: YouTube may be refusing the home IP (see YouTube refusals)."
   },
   "labels": {
-   "project": "everything-is-ok"
+   "project": "everything-is-ok",
+   "severity": "warning"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"
@@ -277,7 +552,8 @@
    "summary": "Over the last 6 hours Tunelio (credits, segment timing) answered more caption fetches than the free sources (home relay, yt-dlp): YouTube may be refusing caption requests (see YouTube refusals)."
   },
   "labels": {
-   "project": "everything-is-ok"
+   "project": "everything-is-ok",
+   "severity": "warning"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"
@@ -330,7 +606,8 @@
    "summary": "A new/candidate/manual resolution or flash job has waited over 2 hours, or the daily batch over 5 hours; the Optiplex worker runs every 20 minutes, 6 jobs a run."
   },
   "labels": {
-   "project": "everything-is-ok"
+   "project": "everything-is-ok",
+   "severity": "warning"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"
@@ -383,7 +660,8 @@
    "summary": "The home relay has used 90 % of HOME_DAILY_MB today; at the cap, long videos go to Tunelio (credits) or youtube.com instead."
   },
   "labels": {
-   "project": "everything-is-ok"
+   "project": "everything-is-ok",
+   "severity": "warning"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"
@@ -436,7 +714,8 @@
    "summary": "No media worker (the Optiplex relay) connected for 15 minutes: home relay plays fall back to Tunelio or youtube.com."
   },
   "labels": {
-   "project": "everything-is-ok"
+   "project": "everything-is-ok",
+   "severity": "warning"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"
@@ -489,7 +768,8 @@
    "summary": "At the last 3 days’ spend, the Tunelio credits run out before the plan renews on the 1st (the pacer then keeps plays at 720p; at 0 they go to youtube.com)."
   },
   "labels": {
-   "project": "everything-is-ok"
+   "project": "everything-is-ok",
+   "severity": "warning"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"
@@ -542,7 +822,8 @@
    "summary": "The Optiplex has sent over 50 GB today (home relay uploads and everything else on the box)."
   },
   "labels": {
-   "project": "everything-is-ok"
+   "project": "everything-is-ok",
+   "severity": "warning"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"
@@ -595,7 +876,8 @@
    "summary": "The Optiplex has sent over 500 GB this month."
   },
   "labels": {
-   "project": "everything-is-ok"
+   "project": "everything-is-ok",
+   "severity": "warning"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"
@@ -648,7 +930,8 @@
    "summary": "The Linode has sent over 700 GB this month, of its 1 TB transfer (overage about $5 per TB)."
   },
   "labels": {
-   "project": "everything-is-ok"
+   "project": "everything-is-ok",
+   "severity": "warning"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"
@@ -701,7 +984,8 @@
    "summary": "Under 10 % free on / of {{ $labels.host }}."
   },
   "labels": {
-   "project": "everything-is-ok"
+   "project": "everything-is-ok",
+   "severity": "warning"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"

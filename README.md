@@ -84,8 +84,16 @@ a pasted YouTube link is played as on `/v1`.
 
 The letters are baked into the uploaded world: never change or reuse one, only add new ones (`SHORT_LANGS` in
 `src/query.js`; a test pins the table). The routes don't depend on the host name, so a shorter domain can serve the same
-addresses: add it to the Caddy site's address line (`yt.japharsworld.com, <short domain> { … }` in
+addresses. Add it to the Caddy site's address line (`yt.japharsworld.com, <short domain> { … }` in
 `/etc/caddy/sites/japharsworld-yt.caddy`) and reload Caddy, which gets its certificate.
+
+**eiok.cc** (owner, 2026-10-25) is that short domain, for the world's Quest search box:
+`https://eiok.cc/s/<shard><letter>?q=` is 23 characters. It serves the whole service, the same as
+yt.japharsworld.com; the ops, stats and relay routes stay behind their tokens.
+- Its DNS is an A record to the Linode, DNS only (not proxied through Cloudflare), like yt.japharsworld.com.
+- The owner renews it, with auto-renew several years ahead: the public world bakes the address, so losing the domain
+  breaks Quest search until a re-upload.
+- Every other URL (tickets, captions, playback, the relay workers' `RELAY_URL`) stays on yt.japharsworld.com.
 
 ## Status / kill switch
 

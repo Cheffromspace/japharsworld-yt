@@ -263,9 +263,9 @@ export function dashboard() {
 
 // Alerts for what the services can't report about themselves (they already alert Discord on their own problems).
 export function alertRules(dsUid) {
-  const rule = (uid, title, expr, { forM = 5, summary, noData = 'OK' }) => ({
+  const rule = (uid, title, expr, { forM = 5, summary, noData = 'OK', severity = 'warning' }) => ({
     uid, title, folderUID: FOLDER.uid, ruleGroup: 'everything-is-ok', condition: 'C', for: `${forM}m`, noDataState: noData, execErrState: 'Error',
-    annotations: { summary }, labels: { project: 'everything-is-ok' }, notification_settings: { receiver: RECEIVER },
+    annotations: { summary }, labels: { project: 'everything-is-ok', severity }, notification_settings: { receiver: RECEIVER },
     data: [
       { refId: 'A', relativeTimeRange: { from: 900, to: 0 }, datasourceUid: dsUid, model: { refId: 'A', expr, instant: true } },
       { refId: 'C', datasourceUid: '__expr__', model: { refId: 'C', type: 'threshold', expression: 'A', conditions: [{ evaluator: { type: 'gt', params: [0] } }] } },
@@ -276,6 +276,14 @@ export function alertRules(dsUid) {
     rule('eiok-optiplex-silent', 'Optiplex sends nothing', 'absent_over_time(node_time_seconds{host="optiplex"}[15m])', { summary: 'No metrics from the Optiplex for 15 minutes: searches fall back and flash checks wait.' }),
     rule('eiok-search-down', 'Search service down', 'max_over_time(eiok_search_up[5m]) < 1', { summary: 'The search service has not answered /healthz on the Linode for 5 minutes.' }),
     rule('eiok-public-down', 'yt.japharsworld.com unreachable', 'max_over_time(probe_success{job=~".*search-healthz.*"}[10m]) < 1', { forM: 5, summary: 'https://yt.japharsworld.com/healthz failed from outside for 10 minutes (Caddy, TLS or DNS).' }),
+    // The short domain (owner, 2026-10-25): the public world bakes https://eiok.cc/s/… for Quest search.
+    rule('eiok-short-down', 'eiok.cc unreachable', 'max_over_time(probe_success{job=~".*short-healthz.*"}[10m]) < 1', { forM: 5, summary: 'https://eiok.cc/healthz failed from outside for 10 minutes (Caddy, TLS or DNS): Quest search in the world is down.' }),
+    // Caddy renews 30 days ahead, so under 14 days left means renewal is failing.
+    rule('eiok-cert-expiry', 'TLS certificate expiring', 'min by (job) (probe_ssl_earliest_cert_expiry{job=~".*(search|short)-healthz.*"} - time()) / 86400 < 14', { forM: 60, summary: 'A public certificate has under 14 days left ({{ $labels.job }}); Caddy should have renewed it at 30. Check `journalctl -u caddy` on the Linode.' }),
+    // Domain registrations from RDAP (metrics/poll.js domainPass): renewal is the owner's (auto-renew, years ahead).
+    rule('eiok-domain-expiry', 'Domain expires within 30 days', 'min by (source) (eiok_poll{source=~"domain:.*",metric="expires"} - time()) / 86400 < 30', { forM: 60, summary: '{{ $labels.source }} expires within 30 days. The world bakes it: renew it at the registrar (Cloudflare for eiok.cc).' }),
+    rule('eiok-domain-expiry-urgent', 'Domain expires within 7 days', 'min by (source) (eiok_poll{source=~"domain:.*",metric="expires"} - time()) / 86400 < 7', { forM: 60, severity: 'critical', summary: 'URGENT: {{ $labels.source }} expires within 7 days. When it lapses, the public world breaks until it is renewed.' }),
+    rule('eiok-domain-check-stale', 'Domain expiry check failing', '(time() - max by (source) (eiok_poll_timestamp_seconds{source=~"domain:.*"})) > 3 * 86400 or absent(eiok_poll_timestamp_seconds{source="domain:eiok.cc"}) or absent(eiok_poll_timestamp_seconds{source="domain:japharsworld.com"})', { forM: 60, summary: 'No good RDAP answer for a domain in 3 days (or never): the expiry alerts are blind. See `journalctl -u japharsworld-yt-metrics | grep domain_` on the Linode.' }),
     // Owner, 2026-10-25: at 6 jobs a run the 14:00 UTC daily batch (~60 jobs) takes ~3.5 h, so it gets 5 h; other jobs 2 h.
     // Owner, 2026-10-25 (YouTube risk fix 2): a home worker that is online but fails, which "no search worker" misses,
     // and captions answered mostly by Tunelio.

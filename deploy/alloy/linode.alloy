@@ -52,6 +52,12 @@ prometheus.exporter.blackbox "public" {
     address = "https://yt.japharsworld.com/healthz"
     module  = "http_2xx"
   }
+  // The short domain the world's Quest search box bakes (owner, 2026-10-25); probe_ssl_earliest_cert_expiry covers its certificate.
+  target {
+    name    = "short-healthz"
+    address = "https://eiok.cc/healthz"
+    module  = "http_2xx"
+  }
   target {
     name    = "pages-sleep-list"
     address = "https://cheffromspace.github.io/japharsworld-yt/sleep-list.json"

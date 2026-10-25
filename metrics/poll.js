@@ -12,7 +12,7 @@ import { openMetricsDb, recordPoll, getMeta, setMeta, dayOf } from '../src/metri
 import { makeAlert } from '../src/alert.js';
 import { addDays, billingPeriod, daysBetween } from '../src/stats.js';
 import { VRChat, worldValues, groupValues } from './vrchat.js';
-import { tunelioCredits, githubRepo } from './sources.js';
+import { tunelioCredits, githubRepo, domainExpiry, DOMAINS } from './sources.js';
 import { dailyReport, weeklyReport, testWorld, chunks } from './report.js';
 
 const env = process.env;
@@ -190,6 +190,23 @@ export async function dailySources(db, cfg, { now = Date.now(), fetcher = fetch 
   }
 }
 
+// Domain expiry from RDAP (owner, 2026-10-25), as polls `domain:<name>` / `expires` (epoch seconds). Once a day per domain,
+// retried at most hourly when RDAP fails. Grafana alerts below 30 and 7 days, and when a domain's last good check
+// is over 3 days old, so a check that keeps failing can't hide an expiry (tools/grafana.mjs).
+export async function domainPass(db, cfg, { now = Date.now(), fetcher = fetch } = {}) {
+  const lastOk = db.prepare("SELECT MAX(ts) ts FROM polls WHERE source = ? AND metric = 'expires'");
+  for (const domain of Object.keys(cfg.domains ?? DOMAINS)) {
+    if (now - (lastOk.get(`domain:${domain}`)?.ts ?? 0) < 20 * HOUR) continue;
+    if (now - Number(getMeta(db, `domain_try:${domain}`) ?? 0) < HOUR) continue;
+    setMeta(db, `domain_try:${domain}`, String(now));
+    try {
+      const at = await domainExpiry({ domain, base: (cfg.domains ?? DOMAINS)[domain], userAgent: cfg.userAgent, fetcher });
+      recordPoll(db, { ts: now, source: `domain:${domain}`, values: { expires: Math.round(at / 1000) }, tz: cfg.tz });
+      log({ event: 'domain_expiry', domain, days: Math.floor((at - now) / 86400_000) });
+    } catch (err) { log({ event: 'domain_error', domain, message: String(err.message).slice(0, 200) }); }
+  }
+}
+
 export async function run(cfg = settings(), { now = Date.now() } = {}) {
   // 1. As root: the VRChat session.
   const state = readState(cfg.stateFile);
@@ -212,6 +229,7 @@ export async function run(cfg = settings(), { now = Date.now() } = {}) {
       await dailySources(db, cfg, { now });
       setMeta(db, 'daily_sources', today);
     }
+    await domainPass(db, cfg, { now });
     const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: cfg.tz, hour: 'numeric', hourCycle: 'h23' }).format(now));
     if (hour >= cfg.reportHour) {
       for (const text of renewalReminders(db, cfg, { today })) {

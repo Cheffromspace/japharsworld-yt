@@ -1,0 +1,18 @@
+[Unit]
+Description=bgutil PO-token provider for yt-dlp (localhost only; the Optiplex: relay worker and flash checks, deploy/bgutil-setup.sh)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=jytrelay
+Group=jytrelay
+WorkingDirectory=/opt/bgutil-pot/server
+ExecStart=/usr/bin/node build/main.js --port 4416
+Restart=always
+RestartSec=5
+MemoryMax=400M
+NoNewPrivileges=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

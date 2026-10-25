@@ -65,7 +65,9 @@ After `deploy/relay-setup.sh` (the search relay):
 sudo bash /opt/japharsworld-yt-relay/deploy/slotworker-setup.sh
 ```
 
-That installs ffmpeg, yt-dlp (`/opt/japharsworld-yt-slotworker-venv`, updated daily by the relay's update timer) and
+That installs ffmpeg, yt-dlp (`/opt/japharsworld-yt-slotworker-venv`, updated daily by the relay's update timer) with the
+bgutil PO-token plugin and its server (`bgutil-pot-relay.service` on 127.0.0.1:4416, `deploy/bgutil-setup.sh`; the relay
+worker's captions and media use the same yt-dlp), and
 `japharsworld-yt-slotworker.timer` (every 20 minutes, user `jytrelay`, outbound SSH only), creates its SSH key in
 `/var/lib/japharsworld-yt-slotworker/` and prints the restricted line for the Linode's `/root/.ssh/authorized_keys`.
 Log: `journalctl -u japharsworld-yt-slotworker`. Run once now: `systemctl start japharsworld-yt-slotworker`.

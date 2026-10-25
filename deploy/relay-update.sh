@@ -12,7 +12,9 @@ VENV=/opt/japharsworld-yt-slotworker-venv
 STAMP=/var/lib/japharsworld-yt-slotworker/.ytdlp-updated
 if [ -x "$VENV/bin/pip" ] && { [ ! -f "$STAMP" ] || [ -n "$(find "$STAMP" -mmin +1440)" ] || ! "$VENV/bin/python" -c 'import curl_cffi' 2>/dev/null; }; then
   before=$("$VENV/bin/yt-dlp" --version)
-  "$VENV/bin/pip" install -q -U "yt-dlp[default,curl-cffi]" && touch "$STAMP"
+  # Keeps the bgutil plugin on the version deploy/bgutil-setup.sh pins, once that has run here.
+  pin=$( [ -f /etc/systemd/system/bgutil-pot-relay.service ] && echo "bgutil-ytdlp-pot-provider==$(bash "$APP/deploy/bgutil-setup.sh" --version)" || true)
+  "$VENV/bin/pip" install -q -U "yt-dlp[default,curl-cffi]" $pin && touch "$STAMP"
   after=$("$VENV/bin/yt-dlp" --version)
   [ "$before" = "$after" ] || echo "yt-dlp $before -> $after"
 fi
@@ -24,9 +26,13 @@ changed=$(git diff --name-only "$current" "$target")
 git reset -q --hard "$target"
 chown -R jytrelay:jytrelay "$APP"
 if echo "$changed" | grep -qx 'package-lock.json'; then sudo -u jytrelay npm ci --omit=dev --no-audit --no-fund --loglevel=error; fi
-for unit in japharsworld-yt-relay.service japharsworld-yt-relay-update.service japharsworld-yt-relay-update.timer     $( [ -f /etc/systemd/system/japharsworld-yt-slotworker.timer ] && echo japharsworld-yt-slotworker.service japharsworld-yt-slotworker.timer ); do
+for unit in japharsworld-yt-relay.service japharsworld-yt-relay-update.service japharsworld-yt-relay-update.timer     $( [ -f /etc/systemd/system/japharsworld-yt-slotworker.timer ] && echo japharsworld-yt-slotworker.service japharsworld-yt-slotworker.timer )     $( [ -f /etc/systemd/system/bgutil-pot-relay.service ] && echo bgutil-pot-relay.service ); do
   cmp -s "deploy/$unit" "/etc/systemd/system/$unit" || { install -m 644 "deploy/$unit" /etc/systemd/system/; systemctl daemon-reload; }
 done
+# A new bgutil version: plugin and server together (deploy/bgutil-setup.sh restarts the server), once it is set up here.
+if [ -f /etc/systemd/system/bgutil-pot-relay.service ] && echo "$changed" | grep -qx 'deploy/bgutil-setup.sh'; then
+  bash deploy/bgutil-setup.sh "$VENV" bgutil-pot-relay.service || echo "bgutil setup failed"
+fi
 # Grafana Alloy (claude/monitoring.md), once it has been set up here.
 if command -v alloy >/dev/null && echo "$changed" | grep -qE '^deploy/alloy'; then bash deploy/alloy-setup.sh optiplex || echo "alloy setup failed"; fi
 if echo "$changed" | grep -qE '^(relay/|src/|package(-lock)?\.json$|deploy/japharsworld-yt-relay)'; then

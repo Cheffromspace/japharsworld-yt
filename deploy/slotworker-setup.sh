@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Channels flash-check worker on the Optiplex (Debian/Ubuntu), as root, after deploy/relay-setup.sh. Safe to re-run.
 #   sudo bash /opt/japharsworld-yt-relay/deploy/slotworker-setup.sh
-# Installs ffmpeg and python3-venv, yt-dlp in /opt/japharsworld-yt-slotworker-venv, an SSH key for the Linode and the
+# Installs ffmpeg and python3-venv, yt-dlp in /opt/japharsworld-yt-slotworker-venv with the bgutil PO-token plugin and
+# its server (deploy/bgutil-setup.sh), an SSH key for the Linode and the
 # 20-minute timer. Prints the line to add to the Linode's /root/.ssh/authorized_keys: the key may only run
 # /usr/local/bin/slotmon-remote (claim/submit for runner "optiplex").
 set -euo pipefail
@@ -23,6 +24,8 @@ say "yt-dlp ($VENV)"
 [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
 "$VENV/bin/pip" install -q -U pip "yt-dlp[default,curl-cffi]"
 "$VENV/bin/yt-dlp" --version
+# PO tokens for this yt-dlp, which the relay worker runs too (YouTube risk fix 4, owner 2026-10-25).
+bash "$APP/deploy/bgutil-setup.sh" "$VENV" bgutil-pot-relay.service
 
 say "SSH key ($STATE)"
 install -d -m 700 -o jytrelay -g jytrelay "$STATE" "$STATE/.ssh" "$STATE/cache"

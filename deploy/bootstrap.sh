@@ -13,8 +13,6 @@ DOMAIN="${DOMAIN:-yt.japharsworld.com}"
 REPO="${REPO:-https://github.com/Cheffromspace/japharsworld-yt.git}"
 APP=/opt/japharsworld-yt
 VENV=/opt/japharsworld-yt-venv
-BGUTIL=/opt/bgutil-pot
-BGUTIL_VERSION=2.0.2
 DATA=/var/lib/japharsworld-yt
 PORT=8790
 
@@ -57,16 +55,11 @@ else git clone -q "$REPO" "$APP"; fi
 say "yt-dlp + bgutil PO-token plugin (captions)"
 [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
 "$VENV/bin/pip" install -q -U pip
-"$VENV/bin/pip" install -q -U "yt-dlp[default]" "bgutil-ytdlp-pot-provider==$BGUTIL_VERSION"
+"$VENV/bin/pip" install -q -U "yt-dlp[default]"
 "$VENV/bin/yt-dlp" --version
 
-say "bgutil PO-token server $BGUTIL_VERSION (127.0.0.1:4416)"
-if [ "$(cat "$BGUTIL/.version" 2>/dev/null)" != "$BGUTIL_VERSION" ]; then
-  rm -rf "$BGUTIL"
-  git clone -q --single-branch --branch "$BGUTIL_VERSION" https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git "$BGUTIL"
-  (cd "$BGUTIL/server" && npm ci --no-audit --no-fund --loglevel=error && npx tsc)
-  echo "$BGUTIL_VERSION" > "$BGUTIL/.version"
-fi
+# The plugin and the token server, shared with the Optiplex (its unit is installed below).
+bash "$APP/deploy/bgutil-setup.sh" "$VENV"
 
 say "Settings (/etc/japharsworld-yt.env)"
 if [ ! -f /etc/japharsworld-yt.env ]; then

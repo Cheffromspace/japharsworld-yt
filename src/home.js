@@ -26,6 +26,9 @@ const SEGMENT = /^seg\d{1,5}\.ts$/;
 const TOKEN = /^[a-f0-9]{18}$/;
 const MAX_SEGMENT_BYTES = 64 << 20;
 const RETRY_MS = 60_000; // a failed session is tried again after this long
+// An unfinished session with no upload for this long has no worker stream behind it any more (it died or was stopped);
+// a live one uploads every few seconds, and a server restart only pauses it for seconds (the worker retries).
+const STALE_MS = 5 * 60_000;
 
 export class Home {
   constructor({ relay, dir, base = 'https://yt.japharsworld.com/home', enabled = false, dailyBuilds = 40, dailyMb = 10_000,
@@ -38,37 +41,55 @@ export class Home {
     if (dir && enabled) { this.loading = true; this.#load(); this.loading = false; }
   }
 
-  // Sessions and today's use from before a restart. Folders without a readable meta.json are removed.
+  // Sessions, today's use and the uneven videos from before a restart. Folders without a readable meta.json are removed,
+  // and so are sessions that failed or were given up, and unfinished ones whose worker stream is gone (STALE_MS):
+  // 2026-10-25, a session given up as uneven after 13 of a 90-minute video's segments came back after a deploy as
+  // ready, and a Quest replay was sent to its ~65 s growing playlist, which never grew (6 of the 8 sessions on disk).
   #load() {
     mkdirSync(this.dir, { recursive: true });
     try { this.day = { date: '', builds: 0, mb: 0, ...JSON.parse(readFileSync(join(this.dir, 'day.json'), 'utf8')) }; } catch { /* none */ }
+    try {
+      for (const [id, until] of Object.entries(JSON.parse(readFileSync(join(this.dir, 'uneven.json'), 'utf8')))) {
+        if (until > this.now()) this.uneven.set(id, until);
+      }
+    } catch { /* none */ }
+    let dropped = 0;
     for (const token of readdirSync(this.dir)) {
       if (!TOKEN.test(token)) continue;
       const folder = join(this.dir, token);
       try {
         const m = JSON.parse(readFileSync(join(folder, 'meta.json'), 'utf8'));
+        if (m.state === 'failed') throw new Error('failed');
         const s = this.#session({ ...m, token });
         for (const f of readdirSync(folder)) if (SEGMENT.test(f)) { s.stored.add(f); s.mb += statSync(join(folder, f)).size / 1e6; }
         try { this.#playlist(s, readFileSync(join(folder, 'index.m3u8'), 'utf8')); } catch { /* none yet */ }
         if (s.state !== 'ready') throw new Error('never ready');
+        if (this.#stale(s)) throw new Error('stream gone');
         this.sessions.set(`${s.id}@${s.quality}`, s);
         this.byToken.set(s.token, s);
-      } catch { rmSync(folder, { recursive: true, force: true }); }
+      } catch { rmSync(folder, { recursive: true, force: true }); dropped++; }
     }
-    if (this.byToken.size) this.log({ event: 'home_loaded', sessions: this.byToken.size });
+    if (this.byToken.size || dropped) this.log({ event: 'home_loaded', sessions: this.byToken.size, dropped });
   }
 
   #session(f) {
     return { token: f.token, id: f.id, quality: f.quality, seconds: f.seconds ?? 0, worker: f.worker ?? null, state: 'building',
       startedMs: f.startedMs ?? this.now(), readyMs: 0, endedMs: 0, lastPutMs: f.lastPutMs ?? 0, ended: false, mb: 0, segments: 0,
       listed: [], listedSeconds: 0, stored: new Set(), reason: null, waiters: [], endWaiters: [], segmentWaiters: new Map(),
-      firstSegmentMs: 0, firstServed: null };
+      firstSegmentMs: 0, firstServed: null, why: f.why ?? null };
   }
 
+  // Not finished, and no upload for STALE_MS: nothing will arrive any more.
+  #stale(s) { return !s.ended && this.now() - (s.lastPutMs || s.startedMs) > STALE_MS; }
+
+  // The session's why (server.js startHome) is saved with it, so leaveHome still knows a reloaded long play.
+  save(s) { this.#saveMeta(s); }
   #saveMeta(s) {
-    const meta = { id: s.id, quality: s.quality, seconds: s.seconds, worker: s.worker, startedMs: s.startedMs, lastPutMs: s.lastPutMs };
-    try { writeFileSync(join(this.dir, s.token, 'meta.json'), JSON.stringify(meta)); } catch { /* folder gone */ }
+    const meta = { id: s.id, quality: s.quality, seconds: s.seconds, worker: s.worker, startedMs: s.startedMs, lastPutMs: s.lastPutMs,
+      why: s.why ?? null, ...(s.state === 'failed' ? { state: 'failed', reason: s.reason, endedMs: s.endedMs } : {}) };
+    try { writeFileSync(join(this.dir, s.token, 'meta.json'), JSON.stringify(meta)); s.metaSavedMs = this.now(); } catch { /* folder gone */ }
   }
+  #saveUneven() { try { writeFileSync(join(this.dir, 'uneven.json'), JSON.stringify(Object.fromEntries(this.uneven))); } catch { /* no dir */ } }
   #saveDay() { try { writeFileSync(join(this.dir, 'day.json'), JSON.stringify(this.day)); } catch { /* no dir */ } }
 
   #today() {
@@ -90,6 +111,7 @@ export class Home {
     if (!s) return null;
     if (s.state === 'failed' && this.now() - s.endedMs > RETRY_MS) return null;
     if (s.state !== 'failed' && this.now() - (s.lastPutMs || s.startedMs) > this.keepHours * 3600_000) return null;
+    if (s.state === 'ready' && this.#stale(s)) return null; // its stream died part way: start again rather than reuse it
     return s;
   }
 
@@ -99,16 +121,18 @@ export class Home {
   // plays don't try home first. The worker stops at its next upload (410).
   giveUp(s, reason = 'uneven') {
     this.uneven.set(s.id, this.now() + this.keepHours * 3600_000);
+    this.#saveUneven();
     s.state = 'failed';
     s.reason = reason;
     s.endedMs = this.now();
+    this.#saveMeta(s);
     this.onEvent(reason);
     this.log({ event: 'home_failed', id: s.id, quality: s.quality, reason, ms: s.endedMs - s.startedMs });
     this.#wake(s);
   }
   isUneven(data) {
     const until = this.uneven.get(data.id);
-    if (until && until < this.now()) this.uneven.delete(data.id);
+    if (until && until < this.now()) { this.uneven.delete(data.id); this.#saveUneven(); }
     return Boolean(until && until >= this.now());
   }
 
@@ -151,6 +175,7 @@ export class Home {
     s.state = 'failed';
     s.reason = reason;
     s.endedMs = this.now();
+    this.#saveMeta(s);
     this.onEvent('failed');
     this.log({ event: 'home_failed', id: s.id, quality: s.quality, reason, ms: s.endedMs - s.startedMs, message: message.slice(0, 200) });
     this.#wake(s);
@@ -278,6 +303,9 @@ export class Home {
     renameSync(`${path}.tmp`, path);
     s.lastPutMs = this.now();
     if (file === 'index.m3u8') { this.#saveMeta(s); this.#saveDay(); }
+    // A predicted playlist goes up once and the segments follow for minutes: lastPutMs reaches meta.json at least every
+    // 30 s, so a restart doesn't take a live stream for a dead one (STALE_MS).
+    else if (s.lastPutMs - (s.metaSavedMs ?? 0) > 30_000) this.#saveMeta(s);
   }
 
   // A file for a player: { body, type } or null. A segment that isn't here yet is waited for up to segmentHoldMs while

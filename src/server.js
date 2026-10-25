@@ -483,7 +483,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // A home session for this play, counted once by why it went home (a session that is already there is just used).
   function startHome(data, quality, why) {
     const s = home.start(data, quality);
-    if (s && !s.why) { s.why = why; metrics.inc('home_why', why); }
+    if (s && !s.why) { s.why = why; home.save?.(s); metrics.inc('home_why', why); }
     return s;
   }
   // A ready home session that went home only for being long and whose playlist grows (uneven keyframes, not due to

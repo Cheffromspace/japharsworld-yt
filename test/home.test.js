@@ -144,6 +144,34 @@ test('home: sessions and the day\'s use survive a restart (a deploy); an unfinis
   assert.match((await again.file(a.token, 'index.m3u8')).body.toString(), new RegExp(`https://yt/home/${a.token}/seg1\\.ts`));
 });
 
+test('home: a restart drops given-up and dead sessions, and keeps the uneven list and why (2026-10-25)', (t) => {
+  const dir = tmp(t);
+  let ms = Date.parse('2026-10-25T22:53:00Z');
+  const now = () => ms;
+  const first = new Home({ relay: fakeRelay(), dir, base: 'https://yt/home', enabled: true, now });
+  const play = (id) => { const s = first.start({ id, seconds: 5400 }, '720p'); first.put(s.token, 'seg0.ts', Buffer.from('ts0')); first.put(s.token, 'index.m3u8', Buffer.from(PL1)); return s; };
+  const given = play('aaaaaaaaaaa');
+  given.why = 'long';
+  first.save(given);
+  first.giveUp(given, 'uneven');           // the 2026-10-25 case: 13 segments, then Tunelio
+  const dead = play('bbbbbbbbbbb');        // its worker stream stopped part way
+  const live = play('ccccccccccc');
+  live.why = 'long';
+  first.save(live);
+  ms += 6 * 60_000;
+  assert.equal(first.peek({ id: 'bbbbbbbbbbb' }, '720p'), null, 'a dead stream is not reused');
+  first.put(live.token, 'seg1.ts', Buffer.from('ts1'));  // still uploading
+  ms += 60_000;
+  const logs = [];
+  const again = new Home({ relay: fakeRelay(), dir, base: 'https://yt/home', enabled: true, now, log: (o) => logs.push(o) });
+  assert.equal(again.peek({ id: 'aaaaaaaaaaa' }, '720p'), null, 'given up: not reloaded');
+  assert.equal(again.peek({ id: 'bbbbbbbbbbb' }, '720p'), null, 'dead: not reloaded');
+  assert.equal(again.peek({ id: 'ccccccccccc' }, '720p').why, 'long');
+  assert.equal(again.isUneven({ id: 'aaaaaaaaaaa' }), true);
+  assert.deepEqual(logs.find((l) => l.event === 'home_loaded'), { event: 'home_loaded', sessions: 1, dropped: 2 });
+  assert.throws(() => readFileSync(join(dir, given.token, 'meta.json')), 'its folder is gone');
+});
+
 // A fake ffmpeg: writes segments and the playlist into its output folder like the real one, then exits with `code`.
 function fakeFfmpeg({ code = 0, steps = [[PL1, ['seg0.ts']], [PL2, ['seg1.ts']]] } = {}) {
   const calls = [];

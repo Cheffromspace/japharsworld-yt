@@ -166,6 +166,11 @@ Only while a worker that announced `caps=media` is online and today's `HOME_DAIL
 up (YouTube may flag an IP that downloads a lot). Otherwise, or when the first segments don't arrive within
 `HOME_READY_SECONDS`, the play takes the Tunelio path as before.
 
+**Quality and concurrency** (owner, 2026-10-25): home builds the room's own pick, or `HOME_QUALITY` (1080p) when
+the room hasn't picked. It streams, so 1080p starts about as fast as 720p (first segments 6.2 s vs 2.9 s on the
+Optiplex, 2026-10-23). The worker runs up to `RELAY_MEDIA_MAX` (4) streams at once and answers "busy" beyond that;
+four 1080p plays need about 1.1 MB/s of the home connection's ~12 MB/s upload.
+
 **How:** the server sends the worker `{kind: "media", videoId, quality, token}`. The worker has yt-dlp resolve the
 H.264 + AAC stream URLs (they only work from the IP that resolved them), and ffmpeg reads them through a local proxy
 that fetches 10 MB pieces with the URL's `&range=` parameter, as yt-dlp does (YouTube throttles a plain read to about

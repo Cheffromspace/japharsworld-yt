@@ -114,6 +114,9 @@ export const config = {
   // verified on the Quest (2026-10-23).
   homeAndroid: (process.env.HOME_ANDROID ?? 'off') === 'on',
   homeLongMinutes: int('HOME_LONG_MINUTES', 30),
+  // The quality home builds when the room hasn't picked one (owner, 2026-10-25: 1080p; home streams, so 1080p starts
+  // about as fast as 720p: first segments 6.2 s vs 2.9 s on the Optiplex, 2026-10-23). A room's own pick wins.
+  homeQuality: process.env.HOME_QUALITY ?? '1080p',
   homeDailyBuilds: int('HOME_DAILY_BUILDS', 40),
   homeDailyMb: int('HOME_DAILY_MB', 50_000), // owner, 2026-10-23: 10 GB went in a few long videos (a 6 h mix is ~2.5 GB)
   homeKeepHours: int('HOME_KEEP_HOURS', 12),

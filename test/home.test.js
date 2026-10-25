@@ -377,6 +377,18 @@ async function homeApp(t, { config: c = {}, media = null, playlist = PL1, ...ove
 }
 const QUEST = 'AVProMobileVideo/2026.3.3p2 (Linux;Android 14) ExoPlayer';
 
+test('ticket → home: home builds 1080p when the room has not picked, and the room\'s own pick otherwise (owner, 2026-10-25)', async (t) => {
+  const app = await homeApp(t);
+  const PC = 'NSPlayer/12.00.26100 WMFSDK/12.00';
+  assert.equal((await app.play(PC, '')).status, 302);
+  const tablet = await (await fetch(`${app.url}/v1/0/${app.n}`, { headers: { 'user-agent': 'UnityPlayer/2022.3 (UnityWebRequest/1.0)' } })).json();
+  assert.equal(tablet.quality, '1080p');
+  assert.equal(tablet.room, '720p', 'the room itself still reads as its default');
+  app.store.setQuality(0, '720p');
+  await app.play(PC, '');
+  assert.deepEqual(app.jobs.map((j) => j.quality), ['1080p', '720p']);
+});
+
 test('ticket → home on Quest: a .m3u8 ticket goes home only with HOME_ANDROID=on; a plain ticket never', async (t) => {
   const off = await homeApp(t);
   assert.doesNotMatch((await off.play(QUEST)).headers.get('location'), /\/home\//, 'HOME_ANDROID off: as before');
@@ -518,6 +530,7 @@ test('ticket → home: right after a Tunelio timeout a PC play goes home (tuneli
 test('ticket → home: the room switching quality mid-play keeps the home session when the new one can\'t be built (#127)', async (t) => {
   const app = await homeApp(t, { media: async (job) => { if (job.quality === '1080p') throw new Error('busy'); } });
   const PC = 'NSPlayer/12.00.26100 WMFSDK/12.00';
+  app.store.setQuality(0, '720p');
   const first = (await app.play(PC, '')).headers.get('location');
   assert.match(first, /\/home\/[a-f0-9]{18}\/index\.m3u8$/);
   app.store.setQuality(0, '1080p');

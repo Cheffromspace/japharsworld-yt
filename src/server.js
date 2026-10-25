@@ -421,6 +421,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // Playback quality per room (owner, 2026-10-22: a resolution picker for search videos, 720p by default). The tablet
   // loads /v1/<shard>/q/720 or /q/1080 (baked URLs, like everything else) and /v1/<shard>/q to read it back.
   const roomQuality = (shard) => store.quality(shard, config.qualityHours * 3600_000) ?? config.tunelioQuality;
+  // What home builds for this room: its pick, else HOME_QUALITY (1080p).
+  const homeQuality = (shard) => store.quality(shard, config.qualityHours * 3600_000) ?? config.homeQuality;
   // Playback plans for this shard and video (off unless ADAPTIVE_HLS=on; live streams and paused Tunelio go the old way).
   const adaptiveFor = (shard, data) => config.adaptiveHls && (!config.adaptiveShards.length || config.adaptiveShards.includes(shard))
     && !data.live && tunelio.enabled && Date.now() >= (playback.pausedUntil ?? 0);
@@ -533,10 +535,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       metrics.inc('ticket_client', kind);
       // The tablet asking (a row selected, or watching a build): start the build, report it, never redirect.
       if (kind === 'string') {
-        const hq = roomQuality(shard);
+        const hq = homeQuality(shard);
         const hw = hlsTicket && !config.homeAndroid ? null : homeWhy(t.data, hq);
         const hs = hw ? homeKeep(t.data, hq, startHome(t.data, hq, hw)) : null;
-        if (hs && hs.state !== 'failed' && !leaveHome(hs)) return json(res, 200, { v: API, shard, t: n, room: hq, ...homeStatus(hs), ...meta(t.data) });
+        if (hs && hs.state !== 'failed' && !leaveHome(hs)) return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(hs), ...meta(t.data) });
         let c = await choice(shard, t.data);
         if (hlsTicket) c = hlsChoice(c);
         const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
@@ -560,7 +562,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // .m3u8 ticket (the world's Android build, which opens HLS) only with HOME_ANDROID=on (2026-10-23, to be verified
       // on the Quest). The resolver is sent on at once (it would only pick the playlist apart); the player waits for
       // the first segments.
-      const hq = roomQuality(shard);
+      const hq = homeQuality(shard);
       const homeOk = hlsTicket ? config.homeAndroid : !android;
       const why = homeOk ? homeWhy(t.data, hq) : null;
       let hs = why ? homeKeep(t.data, hq, startHome(t.data, hq, why)) : null;

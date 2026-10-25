@@ -208,6 +208,21 @@ test('mediaJob: answers at the first playlist, uploads the rest, closes with END
   assert.equal(args[args.indexOf('-bsf:v') + 1], 'h264_mp4toannexb,dump_extra=freq=keyframe', 'SPS/PPS in every segment');
 });
 
+test('mediaJob: the first playlist goes up right after seg0, not after every segment ffmpeg has made (2026-10-25)', async () => {
+  const pl = (n) => `#EXTM3U
+${Array.from({ length: n }, (_, i) => `#EXTINF:4,
+seg${i}.ts
+`).join('')}`;
+  const ff = fakeFfmpeg({ steps: [[pl(3), ['seg0.ts', 'seg1.ts', 'seg2.ts']], [`${pl(4)}#EXT-X-ENDLIST
+`, ['seg3.ts']]] });
+  const uploads = [];
+  const first = await mediaJob({ videoId: 'aaaaaaaaaaa', quality: '720p', token: 'x', vod: false }, { ytdlp: 'yt-dlp', runner, spawnFn: ff.spawnFn, pollMs: 10,
+    upload: async (file) => { uploads.push(file); return 204; } });
+  assert.deepEqual(uploads, ['seg0.ts', 'index.m3u8'], 'ready with seg0 and the playlist');
+  await first.done;
+  assert.deepEqual(uploads.filter((f) => f !== 'index.m3u8'), ['seg0.ts', 'seg1.ts', 'seg2.ts', 'seg3.ts'], 'the rest follow in order');
+});
+
 test('mediaJob: ffmpeg dying part way closes the playlist where it got to; a 410 stops it', async () => {
   const uploads = [];
   const ff = fakeFfmpeg({ code: 1, steps: [[PL1, ['seg0.ts']]] });

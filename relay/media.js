@@ -183,6 +183,10 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
     const segs = text.split(/\r?\n/).filter((l) => SEGMENT.test(l));
     for (const s of segs) {
       if (sent.has(s)) continue;
+      // Before the first playlist, seg0 only: a player needs nothing more to start, and the server holds a listed
+      // segment that isn't here yet. Uploading all ffmpeg had made first held ready back by up to ~8 s (10–98
+      // segments before the first playlist, Optiplex, 2026-10-24/25).
+      if (!isReady && sent.size >= 1) break;
       const body = await readFile(join(dir, s));
       const status = await upload(s, body, 'video/mp2t');
       if (status === 410) { gone = true; return; }

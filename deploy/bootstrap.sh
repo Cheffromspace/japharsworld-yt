@@ -103,9 +103,13 @@ echo "This box: ${public_ip:-unknown}   $DOMAIN resolves to: ${dns_ip:-nothing y
 
 on443=$(ss -ltnpH '( sport = :443 or sport = :80 )' | sed -n 's/.*users:(("\([^"]*\)".*/\1/p' | sort -u | tr '\n' ' ')
 echo "Already on ports 80/443: ${on443:-nothing}"
+# lb_try_*: a deploy restarts the service (~1.3 s down, 2026-10-24); new requests wait for it instead of getting 502.
 site_block="$DOMAIN {
 	encode gzip
-	reverse_proxy 127.0.0.1:$PORT
+	reverse_proxy 127.0.0.1:$PORT {
+		lb_try_duration 5s
+		lb_try_interval 250ms
+	}
 }"
 if [ -z "$on443" ] || [[ "$on443" == *caddy* ]]; then
   if ! command -v caddy >/dev/null; then

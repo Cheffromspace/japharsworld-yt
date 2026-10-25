@@ -247,3 +247,12 @@ test('worker keeps continuations and answers expired for unknown ones', async ()
   assert.equal(more.page.videos[0].id, 'W20xxxxxxxx');
   assert.deepEqual(await w.handle({ id: '3', kind: 'more', cont: r.page.cont }), { id: '3', ok: false, error: 'expired' });
 });
+
+test('shutdown: drain answers held polls with nothing at once, and later polls too', async () => {
+  const relay = new Relay({ token: 't', pollMs: 60_000 });
+  const held = relay.next('w', 'v');
+  relay.drain();
+  assert.equal(await held, null);
+  assert.equal(relay.waiting.length, 0);
+  assert.equal(await relay.next('w', 'v'), null);
+});

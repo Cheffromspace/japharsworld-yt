@@ -56,14 +56,22 @@ export class Relay {
     return w;
   }
 
+  // Shutting down: held polls answer "nothing" now, so a deploy restart reaches the worker as an empty poll instead of a
+  // cut connection (Caddy 502; 341 in the week to 2026-10-25, about 4.6 per restart).
+  drain() {
+    this.draining = true;
+    for (const w of [...this.waiting]) w.give(null);
+  }
+
   // A worker's long poll. Resolves with a job, or null after pollMs (or when `signal` aborts).
   next(name, version, signal, caps = null) {
     const w = this.#seen(name, version, caps);
+    if (this.draining) return Promise.resolve(null);
     const i = this.queue.findIndex((q) => q.worker == null || q.worker === name);
     if (i >= 0) return Promise.resolve(this.#hand(this.queue.splice(i, 1)[0].job, name));
     return new Promise((resolve) => {
       w.polling++;
-      const waiter = { worker: name, give: (job) => { finish(); resolve(this.#hand(job, name)); } };
+      const waiter = { worker: name, give: (job) => { finish(); resolve(job && this.#hand(job, name)); } };
       const timer = setTimeout(() => { finish(); resolve(null); }, this.pollMs);
       const finish = () => {
         clearTimeout(timer);

@@ -843,9 +843,16 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const app = createApp();
-  // Write the last minute's counts before systemd stops us (deploys restart the service).
-  for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { app.metrics.close(); process.exit(0); });
-  http.createServer(app).listen(defaults.port, defaults.host, () => {
+  // Write the last minute's counts before systemd stops us (deploys restart the service), and answer the relay
+  // workers' held polls first; the short wait lets those 204s reach Caddy before the process exits.
+  let server;
+  for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {
+    app.relay?.drain();
+    server.close();
+    app.metrics.close();
+    setTimeout(() => process.exit(0), 200);
+  });
+  server = http.createServer(app).listen(defaults.port, defaults.host, () => {
     console.log(`japharsworld-yt listening on ${defaults.host}:${defaults.port} (${defaults.shards} shards × ${defaults.pool} tickets)`);
   });
 }

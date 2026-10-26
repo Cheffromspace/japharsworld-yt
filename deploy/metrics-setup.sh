@@ -32,11 +32,14 @@ EOT
 fi
 chown root:root "$ENVF"; chmod 600 "$ENVF"
 
-for unit in japharsworld-yt-metrics.service japharsworld-yt-metrics.timer japharsworld-yt-occupants.service japharsworld-yt-occupants.timer japharsworld-yt-exporter.service; do
+for unit in japharsworld-yt-metrics.service japharsworld-yt-metrics.timer japharsworld-yt-occupants.service japharsworld-yt-occupants.timer japharsworld-yt-exporter.service japharsworld-yt-security.service japharsworld-yt-security.timer; do
   install -m 644 "$APP/deploy/$unit" /etc/systemd/system/
 done
 systemctl daemon-reload
 systemctl enable -q --now japharsworld-yt-metrics.timer japharsworld-yt-occupants.timer
+# Security counters (metrics/security.js) into Alloy's textfile folder; the folder deploy-record.sh uses.
+install -d -m 755 /var/lib/japharsworld-yt-deploy
+systemctl enable -q --now japharsworld-yt-security.timer
 # The Prometheus exporter for Grafana Cloud (claude/monitoring.md); loopback only.
 systemctl enable -q japharsworld-yt-exporter.service
 systemctl restart japharsworld-yt-exporter.service

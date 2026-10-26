@@ -31,7 +31,7 @@ git fetch -q origin main
 current=$(git rev-parse HEAD); target=$(git rev-parse origin/main)
 if [ "$current" = "$target" ]; then
   [ -x /opt/japharsworld-yt-monitor-venv/bin/python ] || bash deploy/monitor-setup.sh
-  [ -f /etc/systemd/system/japharsworld-yt-exporter.service ] && [ -f /etc/systemd/system/japharsworld-yt-occupants.timer ] || bash deploy/metrics-setup.sh
+  [ -f /etc/systemd/system/japharsworld-yt-exporter.service ] && [ -f /etc/systemd/system/japharsworld-yt-occupants.timer ] && [ -f /etc/systemd/system/japharsworld-yt-security.timer ] || bash deploy/metrics-setup.sh
   exit 0
 fi
 
@@ -59,7 +59,7 @@ if [ -n "$monitor_setup_changed" ] || [ ! -x /opt/japharsworld-yt-monitor-venv/b
   bash deploy/monitor-setup.sh || echo "monitor setup failed"
 fi
 # The metrics poller (metrics/) runs from this checkout on its own timer, so its code needs no restart here.
-if [ -n "$metrics_setup_changed" ] || [ ! -f /etc/systemd/system/japharsworld-yt-exporter.service ] || [ ! -f /etc/systemd/system/japharsworld-yt-occupants.timer ]; then
+if [ -n "$metrics_setup_changed" ] || [ ! -f /etc/systemd/system/japharsworld-yt-exporter.service ] || [ ! -f /etc/systemd/system/japharsworld-yt-occupants.timer ] || [ ! -f /etc/systemd/system/japharsworld-yt-security.timer ]; then
   bash deploy/metrics-setup.sh || echo "metrics setup failed"
 elif [ -n "$exporter_changed" ]; then
   systemctl try-restart japharsworld-yt-exporter.service

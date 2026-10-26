@@ -9,8 +9,10 @@ test('infra check: the sudoers files allow no restarts and only the listed read-
   for (const f of ['sudoers-linode', 'sudoers-optiplex']) {
     const rules = kit(f).split('\n').filter((l) => !l.startsWith('#')).join('\n');
     assert.doesNotMatch(rules, /systemctl|restart|reboot|apt|ALL\s*$/m, f);
-    assert.match(rules, /NOPASSWD: YT_SAFE, YT_READ$/m, f);
   }
+  // The Linode's rule is read only (owner, 2026-10-26); the repo copy is the installed file, byte for byte.
+  assert.match(kit('sudoers-linode'), /^ytcheck ALL=\(root\) NOPASSWD: YT_READ$/m);
+  assert.match(kit('sudoers-optiplex'), /^jonflatt ALL=\(root\) NOPASSWD: YT_SAFE, YT_READ$/m);
   assert.match(kit('sudoers-linode'), /fail2ban-client status sshd/);
   assert.match(kit('sudoers-optiplex'), /\/usr\/bin\/ss -tlnp/);
 });

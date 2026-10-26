@@ -1,0 +1,16 @@
+[Unit]
+Description=Security counters for Grafana: SSH logins, fail2ban, authorized_keys/sshd/ufw change hashes (metrics/security.js)
+
+[Service]
+Type=oneshot
+# Root, to read every authorized_keys file, sshd -T, ufw and fail2ban. Only counts, flags and short hashes are written.
+# SSH_KNOWN_SOURCES (the expected login addresses) is local only: the repo is public.
+EnvironmentFile=-/etc/japharsworld-yt-security.env
+ExecStart=/usr/bin/node /opt/japharsworld-yt/metrics/security.js
+TimeoutStartSec=50s
+Nice=10
+MemoryMax=100M
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/japharsworld-yt-deploy
+PrivateTmp=true

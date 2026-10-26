@@ -119,8 +119,9 @@ here, not in a session's memory. The prompt tells it to read this section from t
 (`/opt/japharsworld-yt-relay/claude/monitoring.md`, updated every 5 minutes).
 
 **What it may do.** Read only: status, logs, metrics, `/healthz`, one test search, Grafana's API, and its own past
-reports. The only change it may make is the maintenance its sudoers rule allows, and only when a host's `/` is
-**85 % used or more**: `journalctl --vacuum-size=500M`, then `logrotate -f /etc/logrotate.conf` if that wasn't
+reports. The only change it may make is the maintenance its sudoers rule allows, on the **Optiplex only** (the
+Linode's rule is read only, owner 2026-10-26: a full Linode disk is a finding), and only when `/` is **85 % used or
+more**: `journalctl --vacuum-size=500M`, then `logrotate -f /etc/logrotate.conf` if that wasn't
 enough. It logs each with the command, the disk use before and after, and what was lost (journal history before a
 date).
 
@@ -149,7 +150,8 @@ IPs, key fingerprints, ports, ufw rules) in the local `reports/<date>.security.m
 `security-baseline.md`; GitHub gets only "Security: green/yellow/red, details in the local report", and a red item
 an issue without details. A red item makes the Discord summary start with "SECURITY:".
 
-**Its sudoers rules** (`infra-check/sudoers-*`) allow only the two maintenance commands and the read-only security
-commands (`sshd -T`, `ufw status verbose`; `fail2ban-client status sshd` on the Linode, `ss -tlnp` on the Optiplex).
+**Its sudoers rules** (`infra-check/sudoers-*`, copies of what is installed) allow only read-only security commands
+(`sshd -T`, `ufw status verbose`; `fail2ban-client status sshd` on the Linode, `ss -tlnp` on the Optiplex), plus the
+two maintenance commands on the Optiplex.
 The copies installed on 2026-10-24 also allowed service restarts (on the Linode including the owner's mediamtx). The
 rule above forbids those either way; the owner reinstalls the narrowed files.

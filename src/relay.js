@@ -69,6 +69,9 @@ export class Relay {
     return out;
   }
 
+  // For /ops/state: { worker: streams at once } for online workers that announced it (RELAY_MEDIA_MAX).
+  mediaMax() { return Object.fromEntries(this.online().filter((n) => this.workers.get(n).mediaMax != null).map((n) => [n, this.workers.get(n).mediaMax])); }
+
   #setPaused(name, w, list) {
     const next = parsePaused(list, this.now());
     const kinds = (p) => Object.keys(p ?? {}).filter((k) => p[k] > this.now()).sort().join(',');
@@ -76,7 +79,7 @@ export class Relay {
     w.paused = next;
   }
 
-  #seen(name, version, caps, paused) {
+  #seen(name, version, caps, paused, mediaMax = null) {
     const t = this.now();
     let w = this.workers.get(name);
     if (!w || !this.isOnline(name)) this.log({ event: 'relay_worker_online', worker: name, version });
@@ -84,6 +87,7 @@ export class Relay {
     w.seen = t;
     if (version) w.version = version;
     if (caps) w.caps = caps;
+    if (mediaMax != null) w.mediaMax = mediaMax;
     if (paused !== undefined) this.#setPaused(name, w, paused);
     this.lastSeenAny = t;
     return w;
@@ -98,8 +102,8 @@ export class Relay {
 
   // A worker's long poll. Resolves with a job, or null after pollMs (or when `signal` aborts).
   // `paused`: the worker's back-off list from the poll (none = nothing paused).
-  next(name, version, signal, caps = null, paused = '') {
-    const w = this.#seen(name, version, caps, paused);
+  next(name, version, signal, caps = null, paused = '', mediaMax = null) {
+    const w = this.#seen(name, version, caps, paused, mediaMax);
     if (this.draining) return Promise.resolve(null);
     const i = this.queue.findIndex((q) => q.worker == null || q.worker === name);
     if (i >= 0) return Promise.resolve(this.#hand(this.queue.splice(i, 1)[0].job, name));

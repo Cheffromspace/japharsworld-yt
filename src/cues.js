@@ -140,8 +140,18 @@ export function tracksFromInfo(info) {
   const manual = (info.manual ?? Object.keys(info.subtitles ?? {})).filter((k) => k !== 'live_chat');
   const auto = info.auto ?? Object.keys(info.automatic_captions ?? {});
   const list = manual.map((k) => ({ code: codeOfKey(k), key: k, auto: false }));
-  const orig = auto.find((k) => k.endsWith('-orig'));
+  // A video with dubbed audio has an -orig auto track per audio language (2026-10-26: a 33-minute en-US video listed 20,
+  // bn-orig first): the one in the video's language is the original. The first one was taken before, and Bengali is
+  // not a script the world draws, so the list came out empty every time.
+  const lang = String(info.language ?? '').toLowerCase(), base = lang.split('-')[0];
+  const origs = auto.filter((k) => k.endsWith('-orig'));
+  const orig = origs.find((k) => codeOfKey(k).toLowerCase() === lang) ?? origs.find((k) => codeOfKey(k).toLowerCase().split('-')[0] === base) ?? origs[0];
   if (orig) list.push({ code: codeOfKey(orig), key: orig, auto: true });
-  else if (info.language && auto.includes(info.language)) list.push({ code: info.language, key: info.language, auto: true });
+  else if (info.language) {
+    // The spoken language as YouTube's auto keys spell it: a region-tagged language ("en-US") may have its auto track
+    // under the bare code ("en").
+    const key = auto.includes(info.language) ? info.language : auto.find((k) => k === base) ?? auto.find((k) => k.split('-')[0] === base);
+    if (key) list.push({ code: key, key, auto: true });
+  }
   return list;
 }

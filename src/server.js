@@ -404,7 +404,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           .map((j) => ({ at: new Date(j.endedMs).toISOString(), state: j.state, reason: j.reason, format: j.format, quality: j.quality, mb: j.mb, seconds: j.seconds, buildS: Math.round((j.endedMs - j.startedMs) / 100) / 10 })),
         learned: { rate: playback.rate, fixed: playback.fixed } },
       // paused: { worker: { kind: seconds left } }, the workers' back-off after a YouTube refusal (relay/worker.js).
-      relay: { enabled: relay.enabled, workers: relay.online(), idleS: Math.round(relay.idleMs() / 1000), paused: relay.paused() },
+      relay: { enabled: relay.enabled, workers: relay.online(), idleS: Math.round(relay.idleMs() / 1000), paused: relay.paused(), mediaMax: relay.mediaMax() },
       home: home.state(),
       search: { lastVia: searcher.state.lastVia, apiUnitsToday: api.unitsToday },
       plans: {
@@ -771,7 +771,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (/^\d{1,20}$/.test(url.searchParams.get('tx') ?? '')) metrics.inc('transfer', 'home', txDelta.mb(`w:${name}`, tx));
       const gone = new AbortController();
       res.on('close', () => gone.abort());
-      const job = await relay.next(name, version, gone.signal, caps, (url.searchParams.get('paused') ?? '').slice(0, 200));
+      const mediaMax = /^\d{1,2}$/.test(url.searchParams.get('mediaMax') ?? '') ? Number(url.searchParams.get('mediaMax')) : null;
+      const job = await relay.next(name, version, gone.signal, caps, (url.searchParams.get('paused') ?? '').slice(0, 200), mediaMax);
       if (!job) { res.writeHead(204, { 'cache-control': 'no-store' }); return res.end(); }
       return json(res, 200, { job });
     }

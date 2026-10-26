@@ -356,6 +356,7 @@ test('ticket → home: a PC player gets the home playlist when Tunelio is off; t
   worker.start();
   t.after(() => worker.stop());
   while (!relay.capable('media').length) await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(relay.mediaMax(), { home: 4 }, 'the worker announces how many streams it takes (RELAY_MEDIA_MAX)');
 
   const [n] = store.allocate(0, [{ kind: 'video', data: { id: 'aaaaaaaaaaa', title: 'T', seconds: 600, live: false } }]);
   const play = (ua) => fetch(`${url}/v1/0/${n}`, { redirect: 'manual', headers: { 'user-agent': ua } });

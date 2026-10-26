@@ -182,7 +182,7 @@ export class CaptionChain {
           this.keep(videoId, got, want);
           this.metrics?.inc('cc_via', via);
           this.log({ event: 'captions_via', id: videoId, via, ms: Date.now() - t0, tracks: got.tracks?.length ?? null, cues: got.cues?.length ?? null, reason: got.reason,
-            ...(got.retried ? { retried: true } : {}), ...(got.warnings ? { warnings: got.warnings } : {}) });
+            ...(got.retried ? { retried: true } : {}), ...(got.warnings != null ? { warnings: got.warnings } : {}) });
           return got;
         } catch (err) {
           this.log({ event: 'captions_source_failed', id: videoId, via, ms: Date.now() - t0, message: short(err) });

@@ -138,7 +138,7 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
       if (job.kind === 'captions') {
         const captions = await runCaptions(job);
         log({ event: 'job', kind: job.kind, ms: now() - started, cues: captions.cues?.length ?? 0, reason: captions.reason,
-          ...(captions.retried ? { retried: true } : {}), ...(captions.warnings?.length ? { warnings: captions.warnings.length } : {}) });
+          ...(captions.retried ? { retried: true } : {}), warnings: captions.warnings?.length ?? 0 });
         // The track failed after its list worked: the usual sign of timedtext being rate-limited.
         return { id: job.id, ok: true, captions, ...(captions.reason === 'temporarily_unavailable' ? { refusal: 'rate' } : {}) };
       }
@@ -161,7 +161,8 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
 
   async function loop(n) {
     let backoff = 1000;
-    const q = new URLSearchParams({ worker: name, version, ...(caps.length ? { caps: caps.join(',') } : {}) });
+    // mediaMax: how many streams this worker takes at once, for /ops/state (RELAY_MEDIA_MAX is in a root-only env file).
+    const q = new URLSearchParams({ worker: name, version, ...(caps.length ? { caps: caps.join(',') } : {}), ...(caps.includes('media') ? { mediaMax: String(mediaMax) } : {}) });
     while (!stopping.signal.aborted) {
       const p = paused();
       if (p.length) q.set('paused', p.join(',')); else q.delete('paused');
@@ -191,7 +192,7 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
 
   return {
     handle, conts, paused, get streaming() { return streaming; },
-    start() { log({ event: 'start', worker: name, version, relay: base, polls, cacheGb: cache?.maxGb ?? 0, cacheDir: cache?.dir }); return Promise.all(Array.from({ length: polls }, (_, i) => loop(i))); },
+    start() { log({ event: 'start', worker: name, version, relay: base, polls, mediaMax, cacheGb: cache?.maxGb ?? 0, cacheDir: cache?.dir }); return Promise.all(Array.from({ length: polls }, (_, i) => loop(i))); },
     stop() { stopping.abort(); },
   };
 }

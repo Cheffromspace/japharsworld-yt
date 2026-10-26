@@ -155,6 +155,14 @@ test('track keys: variant ids and -orig fold to the language code; the key to do
   // A video whose auto track is the spoken language without -orig, and one with none at all.
   assert.deepEqual(tracksFromInfo({ language: 'ja', manual: ['en'], auto: ['ja', 'en'] }), [{ code: 'en', key: 'en', auto: false }, { code: 'ja', key: 'ja', auto: true }]);
   assert.deepEqual(tracksFromInfo({ language: null, manual: [], auto: [] }), []);
+  // Dubbed audio: an -orig track per audio language; the video's own language is the original (2026-10-26: bn-orig came
+  // first and Bengali isn't drawn, so the list was empty).
+  assert.deepEqual(tracksFromInfo({ language: 'en-US', manual: [], auto: ['ab', 'bn-orig', 'bn', 'nl-orig', 'en', 'en-orig', 'fr-orig'] }), [{ code: 'en', key: 'en-orig', auto: true }]);
+  assert.deepEqual(tracksFromInfo({ language: null, manual: [], auto: ['nl-orig', 'en-orig'] }), [{ code: 'nl', key: 'nl-orig', auto: true }], 'no language: the first, as before');
+  // A region-tagged language whose auto track has the bare code (2026-10-25: an en-US video, every track was dropped).
+  assert.deepEqual(tracksFromInfo({ language: 'en-US', manual: [], auto: ['ab', 'aa', 'en', 'fr'] }), [{ code: 'en', key: 'en', auto: true }]);
+  assert.deepEqual(tracksFromInfo({ language: 'pt-BR', manual: [], auto: ['en', 'pt-PT'] }), [{ code: 'pt-PT', key: 'pt-PT', auto: true }]);
+  assert.equal(keyFor({ automatic_captions: { ab: [], en: [] } }, { code: 'en', auto: true }), 'en');
 });
 
 test('Thai captions: no unit starts with a mark or a following vowel, leading vowels take their consonant, spaces kept (#129)', () => {

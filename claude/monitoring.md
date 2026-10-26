@@ -146,7 +146,9 @@ wants done becomes an issue for the coordinator (the Everything is OK coordinati
    edit, a decision, anything it may not do itself), it also files one `owner-task` issue in the private
    `Cheffromspace/Everything-is-OK`, which lands on the owner's "Your tasks" board (user project 4). First search the
    open ones (`gh issue list -R Cheffromspace/Everything-is-OK --label owner-task --state open`) and comment on a
-   duplicate instead. The issue follows that repo's `.github/ISSUE_TEMPLATE/owner-task.md`: one small job per issue,
+   duplicate instead. Every comment it posts on an `owner-task` issue ends with the line `<!-- coordinator -->`:
+   agents and the owner post from the same GitHub account, and the coordinator's board watcher counts an unmarked
+   comment as the owner's (coordinator, 2026-10-26). The issue follows that repo's `.github/ISSUE_TEMPLATE/owner-task.md`: one small job per issue,
    a title starting with a verb, **Why / Time / Where / Do first** up front, numbered checkboxes with at most one
    copyable block each, **Done when**, and "close this issue when done". It links the public finding in this repo,
    which stays as it is. Create it with `gh issue create -R Cheffromspace/Everything-is-OK --label owner-task

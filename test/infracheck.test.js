@@ -34,8 +34,12 @@ test('infra check: both prompts file owner tasks in the private world repo, secu
     assert.match(p, /search the open `owner-task` issues there first/, f);
     assert.match(p, /\.github\/ISSUE_TEMPLATE\/owner-task\.md/, f);
     assert.match(p, /"Security finding on <host>, see the local report of <date>"/, f);
+    // The owner shares the GitHub account; the board watcher skips only marked comments (coordinator, 2026-10-26).
+    assert.match(p, /every comment you post on an `owner-task` issue ends with the line `<!-- coordinator -->`/, f);
   }
-  assert.match(readFileSync(new URL('../claude/monitoring.md', import.meta.url), 'utf8'), /\*\*Owner task\*\* \(owner, 2026-10-26, world #216\)/);
+  const rules = readFileSync(new URL('../claude/monitoring.md', import.meta.url), 'utf8');
+  assert.match(rules, /\*\*Owner task\*\* \(owner, 2026-10-26, world #216\)/);
+  assert.match(rules, /Every comment it posts on an `owner-task` issue ends with the line `<!-- coordinator -->`/);
 });
 
 test('infra check: the README has no step that writes a placeholder key (2026-10-25)', () => {

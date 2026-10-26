@@ -176,7 +176,8 @@ nowhere on GitHub,** and its note carries no addresses, keys, ports or account n
 
 The critical rules (`tools/grafana.mjs`, 2026-10-26): `eiok-search-down`, `eiok-public-down`, `eiok-short-down`
 (owner: "search service much more critical"), `eiok-ssh-unknown-login`, `eiok-security-change`,
-`eiok-sshd-not-hardened`, `eiok-linode-disk-80` and `eiok-domain-expiry-urgent`. With `GRAFANA_DISCORD_MENTION` in
+`eiok-sshd-not-hardened`, `eiok-linode-disk-80`, `eiok-domain-expiry-urgent` and `eiok-channels-mass-down` (8 or
+more shown Channels slots down or hidden; the monitor's own `MASS_DOWN` ping counts the same). With `GRAFANA_DISCORD_MENTION` in
 the repo's local `.env` the contact point pings the owner on these (firing only), and `DISCORD_MENTION_ID` in
 `~/yt-infra-check/.env` makes every "SEVERE:" triage post ping them; both IDs stay out of the repo. A rule raised to critical is triaged
 from its next firing. Test the path with `node /opt/japharsworld-yt-relay/infra-check/triage.mjs --synthetic

@@ -1,5 +1,5 @@
 """Discord webhook alerts. Without DISCORD_WEBHOOK they only go to the journal."""
-import json, time
+import json, re, time
 
 from . import config, db
 from .youtube import http
@@ -7,8 +7,15 @@ from .youtube import http
 COLORS = {"info": 0x7aa2f7, "good": 0x9ece6a, "warn": 0xe0af68, "urgent": 0xf7768e}
 
 
-def send(con, title, body="", level="info", dedupe=None, every_hours=6):
-    """dedupe: key that sends at most once per every_hours (service errors, quota)."""
+def mention_id():
+    """The user ID in DISCORD_MENTION ("<@123>" or "123"), or None."""
+    m = re.fullmatch(r"<@!?(\d{5,25})>|(\d{5,25})", config.DISCORD_MENTION)
+    return (m.group(1) or m.group(2)) if m else None
+
+
+def send(con, title, body="", level="info", dedupe=None, every_hours=6, mention=False):
+    """dedupe: key that sends at most once per every_hours (service errors, quota). mention: ping DISCORD_MENTION's user
+    (only the mass outage, core.outage_watch); nothing else can ping anyone, whatever a stream title says."""
     if dedupe:
         last = db.get_meta(con, "alert:" + dedupe, 0)
         if time.time() - last < every_hours * 3600:
@@ -20,9 +27,11 @@ def send(con, title, body="", level="info", dedupe=None, every_hours=6):
         return
     payload = {"username": "Everything is OK monitor",
                "embeds": [{"title": title[:256], "description": body[:4000], "color": COLORS.get(level, COLORS["info"])}],
-               "allowed_mentions": {"parse": ["users"]}}
-    if level == "urgent" and config.DISCORD_MENTION:
-        payload["content"] = config.DISCORD_MENTION
+               "allowed_mentions": {"parse": []}}
+    uid = mention_id() if mention else None
+    if uid:
+        payload["content"] = "<@%s>" % uid
+        payload["allowed_mentions"] = {"parse": [], "users": [uid]}
     try:
         http(config.DISCORD_WEBHOOK, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"}, method="POST")
     except Exception as e:

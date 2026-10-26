@@ -52,6 +52,7 @@ export function isSecurity(a) {
 
 export function kindOf(a) {
   if (isSecurity(a)) return 'security';
+  if (/channels/i.test(a.labels?.alertname ?? '')) return 'channels';
   return /down|silent|unreachable|not active|no worker/i.test(a.labels?.alertname ?? '') ? 'down' : 'other';
 }
 

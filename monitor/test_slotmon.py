@@ -56,8 +56,13 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.con = db.connect(os.path.join(self.tmp, "t.db"))
         self.api = FakeApi(self.con)
-        self.alerts = []
-        self.p = [mock.patch("slotmon.discord.send", lambda con, title, body="", level="info", **k: self.alerts.append((level, title))),
+        self.alerts, self.mentions = [], []
+
+        def send(con, title, body="", level="info", **k):
+            self.alerts.append((level, title))
+            if k.get("mention"):
+                self.mentions.append(title)
+        self.p = [mock.patch("slotmon.discord.send", send),
                   mock.patch.object(core, "Api", lambda con: self.api),
                   mock.patch.object(core, "channel_live_ids", lambda cid: self.live_ids.get(cid, [])),
                   mock.patch.object(core.time, "sleep", lambda s: None)]
@@ -88,6 +93,40 @@ class Base(unittest.TestCase):
 
 
 class Tests(Base):
+    def test_only_a_mass_outage_pings_the_owner(self):
+        # Owner, 2026-10-26: one outage or flash fail stays unmentioned; MASS_DOWN shown slots out at once pings.
+        with mock.patch.object(config, "MASS_DOWN", 2):
+            self.api.world["CAMCAMCAM01"] = st("CAMCAMCAM01", "ended")
+            self.check()
+            core.outage_watch(self.con, OVERRIDES)
+            self.assertTrue(self.slot("cam")["auto_hidden"])
+            self.assertEqual(self.mentions, [], "one slot down: no ping")
+            self.con.execute("UPDATE slots SET auto_hidden=1, auto_reason='flash fail' WHERE key='radio'")
+            self.con.execute("UPDATE slots SET auto_hidden=1, auto_reason='down' WHERE key='spare'")  # baked hidden: not counted
+            core.outage_watch(self.con, OVERRIDES)
+            self.assertEqual(self.mentions, ["2 channels down or hidden at once"])
+            db.set_meta(self.con, "alert:mass-down", time.time())  # as discord.send records it
+            self.con.execute("UPDATE slots SET auto_hidden=0, auto_reason=NULL WHERE key='radio'")
+            core.outage_watch(self.con, OVERRIDES)
+            self.assertEqual(self.alerts[-1], ("good", "Channels back"))
+            self.assertEqual(len(self.mentions), 1, "the all-clear does not ping")
+
+    def test_mention_payload_pings_that_user_only(self):
+        from slotmon import discord
+        sent = []
+        real_send = self.p[0].temp_original  # Base mocks discord.send; this is the real one
+        with mock.patch.object(config, "DISCORD_WEBHOOK", "https://hook"), mock.patch.object(config, "DISCORD_MENTION", "<@123456789012>"), \
+                mock.patch.object(discord, "http", lambda url, data=None, **k: sent.append(json.loads(data))):
+            real_send(self.con, "FLASH FAIL: x @everyone", "b", "urgent")
+            real_send(self.con, "8 channels down or hidden at once", "b", "urgent", mention=True)
+        self.assertNotIn("content", sent[0], "an urgent alert alone pings nobody")
+        self.assertEqual(sent[0]["allowed_mentions"], {"parse": []})
+        self.assertEqual(sent[1]["content"], "<@123456789012>")
+        self.assertEqual(sent[1]["allowed_mentions"], {"parse": [], "users": ["123456789012"]})
+        with mock.patch.object(config, "DISCORD_MENTION", "123456789012"):
+            self.assertEqual(discord.mention_id(), "123456789012")
+        with mock.patch.object(config, "DISCORD_MENTION", "@here"):
+            self.assertIsNone(discord.mention_id())
     def test_api_warnings_get_an_all_clear_once_the_api_answers(self):
         core.statuses(self.con, self.api, ["CAMCAMCAM01"])
         self.assertEqual(self.alerts, [])  # nothing was wrong: no all-clear

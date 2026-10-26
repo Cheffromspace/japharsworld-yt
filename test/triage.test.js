@@ -43,6 +43,7 @@ test('triage: the security rules are told apart (they go nowhere on GitHub)', ()
   assert.ok(isSecurity(alert('x', 'Something new', { summary: 'SECURITY: something' })));
   assert.equal(kindOf(alert('x', 'Search service down')), 'down');
   assert.equal(kindOf(alert('x', 'Linode disk 80 % full')), 'other');
+  assert.equal(kindOf(alert('x', 'Many Channels slots down or hidden')), 'channels', 'not the service "down" checks');
   assert.equal(kindOf(alert('x', 'Domain expires within 7 days')), 'other');
   assert.equal(kindOf(syntheticAlert('security', 0)), 'security');
   assert.equal(kindOf(syntheticAlert('down', 0)), 'down');

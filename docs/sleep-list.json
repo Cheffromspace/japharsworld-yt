@@ -1,9 +1,6 @@
 {
  "notice": "",
  "slots": {
-  "borneo-jungle-night": {
-   "hidden": true
-  },
   "fan-noise-black": {
    "hidden": true
   },
@@ -19,22 +16,7 @@
   "jack-retro": {
    "hidden": true
   },
-  "jack-stardew": {
-   "hidden": true
-  },
-  "milky-way": {
-   "hidden": true
-  },
-  "nasa-iss-hd": {
-   "hidden": true
-  },
-  "ocean-thunderstorm": {
-   "hidden": true
-  },
   "osaka-loop-line": {
-   "hidden": true
-  },
-  "rain-thunder-dark": {
    "hidden": true
   },
   "retroworld-ps1": {

@@ -65,7 +65,10 @@ export class Adaptive {
     start = null, startSeconds = 10, startMid = false, startStepSeconds = 30, androidNoAv1 = false, stateFile = null }) {
     Object.assign(this, { playback, pacer, fetch: fetcher, log, onEvent, lower, upper, holdMs, maxUpperMb, directSeconds, now, base, switching, start, startSeconds, startMid, androidNoAv1 });
     this.startStepSeconds = startStepSeconds;
-    this.byJob = new WeakMap(); // build job → its session
+    this.byJob = new WeakMap(); // build job → its adaptive session
+    // A plain-playlist session apart: on a shared 720p HLS build, a Quest's single session reused a PC's adaptive one
+    // and got its master (and the PC got a plain playlist the other way round), #209.
+    this.singleByJob = new WeakMap();
     this.plans = new Map();    // video id → { mode, upgrade, until, promise }
     this.sessions = new Map(); // token → { token, data, lowerJob, served, fellBack }
     this.byVideo = new Map();  // video id → token
@@ -88,7 +91,7 @@ export class Adaptive {
       if (!job || !/^[a-f0-9]{18}$/.test(x.token) || !Array.isArray(x.rungs) || !Array.isArray(x.ladder)) continue;
       const s = { token: x.token, data, lowerJob: job, rungs: x.rungs, ladder: x.ladder, single: !!x.single, started: !!x.started,
         served: new Set(x.served ?? []), viewers: new Map(), best: x.ladder.includes(x.best) ? x.best : undefined };
-      this.byJob.set(job, s);
+      (s.single ? this.singleByJob : this.byJob).set(job, s);
       this.sessions.set(s.token, s);
     }
   }
@@ -193,13 +196,14 @@ export class Adaptive {
   // ones on a plain HLS build. rungs: the variants the master lists; ladder: every build the session makes, lowest first
   // (a `start` session's 720p is built but not listed, see the top).
   session(data, job = this.playback.peek(data, this.lower, { hls: true }), { single = false } = {}) {
-    let s = this.byJob.get(job);
+    const byJob = single ? this.singleByJob : this.byJob;
+    let s = byJob.get(job);
     if (!s) {
       const startRung = this.start && job.requested === this.start;
       const ladder = startRung ? [this.start, this.lower, this.upper] : [this.lower, this.upper];
       const rungs = startRung && !this.startMid ? [this.start, this.upper] : ladder;
       s = { token: randomBytes(9).toString('hex'), data, lowerJob: job, rungs, ladder, single, started: false, served: new Set(), viewers: new Map() };
-      this.byJob.set(job, s);
+      byJob.set(job, s);
       this.sessions.set(s.token, s);
       if (this.sessions.size > 2000) this.sessions.delete(this.sessions.keys().next().value);
       this.#save();
@@ -226,7 +230,10 @@ export class Adaptive {
   // after an error). Counted as reload_after_upgrade when that player had been served a higher rung, else
   // reload_before_upgrade: the freeze after a switch (2026-10-22) shows no error, so a reload is the closest signal
   // the server has. A proxy, not a freeze count: compare the two.
-  master(token, viewer) {
+  // android: an Android player (src/playback.js isAndroidPlayer) gets only the rungs already built (#209: on the Quest
+  // a variant answering 404 after the hold turned the picture grey). Its .m3u8 tickets get no master any more
+  // (server.js hlsChoice); this keeps that true for any way it reaches one.
+  master(token, viewer, { android = false } = {}) {
     const s = this.sessions.get(token);
     if (!s || s.single) return null;
     if (viewer) {
@@ -251,7 +258,8 @@ export class Adaptive {
     }
     this.onEvent('master');
     const lines = ['#EXTM3U', '#EXT-X-INDEPENDENT-SEGMENTS'];
-    s.rungs.forEach((q, i) => {
+    const rungs = android ? s.rungs.filter((q, i) => i === 0 || this.#job(s, q)?.state === 'ready') : s.rungs;
+    rungs.forEach((q, i) => {
       // Before a rung's /create answers its size is unknown: guess from the first rung's.
       const job = this.#job(s, q);
       const bw = i === 0 || job?.mb > 0 ? this.bandwidth(job) : this.bandwidth(s.lowerJob, 1.8 ** s.ladder.indexOf(q));

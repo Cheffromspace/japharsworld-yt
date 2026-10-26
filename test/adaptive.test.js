@@ -219,21 +219,55 @@ test('.m3u8 ticket (the world\'s Android build): always HLS, the plan\'s quality
   assert.equal((await s.get(`/v1/0/${n0}.mp4`, QUEST)).status, 404);
 });
 
-test('.m3u8 ticket on an adaptive plan: the master, without CODECS', async (t) => {
+test('.m3u8 ticket on an adaptive plan: the 720p alone as a plain playlist, never a master (#209)', async (t) => {
   const s = await server();
   t.after(() => s.srv.close());
   s.playback.rate.progressive = 0.1; // slow → adaptive
   const n = await s.ticket(3);
-  const p = await s.get(`/v1/3/${n}.m3u8`, QUEST);
-  assert.match(p.headers.get('location'), /^http:\/\/pub\.example\/hls\/[a-f0-9]{18}\.m3u8$/);
-  const m = await (await s.get(new URL(p.headers.get('location')).pathname, QUEST)).text();
-  assert.match(m, /RESOLUTION=1280x720\n/);
-  assert.doesNotMatch(m, /CODECS/);
-  // The tablet's status on the .m3u8 ticket reports the rung like a PC play's.
-  const base = new URL(p.headers.get('location')).pathname;
-  await s.get(base.replace('.m3u8', '/720p.m3u8'), QUEST);
+  // A PC player first: its master, on the same 720p HLS build the Quest is about to get.
+  const pc = await s.get(`/v1/3/${n}`);
+  assert.match(pc.headers.get('location'), /^http:\/\/pub\.example\/hls\/[a-f0-9]{18}\.m3u8$/, 'PC keeps the master');
   const st = await (await s.get(`/v1/3/${n}.m3u8`, 'UnityPlayer/2022')).json();
-  assert.deepEqual([st.plan, st.rung, st.top], ['adaptive', '720p', 'pending']);
+  assert.deepEqual([st.plan, st.quality, st.format], ['lower', '720p', 'hls'], 'the tablet reports what the Quest will get');
+  const q = await s.get(`/v1/3/${n}.m3u8`, QUEST);
+  assert.match(q.headers.get('location'), /^http:\/\/pub\.example\/hls\/[a-f0-9]{18}\/720p\.m3u8$/, 'a plain 720p playlist, not the PC session\'s master');
+  const body = await (await s.get(new URL(q.headers.get('location')).pathname, QUEST)).text();
+  assert.match(body, /#BUILD:720p/);
+  assert.doesNotMatch(body, /STREAM-INF/);
+  // And the other way round: the PC's master is still a master after the Quest's single session.
+  assert.match((await s.get(`/v1/3/${n}`)).headers.get('location'), /\/hls\/[a-f0-9]{18}\.m3u8$/);
+  assert.equal(pc.headers.get('location'), (await s.get(`/v1/3/${n}`)).headers.get('location'), 'the same PC session');
+});
+
+test('.m3u8 ticket on a start plan: the 720p alone too, not the 360p rung (#209)', async (t) => {
+  const s = await server({ hold720: true }, { start: '360p', startSeconds: 10 });
+  t.after(() => s.srv.close());
+  s.playback.rate.progressive = 0.1;
+  s.playback.rate.hls = 0.2;
+  s.playback.speeds = [{ at: Date.now(), mbps: 20 }, { at: Date.now(), mbps: 20 }];
+  const n = await s.ticket(3);
+  assert.equal((await (await s.get(`/v1/3/${n}`, 'UnityPlayer/2022')).json()).plan, 'start', 'PC: a start plan');
+  assert.equal((await (await s.get(`/v1/3/${n}.m3u8`, 'UnityPlayer/2022')).json()).plan, 'lower');
+  s.release720();
+  const q = await s.get(`/v1/3/${n}.m3u8`, QUEST);
+  assert.match(q.headers.get('location'), /\/hls\/[a-f0-9]{18}\/720p\.m3u8$/);
+});
+
+test('master: an Android player is listed only the rungs already built; PC gets every rung (#209)', async () => {
+  const f = fakes();
+  const a = new Adaptive({ playback: f.playback, pacer: { check: () => ({ ok: true }) }, fetcher: f.fetcher, base: 'http://pub.example/hls' });
+  const data = { id: 'AbCdEfGh1jK', seconds: 1200 };
+  const job = f.playback.start(data, '720p', { hls: true });
+  await f.playback.wait(job, 1000);
+  const sess = a.session(data, job);
+  const token = sess.token;
+  const rungs = (m) => [...m.matchAll(/\/(\d+p)\.m3u8/g)].map((x) => x[1]);
+  assert.deepEqual(rungs(a.master(token, 'quest', { android: true })), ['720p'], '1080p still building: not listed');
+  assert.deepEqual(rungs(a.master(token, 'pc')), ['720p', '1080p']);
+  f.releaseUpper();
+  await f.playback.wait(f.playback.peek(data, '1080p', { hls: true }), 1000);
+  assert.deepEqual(rungs(a.master(token, 'quest2', { android: true })), ['720p', '1080p'], 'once built it is listed');
+  assert.equal(a.single(data, job).endsWith('/720p.m3u8'), true, 'a single session on the same build is its own');
 });
 
 test('speed estimate: the median of recent builds wins over the long-run average, old ones expire', () => {

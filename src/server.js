@@ -311,7 +311,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }
     // Which player this is, only to tell a reload from a new player (src/adaptive.js master); never stored or logged.
     const viewer = createHash('sha256').update(`${clientIp(req)} ${req.headers['user-agent'] ?? ''}`).digest('hex').slice(0, 16);
-    const body = m[2] ? await adaptive.variant(m[1], m[2], viewer, { android: isAndroidPlayer(req.headers['user-agent']) }) : adaptive.master(m[1], viewer);
+    const body = m[2] ? await adaptive.variant(m[1], m[2], viewer, { android: isAndroidPlayer(req.headers['user-agent']) }) : adaptive.master(m[1], viewer, { android: isAndroidPlayer(req.headers['user-agent']) });
     if (body == null) return fail(res, 404, 'not_found', m[2] ? 'Not ready.' : 'Unknown path.');
     const buf = Buffer.from(body);
     res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'content-length': buf.length, 'cache-control': 'no-store' });
@@ -522,10 +522,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
 
   // A ticket ending in .m3u8 (`hlsTicket`) is the world's Android build: Quest's player (ExoPlayer) picks the format from
   // the URL's extension, so it opens an extensionless ticket as a file and fails on HLS behind it, and opens a .m3u8 one
-  // as HLS and fails on an mp4 behind it. So a .m3u8 ticket is always answered with HLS: the plan's master when it is
-  // adaptive, else a plain HLS build of the plan's quality (a separate build from a PC player's mp4 in the same room).
-  // The tablet's status requests on it report that HLS build, so its warm-up builds what the player will open.
-  const hlsChoice = (c) => (c.hls ? c : { ...c, hls: true, single: true });
+  // as HLS and fails on an mp4 behind it. So a .m3u8 ticket is always answered with HLS: a plain HLS build of the plan's
+  // quality (a separate build from a PC player's mp4 in the same room), never a master. An adaptive or start plan (the
+  // 1080p build slow) is the 720p alone there, reported as plan "lower": a Quest master listed rungs still building,
+  // whose 404 after the 1 s hold turned the picture grey (#209, owner 2026-10-26); a fast 1080p is a direct plan, so
+  // the 1080p alone. PC players keep the plan's master. The tablet's status requests on it report that HLS build, so
+  // its warm-up builds what the player will open.
+  const hlsChoice = (c) => (c.hls ? { quality: adaptive.lower, hls: true, single: true, mode: 'lower' } : { ...c, hls: true, single: true });
 
   async function ticket(req, res, shard, n, hlsTicket = false) {
     const t = store.get(shard, n);

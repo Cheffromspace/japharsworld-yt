@@ -169,7 +169,8 @@ up (YouTube may flag an IP that downloads a lot). Otherwise, or when the first s
 `HOME_READY_SECONDS`, the play takes the Tunelio path as before.
 
 **Quality and concurrency** (owner, 2026-10-25): home builds the room's own pick, or `HOME_QUALITY` (1080p) when
-the room hasn't picked. It streams, so 1080p starts about as fast as 720p (first segments 6.2 s vs 2.9 s on the
+the room hasn't picked, but 720p for a video whose 1080p files would be over `HOME_ITEM_MAX_GB` (`HOME_MAX_GB` by default,
+so only an item bigger than the whole cache; world #240 and #242: a 4 h 1080p mix came to 8.4 GB, more than the 8 GB cache). It streams, so 1080p starts about as fast as 720p (first segments 6.2 s vs 2.9 s on the
 Optiplex, 2026-10-23). The worker runs up to `RELAY_MEDIA_MAX` (4) streams at once and answers "busy" beyond that;
 four 1080p plays need about 1.1 MB/s of the home connection's ~12 MB/s upload.
 

@@ -425,6 +425,27 @@ test('ticket → home: home builds 1080p when the room has not picked, and the r
   assert.deepEqual(app.jobs.map((j) => j.quality), ['1080p', '720p']);
 });
 
+test('ticket → home: a video whose 1080p files would be over HOME_ITEM_MAX_GB is built at 720p (world #240)', async (t) => {
+  const PC = 'NSPlayer/12.00.26100 WMFSDK/12.00';
+  const tablet = async (app) => (await fetch(`${app.url}/v1/0/${app.n}`, { headers: { 'user-agent': 'UnityPlayer/2022.3 (UnityWebRequest/1.0)' } })).json();
+  // The test video is 600 s: ~342 MB at 1080p, over 0.3 GB.
+  const app = await homeApp(t, { config: { homeItemMaxGb: 0.3 } });
+  assert.equal((await app.play(PC, '')).status, 302);
+  assert.equal((await tablet(app)).quality, '720p');
+  app.store.setQuality(0, '1080p');
+  assert.equal((await tablet(app)).quality, '720p', "the room's 1080p pick is the ceiling, not a promise");
+  app.store.setQuality(0, '720p');
+  await app.play(PC, '');
+  assert.deepEqual(app.jobs.map((j) => j.quality), ['720p'], 'one 720p session for all three');
+  // Off (0), or within the limit: 1080p as before.
+  assert.equal(base.homeItemMaxGb, base.homeMaxGb, 'by default only an item bigger than the whole cache (#242)');
+  for (const homeItemMaxGb of [0, 0.4]) {
+    const other = await homeApp(t, { config: { homeItemMaxGb } });
+    await other.play(PC, '');
+    assert.deepEqual(other.jobs.map((j) => j.quality), ['1080p'], `homeItemMaxGb ${homeItemMaxGb}`);
+  }
+});
+
 test('ticket → home on Quest: a .m3u8 ticket goes home only with HOME_ANDROID=on; a plain ticket never', async (t) => {
   const off = await homeApp(t);
   assert.doesNotMatch((await off.play(QUEST)).headers.get('location'), /\/home\//, 'HOME_ANDROID off: as before');

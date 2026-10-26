@@ -423,7 +423,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // loads /v1/<shard>/q/720 or /q/1080 (baked URLs, like everything else) and /v1/<shard>/q to read it back.
   const roomQuality = (shard) => store.quality(shard, config.qualityHours * 3600_000) ?? config.tunelioQuality;
   // What home builds for this room: its pick, else HOME_QUALITY (1080p).
-  const homeQuality = (shard) => store.quality(shard, config.qualityHours * 3600_000) ?? config.homeQuality;
+  const homePick = (shard) => store.quality(shard, config.qualityHours * 3600_000) ?? config.homeQuality;
+  // 720p instead of 1080p for a video whose 1080p files would be over HOME_ITEM_MAX_GB (world #240). 1080p home files
+  // ran 0.46-0.57 MB/s of video (2026-10-26, a 4.1 h mix 8404 MB); 720p ones far less (a 6 h mix ~2.5 GB, 2026-10-23).
+  const tooBigAt1080 = (data) => config.homeItemMaxGb > 0 && (data.seconds ?? 0) * 0.57 > config.homeItemMaxGb * 1000;
+  const homeQuality = (shard, data) => { const q = homePick(shard); return q === '1080p' && tooBigAt1080(data) ? '720p' : q; };
   // Playback plans for this shard and video (off unless ADAPTIVE_HLS=on; live streams and paused Tunelio go the old way).
   const adaptiveFor = (shard, data) => config.adaptiveHls && (!config.adaptiveShards.length || config.adaptiveShards.includes(shard))
     && !data.live && tunelio.enabled && Date.now() >= (playback.pausedUntil ?? 0);
@@ -483,10 +487,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     try { await home.settle?.(s, config.homeSettleMs); } finally { holding--; }
     return { location: home.url(s), via: 'home', reason: s.why, ready: true };
   }
-  // A home session for this play, counted once by why it went home (a session that is already there is just used).
-  function startHome(data, quality, why) {
+  // A home session for this play, counted once by why it went home (a session that is already there is just used),
+  // and once as `stepdown` when it is 720p only for its length.
+  function startHome(shard, data, quality, why) {
     const s = home.start(data, quality);
-    if (s && !s.why) { s.why = why; home.save?.(s); metrics.inc('home_why', why); }
+    if (s && !s.why) {
+      s.why = why; home.save?.(s); metrics.inc('home_why', why);
+      if (quality !== homePick(shard)) { metrics.inc('home', 'stepdown'); logJson({ event: 'home_stepdown', id: data.id, from: homePick(shard), quality, seconds: data.seconds }); }
+    }
     return s;
   }
   // A ready home session that went home only for being long and whose playlist grows (uneven keyframes, not due to
@@ -539,9 +547,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       metrics.inc('ticket_client', kind);
       // The tablet asking (a row selected, or watching a build): start the build, report it, never redirect.
       if (kind === 'string') {
-        const hq = homeQuality(shard);
+        const hq = homeQuality(shard, t.data);
         const hw = hlsTicket && !config.homeAndroid ? null : homeWhy(t.data, hq);
-        const hs = hw ? homeKeep(t.data, hq, startHome(t.data, hq, hw)) : null;
+        const hs = hw ? homeKeep(t.data, hq, startHome(shard, t.data, hq, hw)) : null;
         if (hs && hs.state !== 'failed' && !leaveHome(hs)) return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(hs), ...meta(t.data) });
         let c = await choice(shard, t.data);
         if (hlsTicket) c = hlsChoice(c);
@@ -566,10 +574,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // .m3u8 ticket (the world's Android build, which opens HLS) only with HOME_ANDROID=on (2026-10-23, to be verified
       // on the Quest). The resolver is sent on at once (it would only pick the playlist apart); the player waits for
       // the first segments.
-      const hq = homeQuality(shard);
+      const hq = homeQuality(shard, t.data);
       const homeOk = hlsTicket ? config.homeAndroid : !android;
       const why = homeOk ? homeWhy(t.data, hq) : null;
-      let hs = why ? homeKeep(t.data, hq, startHome(t.data, hq, why)) : null;
+      let hs = why ? homeKeep(t.data, hq, startHome(shard, t.data, hq, why)) : null;
       if (hs && hs.state !== 'failed') {
         if (resolver) {
           metrics.inc('home', 'defer');
@@ -590,7 +598,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         c = await choice(shard, t.data);
         // The plan's own /create (or another play's) just timed out: home now, not another /create that would likely
         // time out too (2026-10-23: two 12 s timeouts in a row, 48 s from pick to picture).
-        const slow = homeOk && !hs && tunelioSlow() && home.worker() ? startHome(t.data, hq, 'tunelio_slow') : null;
+        const slow = homeOk && !hs && tunelioSlow() && home.worker() ? startHome(shard, t.data, hq, 'tunelio_slow') : null;
         if (slow && slow.state !== 'failed') {
           if (resolver) {
             metrics.inc('home', 'defer');
@@ -652,7 +660,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         // Tunelio's build failed: home before youtube.com's 360p, for a player that can take home's HLS, when a worker is free.
         if (!homeFor && !resolver && homeOk && where.ready && where.via === 'youtube' && /^(tunelio_failed|build_failed)$/.test(where.reason ?? '') && home.worker()) homeFor = 'tunelio_failed';
         if (homeFor) {
-          const fallback = startHome(t.data, hq, homeFor);
+          const fallback = startHome(shard, t.data, hq, homeFor);
           if (fallback && fallback.state !== 'failed') {
             holding++;
             try { await home.wait(fallback, config.homeReadyMs); } finally { holding--; }

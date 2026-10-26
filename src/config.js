@@ -121,6 +121,11 @@ export const config = {
   homeDailyMb: int('HOME_DAILY_MB', 50_000), // owner, 2026-10-23: 10 GB went in a few long videos (a 6 h mix is ~2.5 GB)
   homeKeepHours: int('HOME_KEEP_HOURS', 12),
   homeMaxGb: int('HOME_MAX_GB', 8),
+  // A safety net: a home build expected to be larger than this (its length × 1080p's ~0.57 MB/s) is built at 720p
+  // instead. A 4 h 1080p mix came to 8.4 GB, over HOME_MAX_GB alone, so it was evicted minutes after each play and
+  // pushed every other finished session out with it (world #240, 2026-10-26). HOME_MAX_GB by default (owner, #242:
+  // only an item bigger than the whole cache steps down; near-static long videos are far smaller); 0 = off.
+  homeItemMaxGb: (() => { const v = Number.parseFloat(process.env.HOME_ITEM_MAX_GB ?? ''); return Number.isFinite(v) ? v : int('HOME_MAX_GB', 8); })(),
   // How long a new session may take to its first playlist: yt-dlp ~3 s, then its stream URLs answer 403 for 0.1–2.6 s,
   // once 22 s, before they work (2026-10-23), then the first segments.
   homeReadyMs: int('HOME_READY_SECONDS', 40) * 1000,

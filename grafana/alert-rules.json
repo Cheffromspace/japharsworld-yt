@@ -28,7 +28,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "absent_over_time(eiok_search_up{host=\"linode\"}[10m])",
+     "expr": "absent_over_time(eiok_search_up{env!=\"staging\",host=\"linode\"}[10m])",
      "instant": true
     }
    },
@@ -82,7 +82,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "absent_over_time(node_time_seconds{host=\"optiplex\"}[15m])",
+     "expr": "absent_over_time(node_time_seconds{env!=\"staging\",host=\"optiplex\"}[15m])",
      "instant": true
     }
    },
@@ -136,7 +136,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "1 - max_over_time(eiok_search_up[5m])",
+     "expr": "1 - max_over_time(eiok_search_up{env!=\"staging\"}[5m])",
      "instant": true
     }
    },
@@ -190,7 +190,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "1 - max_over_time(probe_success{job=~\".*search-healthz.*\"}[10m])",
+     "expr": "1 - max_over_time(probe_success{env!=\"staging\",job=~\".*search-healthz.*\"}[10m])",
      "instant": true
     }
    },
@@ -244,7 +244,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "1 - max_over_time(probe_success{job=~\".*short-healthz.*\"}[10m])",
+     "expr": "1 - max_over_time(probe_success{env!=\"staging\",job=~\".*short-healthz.*\"}[10m])",
      "instant": true
     }
    },
@@ -298,7 +298,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "14 - min by (job) (probe_ssl_earliest_cert_expiry{job=~\".*(search|short)-healthz.*\"} - time()) / 86400",
+     "expr": "14 - min by (job) (probe_ssl_earliest_cert_expiry{env!=\"staging\",job=~\".*(search|short)-healthz.*\"} - time()) / 86400",
      "instant": true
     }
    },
@@ -352,7 +352,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "30 - min by (source) (eiok_poll{source=~\"domain:.*\",metric=\"expires\"} - time()) / 86400",
+     "expr": "30 - min by (source) (eiok_poll{env!=\"staging\",source=~\"domain:.*\",metric=\"expires\"} - time()) / 86400",
      "instant": true
     }
    },
@@ -406,7 +406,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "7 - min by (source) (eiok_poll{source=~\"domain:.*\",metric=\"expires\"} - time()) / 86400",
+     "expr": "7 - min by (source) (eiok_poll{env!=\"staging\",source=~\"domain:.*\",metric=\"expires\"} - time()) / 86400",
      "instant": true
     }
    },
@@ -460,7 +460,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "(time() - max by (source) (eiok_poll_timestamp_seconds{source=~\"domain:.*\"})) > 3 * 86400 or absent(eiok_poll_timestamp_seconds{source=\"domain:eiok.cc\"}) or absent(eiok_poll_timestamp_seconds{source=\"domain:japharsworld.com\"})",
+     "expr": "(time() - max by (source) (eiok_poll_timestamp_seconds{env!=\"staging\",source=~\"domain:.*\"})) > 3 * 86400 or absent(eiok_poll_timestamp_seconds{env!=\"staging\",source=\"domain:eiok.cc\"}) or absent(eiok_poll_timestamp_seconds{env!=\"staging\",source=\"domain:japharsworld.com\"})",
      "instant": true
     }
    },
@@ -514,7 +514,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "(1 - (sum(increase(eiok_events_total{metric=\"search_source\",key=\"worker\"}[30m])) or vector(0)) / sum(increase(eiok_events_total{metric=\"search_source\"}[30m]))) > 0.5 and on() sum(increase(eiok_events_total{metric=\"search_source\"}[30m])) >= 3 and on() max(eiok_relay_workers_online) > 0",
+     "expr": "(1 - (sum(increase(eiok_events_total{env!=\"staging\",metric=\"search_source\",key=\"worker\"}[30m])) or vector(0)) / sum(increase(eiok_events_total{env!=\"staging\",metric=\"search_source\"}[30m]))) > 0.5 and on() sum(increase(eiok_events_total{env!=\"staging\",metric=\"search_source\"}[30m])) >= 3 and on() max(eiok_relay_workers_online{env!=\"staging\"}) > 0",
      "instant": true
     }
    },
@@ -568,7 +568,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "sum(increase(eiok_events_total{metric=\"cc_via\",key=\"tunelio\"}[6h])) - (sum(increase(eiok_events_total{metric=\"cc_via\",key=~\"worker|local\"}[6h])) or vector(0)) > 0 and on() sum(increase(eiok_events_total{metric=\"cc_via\",key=\"tunelio\"}[6h])) >= 3",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"cc_via\",key=\"tunelio\"}[6h])) - (sum(increase(eiok_events_total{env!=\"staging\",metric=\"cc_via\",key=~\"worker|local\"}[6h])) or vector(0)) > 0 and on() sum(increase(eiok_events_total{env!=\"staging\",metric=\"cc_via\",key=\"tunelio\"}[6h])) >= 3",
      "instant": true
     }
    },
@@ -622,7 +622,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "sum(eiok_slot_hidden * on(slot) (1 - eiok_slot_spare)) - 7",
+     "expr": "sum(eiok_slot_hidden{env!=\"staging\"} * on(slot) (1 - eiok_slot_spare{env!=\"staging\"})) - 7",
      "instant": true
     }
    },
@@ -676,7 +676,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max(eiok_jobs_oldest_pending_seconds{reason=\"other\"}) > 7200 or max(eiok_jobs_oldest_pending_seconds{reason=\"daily\"}) > 18000",
+     "expr": "max(eiok_jobs_oldest_pending_seconds{env!=\"staging\",reason=\"other\"}) > 7200 or max(eiok_jobs_oldest_pending_seconds{env!=\"staging\",reason=\"daily\"}) > 18000",
      "instant": true
     }
    },
@@ -730,7 +730,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max(eiok_home_today{key=\"mb\"}) / max(eiok_home_today{key=\"cap_mb\"}) >= 0.9",
+     "expr": "max(eiok_home_today{env!=\"staging\",key=\"mb\"}) / max(eiok_home_today{env!=\"staging\",key=\"cap_mb\"}) >= 0.9",
      "instant": true
     }
    },
@@ -784,7 +784,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "1 - max(eiok_home_today{key=\"workers\"})",
+     "expr": "1 - max(eiok_home_today{env!=\"staging\",key=\"workers\"})",
      "instant": true
     }
    },
@@ -838,7 +838,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "(sum(increase(eiok_events_total{metric=\"credits\"}[3d])) / 3) * (days_in_month() - day_of_month() + 1) - max(eiok_credits_remaining) > 0",
+     "expr": "(sum(increase(eiok_events_total{env!=\"staging\",metric=\"credits\"}[3d])) / 3) * (days_in_month() - day_of_month() + 1) - max(eiok_credits_remaining{env!=\"staging\"}) > 0",
      "instant": true
     }
    },
@@ -892,7 +892,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max(eiok_transfer_bytes{host=\"home\",period=\"today\"}) > 50e9",
+     "expr": "max(eiok_transfer_bytes{env!=\"staging\",host=\"home\",period=\"today\"}) > 50e9",
      "instant": true
     }
    },
@@ -946,7 +946,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max(eiok_transfer_bytes{host=\"home\",period=\"month\"}) > 500e9",
+     "expr": "max(eiok_transfer_bytes{env!=\"staging\",host=\"home\",period=\"month\"}) > 500e9",
      "instant": true
     }
    },
@@ -1000,7 +1000,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max(eiok_transfer_bytes{host=\"linode\",period=\"month\"}) > 700e9",
+     "expr": "max(eiok_transfer_bytes{env!=\"staging\",host=\"linode\",period=\"month\"}) > 700e9",
      "instant": true
     }
    },
@@ -1054,7 +1054,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max(1 - node_filesystem_avail_bytes{host=\"linode\",mountpoint=\"/\"} / node_filesystem_size_bytes{host=\"linode\",mountpoint=\"/\"}) > 0.7",
+     "expr": "max(1 - node_filesystem_avail_bytes{env!=\"staging\",host=\"linode\",mountpoint=\"/\"} / node_filesystem_size_bytes{env!=\"staging\",host=\"linode\",mountpoint=\"/\"}) > 0.7",
      "instant": true
     }
    },
@@ -1108,7 +1108,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max(1 - node_filesystem_avail_bytes{host=\"linode\",mountpoint=\"/\"} / node_filesystem_size_bytes{host=\"linode\",mountpoint=\"/\"}) > 0.8",
+     "expr": "max(1 - node_filesystem_avail_bytes{env!=\"staging\",host=\"linode\",mountpoint=\"/\"} / node_filesystem_size_bytes{env!=\"staging\",host=\"linode\",mountpoint=\"/\"}) > 0.8",
      "instant": true
     }
    },
@@ -1162,7 +1162,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max(eiok_ssh_accepted_10m{host=\"linode\",source=\"unknown\"})",
+     "expr": "max(eiok_ssh_accepted_10m{env!=\"staging\",host=\"linode\",source=\"unknown\"})",
      "instant": true
     }
    },
@@ -1216,7 +1216,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max by (item) (changes(eiok_security_hash{host=\"linode\"}[15m]))",
+     "expr": "max by (item) (changes(eiok_security_hash{env!=\"staging\",host=\"linode\"}[15m]))",
      "instant": true
     }
    },
@@ -1270,7 +1270,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "1 - min(eiok_sshd_hardened{host=\"linode\"})",
+     "expr": "1 - min(eiok_sshd_hardened{env!=\"staging\",host=\"linode\"})",
      "instant": true
     }
    },
@@ -1324,7 +1324,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "sum(eiok_ssh_failed_10m{host=\"linode\"}) > 20",
+     "expr": "sum(eiok_ssh_failed_10m{env!=\"staging\",host=\"linode\"}) > 20",
      "instant": true
     }
    },
@@ -1378,7 +1378,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "1 - max by (name) (node_systemd_unit_state{host=\"linode\",name=~\"(ssh|fail2ban|mediamtx|alloy).service\",state=\"active\"})",
+     "expr": "1 - max by (name) (node_systemd_unit_state{env!=\"staging\",host=\"linode\",name=~\"(ssh|fail2ban|mediamtx|alloy).service\",state=\"active\"})",
      "instant": true
     }
    },
@@ -1432,7 +1432,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "time() - max(eiok_security_updated_seconds{host=\"linode\"}) - 600",
+     "expr": "time() - max(eiok_security_updated_seconds{env!=\"staging\",host=\"linode\"}) - 600",
      "instant": true
     }
    },
@@ -1486,7 +1486,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max by (host) (1 - node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"}) > 0.9",
+     "expr": "max by (host) (1 - node_filesystem_avail_bytes{env!=\"staging\",mountpoint=\"/\"} / node_filesystem_size_bytes{env!=\"staging\",mountpoint=\"/\"}) > 0.9",
      "instant": true
     }
    },

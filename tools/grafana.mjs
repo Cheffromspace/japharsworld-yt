@@ -24,6 +24,17 @@ const DASH_UID = 'everything-is-ok';
 const FOLDER = { uid: 'everything-is-ok', title: 'Everything is OK' };
 const RECEIVER = 'Everything is OK Discord';
 
+// Staging (#160, deploy/alloy/staging.alloy) sends the same metrics with env="staging"; production's carry no env label,
+// so this matcher keeps every one of them. Added to every selector of every query and rule at build time (owner,
+// 2026-10-26), so staging never shows on the dashboard or fires a production alert.
+const PROD = 'env!="staging"';
+export function prodOnly(expr) {
+  return expr.replace(/\b((?:eiok|probe|node)_[A-Za-z0-9_]+)(\{)?/g, (m, name, brace) => (brace ? `${name}{${PROD},` : `${name}{${PROD}}`));
+}
+const scoped = (o) => (Array.isArray(o) ? o.map(scoped)
+  : o && typeof o === 'object' ? Object.fromEntries(Object.entries(o).map(([k, v]) => [k, k === 'expr' && typeof v === 'string' ? prodOnly(v) : scoped(v)]))
+  : o);
+
 let id = 0;
 const grid = { x: 0, y: 0 };
 function place(w, h) {
@@ -248,7 +259,7 @@ export function dashboard() {
   p.push(versions('Deploys of main', 'max by (host, commit, outcome) (eiok_deploy_timestamp_seconds) * 1000', ['host', 'commit', 'outcome'],
     'Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.'));
 
-  return {
+  return scoped({
     uid: DASH_UID, title: 'Everything is OK', tags: ['everything-is-ok'], timezone: 'America/Chicago', refresh: '5m',
     time: { from: 'now-2d', to: 'now' }, schemaVersion: 39, editable: true, graphTooltip: 1,
     templating: { list: [{ name: 'ds', label: 'Data source', type: 'datasource', query: 'prometheus', regex: '.*-prom$', current: {} }] },
@@ -259,7 +270,7 @@ export function dashboard() {
       marker('Deploys', 'max by (host, commit, outcome) (eiok_deploy_timestamp_seconds) * 1000', '#e0af68', '{{host}} {{commit}} ({{outcome}})', 'host,outcome'),
     ] },
     panels: p,
-  };
+  });
 }
 
 // The Discord contact point. With a mention (owner, 2026-10-26) a notification with a firing severity=critical alert
@@ -286,7 +297,7 @@ export function alertRules(dsUid) {
   });
   // The condition is "A > 0", so every expression is positive when it fires (2026-10-26: "x < 1" returned 0 when down
   // and "days < 14" went negative once expired, so those never fired). test/grafana.test.js checks the shape.
-  return [
+  return scoped([
     rule('eiok-linode-silent', 'Linode sends nothing', 'absent_over_time(eiok_search_up{host="linode"}[10m])', { summary: 'No metrics from the Linode for 10 minutes: the server, Alloy or the exporter is down.' }),
     rule('eiok-optiplex-silent', 'Optiplex sends nothing', 'absent_over_time(node_time_seconds{host="optiplex"}[15m])', { summary: 'No metrics from the Optiplex for 15 minutes: searches fall back and flash checks wait.' }),
     rule('eiok-search-down', 'Search service down', '1 - max_over_time(eiok_search_up[5m])', { severity: 'critical', summary: 'The search service has not answered /healthz on the Linode for 5 minutes.' }),
@@ -331,7 +342,7 @@ export function alertRules(dsUid) {
     rule('eiok-linode-unit-down', 'Linode ssh/fail2ban/mediamtx/alloy not active', '1 - max by (name) (node_systemd_unit_state{host="linode",name=~"(ssh|fail2ban|mediamtx|alloy).service",state="active"})', { forM: 5, summary: '{{ $labels.name }} is not active on the Linode.' }),
     rule('eiok-security-stale', 'Linode security counters stale', 'time() - max(eiok_security_updated_seconds{host="linode"}) - 600', { forM: 5, noData: 'Alerting', summary: 'metrics/security.js has not written its counters for 10 minutes (japharsworld-yt-security.timer on the Linode), so the security alerts are blind.' }),
     rule('eiok-disk-low', 'Disk almost full', 'max by (host) (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) > 0.9', { forM: 15, summary: 'Under 10 % free on / of {{ $labels.host }}.' }),
-  ];
+  ]);
 }
 
 async function api(path, { method = 'GET', body } = {}) {

@@ -301,6 +301,9 @@ export function alertRules(dsUid) {
     rule('eiok-home-egress-day', 'Home sent over 50 GB today', 'max(eiok_transfer_bytes{host="home",period="today"}) > 50e9', { forM: 5, summary: 'The Optiplex has sent over 50 GB today (home relay uploads and everything else on the box).' }),
     rule('eiok-home-egress-month', 'Home sent over 500 GB this month', 'max(eiok_transfer_bytes{host="home",period="month"}) > 500e9', { forM: 5, summary: 'The Optiplex has sent over 500 GB this month.' }),
     rule('eiok-linode-egress-month', 'Linode sent over 700 GB this month', 'max(eiok_transfer_bytes{host="linode",period="month"}) > 700e9', { forM: 5, summary: 'The Linode has sent over 700 GB this month, of its 1 TB transfer (overage about $5 per TB).' }),
+    // The Linode's / is 25 GB (47 % used 2026-10-25, the home session files capped at HOME_MAX_GB=8): earlier warnings there.
+    rule('eiok-linode-disk-70', 'Linode disk 70 % full', 'max(1 - node_filesystem_avail_bytes{host="linode",mountpoint="/"} / node_filesystem_size_bytes{host="linode",mountpoint="/"}) > 0.7', { forM: 15, summary: 'The Linode’s / is over 70 % full. Check `du -sh /var/lib/japharsworld-yt/*` (home sessions, SQLite) and the journal.' }),
+    rule('eiok-linode-disk-80', 'Linode disk 80 % full', 'max(1 - node_filesystem_avail_bytes{host="linode",mountpoint="/"} / node_filesystem_size_bytes{host="linode",mountpoint="/"}) > 0.8', { forM: 15, severity: 'critical', summary: 'The Linode’s / is over 80 % full: free space before SQLite writes and home uploads fail. Check `du -sh /var/lib/japharsworld-yt/*` and lower HOME_MAX_GB if the home files grew.' }),
     rule('eiok-disk-low', 'Disk almost full', 'max by (host) (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) > 0.9', { forM: 15, summary: 'Under 10 % free on / of {{ $labels.host }}.' }),
   ];
 }

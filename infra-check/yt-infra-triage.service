@@ -1,0 +1,12 @@
+[Unit]
+Description=YT Search severe-alert triage (polls Grafana; Claude Code headless on a new critical alert)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# The weekly check's lock (run.sh): never both at once. While the weekly check runs this exits 0 and records nothing,
+# so the first poll after it triages the alert (Grafana's own Discord alert has gone out meanwhile).
+ExecStart=/usr/bin/flock -n -E 0 %h/yt-infra-check/.lock /usr/bin/node /opt/japharsworld-yt-relay/infra-check/triage.mjs
+TimeoutStartSec=30min

@@ -88,6 +88,13 @@ systemctl --user list-timers yt-infra-check.timer
 
 # 9. Test run now
 systemctl --user start yt-infra-check && journalctl --user -u yt-infra-check -e
+
+# 10. Severe-alert triage (needs steps 1-8; no sudo): polls Grafana every 2 minutes, triages new critical alerts
+node $KIT/triage.mjs --synthetic down --dry-run     # a made-up alert end to end; prints the Discord text, posts nothing
+cp $KIT/yt-infra-triage.service $KIT/yt-infra-triage.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now yt-infra-triage.timer
+journalctl --user -u yt-infra-triage -e                 # quiet while nothing critical fires
 ```
 
 ## Notes
@@ -99,3 +106,8 @@ systemctl --user start yt-infra-check && journalctl --user -u yt-infra-check -e
 - Updating: nothing to copy. `run.sh`, `prompt.md` and the rules in `claude/monitoring.md` are read from the checkout at
   each run. Only a change to the units (copy them again, `daemon-reload`) or the sudoers files (reinstall them) needs a step.
 - Reports: `~/yt-infra-check/reports/`, raw run output: `~/yt-infra-check/logs/` (kept 26 weeks).
+- Severe-alert triage (`triage.mjs`, `triage-prompt.md`, rules in `claude/monitoring.md`, "Severe alert triage"):
+  on a new firing `severity=critical` alert it runs a read-only Claude triage and posts "SEVERE: …" to Discord with the
+  report attached (`reports/<date>-<hhmm>-triage-<rule>.md`); a GitHub issue only for non-security alerts. Once per
+  alert per 6 hours, 6 runs a day at most; it shares the weekly check's lock. Its state is
+  `~/yt-infra-check/triage-state.json` (delete it to forget which alerts were triaged).

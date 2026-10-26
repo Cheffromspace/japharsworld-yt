@@ -1,0 +1,11 @@
+[Unit]
+Description=Every 2 minutes: check Grafana for new critical alerts to triage
+
+[Timer]
+OnBootSec=3min
+# Counted from the end of the last poll, so a long triage run never overlaps the next poll.
+OnUnitInactiveSec=2min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

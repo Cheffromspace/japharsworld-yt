@@ -155,3 +155,27 @@ an issue without details. A red item makes the Discord summary start with "SECUR
 two maintenance commands on the Optiplex.
 The copies installed on 2026-10-24 also allowed service restarts (on the Linode including the owner's mediamtx). The
 rule above forbids those either way; the owner reinstalls the narrowed files.
+
+## Severe alert triage (Optiplex agent)
+
+The same headless Claude Code on the Optiplex, woken by a critical Grafana alert (owner, 2026-10-26;
+`infra-check/triage.mjs`, `triage-prompt.md` and the `yt-infra-triage` user timer). The home network stays
+outbound-only, so nothing calls in: every 2 minutes the timer asks Grafana Cloud's alertmanager (the weekly check's
+read-only `GRAFANA_TOKEN`) for firing, unsilenced alerts labelled `severity=critical` and `project=everything-is-ok`.
+A new one gets one triage run (all new alerts of a poll share it), each alert at most once per 6 hours, at most 6 runs
+a day. Past the cap, or when Claude can't run (an expired login, a timeout), the alert still goes to Discord with
+"Triage couldn't run: …", so it is never swallowed. It holds the weekly check's lock: while that runs, the triage waits
+for the first poll after it. A planned change gets a Grafana silence first, which keeps it out of triage too.
+
+**The rules are the weekly check's,** read only and stricter: no maintenance either, only evidence (`ssh linode-check`
+with its read-only sudo, local checks, Grafana's API), a diagnosis and a suggested next step for the owner or the
+coordinator. It writes `~/yt-infra-check/reports/<date>-<hhmm>-triage-<rule>.md` (local) and a short note that
+`triage.mjs` posts to Discord as "SEVERE: <alert>, firing since …" with the report attached. A non-security alert
+also gets a GitHub issue under the weekly "New finding" rule (or a comment on the open one); **a security alert goes
+nowhere on GitHub,** and its note carries no addresses, keys, ports or account names (those stay in the attachment).
+
+The critical rules (`tools/grafana.mjs`, 2026-10-26): `eiok-ssh-unknown-login`, `eiok-security-change`,
+`eiok-sshd-not-hardened`, `eiok-linode-disk-80` and `eiok-domain-expiry-urgent`. A rule raised to critical is triaged
+from its next firing. Test the path with `node /opt/japharsworld-yt-relay/infra-check/triage.mjs --synthetic
+security|down --dry-run` on the Optiplex: a made-up alert through the same run, nothing recorded, no GitHub writes,
+and the Discord text printed instead of posted.

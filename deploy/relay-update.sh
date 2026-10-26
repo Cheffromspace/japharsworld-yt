@@ -46,7 +46,8 @@ if [ "$SETUP" = on ] && [ -f /etc/systemd/system/bgutil-pot-relay.service ] && e
 fi
 # Grafana Alloy (claude/monitoring.md), once it has been set up here.
 if [ "$SETUP" = on ] && command -v alloy >/dev/null && echo "$changed" | grep -qE '^deploy/alloy'; then bash deploy/alloy-setup.sh optiplex || echo "alloy setup failed"; fi
-if echo "$changed" | grep -qE '^(relay/|src/|package(-lock)?\.json$|deploy/japharsworld-yt-relay)'; then
+# Its own units only: the staging worker's unit files don't restart the production worker, and the other way round.
+if echo "$changed" | grep -qE "^(relay/|src/|package(-lock)?\.json\$|deploy/$UNIT(\.|-update\.))"; then
   systemctl restart "$UNIT.service"
   echo "worker restarted on $(git log -1 --format='%h %s')"
   outcome=restarted

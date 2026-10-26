@@ -32,11 +32,16 @@ EOT
 fi
 chown root:root "$ENVF"; chmod 600 "$ENVF"
 
-for unit in japharsworld-yt-metrics.service japharsworld-yt-metrics.timer japharsworld-yt-occupants.service japharsworld-yt-occupants.timer japharsworld-yt-exporter.service japharsworld-yt-security.service japharsworld-yt-security.timer; do
+# DEPLOY_POLLER=off (staging, #160; update.sh passes it): no poller, which posts the Discord reports and counts the
+# production world; the exporter and the security counters still run.
+POLLER=${DEPLOY_POLLER:-on}
+units="japharsworld-yt-exporter.service japharsworld-yt-security.service japharsworld-yt-security.timer"
+[ "$POLLER" != on ] || units="japharsworld-yt-metrics.service japharsworld-yt-metrics.timer japharsworld-yt-occupants.service japharsworld-yt-occupants.timer $units"
+for unit in $units; do
   install -m 644 "$APP/deploy/$unit" /etc/systemd/system/
 done
 systemctl daemon-reload
-systemctl enable -q --now japharsworld-yt-metrics.timer japharsworld-yt-occupants.timer
+[ "$POLLER" != on ] || systemctl enable -q --now japharsworld-yt-metrics.timer japharsworld-yt-occupants.timer
 # Security counters (metrics/security.js) into Alloy's textfile folder; the folder deploy-record.sh uses.
 install -d -m 755 /var/lib/japharsworld-yt-deploy
 systemctl enable -q --now japharsworld-yt-security.timer
@@ -44,6 +49,6 @@ systemctl enable -q --now japharsworld-yt-security.timer
 systemctl enable -q japharsworld-yt-exporter.service
 systemctl restart japharsworld-yt-exporter.service
 [ "$restart" = 0 ] || systemctl restart japharsworld-yt.service
-echo "Metrics timer: $(systemctl is-active japharsworld-yt-metrics.timer), exporter: $(systemctl is-active japharsworld-yt-exporter). Logs: journalctl -u japharsworld-yt-metrics"
+echo "Metrics timer: $( [ "$POLLER" = on ] && systemctl is-active japharsworld-yt-metrics.timer || echo off), exporter: $(systemctl is-active japharsworld-yt-exporter). Logs: journalctl -u japharsworld-yt-metrics"
 }
 main "$@"

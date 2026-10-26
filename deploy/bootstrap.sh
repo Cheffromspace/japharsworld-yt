@@ -51,8 +51,11 @@ id jyt >/dev/null 2>&1 || useradd --system --home "$DATA" --shell /usr/sbin/nolo
 mkdir -p "$DATA" && chown jyt:jyt "$DATA"
 
 say "App ($REPO)"
-if [ -d "$APP/.git" ]; then git -C "$APP" fetch -q origin && git -C "$APP" reset -q --hard origin/main
-else git clone -q "$REPO" "$APP"; fi
+# The branch update.sh deploys: main, or DEPLOY_BRANCH from /etc/japharsworld-yt-deploy.env (staging, #160).
+BRANCH=main
+[ ! -f /etc/japharsworld-yt-deploy.env ] || BRANCH=$(. /etc/japharsworld-yt-deploy.env; echo "${DEPLOY_BRANCH:-main}")
+if [ -d "$APP/.git" ]; then git -C "$APP" fetch -q origin "$BRANCH" && git -C "$APP" checkout -q -B "$BRANCH" "origin/$BRANCH"
+else git clone -q -b "$BRANCH" "$REPO" "$APP"; fi
 (cd "$APP" && npm ci --omit=dev --no-audit --no-fund --loglevel=error)
 
 say "Hardening (deploy/harden.sh)"

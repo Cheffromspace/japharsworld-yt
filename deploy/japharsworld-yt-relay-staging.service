@@ -1,0 +1,33 @@
+[Unit]
+Description=japharsworld-yt STAGING relay worker (#160; outbound only: long-polls staging-yt.eiok.cc, never listens)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=jytrelay
+Group=jytrelay
+WorkingDirectory=/opt/japharsworld-yt-relay-staging
+EnvironmentFile=/etc/japharsworld-yt-relay-staging.env
+ExecStart=/usr/bin/node /opt/japharsworld-yt-relay-staging/relay/worker.js
+# The worker's cache of finished home relay streams (relay/cache.js), writable despite ProtectSystem=strict. A bigger
+# volume can be mounted at /var/cache/japharsworld-yt-relay (README, home relay cache).
+CacheDirectory=japharsworld-yt-relay-staging
+Restart=always
+RestartSec=5
+# The cgroup counts the page cache of the stream cache: 2026-10-25 at 300M it held 64 MB anon + 199 MB file, hit the
+# limit 35k times (memory.events max), throttled sockets 9k times and swapped 29 MB. The Optiplex has ~30 GB free.
+MemoryMax=300M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

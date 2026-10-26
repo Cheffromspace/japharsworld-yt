@@ -6,8 +6,10 @@
 //
 // <dir>/<videoId>@<quality>/  seg0.ts … and index.m3u8 (the playlist the server got last, ENDLIST included), meta.json
 // <dir>/.tmp-*                a stream being made (moved in by put when it finished; left over ones are removed at start)
-// Set with RELAY_CACHE_GB (40 = about half the Optiplex's free disk, measured 2026-10-23: 77 of 98 GB free; 0 = off)
-// in systemd's CacheDirectory (/var/cache/japharsworld-yt-relay).
+// It lives in systemd's CacheDirectory (/var/cache/japharsworld-yt-relay). Set with RELAY_CACHE_GB (default 40, sized
+// for the Optiplex's 98 GB root before the cache had its own volume; 0 = off). That directory is now the 492 GB
+// jyt-media volume (README), so the env file sets 440 (owner card, #242, 2026-10-26: the default had been left on,
+// 41 GB used with 451 GB free).
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, renameSync, rmSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 

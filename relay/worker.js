@@ -5,7 +5,7 @@
 // Settings (environment, /etc/japharsworld-yt-relay.env): RELAY_URL, RELAY_TOKEN, WORKER_NAME, RELAY_POLLS (3),
 // YTDLP (found in the flash-check venv or PATH when unset), YTDLP_ARGS (--js-runtimes node), FFMPEG (ffmpeg),
 // RELAY_MEDIA (on; off = never announce media jobs), RELAY_MEDIA_MAX (4 streams at once; owner, 2026-10-25: four
-// 1080p plays need ~1.1 MB/s of the ~12 MB/s upload), RELAY_CACHE_GB (40; 0 = no cache of finished streams, relay/cache.js) in RELAY_CACHE_DIR (else systemd's CACHE_DIRECTORY), YT_BACKOFF_MINUTES (10)
+// 1080p plays need ~1.1 MB/s of the ~12 MB/s upload), RELAY_CACHE_GB (40; 440 on the Optiplex's 492 GB cache volume; 0 = no cache of finished streams, relay/cache.js) in RELAY_CACHE_DIR (else systemd's CACHE_DIRECTORY), YT_BACKOFF_MINUTES (10)
 // and YT_BACKOFF_MAX_MINUTES (120): how long a kind of job pauses after YouTube refuses it (see refused() below).
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';

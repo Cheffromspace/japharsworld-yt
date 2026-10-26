@@ -137,7 +137,8 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
       }
       if (job.kind === 'captions') {
         const captions = await runCaptions(job);
-        log({ event: 'job', kind: job.kind, ms: now() - started, cues: captions.cues?.length ?? 0, reason: captions.reason });
+        log({ event: 'job', kind: job.kind, ms: now() - started, cues: captions.cues?.length ?? 0, reason: captions.reason,
+          ...(captions.retried ? { retried: true } : {}), ...(captions.warnings?.length ? { warnings: captions.warnings.length } : {}) });
         // The track failed after its list worked: the usual sign of timedtext being rate-limited.
         return { id: job.id, ok: true, captions, ...(captions.reason === 'temporarily_unavailable' ? { refusal: 'rate' } : {}) };
       }

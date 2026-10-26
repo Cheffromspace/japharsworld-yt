@@ -23,11 +23,13 @@ const matches = (a, b) => Boolean(a.auto) === Boolean(b.auto) && (lower(a.code) 
 
 // An empty list is suspect: YouTube sometimes answers the home IP with no captions at all and no error (2026-10-25: a
 // 100-minute video got 0 tracks in two lookups 2 s apart, then 176 auto tracks 25 minutes later). So the first empty
-// answer is only marked (EMPTY_KEY), the next request looks once more, and a second empty answer is kept for emptyMs.
+// answer is only marked (EMPTY_KEY) and counts as empty for emptyRetryMs; the first request after that looks once more,
+// and a second empty answer is kept for emptyMs. (2026-10-25 01:27: the retry ran 27 s after the first try and got the
+// same empty answer that a lookup 2 minutes later didn't, so the second try waits 3 minutes.)
 const EMPTY_KEY = 'tracks-empty';
 
 export class CaptionChain {
-  constructor({ store, relay = null, local = null, tunelio = null, cacheDays = 7, emptyMinutes = 30, scripts = DEFAULT_SCRIPTS,
+  constructor({ store, relay = null, local = null, tunelio = null, cacheDays = 7, emptyMinutes = 30, emptyRetryMinutes = 3, scripts = DEFAULT_SCRIPTS,
     relayWaitMs = 40_000, metrics = null, log = () => {} }) {
     this.store = store;
     this.relay = relay;
@@ -35,6 +37,7 @@ export class CaptionChain {
     this.tunelio = tunelio;  // a TunelioCaptions instance or null
     this.maxAgeMs = cacheDays * 86400_000;
     this.emptyMs = emptyMinutes * 60_000;
+    this.emptyRetryMs = emptyRetryMinutes * 60_000;
     this.looking = new Map(); // video id → its lookup in flight (any want), so the CC list can wait for the play's warm-up
     this.scripts = scripts;
     this.relayWaitMs = relayWaitMs;
@@ -128,8 +131,13 @@ export class CaptionChain {
   }
 
   // ---- cache ----
-  // A confirmed empty list counts for emptyMs only; after that the video is looked up again.
+  // A confirmed empty list counts for emptyMs only; after that the video is looked up again. A first empty answer counts
+  // as empty for emptyRetryMs.
   list(videoId) {
+    return this.stored(videoId) ?? (this.store.captionGet(videoId, EMPTY_KEY, this.emptyRetryMs) ? [] : null);
+  }
+
+  stored(videoId) {
     const tracks = this.store.captionGet(videoId, 'tracks', this.maxAgeMs);
     if (Array.isArray(tracks) && !tracks.length) return this.store.captionGet(videoId, 'tracks', this.emptyMs);
     return tracks;
@@ -145,8 +153,8 @@ export class CaptionChain {
   }
 
   keep(videoId, got, want) {
-    if (got.tracks?.length && !this.list(videoId)) this.store.captionPut(videoId, 'tracks', got.tracks);
-    if (got.tracks && !got.tracks.length && !this.list(videoId)) {
+    if (got.tracks?.length && !this.stored(videoId)) this.store.captionPut(videoId, 'tracks', got.tracks);
+    if (got.tracks && !got.tracks.length && !this.stored(videoId)) {
       // The first empty answer is only marked; the second within emptyMs is kept (see EMPTY_KEY).
       if (this.store.captionGet(videoId, EMPTY_KEY, this.emptyMs)) this.store.captionPut(videoId, 'tracks', []);
       else this.store.captionPut(videoId, EMPTY_KEY, true);
@@ -173,7 +181,8 @@ export class CaptionChain {
           got.via = via;
           this.keep(videoId, got, want);
           this.metrics?.inc('cc_via', via);
-          this.log({ event: 'captions_via', id: videoId, via, ms: Date.now() - t0, tracks: got.tracks?.length ?? null, cues: got.cues?.length ?? null, reason: got.reason });
+          this.log({ event: 'captions_via', id: videoId, via, ms: Date.now() - t0, tracks: got.tracks?.length ?? null, cues: got.cues?.length ?? null, reason: got.reason,
+            ...(got.retried ? { retried: true } : {}), ...(got.warnings ? { warnings: got.warnings } : {}) });
           return got;
         } catch (err) {
           this.log({ event: 'captions_source_failed', id: videoId, via, ms: Date.now() - t0, message: short(err) });
@@ -202,7 +211,8 @@ export class CaptionChain {
     const r = await this.relay.captions(videoId, want, { timeoutMs: this.relayWaitMs });
     if (!r?.info) throw new Error('worker answered without info');
     const track = r.track ? { code: r.track.code ?? codeOfKey(r.track.key), auto: Boolean(r.track.auto) } : null;
-    return { tracks: this.order(r.info), track, cues: Array.isArray(r.cues) ? r.cues : null, reason: r.reason };
+    return { tracks: this.order(r.info), track, cues: Array.isArray(r.cues) ? r.cues : null, reason: r.reason,
+      warnings: Array.isArray(r.warnings) ? r.warnings.length : 0, retried: Boolean(r.retried) };
   }
 
   async fromLocal(videoId, want) {

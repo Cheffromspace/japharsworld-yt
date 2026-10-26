@@ -225,14 +225,17 @@ function scriptedRelay(answers, delayMs = 0) {
 const emptyInfo = { info: { language: null, manual: [], auto: [] }, track: null, cues: null, reason: 'no_captions' };
 const someInfo = { info: { language: 'en', manual: [], auto: ['en', 'de'] }, track: null, cues: null };
 
-test('an empty list is suspect: looked up once more, then kept for 30 minutes only (2026-10-25)', async () => {
+test('an empty list is suspect: looked up once more after 3 minutes, then kept for 30 minutes only (2026-10-25)', async () => {
   let now = 1_000_000;
   const store = new Store({ path: ':memory:', shards: 1, pool: 10, pinHours: 24, now: () => now });
   const relay = scriptedRelay([emptyInfo, emptyInfo, someInfo]);
   const chain = new CaptionChain({ store, relay, log: () => {} });
   assert.equal((await chain.tracks('aaaaaaaaaaa')).reason, 'no_captions');
   assert.equal(relay.calls.length, 1);
-  assert.equal((await chain.tracks('aaaaaaaaaaa')).reason, 'no_captions', 'the second request looks once more');
+  assert.equal((await chain.tracks('aaaaaaaaaaa')).reason, 'no_captions', 'within 3 minutes: the first answer stands');
+  assert.equal(relay.calls.length, 1);
+  now += 3 * 60_000 + 1;
+  assert.equal((await chain.tracks('aaaaaaaaaaa')).reason, 'no_captions', 'after 3 minutes the next request looks once more');
   assert.equal(relay.calls.length, 2);
   assert.equal((await chain.tracks('aaaaaaaaaaa')).reason, 'no_captions', 'twice empty: kept');
   assert.equal(relay.calls.length, 2);
@@ -246,6 +249,7 @@ test('an empty list is suspect: looked up once more, then kept for 30 minutes on
   const flaky = scriptedRelay([emptyInfo, someInfo]);
   const chain2 = new CaptionChain({ store, relay: flaky, log: () => {} });
   assert.equal((await chain2.tracks('bbbbbbbbbbb')).reason, 'no_captions');
+  now += 3 * 60_000 + 1;
   assert.equal((await chain2.tracks('bbbbbbbbbbb')).available, true);
   now += 6 * 86400_000;
   assert.equal((await chain2.tracks('bbbbbbbbbbb')).available, true);

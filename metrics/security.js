@@ -64,7 +64,11 @@ export function render({ ssh, hashes, hardened, bans, ufwActive, now }) {
   return `${rows.join('\n')}\n`;
 }
 
-const run = (cmd, args) => { try { return execFileSync(cmd, args, { encoding: 'utf8', timeout: 20_000, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return null; } };
+// A command that fails is named in the journal (its output never: it may hold addresses), and its numbers are left out.
+const run = (cmd, args) => {
+  try { return execFileSync(cmd, args, { encoding: 'utf8', timeout: 20_000, stdio: ['ignore', 'pipe', 'ignore'] }); }
+  catch (err) { console.error(JSON.stringify({ event: 'security_check_failed', cmd, status: err.status ?? null, signal: err.signal ?? null })); return null; }
+};
 const read = (f) => { try { return readFileSync(f, 'utf8'); } catch { return null; } };
 
 function main() {

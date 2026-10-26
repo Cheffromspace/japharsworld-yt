@@ -144,8 +144,12 @@ wants done becomes an issue for the coordinator (the Everything is OK coordinati
 
 **Public repo:** reports and issues are public. No secrets, tokens or webhook URLs, no IP addresses or SSH account
 names, no visitor data (search text, video IDs from visitors' plays, VRChat user or instance IDs). Counts and
-timings are fine.
+timings are fine. The security checks (`infra-check/prompt.md`, owner 2026-10-26) keep their details (logins, source
+IPs, key fingerprints, ports, ufw rules) in the local `reports/<date>.security.md`, compared with the local
+`security-baseline.md`; GitHub gets only "Security: green/yellow/red, details in the local report", and a red item
+an issue without details. A red item makes the Discord summary start with "SECURITY:".
 
-**Its sudoers rules** (`infra-check/sudoers-*`) allow only the two maintenance commands. The copies installed on
-2026-10-24 also allowed service restarts (on the Linode including the owner's mediamtx). The rule above forbids those
-either way; the owner reinstalls the narrowed files.
+**Its sudoers rules** (`infra-check/sudoers-*`) allow only the two maintenance commands and the read-only security
+commands (`sshd -T`, `ufw status verbose`; `fail2ban-client status sshd` on the Linode, `ss -tlnp` on the Optiplex).
+The copies installed on 2026-10-24 also allowed service restarts (on the Linode including the owner's mediamtx). The
+rule above forbids those either way; the owner reinstalls the narrowed files.

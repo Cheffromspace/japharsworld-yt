@@ -6,5 +6,6 @@ After=network-online.target
 [Service]
 Type=oneshot
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/yt-infra-check/run.sh
+# The code from the relay worker's checkout of main (its update timer pulls every 5 minutes); data in ~/yt-infra-check.
+ExecStart=/bin/bash /opt/japharsworld-yt-relay/infra-check/run.sh
 TimeoutStartSec=50min

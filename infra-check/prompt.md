@@ -13,6 +13,21 @@ Weekly infrastructure check for the YouTube search feature of Jonathan's VRChat 
 ## Checks (Optiplex locally, Linode over SSH)
 Uptime/reboots, load, memory, swap, disk usage and growth; state of every unit listed above; restarts and crash loops this week; error/warning counts and notable new errors in logs since the last report; TLS expiry on yt.japharsworld.com; a live end-to-end test search with response time, and whether it was served through the Optiplex relay or fell back; relay long-poll health (reconnects, queue/backlog, latency); bgutil-pot and yt-dlp health (bot-wall/PO-token errors, yt-dlp version age); whether Alloy and the exporter are actually delivering to Grafana Cloud; pending security updates (report only); Grafana alerts fired this week and week-over-week trends (latency, error rate, hangs, Tunelio credits, flash-scan backlog/timing, Channels monitor findings such as dead or non-live channels).
 
+## Security (both hosts, last 7 days, read only)
+Compare with the security baseline (path at the end of this prompt; local, never in the repo) and with last week's security report. If the baseline is missing, say so and list what you found as a proposed baseline, without writing the baseline file.
+- SSH logins: accepted logins (user, key fingerprint, source IP); failed and invalid-user attempts (counts, top source IPs), against last week. Linode: `journalctl -u ssh` / `/var/log/auth.log`; Optiplex: the same (it has no `lastb`).
+- `authorized_keys` of every account and the accounts that can log in (a real shell in `/etc/passwd`), against the baseline.
+- sshd hardening still in force: `sudo -n sshd -T` shows `passwordauthentication no`, `kbdinteractiveauthentication no`, `permitrootlogin prohibit-password`.
+- Linode fail2ban: `sudo -n fail2ban-client status sshd` (currently and total banned).
+- Listening ports (`ss -tlnp`, with `sudo -n` on the Optiplex) and `sudo -n ufw status verbose`, against the baseline.
+- systemd units and timers (`systemctl list-unit-files`, `systemctl list-timers --all`) and crontabs (`/etc/cron*`, `crontab -l`) new or changed this week; files changed under `/etc` in the last 7 days (`find /etc -newermt '-7 days' -type f`; paths only).
+- The env files (`/etc/japharsworld-yt*.env`) still owned by root with mode 0600: `stat` only, never read their contents.
+- Pending security updates and `/var/run/reboot-required`.
+- Caddy on the Linode: requests for scanner paths (`/wp-*`, `/.env`, `/.git`, `*.php`, …) and status counts, from its journal.
+- MediaMTX on the Linode: publish or authentication failures from its journal.
+
+Write the details to the security report (path at the end of this prompt). They never go in the public report, the issue #33 comment, other issues or the Discord summary text: the public report gets one line, "Security: green/yellow/red, details in the local report". The wrapper attaches the security report to the Discord post. Anything red (a login you can't account for, a key or account not in the baseline, sshd hardening off, a new listening port, an env file readable by others, a reboot pending for a security update) makes the summary's first line start with "SECURITY:". A red security item is filed as a GitHub issue only as "Security finding on <host>, see the local report of <date>", with no details.
+
 ## Changes: maintenance only
 The only change allowed is the journal vacuum or logrotate that the rules section allows, above its disk threshold. Always use `sudo -n` (never prompt). No restarts, even of a crashed service, and even though `sudo -n -l` may still list restart commands: report it as a finding instead. Everything else you'd want done (restarts, config edits, package updates, reboots, deleting caches or data, firewall/router/network/port changes, anything exposing the home network, the channel list, credentials, Tunelio settings, git pushes, world uploads) becomes an issue for the coordinator to triage, as the rules section describes.
 

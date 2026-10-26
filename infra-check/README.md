@@ -1,6 +1,12 @@
 # YT Search weekly infra check (Optiplex)
 
-Runs Claude Code headless every Thursday at 6:52 AM Central, checks the Optiplex + Linode + Grafana, posts the full report as a comment on issue #33 and files findings as `infra-check` issues, and posts a summary to Discord with the report attached. It is read only apart from a journal vacuum or logrotate above 85 % disk use. Its rules are in `claude/monitoring.md`, "Weekly infra check (Optiplex agent)", which it reads from `/opt/japharsworld-yt-relay` (the relay worker's checkout of `main`).
+Runs Claude Code headless every Thursday at 6:52 AM Central, checks the Optiplex + Linode + Grafana, posts the full report as a comment on issue #33 and files findings as `infra-check` issues, and posts a summary to Discord with the report and a local security report attached. It is read only apart from a journal vacuum or logrotate above 85 % disk use. Its rules are in `claude/monitoring.md`, "Weekly infra check (Optiplex agent)", which it reads from `/opt/japharsworld-yt-relay` (the relay worker's checkout of `main`).
+
+**Code and data are apart.** `run.sh` and `prompt.md` run straight from that checkout
+(`/opt/japharsworld-yt-relay/infra-check/`), so a push to `main` deploys them within 5 minutes (the relay-update
+timer). Everything local stays in `~/yt-infra-check`: `.env` (secrets), `reports/`, `logs/` and
+`security-baseline.md`. The repo is public, so security details (IP addresses, key fingerprints, ports, the
+baseline) only ever go in `reports/<date>.security.md` and the Discord attachment, never in the repo or on GitHub.
 
 ## Install (on the Optiplex, as your normal user)
 
@@ -9,10 +15,10 @@ Runs Claude Code headless every Thursday at 6:52 AM Central, checks the Optiplex
 curl -fsSL https://claude.ai/install.sh | bash
 sudo apt install -y jq curl
 
-# 2. Files
-mkdir -p ~/yt-infra-check && cd ~/yt-infra-check
-cp /opt/japharsworld-yt-relay/infra-check/* .      # this folder of the repo (README, run.sh, prompt.md, units, sudoers)
-chmod +x run.sh
+# 2. The data folder (the code stays in the checkout; nothing is copied)
+mkdir -p ~/yt-infra-check/reports ~/yt-infra-check/logs && cd ~/yt-infra-check
+KIT=/opt/japharsworld-yt-relay/infra-check
+# security-baseline.md: the expected keys, accounts, ports and ufw rules, written by hand (chmod 600; never committed)
 
 # GitHub CLI, signed in with access to Cheffromspace/japharsworld-yt (issues and comments only)
 sudo apt install -y gh && gh auth login
@@ -30,7 +36,7 @@ EOF
 chmod 600 .env
 
 # 5. Optiplex: root actions it may take, plus permission to read system logs
-sudo visudo -cf sudoers-optiplex && sudo install -m 440 sudoers-optiplex /etc/sudoers.d/yt-infra-check
+sudo visudo -cf $KIT/sudoers-optiplex && sudo install -m 440 $KIT/sudoers-optiplex /etc/sudoers.d/yt-infra-check
 sudo usermod -aG systemd-journal,adm jonflatt     # log out/in (or reboot) for this to apply
 
 # 6. A dedicated SSH key for the check
@@ -43,7 +49,7 @@ Host linode-check
   IdentityFile ~/.ssh/yt_check
   IdentitiesOnly yes
 EOF
-cat ~/.ssh/yt_check.pub    # copy this for step 7
+cat ~/.ssh/yt_check.pub    # step 7 asks for this line
 ```
 
 ### On the Linode (as root)
@@ -53,10 +59,17 @@ cat ~/.ssh/yt_check.pub    # copy this for step 7
 adduser --disabled-password --gecos "" ytcheck
 usermod -aG systemd-journal,adm ytcheck
 install -d -m 700 -o ytcheck -g ytcheck /home/ytcheck/.ssh
-echo '<paste yt_check.pub here>' > /home/ytcheck/.ssh/authorized_keys
-chown ytcheck:ytcheck /home/ytcheck/.ssh/authorized_keys && chmod 600 /home/ytcheck/.ssh/authorized_keys
+# Paste the line step 6 printed when asked. Anything else, a placeholder included, writes nothing (2026-10-25: a
+# literal '<paste ...>' replaced the real key, and the check never reached the Linode).
+read -r -p 'yt_check.pub line: ' KEY
+case "$KEY" in
+  'ssh-ed25519 '*' yt-infra-check@gameserver')
+    printf '%s\n' "$KEY" > /home/ytcheck/.ssh/authorized_keys
+    chown ytcheck:ytcheck /home/ytcheck/.ssh/authorized_keys && chmod 600 /home/ytcheck/.ssh/authorized_keys ;;
+  *) echo 'not the yt_check key: nothing written' >&2 ;;
+esac
 
-# copy sudoers-linode over, then:
+# sudoers-linode from the repo (infra-check/), then:
 visudo -cf sudoers-linode && install -m 440 sudoers-linode /etc/sudoers.d/yt-infra-check
 ```
 
@@ -64,12 +77,11 @@ visudo -cf sudoers-linode && install -m 440 sudoers-linode /etc/sudoers.d/yt-inf
 
 ```bash
 ssh -o BatchMode=yes linode-check 'systemctl is-active japharsworld-yt && sudo -n -l' && echo ok
-cd ~/yt-infra-check
 
 # 8. Timer (linger lets user timers run without you logged in)
 sudo loginctl enable-linger "$USER"
 mkdir -p ~/.config/systemd/user
-cp yt-infra-check.service yt-infra-check.timer ~/.config/systemd/user/
+cp $KIT/yt-infra-check.service $KIT/yt-infra-check.timer ~/.config/systemd/user/   # again only if the units change
 systemctl --user daemon-reload
 systemctl --user enable --now yt-infra-check.timer
 systemctl --user list-timers yt-infra-check.timer
@@ -81,6 +93,9 @@ systemctl --user start yt-infra-check && journalctl --user -u yt-infra-check -e
 ## Notes
 - `Persistent=true`: if the Optiplex is off at 6:52, the run happens at next boot.
 - If the login token stops working, the wrapper posts a 🔑 alert to Discord telling you to rerun `claude setup-token`.
-- The sudoers files are the real guardrail: they allow only the journal vacuum and logrotate (no restarts since 2026-10-25; reinstall them with step 5 / step 7 after a change). On the Optiplex this holds only while `jonflatt`'s normal sudo still asks for a password (the check always uses `sudo -n`, so anything outside the allowlist fails instead of prompting). On the Linode, `ytcheck` has no sudo beyond the allowlist.
-- Updating: after a change to this folder lands on `main`, copy `run.sh` and `prompt.md` again (`cp /opt/japharsworld-yt-relay/infra-check/{run.sh,prompt.md} ~/yt-infra-check/`). The rules in `claude/monitoring.md` need no copy.
+- The sudoers files are the real guardrail: they allow only the journal vacuum, logrotate and the read-only security
+  commands (`sshd -T`, `ufw status verbose`, and `fail2ban-client status sshd` on the Linode, `ss -tlnp` on the
+  Optiplex) (no restarts since 2026-10-25; reinstall them with step 5 / step 7 after a change). On the Optiplex this holds only while `jonflatt`'s normal sudo still asks for a password (the check always uses `sudo -n`, so anything outside the allowlist fails instead of prompting). On the Linode, `ytcheck` has no sudo beyond the allowlist.
+- Updating: nothing to copy. `run.sh`, `prompt.md` and the rules in `claude/monitoring.md` are read from the checkout at
+  each run. Only a change to the units (copy them again, `daemon-reload`) or the sudoers files (reinstall them) needs a step.
 - Reports: `~/yt-infra-check/reports/`, raw run output: `~/yt-infra-check/logs/` (kept 26 weeks).

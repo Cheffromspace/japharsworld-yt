@@ -25,6 +25,11 @@ if [ "$SETUP" = on ] && [ -x "$VENV/bin/pip" ] && { [ ! -f "$STAMP" ] || [ -n "$
   [ "$before" = "$after" ] || echo "yt-dlp $before -> $after"
 fi
 cd "$APP"
+# The checkout is jytrelay's and this runs as root, so git refuses it as "dubious ownership" unless the path is a
+# safe.directory. relay-setup.sh adds production's to /etc/gitconfig; the staging checkout (#160) was set up without
+# it and every staging update failed (exit 128, 2026-10-26). Command-scope config counts as protected, so this covers
+# every git call below (deploy-record.sh's too) without touching the machine's config.
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$APP"
 git fetch -q origin "$BRANCH"
 current=$(git rev-parse HEAD); target=$(git rev-parse "origin/$BRANCH")
 [ "$current" != "$target" ] || exit 0

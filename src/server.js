@@ -24,6 +24,7 @@
 //   GET /hls-test/<hex>.m3u8                           player test kit: test playlists and slots (yt-dlp gets a "not a video" page)
 //   GET /hls-test/<hex>/<file>                         player test kit: hand-copied segments and playlists (missing segments held 10 s)
 //   GET /, /privacy, /logo.png                         home page and privacy policy (public/)
+//   GET /feedback                                      301 to the feedback form (FEEDBACK_URL), for eiok.cc/feedback
 import http from 'node:http';
 import { readFileSync, statSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -831,6 +832,12 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         route = 'health';
         return json(res, 200, { ok: true, v: API, tunelio: tunelio.enabled, credits: tunelio.credits,
           workers: relay.online().length, lastSearchVia: searcher.state.lastVia, apiUnitsToday: api.unitsToday, busy: busy() });
+      }
+      if (url.pathname === '/feedback' && config.feedbackUrl) {
+        // eiok.cc/feedback, the same form as japharsworld.com/feedback (owner, world #224, 2026-10-26).
+        route = 'page';
+        res.writeHead(301, { location: config.feedbackUrl });
+        return res.end();
       }
       const pagePath = url.pathname === '/privacy.html' ? '/privacy' : url.pathname;
       if (PAGES[pagePath]) {

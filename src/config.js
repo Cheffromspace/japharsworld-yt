@@ -134,6 +134,8 @@ export const config = {
   metricsTz: process.env.METRICS_TZ ?? 'America/Chicago',
   // Bearer token for GET /stats, /stats.json and /stats/export.csv. Empty = those routes answer 404.
   statsToken: process.env.STATS_TOKEN ?? '',
+  // GET /feedback answers 301 here (world #224: eiok.cc/feedback, the same form as japharsworld.com/feedback). Empty = 404.
+  feedbackUrl: process.env.FEEDBACK_URL ?? 'https://docs.google.com/forms/d/1UXMXbqXXXtClqTAnQAVKA1niKKsIdOLMGjCPCH-yZFA/viewform',
   // The Channels monitor's database (read only, for /stats).
   monitorDb: process.env.MONITOR_DB ?? '/var/lib/japharsworld-yt-monitor/monitor.db',
   // Thumbnail sheet: one cell per result, row-major.

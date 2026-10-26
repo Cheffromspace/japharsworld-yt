@@ -204,3 +204,13 @@ test('serves the home page, privacy policy and logo', async (t) => {
   const logo = await fetch(`http://127.0.0.1:${s.server.address().port}/logo.png`);
   assert.equal(logo.headers.get('content-type'), 'image/png');
 });
+
+test('/feedback answers 301 to the feedback form (world #224)', async (t) => {
+  const s = await start();
+  t.after(() => s.server.close());
+  for (const method of ['GET', 'HEAD']) {
+    const res = await fetch(`http://127.0.0.1:${s.server.address().port}/feedback`, { method, redirect: 'manual' });
+    assert.equal(res.status, 301, method);
+    assert.equal(res.headers.get('location'), 'https://docs.google.com/forms/d/1UXMXbqXXXtClqTAnQAVKA1niKKsIdOLMGjCPCH-yZFA/viewform', method);
+  }
+});

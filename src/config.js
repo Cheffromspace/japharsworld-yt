@@ -120,7 +120,7 @@ export const config = {
   homeDailyBuilds: int('HOME_DAILY_BUILDS', 40),
   homeDailyMb: int('HOME_DAILY_MB', 50_000), // owner, 2026-10-23: 10 GB went in a few long videos (a 6 h mix is ~2.5 GB)
   homeKeepHours: int('HOME_KEEP_HOURS', 12),
-  homeMaxGb: int('HOME_MAX_GB', 6),
+  homeMaxGb: int('HOME_MAX_GB', 8),
   // How long a new session may take to its first playlist: yt-dlp ~3 s, then its stream URLs answer 403 for 0.1–2.6 s,
   // once 22 s, before they work (2026-10-23), then the first segments.
   homeReadyMs: int('HOME_READY_SECONDS', 40) * 1000,

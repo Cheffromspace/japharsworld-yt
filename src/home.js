@@ -17,7 +17,8 @@
 // A session is one video at one quality: building until its first playlist with a segment arrives, then ready
 // (playable while the rest uploads), ended once the playlist has ENDLIST and every segment it lists is here. Sessions
 // are saved next to their files (meta.json) and reloaded on start, so a deploy doesn't cut plays off; the daily use is
-// saved too (day.json), so it doesn't reset the cap. Files stay keepHours, oldest finished first out above maxGb.
+// saved too (day.json), so it doesn't reset the cap. Files stay keepHours, oldest finished first out above maxGb
+// (8 GB: 1080p sessions are 0.6–1.6 GB and the Linode's / is 25 GB, 2026-10-25), never one building or being played.
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, rmSync, renameSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
@@ -29,10 +30,13 @@ const RETRY_MS = 60_000; // a failed session is tried again after this long
 // An unfinished session with no upload for this long has no worker stream behind it any more (it died or was stopped);
 // a live one uploads every few seconds, and a server restart only pauses it for seconds (the worker retries).
 const STALE_MS = 5 * 60_000;
+// A session a player fetched from this recently is being played: the sweep leaves it alone. Players fetch a segment
+// every few seconds, and a paused one picks up where it was.
+const PLAYING_MS = 5 * 60_000;
 
 export class Home {
   constructor({ relay, dir, base = 'https://yt.japharsworld.com/home', enabled = false, dailyBuilds = 40, dailyMb = 10_000,
-    keepHours = 12, maxGb = 6, readyMs = 30_000, segmentHoldMs = 20_000, now = () => Date.now(), log = () => {}, onEvent = () => {} }) {
+    keepHours = 12, maxGb = 8, readyMs = 30_000, segmentHoldMs = 20_000, now = () => Date.now(), log = () => {}, onEvent = () => {} }) {
     Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, keepHours, maxGb, readyMs, segmentHoldMs, now, log, onEvent });
     this.sessions = new Map(); // "videoId@quality" → session
     this.byToken = new Map();  // token → session
@@ -69,14 +73,14 @@ export class Home {
         this.byToken.set(s.token, s);
       } catch { rmSync(folder, { recursive: true, force: true }); dropped++; }
     }
-    if (this.byToken.size || dropped) this.log({ event: 'home_loaded', sessions: this.byToken.size, dropped });
+    if (this.byToken.size || dropped) this.log({ event: 'home_loaded', sessions: this.byToken.size, dropped, storedMb: Math.round(this.#storedMb()), maxGb: this.maxGb });
   }
 
   #session(f) {
     return { token: f.token, id: f.id, quality: f.quality, seconds: f.seconds ?? 0, worker: f.worker ?? null, state: 'building',
       startedMs: f.startedMs ?? this.now(), readyMs: 0, endedMs: 0, lastPutMs: f.lastPutMs ?? 0, ended: false, mb: 0, segments: 0,
       listed: [], listedSeconds: 0, stored: new Set(), reason: null, waiters: [], endWaiters: [], segmentWaiters: new Map(),
-      firstSegmentMs: 0, firstServed: null, why: f.why ?? null };
+      firstSegmentMs: 0, firstServed: null, lastGetMs: 0, why: f.why ?? null };
   }
 
   // Not finished, and no upload for STALE_MS: nothing will arrive any more.
@@ -314,6 +318,7 @@ export class Home {
   async file(token, file) {
     const s = this.byToken.get(token);
     if (!s || !(file === 'index.m3u8' || SEGMENT.test(file))) return null;
+    s.lastGetMs = this.now();
     if (file !== 'index.m3u8' && !s.stored.has(file) && !s.ended && s.state !== 'failed') {
       await new Promise((resolve) => {
         const ws = s.segmentWaiters.get(file) ?? [];
@@ -347,16 +352,23 @@ export class Home {
     try { rmSync(join(this.dir, s.token), { recursive: true, force: true }); } catch { /* gone */ }
   }
 
-  // Old sessions out, then the oldest finished ones while the files take more than maxGb.
+  #storedMb() { return [...this.byToken.values()].reduce((n, s) => n + s.mb, 0); }
+
+  // Old sessions out, then the oldest finished ones while the files take more than maxGb; one being played stays.
   sweep() {
     const now = this.now();
+    const playing = (s) => s.lastGetMs > 0 && now - s.lastGetMs < PLAYING_MS;
+    const evict = (s, why) => { this.log({ event: 'home_evict', id: s.id, quality: s.quality, why, mb: Math.round(s.mb) }); this.#drop(s); };
     for (const s of [...this.byToken.values()]) {
       const last = s.lastPutMs || s.endedMs || s.startedMs;
-      if (now - last > this.keepHours * 3600_000) this.#drop(s);
+      if (now - last > this.keepHours * 3600_000 && !playing(s)) evict(s, 'age');
     }
-    const done = [...this.byToken.values()].filter((s) => s.ended || s.state === 'failed').sort((a, b) => (a.lastPutMs || a.startedMs) - (b.lastPutMs || b.startedMs));
-    let total = [...this.byToken.values()].reduce((n, s) => n + s.mb, 0);
-    while (total > this.maxGb * 1000 && done.length) { const s = done.shift(); total -= s.mb; this.#drop(s); }
+    const done = [...this.byToken.values()].filter((s) => (s.ended || s.state === 'failed') && !playing(s))
+      .sort((a, b) => (a.lastPutMs || a.startedMs) - (b.lastPutMs || b.startedMs));
+    let total = this.#storedMb();
+    while (total > this.maxGb * 1000 && done.length) { const s = done.shift(); total -= s.mb; evict(s, 'size'); }
+    // Builds and plays alone can take more; the disk alerts (tools/grafana.mjs) catch it if that ever fills /.
+    if (total > this.maxGb * 1000) this.log({ event: 'home_over_cap', storedMb: Math.round(total), maxGb: this.maxGb });
   }
 
   state() {
@@ -364,9 +376,9 @@ export class Home {
     const d = this.#today();
     return { enabled: this.enabled, workers: this.relay?.capable?.('media') ?? [],
       today: { builds: d.builds, mb: Math.round(d.mb), cacheHits: d.cacheHits ?? 0, cacheMb: Math.round(d.cacheMb ?? 0) },
-      cap: { builds: this.dailyBuilds, mb: this.dailyMb },
+      cap: { builds: this.dailyBuilds, mb: this.dailyMb, storedGb: this.maxGb },
       building: all.filter((s) => s.state === 'building').length, ready: all.filter((s) => s.state === 'ready' && !s.ended).length,
       ended: all.filter((s) => s.ended).length, failed: all.filter((s) => s.state === 'failed').length,
-      storedMb: Math.round(all.reduce((n, s) => n + s.mb, 0)) };
+      storedMb: Math.round(this.#storedMb()) };
   }
 }

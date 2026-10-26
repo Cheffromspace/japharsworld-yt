@@ -107,6 +107,26 @@ test('home: old sessions are swept, and the oldest finished ones while over maxG
   assert.equal(await home.file(b.token, 'seg0.ts'), null, 'older than keepHours');
 });
 
+test('home: a finished session being played survives the size cap and keepHours; evictions are logged', async (t) => {
+  let now = 0;
+  const logs = [];
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, keepHours: 1, maxGb: 0.000001, now: () => now, log: (l) => logs.push(l) });
+  const a = home.start({ id: 'aaaaaaaaaaa' }, '720p');
+  home.put(a.token, 'seg0.ts', Buffer.alloc(1500));
+  home.put(a.token, 'seg1.ts', Buffer.alloc(10));
+  home.put(a.token, 'index.m3u8', Buffer.from(PL2));
+  now += 2 * 3600_000;
+  assert.ok(await home.file(a.token, 'seg1.ts'), 'a player fetches it');
+  now += 60_000;
+  home.sweep();
+  assert.ok(await home.file(a.token, 'seg0.ts'), 'played a minute ago: kept although old and over the cap');
+  assert.ok(logs.some((l) => l.event === 'home_over_cap'));
+  now += 6 * 60_000;
+  home.sweep();
+  assert.equal(await home.file(a.token, 'seg0.ts'), null, 'no player for 6 minutes: out');
+  assert.deepEqual(logs.filter((l) => l.event === 'home_evict').map((l) => l.why), ['age']);
+});
+
 test('home: a segment asked for before it is here is held until it arrives; one past the end is not', async (t) => {
   const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, segmentHoldMs: 2000 });
   const s = home.start({ id: 'aaaaaaaaaaa' }, '720p');
@@ -168,7 +188,7 @@ test('home: a restart drops given-up and dead sessions, and keeps the uneven lis
   assert.equal(again.peek({ id: 'bbbbbbbbbbb' }, '720p'), null, 'dead: not reloaded');
   assert.equal(again.peek({ id: 'ccccccccccc' }, '720p').why, 'long');
   assert.equal(again.isUneven({ id: 'aaaaaaaaaaa' }), true);
-  assert.deepEqual(logs.find((l) => l.event === 'home_loaded'), { event: 'home_loaded', sessions: 1, dropped: 2 });
+  assert.deepEqual(logs.find((l) => l.event === 'home_loaded'), { event: 'home_loaded', sessions: 1, dropped: 2, storedMb: 0, maxGb: 8 });
   assert.throws(() => readFileSync(join(dir, given.token, 'meta.json')), 'its folder is gone');
 });
 

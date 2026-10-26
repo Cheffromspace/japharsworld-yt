@@ -186,7 +186,9 @@ ahead of the captions), so a player is held up to `HOME_SETTLE_SECONDS` (10) whe
 by then, and gets the finished playlist (`home`/`settled`; `home_first_segment` logs where each session's first
 player started). Sessions are saved
 next to their files and reloaded on restart (a deploy doesn't cut plays off, and the worker retries its uploads through
-it); the day's use is saved too. Files are kept `HOME_KEEP_HOURS`, oldest finished first out above `HOME_MAX_GB`.
+it); the day's use is saved too. Files are kept `HOME_KEEP_HOURS`, oldest finished first out above `HOME_MAX_GB`
+(8 GB), never one that is building or was fetched by a player in the last 5 minutes (`home_evict` logs each one,
+`home_loaded` the stored size and cap at start).
 
 **The worker's cache** (`relay/cache.js`, owner 2026-10-23: "be aggressive, the Optiplex has lots of disk"): every
 stream that finishes whole stays on the Optiplex too, one folder per video and quality, least recently used out above

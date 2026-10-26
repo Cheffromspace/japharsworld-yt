@@ -3,7 +3,7 @@
 One yt-dlp extraction gives both: the height VRChat would get (its resolver asks for
 "(mp4/best)[height<=?1080][height>=?64][width>=?64]"; live streams answer format 96 at 1080p) and a <=480p stream
 URL for the flash check. Same method as SessionWork/2026-10-17/flashcheck/flashcheck.py (validated: the strobing fan
-stream SbjZKmnZYao fails at 9/s): 15 s at 30 fps, 160x90 grey; a flash is a pair of opposing changes in relative
+stream SbjZKmnZYao fails at 9/s): FLASH_SECONDS (60) at 30 fps, 160x90 grey; a flash is a pair of opposing changes in relative
 luminance of at least 0.1 with the darker side below 0.8; fail at more than 3 flashes in any 1 s, measured over the
 whole frame and each quarter.
 
@@ -13,7 +13,7 @@ import json, os, re, shutil, subprocess, sys, time
 
 from . import config
 
-W, H, FPS, SECS = 160, 90, 30, 15
+W, H, FPS = 160, 90, 30
 QUIET = {"creationflags": 0x08000000} if sys.platform == "win32" else {}  # no console windows from the scheduled PC worker
 LUT = [((v / 255.0) ** 2.2) for v in range(256)]
 
@@ -86,9 +86,13 @@ def flash_source(formats):
 
 
 def frames(src):
-    cmd = [ffmpeg_path(), "-loglevel", "error", "-t", str(SECS), "-i", src, "-vf", "fps=%d,scale=%d:%d,format=gray" % (FPS, W, H),
+    # Owner, 2026-10-26: 60 s instead of 15, to catch a strobe that starts later. Measured on the Optiplex that day: a
+    # 480p live stream (1.28 Mbps) took 7.4 s for 15 s (the buffered segments come at once) and 53 s for 60 s (the rest
+    # in real time), ~9.6 MB; 1800 frames are 26 MB here.
+    secs = config.FLASH_SECONDS
+    cmd = [ffmpeg_path(), "-loglevel", "error", "-t", str(secs), "-i", src, "-vf", "fps=%d,scale=%d:%d,format=gray" % (FPS, W, H),
            "-f", "rawvideo", "-"]
-    p = subprocess.run(cmd, capture_output=True, timeout=180, **QUIET)
+    p = subprocess.run(cmd, capture_output=True, timeout=secs + 120, **QUIET)
     data, n = p.stdout, W * H
     return [data[i:i + n] for i in range(0, len(data) - n + 1, n)]
 

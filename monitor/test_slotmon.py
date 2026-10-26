@@ -111,6 +111,18 @@ class Tests(Base):
             self.assertEqual(self.alerts[-1], ("good", "Channels back"))
             self.assertEqual(len(self.mentions), 1, "the all-clear does not ping")
 
+    def test_flash_sample_length_is_a_setting_with_room_to_finish(self):
+        # Owner, 2026-10-26: 60 s by default (15 before); ffmpeg gets the sample plus 120 s.
+        from slotmon import probe
+        seen = []
+        with mock.patch.object(probe.subprocess, "run", lambda cmd, **k: seen.append((cmd, k["timeout"])) or mock.Mock(stdout=b"")), \
+                mock.patch.object(probe, "ffmpeg_path", lambda: "ffmpeg"):
+            probe.frames("https://x")
+            with mock.patch.object(config, "FLASH_SECONDS", 120):
+                probe.frames("https://x")
+        self.assertEqual(config.FLASH_SECONDS, 60)
+        self.assertEqual([(c[c.index("-t") + 1], t) for c, t in seen], [("60", 180), ("120", 240)])
+
     def test_mention_payload_pings_that_user_only(self):
         from slotmon import discord
         sent = []

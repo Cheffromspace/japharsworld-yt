@@ -57,6 +57,7 @@ LOCAL_JOBS = _int("LOCAL_JOBS", 6)  # jobs the server runs itself per pass when 
 MIN_HEIGHT = _int("MIN_HEIGHT", 720)
 MIN_HOURS = _int("MIN_HOURS", 40)
 FLASH_LIMIT = _int("FLASH_LIMIT", 3)  # fail at more than this many flashes in any 1 s
+FLASH_SECONDS = _int("FLASH_SECONDS", 60)  # seconds of stream each flash check samples (15 before 2026-10-26)
 DAILY_HOUR_UTC = _int("DAILY_HOUR_UTC", 14)  # 09:00 CDT
 WORKER_STALE_HOURS = _int("WORKER_STALE_HOURS", 36)
 BANNED_WORDS = ["asmr", "yellow brick cinema", "yellowbrickcinema"]

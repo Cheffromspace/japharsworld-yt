@@ -1,0 +1,26 @@
+[Unit]
+Description=MediaMTX: the owner's RTMP/RTSP stream (deploy/mediamtx-setup.sh; the world's Japhar screen reads live)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=mediamtx
+Group=mediamtx
+ExecStart=/usr/local/bin/mediamtx /etc/mediamtx/mediamtx.yml
+Restart=always
+RestartSec=5
+# Ports 1935 and 8554 are above 1024: no capabilities needed. runOnReady's ffmpeg runs as this user too.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryMax=300M
+
+[Install]
+WantedBy=multi-user.target

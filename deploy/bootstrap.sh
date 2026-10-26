@@ -33,6 +33,9 @@ fi
 
 say "Packages"
 export DEBIAN_FRONTEND=noninteractive
+# A fresh box runs unattended-upgrades at first boot: wait for its dpkg lock instead of failing (2026-10-26, the
+# production rebuild lost the lock on its first run). Every apt call here and in the setup scripts waits up to 10 min.
+echo 'DPkg::Lock::Timeout "600";' > /etc/apt/apt.conf.d/90japharsworld-yt-lock
 rm -f /etc/apt/sources.list.d/caddy-stable.list  # left by an earlier run; that repo now answers 402
 apt-get update -qq
 apt-get install -y -qq git curl ca-certificates python3 python3-venv build-essential >/dev/null
@@ -51,6 +54,11 @@ say "App ($REPO)"
 if [ -d "$APP/.git" ]; then git -C "$APP" fetch -q origin && git -C "$APP" reset -q --hard origin/main
 else git clone -q "$REPO" "$APP"; fi
 (cd "$APP" && npm ci --omit=dev --no-audit --no-fund --loglevel=error)
+
+say "Hardening (deploy/harden.sh)"
+# Needs the known addresses (/etc/japharsworld-yt-security.env, local only: the repo is public).
+if [ -f /etc/japharsworld-yt-security.env ]; then bash "$APP/deploy/harden.sh"
+else warn "No /etc/japharsworld-yt-security.env: SSH, fail2ban and ufw are not hardened. Write SSH_KNOWN_SOURCES there, then run deploy/harden.sh."; fi
 
 say "yt-dlp + bgutil PO-token plugin (captions)"
 [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"

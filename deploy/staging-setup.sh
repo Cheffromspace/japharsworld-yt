@@ -99,7 +99,10 @@ else
   warn "No /etc/caddy/cloudflare.env: only $DOMAIN is served; re-run this once the token file is there."
 fi
 printf '%s\n' "$site" > /etc/caddy/sites/japharsworld-yt.caddy
-caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+# Validate with the token Caddy's unit gets from its EnvironmentFile: the cloudflare module provisions during validate
+# and rejects an empty {env.CF_API_TOKEN} (seen 2026-10-26, world #210).
+( if [ -f /etc/caddy/cloudflare.env ]; then set -a; . /etc/caddy/cloudflare.env; set +a; fi
+  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null )
 systemctl restart caddy
 
 say "Hardening (deploy/harden.sh): SSH from the known addresses only, 80/443 public"

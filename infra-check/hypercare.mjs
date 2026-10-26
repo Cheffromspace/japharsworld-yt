@@ -6,6 +6,8 @@
 // and gets one issue in the private world repo, an `owner-task` card when the owner has to act (a unit down, the
 // public address failing, a disk filling). Still abnormal after 6 hours: Discord again and a comment. Recovered: a
 // quiet Discord line and a comment. It never restarts or fixes anything.
+// It ends itself (world #236, owner 2026-10-26): after 7 days of consecutive clean runs (any finding starts the count
+// again) it posts one Discord line and a comment on world #208, then disables its own user timer.
 // The journal is counted on the Linode (awk), so no log line, video ID or address ever reaches this machine. MediaMTX
 // moved to its own Linode (2026-10-26), which has no check account: a TCP connect to its public RTSP port 8554
 // (open in its ufw by design) at HYPERCARE_MEDIAMTX_HOST from the .env, never in the repo; unset = skipped.
@@ -23,6 +25,9 @@ const BASE = join(homedir(), 'yt-infra-check');   // .env (DISCORD_WEBHOOK_URL, 
 const REPO = 'Cheffromspace/Everything-is-OK';
 const HEALTHZ = 'https://yt.japharsworld.com/healthz';
 const REPEAT_MS = 6 * 3600_000;
+const HYPERCARE_ISSUE = 208;
+// 7 days of hourly runs, and 7 days by the clock too (manual or Persistent catch-up runs don't shorten it).
+export const END_AFTER = { runs: 7 * 24, ms: (7 * 24 - 1) * 3600_000 };   // 168 runs an hour apart span 167 h
 const MARK = '<!-- coordinator -->';   // the board watcher skips marked comments: agents share the owner's GitHub account
 const LINODE_UNITS = ['japharsworld-yt', 'caddy'];
 // The flash worker is a oneshot its timer starts; its last run's Result says whether it worked.
@@ -123,6 +128,13 @@ export function plan(findings, state, now, repeatMs = REPEAT_MS) {
     repeat: findings.filter((f) => state.open[f.key] && now - state.open[f.key].alerted >= repeatMs),
     recovered: Object.entries(state.open).filter(([k]) => !keys.has(k)).map(([key, v]) => ({ key, ...v })),
   };
+}
+
+// The clean streak: a run with no findings adds one (the first sets cleanSince), any finding resets it.
+export function streak(state, findings, now, end = END_AFTER) {
+  const clean = findings.length ? 0 : (state.clean ?? 0) + 1;
+  const cleanSince = findings.length ? null : (state.cleanSince ?? now);
+  return { clean, cleanSince, done: clean >= end.runs && now - cleanSince >= end.ms };
 }
 
 const optiplexSteps = (unit) => [
@@ -253,7 +265,8 @@ async function main(argv) {
   mkdirSync(BASE, { recursive: true });
   const stateFile = join(BASE, 'hypercare-state.json');
   let state;
-  try { state = { open: JSON.parse(readFileSync(stateFile, 'utf8')).open ?? {} }; } catch { state = { open: {} }; }
+  try { const s = JSON.parse(readFileSync(stateFile, 'utf8')); state = { open: s.open ?? {}, clean: s.clean ?? 0, cleanSince: s.cleanSince ?? null }; }
+  catch { state = { open: {}, clean: 0, cleanSince: null }; }
   const now = Date.now();
   const m = await measure(process.env);
   const findings = evaluate(m, limits());
@@ -269,7 +282,20 @@ async function main(argv) {
     await discord(`🔴 **YT hypercare:** ${fresh.length ? `${fresh.length} new` : ''}${fresh.length && repeat.length ? ', ' : ''}${repeat.length ? `${repeat.length} still open` : ''}\n${lines.join('\n')}`, { mention: true, dry });
   }
   if (recovered.length) await discord(`🟢 **YT hypercare recovered:** ${recovered.map((r) => `${r.title}${ref(r.issue)}`).join('; ')}`, { mention: false, dry });
-  if (!dry) { writeFileSync(`${stateFile}.tmp`, JSON.stringify({ open })); renameSync(`${stateFile}.tmp`, stateFile); }
+  const s = streak(state, findings, now);
+  if (!dry) { writeFileSync(`${stateFile}.tmp`, JSON.stringify({ open, ...(s.done ? { clean: 0, cleanSince: null } : { clean: s.clean, cleanSince: s.cleanSince }) })); renameSync(`${stateFile}.tmp`, stateFile); }
+  if (s.done) await end(s, dry);
+}
+
+// 7 clean days: say so once, then turn the timer off; the run in progress finishes, the timer starts no other. The
+// saved count is back at 0, so re-enabling it gives another 7 days. A failed post doesn't keep the timer on.
+async function end(s, dry) {
+  const text = `Hypercare ended: ${s.clean} clean hourly runs in a row since ${chicago(s.cleanSince)} Central, so the yt-hypercare timer turned itself off (world #236). Turn it back on with \`systemctl --user enable --now yt-hypercare.timer\` on the Optiplex.`;
+  try { await discord(`🟢 **YT hypercare:** ${text}`, { mention: false, dry }); } catch (e) { console.error(`hypercare: ${e.message}`); }
+  comment(HYPERCARE_ISSUE, text, dry);
+  if (dry) { console.log('--- would run: systemctl --user disable --now yt-hypercare.timer'); return; }
+  const r = run('systemctl', ['--user', 'disable', '--now', 'yt-hypercare.timer']);
+  if (!r.ok) throw new Error(`systemctl --user disable failed: ${r.err}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

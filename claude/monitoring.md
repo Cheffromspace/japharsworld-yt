@@ -194,6 +194,11 @@ closes an issue. Every comment ends with `<!-- coordinator -->`. Its state is `~
 `node /opt/japharsworld-yt-relay/infra-check/hypercare.mjs --dry-run` runs the real checks and prints what it would
 post and file.
 
+It ends itself (world #236, owner 2026-10-26): it counts consecutive clean runs in the state file (`clean`,
+`cleanSince`), and any finding starts the count again. After 168 clean runs that also span 7 days by the clock (167 h from the first to the last), it posts one
+Discord line and a comment on world #208, then runs `systemctl --user disable --now yt-hypercare.timer`. To turn it
+back on: `systemctl --user enable --now yt-hypercare.timer` (the saved count was reset when it ended, so another 7 days).
+
 ## Severe alert triage (Optiplex agent)
 
 The same headless Claude Code on the Optiplex, woken by a critical Grafana alert (owner, 2026-10-26;

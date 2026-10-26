@@ -117,6 +117,7 @@ systemctl --user list-timers yt-hypercare.timer
 - Reports: `~/yt-infra-check/reports/`, raw run output: `~/yt-infra-check/logs/` (kept 26 weeks).
 - Hourly hypercare (`hypercare.mjs`, rules in `claude/monitoring.md`, "Hourly hypercare"): read-only counts every hour
   at :17; quiet when normal, otherwise Discord plus a world-repo issue (an `owner-task` card when you have to act).
+  After 7 clean days in a row it says so on Discord and world #208 and disables its own timer (world #236).
 - Severe-alert triage (`triage.mjs`, `triage-prompt.md`, rules in `claude/monitoring.md`, "Severe alert triage"):
   on a new firing `severity=critical` alert it runs a read-only Claude triage and posts "SEVERE: …" to Discord with the
   report attached (`reports/<date>-<hhmm>-triage-<rule>.md`); a GitHub issue only for non-security alerts. Once per

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { LIMITS, LINODE_PROBE, evaluate, issueBody, issueTitle, limits, logLine, parseProbe, plan } from '../infra-check/hypercare.mjs';
+import { END_AFTER, LIMITS, LINODE_PROBE, evaluate, issueBody, issueTitle, limits, logLine, parseProbe, plan, streak } from '../infra-check/hypercare.mjs';
 
 const kit = (f) => readFileSync(new URL(`../infra-check/${f}`, import.meta.url), 'utf8');
 
@@ -54,6 +54,26 @@ test('hypercare: new findings are filed once, repeated after 6 hours, and recove
   assert.deepEqual(p.repeat.map((x) => x.key), ['b']);
   assert.deepEqual(p.recovered.map((x) => x.key), ['c']);
   assert.deepEqual(plan(f, { open: { a: { alerted: now - 60_000 }, b: { alerted: now - 60_000 } } }, now), { fresh: [], repeat: [], recovered: [] });
+});
+
+test('hypercare: 7 days of clean runs in a row end it, and any finding starts the count again (world #236)', () => {
+  const H = 3600_000;
+  let s = { open: {} };
+  const step = (now, findings = []) => { s = { ...s, ...streak(s, findings, now) }; return s; };
+  assert.deepEqual(step(0), { open: {}, clean: 1, cleanSince: 0, done: false }, 'a state file from before #236 starts at 1');
+  for (let h = 1; h < 100; h++) step(h * H);
+  assert.equal(step(100 * H, [{ key: 'linode:overcap' }]).clean, 0, 'a finding resets');
+  assert.equal(s.cleanSince, null);
+  for (let h = 101; h < 101 + END_AFTER.runs - 1; h++) assert.equal(step(h * H).done, false, `hour ${h}`);
+  assert.equal(step((101 + END_AFTER.runs - 1) * H).done, true, '168 clean runs over 7 days');
+  // Many runs in a short time (manual or catch-up) don't end it early.
+  assert.equal(streak({ clean: 500, cleanSince: 0 }, [], 3 * 24 * H).done, false);
+  const src = kit('hypercare.mjs');
+  assert.match(src, /run\('systemctl', \['--user', 'disable', '--now', 'yt-hypercare\.timer'\]\)/, 'it disables its own user timer, nothing else');
+  assert.match(src, /comment\(HYPERCARE_ISSUE, text, dry\)/);
+  assert.match(src, /s\.done \? \{ clean: 0, cleanSince: null \}/, 're-enabled, it counts 7 days again');
+  assert.match(src, /const HYPERCARE_ISSUE = 208;/);
+  assert.match(src, /try \{ await discord\(`🟢 \*\*YT hypercare:\*\* \$\{text\}`, \{ mention: false, dry \}\); \} catch/, 'one quiet Discord line; a failed post still ends it');
 });
 
 test('hypercare: owner-task cards follow the world repo template and carry no addresses', () => {

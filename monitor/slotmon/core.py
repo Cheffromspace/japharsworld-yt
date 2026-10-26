@@ -1,7 +1,7 @@
 """One monitor pass: check every slot's stream, react to outages, apply job results, publish."""
 import datetime as dt, difflib, json, os, time
 
-from . import config, db, discord, publish
+from . import config, db, discord, probe, publish
 from .youtube import Api, QuotaExceeded, channel_live_ids, video_id, watch_status
 
 LIVE_WORDS = ("24/7", "24 / 7", "24hr", "24 hours", "24h", "radio", "live cam", "live camera", "livecam", "webcam")
@@ -306,6 +306,11 @@ def submit_results(con, api, results, overrides, source="worker"):
             continue
         vid, runner = res["video_id"], res.get("runner", "?")
         db.set_meta(con, "worker:" + runner, now())
+        # A YouTube refusal the worker classified (probe.refusal_class; a worker without it: from the error text). Only
+        # the class is kept; metrics/exporter.js counts these as yt_refusal flash:<class>.
+        refusal = res.get("refusal") or (res.get("flash") or {}).get("refusal") or (res.get("error") and res["error"] != "timeout" and probe.refusal_class(res["error"]))
+        if refusal in probe.REFUSAL_CLASSES:
+            db.event(con, job["slot_key"], "yt_refusal", vid, refusal)
         if res.get("error"):
             tries = len(json.loads(job["result"] or "[]")) + 1
             log = json.dumps(json.loads(job["result"] or "[]") + [res["error"]])

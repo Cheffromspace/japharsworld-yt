@@ -94,7 +94,26 @@ def frames(src):
            "-f", "rawvideo", "-"]
     p = subprocess.run(cmd, capture_output=True, timeout=secs + 120, **QUIET)
     data, n = p.stdout, W * H
+    frames.stderr = (p.stderr or b"").decode("utf-8", "replace")[-2000:]  # for flash_check's refusal class
     return [data[i:i + n] for i in range(0, len(data) - n + 1, n)]
+
+
+# YouTube refusals by class, the same patterns as src/refusal.js (owner, 2026-10-26): the worker sends only the class,
+# the monitor counts it as an event and the exporter as yt_refusal flash:<class>, so a bot wall the flash checks hit
+# shows next to the relay worker's and alerts (tools/grafana.mjs eiok-flash-refusals).
+REFUSAL_PATTERNS = [
+    ("bot", re.compile(r"Sign in to confirm|LOGIN_REQUIRED", re.I)),
+    ("potoken", re.compile(r"PO Token|po_token", re.I)),
+    ("rate", re.compile(r"\b429\b|Too Many Requests|try again later|This content isn.t available", re.I)),
+    ("forbidden", re.compile(r"status code 403\b|HTTP Error 403|Server returned 403", re.I)),
+]
+
+
+REFUSAL_CLASSES = ("bot", "rate", "forbidden", "potoken", "other")
+
+
+def refusal_class(text):
+    return next((c for c, rx in REFUSAL_PATTERNS if rx.search(text or "")), "other")
 
 
 def region_means(fr):
@@ -136,6 +155,10 @@ def flash_check(src):
     rec = {"frames": len(fs)}
     if len(fs) < FPS * 5:
         rec["verdict"] = "too-few-frames"
+        # ffmpeg's own fetch of the stream refused (a 403 or 429 from googlevideo): counted like a lookup refusal.
+        cls = refusal_class(getattr(frames, "stderr", ""))
+        if cls != "other":
+            rec["refusal"] = cls
         return rec
     means = [region_means(f) for f in fs]
     regions = [flashes_per_second([m[r] for m in means]) for r in range(5)]
@@ -180,4 +203,5 @@ def run_job(job, runner):
         out["error"] = "timeout"
     except Exception as e:
         out["error"] = str(e)[:300]
+        out["refusal"] = refusal_class(str(e))
     return out

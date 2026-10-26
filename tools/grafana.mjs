@@ -196,7 +196,7 @@ export function dashboard() {
     [ev('cc_via'), 'via {{key}}'], [ev('cc_words'), 'words {{key}}'], [ev('cc_unavailable'), 'unavailable: {{key}}'],
   ], { w: 8, min: 0, description: 'Track lists and tracks served, which source answered (worker, local yt-dlp, Tunelio), word timing real or estimated, and why none was available.' }));
   p.push(series('YouTube refusals (per hour)', [[ev('yt_refusal', '1h'), '{{key}}']], { w: 8, stack: true, min: 0,
-    description: 'Failed YouTube lookups by where (home = the Optiplex relay, linode) and class: bot = "Sign in to confirm", rate = 429 / try again later / a caption track that failed after its list, forbidden = 403, potoken = PO token, other. Counted from 2026-10-25 (src/refusal.js).' }));
+    description: 'Failed YouTube lookups by where (home = the Optiplex relay, linode, flash = the Optiplex flash-check worker) and class: bot = "Sign in to confirm", rate = 429 / try again later / a caption track that failed after its list, forbidden = 403, potoken = PO token, other. Counted from 2026-10-25 (src/refusal.js).' }));
   p.push(series('Rooms active (shards with a request, per hour)', [
     ['count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)', 'rooms'],
   ], { w: 8, min: 0, decimals: 0, description: 'Distinct shards that saw a request in the past hour (from the hourly shard table).' }));
@@ -320,6 +320,10 @@ export function alertRules(dsUid) {
     // Owner, 2026-10-26: one channel down is the monitor's job; 8 or more shown (not spare) slots down or hidden at once is
     // severe, as monitor/slotmon outage_watch (MASS_DOWN, default 8) also pings. 5 were hidden when this was added.
     rule('eiok-channels-mass-down', 'Many Channels slots down or hidden', 'sum(eiok_slot_hidden * on(slot) (1 - eiok_slot_spare)) - 7', { forM: 10, severity: 'critical', summary: '8 or more of the world\'s shown Channels slots are down or hidden at once (YouTube, the monitor or its worker).' }),
+    // Owner, 2026-10-26: the flash worker's YouTube refusals (metrics/exporter.js, yt_refusal flash:<class>), which the
+    // search service's own refusal alert (src/refusal.js, the relay worker's) never sees. As there: 3 or more bot, rate,
+    // PO-token or 403 refusals, here within 30 minutes (the worker runs every 20).
+    rule('eiok-flash-refusals', 'Flash checks refused by YouTube', 'sum(increase(eiok_events_total{metric="yt_refusal",key=~"flash:(bot|rate|potoken|forbidden)"}[30m])) - 2', { forM: 0, summary: 'The Optiplex flash-check worker met 3 or more YouTube refusals (bot wall, rate limit, PO token or 403) in 30 minutes: the home IP may be flagged, which hits the relay worker too. Check `journalctl -u japharsworld-yt-slotworker` on the Optiplex.' }),
     rule('eiok-checks-waiting', 'Flash checks waiting', 'max(eiok_jobs_oldest_pending_seconds{reason="other"}) > 7200 or max(eiok_jobs_oldest_pending_seconds{reason="daily"}) > 18000', { summary: 'A new/candidate/manual resolution or flash job has waited over 2 hours, or the daily batch over 5 hours; the Optiplex worker runs every 20 minutes, 6 jobs a run.' }),
     // Owner, 2026-10-23 (the dashboard audit): the home relay's cap and worker, and the credits lasting to renewal.
     rule('eiok-home-cap', 'Home relay near its daily cap', 'max(eiok_home_today{key="mb"}) / max(eiok_home_today{key="cap_mb"}) >= 0.9', { forM: 5, summary: 'The home relay has used 90 % of HOME_DAILY_MB today; at the cap, long videos go to Tunelio (credits) or youtube.com instead.' }),

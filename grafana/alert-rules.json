@@ -648,6 +648,60 @@
   ]
  },
  {
+  "uid": "eiok-flash-refusals",
+  "title": "Flash checks refused by YouTube",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "0m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "The Optiplex flash-check worker met 3 or more YouTube refusals (bot wall, rate limit, PO token or 403) in 30 minutes: the home IP may be flagged, which hits the relay worker too. Check `journalctl -u japharsworld-yt-slotworker` on the Optiplex."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"yt_refusal\",key=~\"flash:(bot|rate|potoken|forbidden)\"}[30m])) - 2",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
   "uid": "eiok-checks-waiting",
   "title": "Flash checks waiting",
   "folderUID": "everything-is-ok",

@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { METRICS, MS_BUCKETS, S_BUCKETS, dayOf } from '../src/metrics.js';
+import { REFUSAL_CLASSES as FLASH_REFUSALS } from '../src/refusal.js';
 
 // Daily bucket counters exported as Prometheus histograms (le in seconds), so histogram_quantile works.
 // metric → [exported name, bucket bounds, bound units per second]
@@ -117,6 +118,14 @@ export function monitorDbSeries(db, o, now = Date.now()) {
     o.add('eiok_slot_flash_max', 'gauge', 'Most flashes in any 1 s at the last flash check (fails above 3).', l, s.flash_max);
     o.add('eiok_slot_flash_pass', 'gauge', '1 = the last flash check passed, 0 = failed.', l, s.flash_verdict == null ? null : s.flash_verdict === 'pass' ? 1 : 0);
     o.add('eiok_slot_flash_timestamp_seconds', 'gauge', 'When the slot\'s current stream was last flash-checked.', l, s.flash_at);
+  }
+  // YouTube refusals the flash worker met (owner, 2026-10-26: monitor/slotmon/probe.py refusal_class), as the search
+  // service's yt_refusal <where>:<class> with where = flash, so the dashboard and eiok-flash-refusals see them. Only
+  // the class leaves the monitor DB; anything else in detail is dropped.
+  // Every class from 0, so the series exist before the first refusal and the rule has data to evaluate.
+  const refused = Object.fromEntries(db.prepare("SELECT detail, COUNT(*) n FROM events WHERE kind = 'yt_refusal' GROUP BY detail").all().map((r) => [r.detail, r.n]));
+  for (const cls of FLASH_REFUSALS) {
+    o.add('eiok_events_total', 'counter', 'Usage counts from the search service, all days summed (claude/metrics.md).', { metric: 'yt_refusal', key: `flash:${cls}` }, refused[cls] ?? 0);
   }
   for (const r of db.prepare('SELECT verdict, COUNT(*) n FROM flash GROUP BY verdict').all()) {
     o.add('eiok_flash_checks_total', 'counter', 'Flash checks run, by verdict.', { verdict: r.verdict ?? 'none' }, r.n);

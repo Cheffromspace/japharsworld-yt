@@ -2151,7 +2151,7 @@
    "type": "timeseries",
    "id": 36,
    "title": "YouTube refusals (per hour)",
-   "description": "Failed YouTube lookups by where (home = the Optiplex relay, linode) and class: bot = \"Sign in to confirm\", rate = 429 / try again later / a caption track that failed after its list, forbidden = 403, potoken = PO token, other. Counted from 2026-10-25 (src/refusal.js).",
+   "description": "Failed YouTube lookups by where (home = the Optiplex relay, linode, flash = the Optiplex flash-check worker) and class: bot = \"Sign in to confirm\", rate = 429 / try again later / a caption track that failed after its list, forbidden = 403, potoken = PO token, other. Counted from 2026-10-25 (src/refusal.js).",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"

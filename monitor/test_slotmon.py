@@ -111,11 +111,36 @@ class Tests(Base):
             self.assertEqual(self.alerts[-1], ("good", "Channels back"))
             self.assertEqual(len(self.mentions), 1, "the all-clear does not ping")
 
+    def test_flash_worker_refusals_are_counted_by_class_only(self):
+        # Owner, 2026-10-26: the same classes as src/refusal.js; the monitor keeps an event per refusal, class only.
+        from slotmon import probe
+        self.assertEqual(probe.refusal_class("ERROR: [youtube] x: Sign in to confirm you're not a bot"), "bot")
+        self.assertEqual(probe.refusal_class("HTTP Error 429: Too Many Requests"), "rate")
+        self.assertEqual(probe.refusal_class("Server returned 403 Forbidden (access denied)"), "forbidden")
+        self.assertEqual(probe.refusal_class("something else"), "other")
+        with mock.patch.object(probe, "extract", side_effect=RuntimeError("ERROR: Sign in to confirm you're not a bot")):
+            r = probe.run_job({"id": 1, "video_id": "CAMCAMCAM01"}, "optiplex")
+        self.assertEqual((r["error"][:5], r["refusal"]), ("ERROR", "bot"))
+        # ffmpeg's stream fetch refused: too few frames, classified from its stderr.
+        with mock.patch.object(probe.subprocess, "run", lambda cmd, **k: mock.Mock(stdout=b"", stderr=b"Server returned 403 Forbidden")), \
+                mock.patch.object(probe, "ffmpeg_path", lambda: "ffmpeg"):
+            self.assertEqual(probe.flash_check("https://x"), {"frames": 0, "verdict": "too-few-frames", "refusal": "forbidden"})
+        self.check()
+        job = self.jobs()[0]
+        core.submit_results(self.con, self.api, [{"id": job["id"], "video_id": job["video_id"], "runner": "optiplex", "ts": time.time(),
+                                                   "error": "ERROR: Sign in to confirm", "refusal": "bot"}], OVERRIDES)
+        core.submit_results(self.con, self.api, [{"id": job["id"], "video_id": job["video_id"], "runner": "pc", "ts": time.time(),
+                                                   "error": "HTTP Error 429"}], OVERRIDES)  # an older worker: classified here
+        core.submit_results(self.con, self.api, [{"id": job["id"], "video_id": job["video_id"], "runner": "pc", "ts": time.time(),
+                                                   "error": "timeout"}], OVERRIDES)  # our own timeout is not a refusal
+        rows = self.con.execute("SELECT detail FROM events WHERE kind='yt_refusal' ORDER BY id").fetchall()
+        self.assertEqual([r["detail"] for r in rows], ["bot", "rate"])
+
     def test_flash_sample_length_is_a_setting_with_room_to_finish(self):
         # Owner, 2026-10-26: 60 s by default (15 before); ffmpeg gets the sample plus 120 s.
         from slotmon import probe
         seen = []
-        with mock.patch.object(probe.subprocess, "run", lambda cmd, **k: seen.append((cmd, k["timeout"])) or mock.Mock(stdout=b"")), \
+        with mock.patch.object(probe.subprocess, "run", lambda cmd, **k: seen.append((cmd, k["timeout"])) or mock.Mock(stdout=b"", stderr=b"")), \
                 mock.patch.object(probe, "ffmpeg_path", lambda: "ffmpeg"):
             probe.frames("https://x")
             with mock.patch.object(config, "FLASH_SECONDS", 120):

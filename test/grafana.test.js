@@ -12,5 +12,8 @@ test('alert rules: every expression is positive when it fires (no trailing < or 
     assert.doesNotMatch(expr, /(<=?|==)\s*-?[\d.e]+\s*$/, `${r.uid}: ${expr}`);
     assert.equal(r.data[1].model.conditions[0].evaluator.type, 'gt');
     assert.deepEqual(r.data[1].model.conditions[0].evaluator.params, [0]);
+    // With noData = Alerting a filter ("> 600") empties the result when healthy, and the rule fires then
+    // (2026-10-26: "security counters stale" fired while they were 60 s old). The value itself must carry it.
+    if (r.noDataState === 'Alerting') assert.doesNotMatch(expr, /(>=?|<=?|==|!=)\s*-?[\d.e*\s]+$/, `${r.uid}: ${expr}`);
   }
 });

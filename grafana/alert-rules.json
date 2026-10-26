@@ -1378,7 +1378,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "time() - max(eiok_security_updated_seconds{host=\"linode\"}) > 600",
+     "expr": "time() - max(eiok_security_updated_seconds{host=\"linode\"}) - 600",
      "instant": true
     }
    },

@@ -77,7 +77,7 @@ test('triage: the units run the checkout under the weekly lock, and the prompt i
   const p = kit('triage-prompt.md');
   assert.match(p, /No restarts/);
   assert.match(p, /ssh linode-check/);
-  assert.match(p, /A security alert goes nowhere on GitHub/);
+  assert.match(p, /A security alert goes nowhere in the public repo/);
   assert.doesNotMatch(p, /ssh linode[^-]/, 'never the root login');
   assert.match(readFileSync(new URL('../claude/monitoring.md', import.meta.url), 'utf8'), /^## Severe alert triage/m);
 });

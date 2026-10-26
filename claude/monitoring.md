@@ -142,6 +142,18 @@ wants done becomes an issue for the coordinator (the Everything is OK coordinati
    **It never closes an issue**; the coordinator does.
 4. Suggestions that aren't findings (cost savings, tuning) go in the weekly comment, not in new issues, unless they
    need a decision from the owner.
+5. **Owner task** (owner, 2026-10-26, world #216): when something needs the owner (a restart, a reboot, a config
+   edit, a decision, anything it may not do itself), it also files one `owner-task` issue in the private
+   `Cheffromspace/Everything-is-OK`, which lands on the owner's "Your tasks" board (user project 4). First search the
+   open ones (`gh issue list -R Cheffromspace/Everything-is-OK --label owner-task --state open`) and comment on a
+   duplicate instead. The issue follows that repo's `.github/ISSUE_TEMPLATE/owner-task.md`: one small job per issue,
+   a title starting with a verb, **Why / Time / Where / Do first** up front, numbered checkboxes with at most one
+   copyable block each, **Done when**, and "close this issue when done". It links the public finding in this repo,
+   which stays as it is. Create it with `gh issue create -R Cheffromspace/Everything-is-OK --label owner-task
+   --project "Your tasks" --title … --body-file …`; if `--project` fails (the Optiplex's `gh` token has no `project`
+   scope as of 2026-10-26), create it without `--project` and say so in the report. A security finding gets at most a
+   card titled "Security finding on <host>, see the local report of <date>", with no details. No secrets, tokens or
+   webhook URLs there either.
 
 **Public repo:** reports and issues are public. No secrets, tokens or webhook URLs, no IP addresses or SSH account
 names, no visitor data (search text, video IDs from visitors' plays, VRChat user or instance IDs). Counts and
@@ -172,7 +184,9 @@ with its read-only sudo, local checks, Grafana's API), a diagnosis and a suggest
 coordinator. It writes `~/yt-infra-check/reports/<date>-<hhmm>-triage-<rule>.md` (local) and a short note that
 `triage.mjs` posts to Discord as "SEVERE: <alert>, firing since …" with the report attached. A non-security alert
 also gets a GitHub issue under the weekly "New finding" rule (or a comment on the open one); **a security alert goes
-nowhere on GitHub,** and its note carries no addresses, keys, ports or account names (those stay in the attachment).
+nowhere in the public repo,** and its note carries no addresses, keys, ports or account names (those stay in the
+attachment). A next step that needs the owner also gets the weekly "Owner task" card; for a security alert that card
+is only "Security finding on <host>, see the local report of <date>".
 
 The critical rules (`tools/grafana.mjs`, 2026-10-26): `eiok-search-down`, `eiok-public-down`, `eiok-short-down`
 (owner: "search service much more critical"), `eiok-ssh-unknown-login`, `eiok-security-change`,

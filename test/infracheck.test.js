@@ -27,6 +27,17 @@ test('infra check: the unit runs the checkout, and the security report stays loc
   assert.match(kit('prompt.md'), /Security: green\/yellow\/red, details in the local report/);
 });
 
+test('infra check: both prompts file owner tasks in the private world repo, security ones without details (world #216)', () => {
+  for (const f of ['prompt.md', 'triage-prompt.md']) {
+    const p = kit(f);
+    assert.match(p, /gh issue create -R Cheffromspace\/Everything-is-OK --label owner-task --project "Your tasks"/, f);
+    assert.match(p, /search the open `owner-task` issues there first/, f);
+    assert.match(p, /\.github\/ISSUE_TEMPLATE\/owner-task\.md/, f);
+    assert.match(p, /"Security finding on <host>, see the local report of <date>"/, f);
+  }
+  assert.match(readFileSync(new URL('../claude/monitoring.md', import.meta.url), 'utf8'), /\*\*Owner task\*\* \(owner, 2026-10-26, world #216\)/);
+});
+
 test('infra check: the README has no step that writes a placeholder key (2026-10-25)', () => {
   const readme = kit('README.md');
   assert.doesNotMatch(readme, /echo '<paste/);

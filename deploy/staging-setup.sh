@@ -58,7 +58,17 @@ chmod 600 /etc/japharsworld-yt.env
 
 say "Caddy with Cloudflare DNS-01 (certificates for the production names, for a flip)"
 apt-get install -y -qq jq >/dev/null
-caddy list-modules 2>/dev/null | grep -q '^dns.providers.cloudflare$' || { caddy add-package github.com/caddy-dns/cloudflare; apt-mark hold caddy >/dev/null; }
+# Ubuntu's Caddy (2.6.2 on 24.04) has no `add-package`: Caddy's own download service builds it with the module. The
+# apt binary is diverted and the package held, so an upgrade doesn't put the module-less one back.
+if ! caddy list-modules 2>/dev/null | grep -q '^dns.providers.cloudflare$'; then
+  curl -fsSL -o /tmp/caddy-cf "https://caddyserver.com/api/download?os=linux&arch=$(dpkg --print-architecture)&p=github.com%2Fcaddy-dns%2Fcloudflare"
+  chmod 755 /tmp/caddy-cf
+  /tmp/caddy-cf list-modules | grep -q '^dns.providers.cloudflare$' || { echo "The downloaded Caddy has no cloudflare module."; exit 1; }
+  dpkg-divert --list /usr/bin/caddy | grep -q . || dpkg-divert --local --rename --add /usr/bin/caddy >/dev/null
+  install -m 755 /tmp/caddy-cf /usr/bin/caddy && rm -f /tmp/caddy-cf
+  apt-mark hold caddy >/dev/null
+  caddy version
+fi
 site="# Staging (#160): written by deploy/staging-setup.sh.
 $DOMAIN {
 	encode gzip

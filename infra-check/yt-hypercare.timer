@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly: YT Search hypercare (world #208)
+
+[Timer]
+# Off the hour, away from the triage poll's and the weekly check's starts.
+OnCalendar=*-*-* *:17:00
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

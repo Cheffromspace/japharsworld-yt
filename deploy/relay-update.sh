@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run by japharsworld-yt-relay-update.timer on the Optiplex every 5 minutes (as root).
-# Pulls origin/main; restarts the worker when something it runs changed (relay/, src/, packages, its units).
+# Pulls origin/<branch> (main; a staging worker: RELAY_BRANCH); restarts the worker when something it runs changed (relay/, src/, packages, its units).
 # Once a day also updates the flash-check worker's yt-dlp (when that worker is set up), which the relay worker runs too;
 # at once when curl_cffi is missing (#15: yt-dlp's browser impersonation needs it; without it every run warned
 # "no impersonate target is available").

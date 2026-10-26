@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run by japharsworld-yt-update.timer every 5 minutes (as root).
-# Deploys origin/main if it moved; rolls back if the new version fails its health check.
+# Deploys origin/<branch> (main; staging: DEPLOY_BRANCH) if it moved; rolls back if the new version fails its health check.
 # Once a day also updates yt-dlp, the usual fix when YouTube changes something.
 # Commits that only touch docs/, the link monitor, the metrics poller/exporter, Alloy, the search relay worker, public/
 # pages (re-read on change), tests, tools, design notes or this script (the monitor publishes docs/ itself) don't restart

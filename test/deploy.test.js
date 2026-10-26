@@ -9,7 +9,8 @@ test('update.sh: production defaults (main, monitor and poller on, the linode Al
   const s = script('update.sh');
   for (const d of ['BRANCH=${DEPLOY_BRANCH:-main}', 'MONITOR=${DEPLOY_MONITOR:-on}', 'POLLER=${DEPLOY_POLLER:-on}', 'ALLOY=${DEPLOY_ALLOY:-linode}']) assert.ok(s.includes(d), d);
   assert.ok(s.includes('[ ! -f /etc/japharsworld-yt-deploy.env ] || . /etc/japharsworld-yt-deploy.env'), 'the switches come from a file production does not have');
-  assert.doesNotMatch(s, /origin\/main|fetch -q origin main/, 'no branch hard-coded any more');
+  const code = s.split('\n').filter((l) => !l.trimStart().startsWith('#')).join('\n');
+  assert.doesNotMatch(code, /origin\/main|fetch -q origin main/, 'no branch hard-coded any more');
   assert.doesNotMatch(s, /\|security\)\.[|)]/, 'the unit-name dots stay escaped');
 });
 
@@ -19,7 +20,9 @@ test('relay-update.sh: production defaults, and a staging worker touches only it
   assert.ok(s.includes('units="$UNIT.service $UNIT-update.service $UNIT-update.timer"'));
   assert.ok(s.includes('systemctl restart "$UNIT.service"'));
   for (const step of ['deploy/bgutil-setup.sh "$VENV"', 'deploy/alloy-setup.sh optiplex', 'deploy/deploy-record.sh']) {
-    const line = s.split('\n').find((l) => l.includes(step));
-    assert.match(line, /\[ "\$SETUP" = on \]/, step);
+    // The guard is on the step's line or on the "if" line just above it.
+    const lines = s.split('\n');
+    const i = lines.findIndex((l) => l.includes(step));
+    assert.match(`${lines[i - 1]}\n${lines[i]}`, /\[ "\$SETUP" = on \]/, step);
   }
 });

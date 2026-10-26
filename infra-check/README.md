@@ -32,6 +32,7 @@ CLAUDE_CODE_OAUTH_TOKEN=<token from step 3>
 DISCORD_WEBHOOK_URL=<the Channels monitor's webhook>
 GRAFANA_URL=https://<your-stack>.grafana.net
 GRAFANA_TOKEN=<Grafana Cloud service account token, Viewer role>
+DISCORD_MENTION_ID=<optional: the owner's Discord user ID; every SEVERE triage post pings it>
 EOF
 chmod 600 .env
 

@@ -174,8 +174,11 @@ coordinator. It writes `~/yt-infra-check/reports/<date>-<hhmm>-triage-<rule>.md`
 also gets a GitHub issue under the weekly "New finding" rule (or a comment on the open one); **a security alert goes
 nowhere on GitHub,** and its note carries no addresses, keys, ports or account names (those stay in the attachment).
 
-The critical rules (`tools/grafana.mjs`, 2026-10-26): `eiok-ssh-unknown-login`, `eiok-security-change`,
-`eiok-sshd-not-hardened`, `eiok-linode-disk-80` and `eiok-domain-expiry-urgent`. A rule raised to critical is triaged
+The critical rules (`tools/grafana.mjs`, 2026-10-26): `eiok-search-down`, `eiok-public-down`, `eiok-short-down`
+(owner: "search service much more critical"), `eiok-ssh-unknown-login`, `eiok-security-change`,
+`eiok-sshd-not-hardened`, `eiok-linode-disk-80` and `eiok-domain-expiry-urgent`. With `GRAFANA_DISCORD_MENTION` in
+the repo's local `.env` the contact point pings the owner on these (firing only), and `DISCORD_MENTION_ID` in
+`~/yt-infra-check/.env` makes every "SEVERE:" triage post ping them; both IDs stay out of the repo. A rule raised to critical is triaged
 from its next firing. Test the path with `node /opt/japharsworld-yt-relay/infra-check/triage.mjs --synthetic
 security|down --dry-run` on the Optiplex: a made-up alert through the same run, nothing recorded, no GitHub writes,
 and the Discord text printed instead of posted.

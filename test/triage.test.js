@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { discordText, fallbackText, isSecurity, kindOf, pick, record, severe, slug, syntheticAlert } from '../infra-check/triage.mjs';
+import { discordPayload, discordText, fallbackText, isSecurity, kindOf, pick, record, severe, slug, syntheticAlert } from '../infra-check/triage.mjs';
 
 // The severe-alert triage on the Optiplex (infra-check/triage.mjs, owner 2026-10-26).
 const kit = (f) => readFileSync(new URL(`../infra-check/${f}`, import.meta.url), 'utf8');
@@ -60,6 +60,13 @@ test('triage: the Discord text starts with SEVERE:, fits Discord, and says when 
   assert.match(f, /^SEVERE: /);
   assert.match(f, /Triage couldn't run: the Claude Code login expired\.$/);
   assert.equal(slug('Linode disk 80 % full'), 'linode-disk-80-full');
+});
+
+test('triage: DISCORD_MENTION_ID pings that user only; unset or not an ID, nobody', () => {
+  assert.deepEqual(discordPayload('SEVERE: x', '123456789012'), { content: '<@123456789012> SEVERE: x', allowed_mentions: { parse: [], users: ['123456789012'] } });
+  assert.deepEqual(discordPayload('SEVERE: x @everyone', undefined), { content: 'SEVERE: x @everyone', allowed_mentions: { parse: [] } });
+  assert.deepEqual(discordPayload('SEVERE: x', '<@1>').allowed_mentions, { parse: [] });
+  assert.ok(discordPayload('x'.repeat(2500), '123456789012').content.length <= 2000);
 });
 
 test('triage: the units run the checkout under the weekly lock, and the prompt is read only', () => {

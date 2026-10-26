@@ -114,9 +114,17 @@ async function firing() {
   return r.json();
 }
 
-async function discord(content, file, dryRun) {
-  if (dryRun) { console.log(`--- Discord text (dry run, not posted${file ? `; attachment ${basename(file)}` : ''}) ---\n${content}\n---`); return; }
-  const payload = JSON.stringify({ content, allowed_mentions: { parse: [] } });
+// Every post is severe, so it pings the owner when DISCORD_MENTION_ID is set in ~/yt-infra-check/.env (owner,
+// 2026-10-26); only that user may be pinged, whatever the text says.
+export function discordPayload(content, mention) {
+  if (!/^\d{5,25}$/.test(mention ?? '')) return { content, allowed_mentions: { parse: [] } };
+  return { content: `<@${mention}> ${content}`.slice(0, 2000), allowed_mentions: { parse: [], users: [mention] } };
+}
+
+async function discord(text, file, dryRun) {
+  const p = discordPayload(text, process.env.DISCORD_MENTION_ID);
+  if (dryRun) { console.log(`--- Discord text (dry run, not posted${file ? `; attachment ${basename(file)}` : ''}) ---\n${p.content}\n---`); return; }
+  const payload = JSON.stringify(p);
   let body, headers = {};
   if (file && existsSync(file)) {
     body = new FormData();

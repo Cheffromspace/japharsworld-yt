@@ -121,7 +121,7 @@
   },
   "labels": {
    "project": "everything-is-ok",
-   "severity": "warning"
+   "severity": "critical"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"
@@ -175,7 +175,7 @@
   },
   "labels": {
    "project": "everything-is-ok",
-   "severity": "warning"
+   "severity": "critical"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"
@@ -229,7 +229,7 @@
   },
   "labels": {
    "project": "everything-is-ok",
-   "severity": "warning"
+   "severity": "critical"
   },
   "notification_settings": {
    "receiver": "Everything is OK Discord"

@@ -5,6 +5,7 @@
 //   GRAFANA_URL               https://<stack>.grafana.net
 //   GRAFANA_SA_TOKEN          a service account token (glsa_…, Editor role); not GRAFANA_TOKEN, Alloy's write-only token
 //   GRAFANA_DISCORD_WEBHOOK   where the alerts go (the contact point). Change it and push again to move them.
+//   GRAFANA_DISCORD_MENTION   optional: a Discord user ID mentioned on firing critical alerts only (kept out of the repo)
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 
 const env = { ...dotenv('.env'), ...process.env };
@@ -261,6 +262,18 @@ export function dashboard() {
   };
 }
 
+// The Discord contact point. With a mention (owner, 2026-10-26) a notification with a firing severity=critical alert
+// starts with <@id>, so it pings; warnings and resolved notices don't. Grafana's default text follows unchanged.
+export function contactPoint(url, mention) {
+  const settings = { url, use_discord_username: false };
+  if (mention) {
+    if (!/^\d{5,25}$/.test(mention)) throw new Error('GRAFANA_DISCORD_MENTION must be a Discord user ID (digits)');
+    settings.message = `{{ $critical := false }}{{ range .Alerts.Firing }}{{ if eq .Labels.severity "critical" }}{{ $critical = true }}{{ end }}{{ end }}`
+      + `{{ if $critical }}<@${mention}> {{ end }}{{ template "default.message" . }}`;
+  }
+  return { name: RECEIVER, type: 'discord', settings, disableResolveMessage: false };
+}
+
 // Alerts for what the services can't report about themselves (they already alert Discord on their own problems).
 export function alertRules(dsUid) {
   const rule = (uid, title, expr, { forM = 5, summary, noData = 'OK', severity = 'warning' }) => ({
@@ -276,10 +289,10 @@ export function alertRules(dsUid) {
   return [
     rule('eiok-linode-silent', 'Linode sends nothing', 'absent_over_time(eiok_search_up{host="linode"}[10m])', { summary: 'No metrics from the Linode for 10 minutes: the server, Alloy or the exporter is down.' }),
     rule('eiok-optiplex-silent', 'Optiplex sends nothing', 'absent_over_time(node_time_seconds{host="optiplex"}[15m])', { summary: 'No metrics from the Optiplex for 15 minutes: searches fall back and flash checks wait.' }),
-    rule('eiok-search-down', 'Search service down', '1 - max_over_time(eiok_search_up[5m])', { summary: 'The search service has not answered /healthz on the Linode for 5 minutes.' }),
-    rule('eiok-public-down', 'yt.japharsworld.com unreachable', '1 - max_over_time(probe_success{job=~".*search-healthz.*"}[10m])', { forM: 5, summary: 'https://yt.japharsworld.com/healthz failed from outside for 10 minutes (Caddy, TLS or DNS).' }),
+    rule('eiok-search-down', 'Search service down', '1 - max_over_time(eiok_search_up[5m])', { severity: 'critical', summary: 'The search service has not answered /healthz on the Linode for 5 minutes.' }),
+    rule('eiok-public-down', 'yt.japharsworld.com unreachable', '1 - max_over_time(probe_success{job=~".*search-healthz.*"}[10m])', { forM: 5, severity: 'critical', summary: 'https://yt.japharsworld.com/healthz failed from outside for 10 minutes (Caddy, TLS or DNS).' }),
     // The short domain (owner, 2026-10-25): the public world bakes https://eiok.cc/s/… for Quest search.
-    rule('eiok-short-down', 'eiok.cc unreachable', '1 - max_over_time(probe_success{job=~".*short-healthz.*"}[10m])', { forM: 5, summary: 'https://eiok.cc/healthz failed from outside for 10 minutes (Caddy, TLS or DNS): Quest search in the world is down.' }),
+    rule('eiok-short-down', 'eiok.cc unreachable', '1 - max_over_time(probe_success{job=~".*short-healthz.*"}[10m])', { forM: 5, severity: 'critical', summary: 'https://eiok.cc/healthz failed from outside for 10 minutes (Caddy, TLS or DNS): Quest search in the world is down.' }),
     // Caddy renews 30 days ahead, so under 14 days left means renewal is failing.
     rule('eiok-cert-expiry', 'TLS certificate expiring', '14 - min by (job) (probe_ssl_earliest_cert_expiry{job=~".*(search|short)-healthz.*"} - time()) / 86400', { forM: 60, summary: 'A public certificate has under 14 days left ({{ $labels.job }}); Caddy should have renewed it at 30. Check `journalctl -u caddy` on the Linode.' }),
     // Domain registrations from RDAP (metrics/poll.js domainPass): renewal is the owner's (auto-renew, years ahead).
@@ -354,7 +367,7 @@ async function push() {
 
   if (env.GRAFANA_DISCORD_WEBHOOK) {
     const points = await api('/api/v1/provisioning/contact-points');
-    const cp = { name: RECEIVER, type: 'discord', settings: { url: env.GRAFANA_DISCORD_WEBHOOK, use_discord_username: false }, disableResolveMessage: false };
+    const cp = contactPoint(env.GRAFANA_DISCORD_WEBHOOK, env.GRAFANA_DISCORD_MENTION);
     const existing = points.find((c) => c.name === RECEIVER);
     if (existing) await api(`/api/v1/provisioning/contact-points/${existing.uid}`, { method: 'PUT', body: { ...cp, uid: existing.uid } });
     else await api('/api/v1/provisioning/contact-points', { method: 'POST', body: cp });

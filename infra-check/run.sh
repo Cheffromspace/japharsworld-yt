@@ -22,7 +22,20 @@ exec 9>"$BASE/.lock"
 flock -n 9 || { echo "another infra check is running"; exit 0; }
 # A summary left by an earlier run today would make a failed run look like a success.
 rm -f "$SUMMARY" "$SECURITY"
-set -a; source "$ENV_FILE"; set +a
+# KEY=VALUE lines read as systemd's EnvironmentFile reads them, never run as shell code: an unquoted DISCORD_MENTION=<@id>
+# is a redirection to bash, a syntax error that dropped every line after it (#246, 2026-10-26). One pair of outer quotes
+# is removed, nothing is expanded.
+load_env() {
+  local line key val
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+    key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
+    if [[ "$val" =~ ^\"(.*)\"$ || "$val" =~ ^\'(.*)\'$ ]]; then val="${BASH_REMATCH[1]}"; fi
+    export "$key=$val"
+  done < "$1"
+}
+load_env "$ENV_FILE"
 
 discord() {  # discord "<message>" [file] [second file]
   local msg="$1" file="${2:-}" file2="${3:-}"

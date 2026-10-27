@@ -47,3 +47,17 @@ test('infra check: the README has no step that writes a placeholder key (2026-10
   assert.doesNotMatch(readme, /echo '<paste/);
   assert.match(readme, /'ssh-ed25519 '\*' yt-infra-check@gameserver'\)/);
 });
+
+// #246 (2026-10-26): `. file` ran DISCORD_MENTION=<@id> as a redirection, a syntax error that dropped every later line
+// (the new DISCORD_CRITICAL_WEBHOOK among them). Env files are read as KEY=VALUE lines, as systemd does, never sourced.
+test('env files: no shell script sources one; each reads KEY=VALUE lines with load_env', () => {
+  const files = ['deploy/slotmon', 'infra-check/run.sh', 'deploy/harden.sh', 'deploy/mediamtx-setup.sh'];
+  const loader = readFileSync(new URL('../deploy/slotmon', import.meta.url), 'utf8').match(/^load_env\(\) \{[\s\S]*?^\}$/m)[0];
+  for (const f of files) {
+    const src = readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
+    assert.doesNotMatch(src, /(^|;|&&)\s*(\.|source)\s+["$\/~]/m, f);
+    assert.ok(src.includes(loader), `${f}: the same loader`);
+    assert.match(src, /^load_env /m, f);
+  }
+  assert.match(loader, /export "\$key=\$val"/, 'values are exported as text, never evaluated');
+});

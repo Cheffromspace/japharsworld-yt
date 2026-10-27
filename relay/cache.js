@@ -13,6 +13,12 @@ import { join } from 'node:path';
 
 const KEY = /^[A-Za-z0-9_-]{11}@\d{3,4}p$/;
 const SEGMENT = /^seg\d{1,5}\.ts$/;
+// A copy whose playlist runs this much shorter than the video is not kept or served (world #266, staging 2026-10-27: a
+// 55 min video's copy cut short at 84 s was cached and the next play got the same 84 s). Keyframe-cut copies end within
+// a GOP (under ~9 s measured, 2026-10-23) of the video's length; time-cut ones within a frame or two.
+export const SHORT_S = 10;
+export const playlistSeconds = (text) => [...String(text).matchAll(/#EXTINF:([\d.]+)/g)].reduce((a, m) => a + Number(m[1]), 0);
+const short = (playlist, seconds) => seconds > 0 && playlistSeconds(playlist) < seconds - SHORT_S;
 // The stream format (relay/media.js ffmpegArgs). Entries of another are made again: 2 = SPS/PPS in every segment (2026-10-23).
 export const FORMAT = 2;
 
@@ -29,7 +35,8 @@ export class MediaCache {
   #meta(key) { try { return JSON.parse(readFileSync(join(this.dir, key, 'meta.json'), 'utf8')); } catch { return null; } }
 
   // → { dir, playlist, segments: [file…], mb } for a complete cached stream, or null. A hit counts as a use (LRU).
-  get(videoId, quality) {
+  // seconds: the video's length (the job's), when known; a copy short of it is removed.
+  get(videoId, quality, { seconds = 0 } = {}) {
     const key = `${videoId}@${quality}`;
     if (!KEY.test(key)) return null;
     const meta = this.#meta(key);
@@ -40,16 +47,22 @@ export class MediaCache {
     try { playlist = readFileSync(join(dir, 'index.m3u8'), 'utf8'); } catch { return null; }
     const segments = playlist.split(/\r?\n/).filter((l) => SEGMENT.test(l));
     if (!segments.length || !segments.every((s) => existsSync(join(dir, s)))) { rmSync(dir, { recursive: true, force: true }); return null; }
+    if (short(playlist, seconds)) {
+      rmSync(dir, { recursive: true, force: true });
+      this.log({ event: 'media_cache_short', quality, seconds: Math.round(playlistSeconds(playlist)), duration: Math.round(seconds) });
+      return null;
+    }
     writeFileSync(join(dir, 'meta.json'), JSON.stringify({ ...meta, usedMs: this.now() }));
     return { dir, playlist, segments, mb: meta.mb };
   }
 
   // A finished stream: its staging folder becomes the cached copy (replacing an older one), if every segment the playlist
   // lists is in it. → true when kept; the staging folder is gone either way.
-  put(videoId, quality, staging, playlist) {
+  put(videoId, quality, staging, playlist, { seconds = 0 } = {}) {
     const key = `${videoId}@${quality}`;
     const segments = playlist.split(/\r?\n/).filter((l) => SEGMENT.test(l));
-    const complete = KEY.test(key) && playlist.includes('#EXT-X-ENDLIST') && segments.length > 0 && segments.every((s) => existsSync(join(staging, s)));
+    const complete = KEY.test(key) && playlist.includes('#EXT-X-ENDLIST') && segments.length > 0 && segments.every((s) => existsSync(join(staging, s)))
+      && !short(playlist, seconds);
     if (!complete || !(this.maxGb > 0)) { rmSync(staging, { recursive: true, force: true }); return false; }
     let bytes = 0;
     for (const f of readdirSync(staging)) {

@@ -41,6 +41,7 @@ import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { run } from '../src/captions.js';
+import { SHORT_S, playlistSeconds } from './cache.js';
 
 const SEGMENT = /^seg\d{1,5}\.ts$/;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -62,9 +63,15 @@ export function formatFor(quality) {
 // ffmpeg's plain read 0.1 MB/s; on the Optiplex `&range=` 19.8 MB/s, while a 10 MB Range header got 403 and only small
 // ones 206). ffmpeg can't make such requests itself (-request_size, a header, and only in development builds; the
 // Optiplex has 8.0.1), so every request ffmpeg makes here, seeks included, is answered by fetching `chunk`-byte pieces
-// in turn. → { urls (local, same order), close() }
-export async function rangeProxy(urls, { fetcher = fetch, chunk = 10_000_000, retryMs = 1000, retryForMs = 30_000 } = {}) {
+// in turn. → { urls (local, same order), close(), failure (why upstream was given up on, or null) }
+//
+// Upstream trouble is never passed on to ffmpeg as the end of the input: ffmpeg takes a connection that closes early as
+// the end of the stream and exits 0 (staging, 2026-10-27 23:16: a 55 min video stopped after 21 of 825 segments, no
+// error anywhere; until then only error answers were asked for again, while a request that threw or a body that broke
+// off part way closed ffmpeg's connection).
+export async function rangeProxy(urls, { fetcher = fetch, chunk = 10_000_000, retryMs = 1000, retryForMs = 30_000, log = () => {} } = {}) {
   const totals = new Map();
+  let failure = null;
   async function total(i) {
     if (totals.has(i)) return totals.get(i);
     let n = Number(new URL(urls[i]).searchParams.get('clen')) || 0;
@@ -91,30 +98,50 @@ export async function rangeProxy(urls, { fetcher = fetch, chunk = 10_000_000, re
       res.writeHead(m ? 206 : 200, { 'content-type': 'application/octet-stream', 'accept-ranges': 'bytes', 'content-length': end - start + 1,
         ...(m ? { 'content-range': `bytes ${start}-${end}/${size}` } : {}) });
       if (req.method === 'HEAD') return res.end();
+      // A piece that fails (an error answer, a request that throws, a body that breaks off or ends early) is asked for
+      // again from the byte it got to, every retryMs for up to retryForMs without progress: fresh stream URLs often answer
+      // 403 for a while before they work (Optiplex, 2026-10-23, six videos: 0.1–2.6 s after yt-dlp printed them, one 22 s).
+      let t0 = Date.now();
       for (let pos = start; pos <= end;) {
-        // A piece that fails is asked for again every retryMs for up to retryForMs: fresh stream URLs often answer 403 for
-        // a while before they work (Optiplex, 2026-10-23, six videos: 0.1–2.6 s after yt-dlp printed them, one 22 s).
-        let up;
-        for (const t0 = Date.now(); ;) {
-          up = await fetcher(`${urls[i]}&range=${pos}-${Math.min(pos + chunk - 1, end)}`, { signal: ac.signal });
-          if (up.status === 200 || up.status === 206) break;
-          try { await up.body?.cancel(); } catch { /* ignore */ }
-          if (Date.now() - t0 >= retryForMs || ac.signal.aborted) throw new Error(`upstream answered ${up.status}`);
-          await sleep(retryMs);
+        const from = pos;
+        let why = null;
+        try {
+          const up = await fetcher(`${urls[i]}&range=${pos}-${Math.min(pos + chunk - 1, end)}`, { signal: ac.signal });
+          if (up.status === 200 || up.status === 206) {
+            for await (const c of up.body) {
+              pos += c.length;
+              if (!res.write(c)) await drained(res);
+              if (ac.signal.aborted) return;
+            }
+            if (pos === from) why = 'empty answer';
+          } else {
+            why = `upstream answered ${up.status}`;
+            try { await up.body?.cancel(); } catch { /* ignore */ }
+          }
+        } catch (err) {
+          if (ac.signal.aborted) return; // ffmpeg closed this request (a seek, or it is done)
+          why = String(err?.cause?.code ?? err?.cause?.message ?? err?.message ?? err).slice(0, 80);
         }
-        for await (const c of up.body) {
-          pos += c.length;
-          if (!res.write(c)) await drained(res);
-          if (ac.signal.aborted) return;
-        }
+        if (pos > from) t0 = Date.now();
+        if (!why) continue;
+        if (Date.now() - t0 >= retryForMs) throw new Error(why);
+        log({ event: 'media_source_retry', stream: i, mb: Math.round(pos / 1e5) / 10, why });
+        await sleep(retryMs);
       }
       res.end();
-    } catch { res.destroy(); }
+    } catch (err) {
+      if (!ac.signal.aborted) {
+        failure = String(err?.message ?? err).slice(0, 120);
+        log({ event: 'media_source_failed', stream: i, why: failure });
+      }
+      res.destroy();
+    }
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const { port } = server.address();
-  return { urls: urls.map((_, i) => `http://127.0.0.1:${port}/${i}`), close: () => { server.close(); server.closeAllConnections(); } };
+  return { urls: urls.map((_, i) => `http://127.0.0.1:${port}/${i}`), close: () => { server.close(); server.closeAllConnections(); },
+    get failure() { return failure; } };
 }
 
 // The whole playlist from the durations of the segments made so far (`known`), the usual segment length (`gop`) and
@@ -192,7 +219,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) throw new Error('bad videoId');
   if (!/^\d{3,4}p$/.test(quality)) throw new Error('bad quality');
   const started = Date.now();
-  const hit = cache?.get(videoId, quality);
+  const hit = cache?.get(videoId, quality, { seconds: Number(job.seconds) || 0 });
   if (hit) return fromCache(hit, { upload: put, retryMs, started, log });
   const out = await runner(ytdlp, [...extraArgs, '--no-warnings', '--no-cache-dir', '--no-playlist', '-g', '-f', formatFor(quality),
     '--', `https://www.youtube.com/watch?v=${videoId}`], 30_000);
@@ -213,7 +240,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
     }
   }
   const dir = cache ? cache.staging() : await mkdtemp(join(tmp, 'jyt-media-'));
-  const proxy = await rangeProxy(urls, { fetcher });
+  const proxy = await rangeProxy(urls, { fetcher, log });
   const ff = spawnFn(ffmpeg, ffmpegArgs(proxy.urls, dir, { splitByTime }), { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   ff.stderr?.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
@@ -224,7 +251,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   let ready, failed, background;
   const first = new Promise((res, rej) => { ready = res; failed = rej; });
   const sent = new Set();
-  let mb = 0, gone = false, isReady = false, lastPlaylist = '', realText = '', predicted = null;
+  let mb = 0, gone = false, isReady = false, lastPlaylist = '', realText = '', predicted = null, short = false;
 
   async function pass(final) {
     let text;
@@ -287,6 +314,18 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       }
       if (!gone) await pass(true);
       if (gone) ff.kill('SIGKILL');
+      // ffmpeg ending cleanly short of the video is a failure, not done (world #266): fewer segments than predicted, or
+      // (growing playlist) SHORT_S less running time than the video. The playlist went up closed where it got to; the
+      // server marks a predicted session cut_short, and the copy is not cached, so the next play makes it again.
+      const made = extinfs(realText);
+      const runS = playlistSeconds(realText);
+      short = !gone && exit === 0 && duration > 0 && (predicted ? made.length < predicted.count : runS < duration - SHORT_S);
+      if (short) {
+        log({ event: 'media_failed', reason: 'short', ms: Date.now() - started, mb: Math.round(mb), segments: sent.size,
+          expected: predicted ? predicted.count : undefined, seconds: Math.round(runS), duration: Math.round(duration), source: proxy.failure ?? undefined });
+        if (!isReady) failed(new Error(`ffmpeg ended at ${Math.round(runS)} of ${Math.round(duration)} s`));
+        return;
+      }
       log({ event: 'media_done', ms: Date.now() - started, mb: Math.round(mb), segments: sent.size, exit, gone,
         error: exit ? stderr.trim().split('\n').pop()?.slice(0, 200) : undefined });
       if (!isReady) failed(new Error(gone ? 'session gone' : `ffmpeg exited ${exit}: ${stderr.trim().split('\n').pop() ?? ''}`.slice(0, 300)));
@@ -304,8 +343,8 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       proxy.close();
       // A stream that finished whole goes into the cache (put checks every listed segment is here); anything else is dropped.
       let kept = false;
-      if (cache && exit === 0 && !gone) {
-        try { kept = cache.put(videoId, quality, dir, lastPlaylist); } catch (err) { log({ event: 'media_cache_failed', message: String(err?.message ?? err).slice(0, 200) }); }
+      if (cache && exit === 0 && !gone && !short) {
+        try { kept = cache.put(videoId, quality, dir, lastPlaylist, { seconds: duration }); } catch (err) { log({ event: 'media_cache_failed', message: String(err?.message ?? err).slice(0, 200) }); }
       }
       if (!kept) await rm(dir, { recursive: true, force: true });
     }

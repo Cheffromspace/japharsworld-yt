@@ -305,6 +305,91 @@ test('rangeProxy: serves every request (seeks too) from &range= pieces upstream'
   } finally { proxy.close(); }
 });
 
+test('rangeProxy: a request that throws or a body that breaks off is asked for again from the byte it got to (world #266)', async () => {
+  const data = Buffer.from('abcdefghijklmnopqrstuvwxy');
+  const asked = [];
+  let broke = false;
+  const fetcher = async (url) => {
+    const [a, b] = /[?&]range=(\d+)-(\d+)$/.exec(url).slice(1).map(Number);
+    asked.push(`${a}-${b}`);
+    if (a === 10 && asked.filter((x) => x.startsWith('10-')).length === 1) throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
+    if (a === 20 && !broke) {
+      broke = true; // two bytes, then the connection drops
+      let n = 0;
+      return new Response(new ReadableStream({ pull(c) { if (n++ === 0) c.enqueue(data.subarray(20, 22)); else c.error(new TypeError('terminated')); } }), { status: 200 });
+    }
+    return new Response(data.subarray(a, b + 1), { status: 200 });
+  };
+  const logs = [];
+  const proxy = await rangeProxy(['https://v.example/x?clen=25'], { fetcher, chunk: 10, retryMs: 1, log: (o) => logs.push(o) });
+  try {
+    assert.equal(await (await fetch(proxy.urls[0])).text(), data.toString(), 'ffmpeg gets every byte');
+    assert.deepEqual(asked, ['0-9', '10-19', '10-19', '20-24', '22-24'], 'resumed at byte 22, not from the piece start');
+    assert.deepEqual(logs.map((l) => [l.event, l.why]), [['media_source_retry', 'ECONNRESET'], ['media_source_retry', 'terminated']]);
+    assert.equal(proxy.failure, null);
+  } finally { proxy.close(); }
+});
+
+test('rangeProxy: upstream that keeps failing is given up after retryForMs, logged, and named in failure', async () => {
+  const fetcher = async (url) => {
+    if (/range=0-/.test(url)) return new Response('abcde', { status: 200 });
+    throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'UND_ERR_SOCKET' } });
+  };
+  const logs = [];
+  const proxy = await rangeProxy(['https://v.example/x?clen=10'], { fetcher, chunk: 5, retryMs: 5, retryForMs: 30, log: (o) => logs.push(o) });
+  try {
+    await assert.rejects((await fetch(proxy.urls[0])).text(), 'the connection closes short, as before');
+    assert.equal(proxy.failure, 'UND_ERR_SOCKET');
+    assert.ok(logs.some((l) => l.event === 'media_source_failed' && l.why === 'UND_ERR_SOCKET'));
+  } finally { proxy.close(); }
+});
+
+test('mediaJob: ffmpeg ending cleanly short of the video is a failure, not done, and the copy is not cached (world #266)', async (t) => {
+  const { MediaCache } = await import('../relay/cache.js');
+  const pl = (n) => `#EXTM3U\n${Array.from({ length: n }, (_, i) => `#EXTINF:4.000000,\nseg${i}.ts\n`).join('')}`;
+  const segs = (from, to) => Array.from({ length: to - from }, (_, i) => `seg${from + i}.ts`);
+  const run = async (steps, extra = {}) => {
+    const cache = new MediaCache({ dir: tmp(t), maxGb: 1 });
+    const logs = [];
+    const uploads = [];
+    const first = await mediaJob({ videoId: 'aaaaaaaaaaa', quality: '1080p', token: 'x', seconds: 3300 }, { ytdlp: 'yt-dlp', runner, spawnFn: fakeFfmpeg({ steps }).spawnFn,
+      pollMs: 10, cache, log: (o) => logs.push(o), upload: async (file, body) => { uploads.push([file, body.toString()]); return 204; }, ...extra });
+    await first.done;
+    await new Promise((r) => setTimeout(r, 30)); // the finally block
+    return { cache, logs, playlists: uploads.filter(([f]) => f === 'index.m3u8').map(([, b]) => b) };
+  };
+  // The staging case: time cuts, 825 predicted, ffmpeg exit 0 after 21.
+  const cut = await run([[pl(8), segs(0, 8)], [`${pl(21)}#EXT-X-ENDLIST\n`, segs(8, 21)]], { splitByTime: true });
+  const failed = cut.logs.find((l) => l.event === 'media_failed');
+  assert.deepEqual([failed?.reason, failed?.segments, failed?.expected, failed?.seconds], ['short', 21, 825, 84]);
+  assert.ok(!cut.logs.some((l) => l.event === 'media_done' || l.event === 'media_cached'), 'not done, not cached');
+  assert.match(cut.playlists.at(-1), /seg20\.ts\n#EXT-X-ENDLIST\n$/, 'players get the playlist closed where it got to');
+  assert.equal(cut.cache.get('aaaaaaaaaaa', '1080p'), null);
+  // A growing (keyframe-cut) copy that ends 3216 s early is short too.
+  const grew = await run([[`${pl(21)}#EXT-X-ENDLIST\n`, segs(0, 21)]]);
+  assert.equal(grew.logs.find((l) => l.event === 'media_failed')?.reason, 'short');
+  assert.equal(grew.cache.get('aaaaaaaaaaa', '1080p'), null);
+});
+
+test('media cache: a copy short of the video is never kept or served (world #266)', async (t) => {
+  const { MediaCache } = await import('../relay/cache.js');
+  const logs = [];
+  const cache = new MediaCache({ dir: tmp(t), maxGb: 1, log: (o) => logs.push(o) });
+  const put = (n, opts) => {
+    const s = cache.staging();
+    for (let i = 0; i < n; i++) writeFileSync(join(s, `seg${i}.ts`), 'x');
+    return cache.put('aaaaaaaaaaa', '1080p', s, `#EXTM3U\n${Array.from({ length: n }, (_, i) => `#EXTINF:4.0,\nseg${i}.ts\n`).join('')}#EXT-X-ENDLIST\n`, opts);
+  };
+  assert.equal(put(21, { seconds: 3300 }), false, '84 of 3300 s: not kept');
+  assert.equal(put(21), true, 'no length given: kept, as before (this is how the staging copy got in)');
+  assert.ok(cache.get('aaaaaaaaaaa', '1080p'), 'served when the job gives no length');
+  assert.equal(cache.get('aaaaaaaaaaa', '1080p', { seconds: 3300 }), null, 'the job says 3300 s: dropped');
+  assert.ok(logs.some((l) => l.event === 'media_cache_short' && l.seconds === 84 && l.duration === 3300));
+  assert.equal(cache.get('aaaaaaaaaaa', '1080p'), null, 'and gone from disk');
+  assert.equal(put(823, { seconds: 3298 }), true, 'within SHORT_S of the length: kept');
+  assert.ok(cache.get('aaaaaaaaaaa', '1080p', { seconds: 3298 }));
+});
+
 test('predictPlaylist: the rest of the video at the usual length, the remainder last (the 6 h mix of 2026-10-23)', () => {
   const p = predictPlaylist([5.071733], 5.071733, 22257.851848);
   assert.equal(p.count, 4389);

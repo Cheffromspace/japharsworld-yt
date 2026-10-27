@@ -231,6 +231,7 @@ export class Home {
 
   // A playlist from the worker (or from disk): which segments it lists, ready at the first one, ended when complete.
   #playlist(s, text) {
+    const before = s.listed.length;
     const lines = text.split(/\r?\n/).filter(Boolean);
     s.listed = lines.filter((l) => !l.startsWith('#'));
     s.listedSeconds = lines.reduce((a, l) => a + (Number(/^#EXTINF:([\d.]+)/.exec(l)?.[1]) || 0), 0);
@@ -239,6 +240,14 @@ export class Home {
     if (s.state === 'building' && s.segments > 0 && s.stored.size > 0) {
       s.state = 'ready';
       s.readyMs = this.now();
+    }
+    // Fewer segments than before, closed: the worker cut a predicted (whole) playlist back to what it uploaded after
+    // failing part way (relay/media.js closedAt). Players already on it end there; the session is failed, not done, so
+    // the next play starts over instead of getting the short copy (coordinator, 2026-10-27).
+    if (s.endlist && s.segments < before && !this.loading && s.state !== 'failed') {
+      this.#fail(s, 'cut_short', `${s.segments} of ${before} segments`);
+      for (const [file, ws] of s.segmentWaiters) if (!s.stored.has(file)) { for (const w of ws) w(); s.segmentWaiters.delete(file); }
+      return;
     }
     this.#checkEnded(s);
   }

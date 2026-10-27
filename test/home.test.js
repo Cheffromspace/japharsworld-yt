@@ -52,6 +52,31 @@ test('home: a session is ready at its first playlist with a segment; the playlis
   assert.deepEqual(events, ['start', 'ready']);
 });
 
+test('home: a predicted playlist cut back after a part-way failure is failed, not done; players on it still get what is there, the next play starts over', async (t) => {
+  let now = 1_000_000;
+  const logs = [];
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), base: 'https://yt/home', enabled: true, segmentHoldMs: 5000, now: () => now, log: (l) => logs.push(l) });
+  const s = home.start({ id: 'aaaaaaaaaaa', seconds: 16 }, '720p');
+  const pl = (n, end = true) => `#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n${Array.from({ length: n }, (_, i) => `#EXTINF:4.000000,\nseg${i}.ts\n`).join('')}${end ? '#EXT-X-ENDLIST\n' : ''}`;
+  assert.equal(home.put(s.token, 'seg0.ts', Buffer.from('a')), 204);
+  assert.equal(home.put(s.token, 'index.m3u8', Buffer.from(pl(4))), 204);
+  assert.equal(home.put(s.token, 'seg1.ts', Buffer.from('b')), 204);
+  assert.equal(s.state, 'ready');
+  const waiting = home.file(s.token, 'seg2.ts'); // a player ahead of the upload
+  assert.equal(home.put(s.token, 'index.m3u8', Buffer.from(pl(2))), 204);
+  assert.equal(s.state, 'failed');
+  assert.equal(s.reason, 'cut_short');
+  assert.equal(s.ended, false);
+  assert.equal(await waiting, null, 'released at once, not after the hold');
+  assert.match((await home.file(s.token, 'index.m3u8')).body.toString(), /seg1\.ts\n#EXT-X-ENDLIST/);
+  assert.equal((await home.file(s.token, 'seg1.ts')).body.toString(), 'b');
+  assert.ok(logs.some((l) => l.event === 'home_failed' && l.reason === 'cut_short') && !logs.some((l) => l.event === 'home_done'));
+  assert.equal(home.peek({ id: 'aaaaaaaaaaa' }, '720p'), s, 'failed for a minute, like any failure');
+  now += 61_000;
+  assert.equal(home.peek({ id: 'aaaaaaaaaaa' }, '720p'), null, 'then the next play starts over');
+  assert.notEqual(home.start({ id: 'aaaaaaaaaaa', seconds: 16 }, '720p'), s);
+});
+
 test('home: uploads are checked (names, playlist lines, unknown sessions)', async (t) => {
   const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true });
   const s = home.start({ id: 'aaaaaaaaaaa' }, '720p');

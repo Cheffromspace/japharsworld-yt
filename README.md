@@ -12,8 +12,10 @@ This service works within that rule:
   ticket numbers. Loading a video ticket is a 302 to the video; no video passes through this server.
 - **HD playback (Tunelio).** With `TUNELIO_API_KEY` set, an ordinary video's ticket redirects to a
   [Tunelio](https://tunelio.dev) tunnel link (720p/1080p): a progressive mp4 (full seeking) up to
-  `TUNELIO_PROGRESSIVE_MAX_MINUTES` and `TUNELIO_PROGRESSIVE_MAX_MB`, Tunelio's HLS playlist for longer or larger
-  videos (and when the mp4 build is refused). Tunelio builds a file on its first request at about 60 MB/s, so a
+  `TUNELIO_PROGRESSIVE_MAX_MINUTES` (720) and `TUNELIO_PROGRESSIVE_MAX_MB` (6000), Tunelio's HLS playlist for longer
+  or larger videos (and when the mp4 build is refused). Since Tunelio's fix of 2026-10-25 a progressive file streams
+  before its build ends, while an HLS playlist still waits for the whole build and is lost at ~125 s, so long videos stay
+  progressive; a progressive 503 (~115 s, the build carries on) is asked again on the same link, at no cost. Tunelio builds a file on its first request at about 60 MB/s, so a
   1080p file above `TUNELIO_MAX_MB` is made again at `TUNELIO_LOWER_QUALITY` (10 more credits, half the wait).
   One link per video is cached until 20 minutes before it expires (about 6 h), so a room, its late joiners and
   replays share one paid call (10 credits).

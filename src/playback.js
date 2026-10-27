@@ -33,18 +33,23 @@ const FIXED_PRIOR = { progressive: 2, hls: 3 };
 export const cachedBuild = (mb, buildMs) => buildMs < 3000 || mb / (buildMs / 1000) > 120;
 
 export class Playback {
-  constructor({ tunelio, quality = '1080p', lowerQuality = '720p', maxMbForQuality = 1500, progressiveMaxMb = 1800,
-    progressiveMaxSeconds = 3 * 3600, marginSeconds = 20 * 60,
+  constructor({ tunelio, quality = '1080p', lowerQuality = '720p', maxMbForQuality = 1500, progressiveMaxMb = 6000,
+    progressiveMaxSeconds = 12 * 3600, progressiveRetries = 2, marginSeconds = 20 * 60,
     pauseMinutes = 10, alert = () => {}, log = () => {}, now = () => Date.now(), probe = null, onBuild = () => {}, stateFile = null, liveFile = null }) {
     this.tunelio = tunelio;
     this.quality = quality;
     // A file above maxMbForQuality MB at `quality` is made again at lowerQuality (10 more credits, roughly half the
-    // build); above progressiveMaxMb MB (or progressiveMaxSeconds long) it is served as HLS, which Tunelio can build
-    // for files the progressive build refuses or times out on.
+    // build); above progressiveMaxMb MB (or progressiveMaxSeconds long) it is served as HLS. Progressive is the better
+    // path for long files since Tunelio's fix of 2026-10-25 (it streams before the build ends; HLS answers only after
+    // the whole build and loses it at ~125 s), so HLS is left for the very largest and for 413-refused files.
     this.lowerQuality = lowerQuality;
     this.maxMbForQuality = maxMbForQuality;
     this.progressiveMaxMb = progressiveMaxMb;
     this.progressiveMaxSeconds = progressiveMaxSeconds;
+    // A progressive 503 (~115 s) is Tunelio's wait for the first bytes running out while the build carries on; asking
+    // the same link again joins that build for free (Tunelio, 2026-10-25, answer 6), where a new /create would cost
+    // 10 credits. HLS is not retried: a cut-off HLS build is discarded, so a retry starts it over.
+    this.progressiveRetries = progressiveRetries;
     this.marginMs = marginSeconds * 1000;
     this.pauseMs = pauseMinutes * 60_000;
     this.alert = alert;
@@ -287,6 +292,10 @@ export class Playback {
         try { return await this.probe(url); } catch (err) { return { ok: false, refused: false, status: 0, error: err?.name ?? 'error' }; }
       };
       let r = await tryProbe(link(job.format));
+      for (let n = 1; !r.ok && r.status === 503 && job.format === 'progressive' && n <= this.progressiveRetries; n++) {
+        this.log({ event: 'build_retry', id, quality: job.quality, mb: job.mb, attempt: n, status: r.status, ms: this.now() - job.startedMs });
+        r = await tryProbe(link('progressive'));
+      }
       if (!r.ok && r.refused && job.format === 'progressive') {
         job.format = 'hls';
         r = await tryProbe(link('hls'));

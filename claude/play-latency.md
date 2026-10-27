@@ -230,3 +230,20 @@ Daily cap (YT#24, 2026-10-23): one 6 h mix is ~2.5 GB, so 10 GB a day went in a 
 
 A deploy (06:03, another session's commit) restarted the service and cut off the home streams, which were in memory
 only; sessions are now saved with their files and reloaded.
+
+## Long videos stay progressive (2026-10-27)
+
+Tunelio's reply of 2026-10-25 (claude/tunelio-support-draft.md, "Tunelio's answer"): since its fix of 10-25 07:38 UTC
+a progressive file is served once its layout is known (1.6–4.5 GB start in 17–25 s, their numbers), while an HLS
+playlist still answers only after the whole build, and a build cut off at ~125 s (524) is thrown away. Our limits
+still sent every video over 180 min or 1800 MB to HLS, and that is where the long-video failures were: in the 30 h to
+10-27 ~14:00 UTC, 2 `build_failed`, both HLS, both 524 at ~125 s (a 1 h video; a 3.3 h, 3.8 GB 720p file), and 19
+`ticket_timeout`s (12 in one retry burst, after which the home relay served the play as `tunelio_failed`).
+
+So `TUNELIO_PROGRESSIVE_MAX_MINUTES` is 720 and `TUNELIO_PROGRESSIVE_MAX_MB` 6000 (from 180 / 1800): the files Tunelio
+quotes, with room above, stay progressive; above that HLS remains (a 6 GB, 10 h HLS build failed at once on 10-24, so
+those rarely play from Tunelio either way). A 413 still falls back to HLS. A progressive 503 (~115 s, Tunelio's wait for
+the first bytes; the build carries on) is asked again on the same link up to twice (`build_retry` events), which
+joins the running build at no cost; HLS is not retried, since each try starts over. A player's 90 s hold usually ends
+before a retry answers, but the room's next play and late joiners get the link. `TUNELIO_MAX_MB` (1500, the 1080p →
+720p re-create) is unchanged.

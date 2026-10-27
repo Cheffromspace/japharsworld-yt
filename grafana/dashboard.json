@@ -47,7 +47,7 @@
     },
     "enable": true,
     "iconColor": "#bb9af7",
-    "expr": "max by (source, version) (eiok_release_timestamp_seconds{source=~\"world:.*\"}) * 1000",
+    "expr": "max by (source, version) (eiok_release_timestamp_seconds{env!=\"staging\",source=~\"world:.*\"}) * 1000",
     "step": "5m",
     "useValueForTime": true,
     "titleFormat": "{{source}} v{{version}}",
@@ -62,7 +62,7 @@
     },
     "enable": true,
     "iconColor": "#7dcfff",
-    "expr": "max by (source, version) (eiok_release_timestamp_seconds{source!~\"world:.*\"}) * 1000",
+    "expr": "max by (source, version) (eiok_release_timestamp_seconds{env!=\"staging\",source!~\"world:.*\"}) * 1000",
     "step": "5m",
     "useValueForTime": true,
     "titleFormat": "{{source}} {{version}}",
@@ -77,7 +77,7 @@
     },
     "enable": true,
     "iconColor": "#e0af68",
-    "expr": "max by (host, commit, outcome) (eiok_deploy_timestamp_seconds) * 1000",
+    "expr": "max by (host, commit, outcome) (eiok_deploy_timestamp_seconds{env!=\"staging\"}) * 1000",
     "step": "5m",
     "useValueForTime": true,
     "titleFormat": "{{host}} {{commit}} ({{outcome}})",
@@ -121,7 +121,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "min(eiok_search_up)",
+     "expr": "min(eiok_search_up{env!=\"staging\"})",
      "legendFormat": "",
      "instant": true
     }
@@ -192,7 +192,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "min(probe_success{job=~\".*search-healthz.*\"})",
+     "expr": "min(probe_success{env!=\"staging\",job=~\".*search-healthz.*\"})",
      "legendFormat": "",
      "instant": true
     }
@@ -264,7 +264,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_relay_workers_online)",
+     "expr": "max(eiok_relay_workers_online{env!=\"staging\"})",
      "legendFormat": "",
      "instant": true
     }
@@ -321,7 +321,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"occupants\"})",
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"occupants\"})",
      "legendFormat": "",
      "instant": true
     }
@@ -374,7 +374,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_credits_remaining)",
+     "expr": "max(eiok_credits_remaining{env!=\"staging\"})",
      "legendFormat": "",
      "instant": true
     }
@@ -435,7 +435,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(eiok_slot_hidden * on(slot) (1 - eiok_slot_spare))",
+     "expr": "sum(eiok_slot_hidden{env!=\"staging\"} * on(slot) (1 - eiok_slot_spare{env!=\"staging\"}))",
      "legendFormat": "",
      "instant": true
     }
@@ -497,7 +497,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "count(eiok_slot_flash_pass == 0) or vector(0)",
+     "expr": "count(eiok_slot_flash_pass{env!=\"staging\"} == 0) or vector(0)",
      "legendFormat": "",
      "instant": true
     }
@@ -555,7 +555,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_jobs_oldest_pending_seconds{reason=\"other\"})",
+     "expr": "max(eiok_jobs_oldest_pending_seconds{env!=\"staging\",reason=\"other\"})",
      "legendFormat": "",
      "instant": true
     }
@@ -616,7 +616,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"visits\"})",
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"visits\"})",
      "legendFormat": "",
      "instant": true
     }
@@ -670,7 +670,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"favorites\"})",
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"favorites\"})",
      "legendFormat": "",
      "instant": true
     }
@@ -725,7 +725,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(increase(eiok_events_total{metric=\"ticket_timeout\"}[3h])) or vector(0)",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"ticket_timeout\"}[3h])) or vector(0)",
      "legendFormat": "player timeouts",
      "instant": true
     },
@@ -735,7 +735,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(increase(eiok_events_total{metric=\"build\",key=\"failed\"}[3h])) or vector(0)",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"build\",key=\"failed\"}[3h])) or vector(0)",
      "legendFormat": "failed builds",
      "instant": true
     }
@@ -798,7 +798,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_build_progressive_seconds_bucket[3h])))",
+     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_build_progressive_seconds_bucket{env!=\"staging\"}[3h])))",
      "legendFormat": "visitors p95, 3 h",
      "instant": true
     },
@@ -808,7 +808,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{source=\"tunelio:progressive\",metric=\"start_s\"})",
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"tunelio:progressive\",metric=\"start_s\"})",
      "legendFormat": "probe progressive",
      "instant": true
     },
@@ -818,7 +818,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{source=\"tunelio:hls\",metric=\"start_s\"})",
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"tunelio:hls\",metric=\"start_s\"})",
      "legendFormat": "probe HLS",
      "instant": true
     }
@@ -913,7 +913,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"occupants\"})",
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"occupants\"})",
      "legendFormat": "in world"
     },
     {
@@ -922,7 +922,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"publicOccupants\"})",
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"publicOccupants\"})",
      "legendFormat": "public instances"
     },
     {
@@ -931,7 +931,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"privateOccupants\"})",
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"privateOccupants\"})",
      "legendFormat": "private instances"
     },
     {
@@ -940,7 +940,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{source=\"group\",metric=\"online\"})",
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"group\",metric=\"online\"})",
      "legendFormat": "group online"
     }
    ],
@@ -990,7 +990,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"visits\"})",
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"visits\"})",
      "legendFormat": "visits"
     },
     {
@@ -999,7 +999,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"favorites\"})",
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"favorites\"})",
      "legendFormat": "favorites"
     }
    ],
@@ -1061,7 +1061,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (metric) (increase(eiok_events_total{metric=~\"search|play|join|more\",key=\"\"}[1h]))",
+     "expr": "sum by (metric) (increase(eiok_events_total{env!=\"staging\",metric=~\"search|play|join|more\",key=\"\"}[1h]))",
      "legendFormat": "{{metric}}"
     }
    ],
@@ -1110,7 +1110,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "histogram_quantile(0.5, sum by (le) (increase(eiok_search_seconds_bucket[3h])))",
+     "expr": "histogram_quantile(0.5, sum by (le) (increase(eiok_search_seconds_bucket{env!=\"staging\"}[3h])))",
      "legendFormat": "p50"
     },
     {
@@ -1119,7 +1119,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_search_seconds_bucket[3h])))",
+     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_search_seconds_bucket{env!=\"staging\"}[3h])))",
      "legendFormat": "p95"
     }
    ],
@@ -1167,7 +1167,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(increase(eiok_events_total{metric=\"search_fail\"}[3h])) / clamp_min(sum(increase(eiok_events_total{metric=\"search\",key=\"\"}[3h])) + sum(increase(eiok_events_total{metric=\"search_fail\"}[3h])), 1)",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"search_fail\"}[3h])) / clamp_min(sum(increase(eiok_events_total{env!=\"staging\",metric=\"search\",key=\"\"}[3h])) + sum(increase(eiok_events_total{env!=\"staging\",metric=\"search_fail\"}[3h])), 1)",
      "legendFormat": "failures"
     }
    ],
@@ -1216,7 +1216,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{metric=\"play_route\"}[3h]))",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"play_route\"}[3h]))",
      "legendFormat": "{{key}}"
     }
    ],
@@ -1264,7 +1264,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_credits_remaining)",
+     "expr": "max(eiok_credits_remaining{env!=\"staging\"})",
      "legendFormat": "left"
     }
    ],
@@ -1314,7 +1314,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "histogram_quantile(0.5, sum by (le) (increase(eiok_build_progressive_seconds_bucket[6h])))",
+     "expr": "histogram_quantile(0.5, sum by (le) (increase(eiok_build_progressive_seconds_bucket{env!=\"staging\"}[6h])))",
      "legendFormat": "progressive p50"
     },
     {
@@ -1323,7 +1323,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_build_progressive_seconds_bucket[6h])))",
+     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_build_progressive_seconds_bucket{env!=\"staging\"}[6h])))",
      "legendFormat": "progressive p95"
     },
     {
@@ -1332,7 +1332,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "histogram_quantile(0.5, sum by (le) (increase(eiok_build_hls_seconds_bucket[6h])))",
+     "expr": "histogram_quantile(0.5, sum by (le) (increase(eiok_build_hls_seconds_bucket{env!=\"staging\"}[6h])))",
      "legendFormat": "HLS p50"
     },
     {
@@ -1341,7 +1341,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_build_hls_seconds_bucket[6h])))",
+     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_build_hls_seconds_bucket{env!=\"staging\"}[6h])))",
      "legendFormat": "HLS p95"
     },
     {
@@ -1350,7 +1350,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_ticket_hold_seconds_bucket[6h])))",
+     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_ticket_hold_seconds_bucket{env!=\"staging\"}[6h])))",
      "legendFormat": "ticket hold p95"
     }
    ],
@@ -1399,7 +1399,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(increase(eiok_events_total{metric=\"ticket_timeout\"}[3h]))",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"ticket_timeout\"}[3h]))",
      "legendFormat": "player timeouts (got youtube.com)"
     },
     {
@@ -1408,7 +1408,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(increase(eiok_events_total{metric=\"ticket_fastfail\"}[3h]))",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"ticket_fastfail\"}[3h]))",
      "legendFormat": "resolver fast-fails (normal while building)"
     },
     {
@@ -1417,7 +1417,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(increase(eiok_events_total{metric=\"build\",key=\"failed\"}[3h]))",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"build\",key=\"failed\"}[3h]))",
      "legendFormat": "failed builds"
     },
     {
@@ -1426,7 +1426,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{metric=\"play_fallback\"}[3h]))",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"play_fallback\"}[3h]))",
      "legendFormat": "fallback: {{key}}"
     }
    ],
@@ -1476,7 +1476,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (source) (eiok_poll{source=~\"tunelio:.*\",metric=\"start_s\"})",
+     "expr": "max by (source) (eiok_poll{env!=\"staging\",source=~\"tunelio:.*\",metric=\"start_s\"})",
      "legendFormat": "{{source}}"
     },
     {
@@ -1485,7 +1485,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (source) (eiok_poll{source=~\"tunelio:.*\",metric=\"create_s\"})",
+     "expr": "max by (source) (eiok_poll{env!=\"staging\",source=~\"tunelio:.*\",metric=\"create_s\"})",
      "legendFormat": "{{source}} /create"
     }
    ],
@@ -1535,7 +1535,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (source) (eiok_poll{source=~\"tunelio:.*\",metric=\"mb_per_s\"})",
+     "expr": "max by (source) (eiok_poll{env!=\"staging\",source=~\"tunelio:.*\",metric=\"mb_per_s\"})",
      "legendFormat": "{{source}} MB/s"
     },
     {
@@ -1544,7 +1544,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (source) (eiok_poll{source=~\"tunelio:.*\",metric=\"mb\"})",
+     "expr": "max by (source) (eiok_poll{env!=\"staging\",source=~\"tunelio:.*\",metric=\"mb\"})",
      "legendFormat": "{{source}} file MB"
     }
    ],
@@ -1620,7 +1620,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{metric=\"adaptive\",key=~\"plan_.*|paced_off\"}[6h]))",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"adaptive\",key=~\"plan_.*|paced_off\"}[6h]))",
      "legendFormat": "{{key}}"
     }
    ],
@@ -1670,7 +1670,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{metric=\"adaptive\",key!~\"plan_.*|paced_off\"}[6h]))",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"adaptive\",key!~\"plan_.*|paced_off\"}[6h]))",
      "legendFormat": "{{key}}"
     }
    ],
@@ -1720,7 +1720,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{metric=\"ticket_client\"}[6h]))",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"ticket_client\"}[6h]))",
      "legendFormat": "{{key}}"
     }
    ],
@@ -1770,7 +1770,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_home_today{key=\"mb\"}) / 1000",
+     "expr": "max(eiok_home_today{env!=\"staging\",key=\"mb\"}) / 1000",
      "legendFormat": "GB",
      "instant": true
     },
@@ -1780,7 +1780,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_home_today{key=\"cap_mb\"}) / 1000",
+     "expr": "max(eiok_home_today{env!=\"staging\",key=\"cap_mb\"}) / 1000",
      "legendFormat": "cap GB",
      "instant": true
     },
@@ -1790,7 +1790,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_home_today{key=\"builds\"})",
+     "expr": "max(eiok_home_today{env!=\"staging\",key=\"builds\"})",
      "legendFormat": "videos",
      "instant": true
     },
@@ -1800,7 +1800,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_home_today{key=\"workers\"})",
+     "expr": "max(eiok_home_today{env!=\"staging\",key=\"workers\"})",
      "legendFormat": "workers",
      "instant": true
     },
@@ -1810,7 +1810,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_home_today{key=\"cache_mb\"}) / 1000",
+     "expr": "max(eiok_home_today{env!=\"staging\",key=\"cache_mb\"}) / 1000",
      "legendFormat": "from cache GB",
      "instant": true
     }
@@ -1865,7 +1865,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{metric=\"home\"}[6h]))",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"home\"}[6h]))",
      "legendFormat": "{{key}}"
     },
     {
@@ -1874,7 +1874,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{metric=\"home_why\"}[6h]))",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"home_why\"}[6h]))",
      "legendFormat": "why: {{key}}"
     }
    ],
@@ -1924,7 +1924,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "histogram_quantile(0.5, sum by (le) (increase(eiok_home_start_seconds_bucket[6h])))",
+     "expr": "histogram_quantile(0.5, sum by (le) (increase(eiok_home_start_seconds_bucket{env!=\"staging\"}[6h])))",
      "legendFormat": "p50"
     },
     {
@@ -1933,7 +1933,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_home_start_seconds_bucket[6h])))",
+     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_home_start_seconds_bucket{env!=\"staging\"}[6h])))",
      "legendFormat": "p95"
     }
    ],
@@ -1983,7 +1983,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{metric=\"credits\"}[1d]))",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"credits\"}[1d]))",
      "legendFormat": "{{key}}"
     }
    ],
@@ -2033,7 +2033,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{metric=\"search_source\"}[6h]))",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"search_source\"}[6h]))",
      "legendFormat": "{{key}}"
     },
     {
@@ -2042,7 +2042,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_youtube_api_units_today)",
+     "expr": "max(eiok_youtube_api_units_today{env!=\"staging\"})",
      "legendFormat": "Data API units today"
     }
    ],
@@ -2092,7 +2092,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (metric) (increase(eiok_events_total{metric=~\"cc_list|cc_track\",key=\"\"}[6h]))",
+     "expr": "sum by (metric) (increase(eiok_events_total{env!=\"staging\",metric=~\"cc_list|cc_track\",key=\"\"}[6h]))",
      "legendFormat": "{{metric}}"
     },
     {
@@ -2101,7 +2101,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{metric=\"cc_via\"}[6h]))",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"cc_via\"}[6h]))",
      "legendFormat": "via {{key}}"
     },
     {
@@ -2110,7 +2110,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{metric=\"cc_words\"}[6h]))",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"cc_words\"}[6h]))",
      "legendFormat": "words {{key}}"
     },
     {
@@ -2119,7 +2119,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{metric=\"cc_unavailable\"}[6h]))",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"cc_unavailable\"}[6h]))",
      "legendFormat": "unavailable: {{key}}"
     }
    ],
@@ -2151,7 +2151,7 @@
    "type": "timeseries",
    "id": 36,
    "title": "YouTube refusals (per hour)",
-   "description": "Failed YouTube lookups by where (home = the Optiplex relay, linode) and class: bot = \"Sign in to confirm\", rate = 429 / try again later / a caption track that failed after its list, forbidden = 403, potoken = PO token, other. Counted from 2026-10-25 (src/refusal.js).",
+   "description": "Failed YouTube lookups by where (home = the Optiplex relay, linode, flash = the Optiplex flash-check worker) and class: bot = \"Sign in to confirm\", rate = 429 / try again later / a caption track that failed after its list, forbidden = 403, potoken = PO token, other. Counted from 2026-10-25 (src/refusal.js).",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2169,7 +2169,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{metric=\"yt_refusal\"}[1h]))",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"yt_refusal\"}[1h]))",
      "legendFormat": "{{key}}"
     }
    ],
@@ -2219,7 +2219,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)",
+     "expr": "count(increase(eiok_shard_active_hours_total{env!=\"staging\"}[1h]) > 0) or vector(0)",
      "legendFormat": "rooms"
     }
    ],
@@ -2270,7 +2270,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{metric=\"play_platform\"}[6h]))",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"play_platform\"}[6h]))",
      "legendFormat": "{{key}}"
     }
    ],
@@ -2319,7 +2319,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{metric=\"quality_pick\"}[6h]))",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"quality_pick\"}[6h]))",
      "legendFormat": "pick {{key}}"
     },
     {
@@ -2328,7 +2328,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(increase(eiok_events_total{metric=\"warm\"}[6h]))",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"warm\"}[6h]))",
      "legendFormat": "warm builds"
     },
     {
@@ -2337,7 +2337,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(increase(eiok_events_total{metric=\"warm_played\"}[6h]))",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"warm_played\"}[6h]))",
      "legendFormat": "warm then played"
     }
    ],
@@ -2399,7 +2399,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (slot, category) (eiok_slot_up)",
+     "expr": "max by (slot, category) (eiok_slot_up{env!=\"staging\"})",
      "legendFormat": "",
      "instant": true,
      "format": "table"
@@ -2410,7 +2410,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (slot, category) (eiok_slot_hidden)",
+     "expr": "max by (slot, category) (eiok_slot_hidden{env!=\"staging\"})",
      "legendFormat": "",
      "instant": true,
      "format": "table"
@@ -2421,7 +2421,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (slot, category) (eiok_slot_height)",
+     "expr": "max by (slot, category) (eiok_slot_height{env!=\"staging\"})",
      "legendFormat": "",
      "instant": true,
      "format": "table"
@@ -2432,7 +2432,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (slot, category) (eiok_slot_flash_max)",
+     "expr": "max by (slot, category) (eiok_slot_flash_max{env!=\"staging\"})",
      "legendFormat": "",
      "instant": true,
      "format": "table"
@@ -2443,7 +2443,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "time() - max by (slot, category) (eiok_slot_flash_timestamp_seconds)",
+     "expr": "time() - max by (slot, category) (eiok_slot_flash_timestamp_seconds{env!=\"staging\"})",
      "legendFormat": "",
      "instant": true,
      "format": "table"
@@ -2615,7 +2615,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (verdict) (increase(eiok_flash_checks_total[6h]))",
+     "expr": "sum by (verdict) (increase(eiok_flash_checks_total{env!=\"staging\"}[6h]))",
      "legendFormat": "{{verdict}}"
     }
    ],
@@ -2663,7 +2663,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_jobs_pending)",
+     "expr": "max(eiok_jobs_pending{env!=\"staging\"})",
      "legendFormat": "waiting"
     },
     {
@@ -2672,7 +2672,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (reason) (eiok_jobs_oldest_pending_seconds) / 60",
+     "expr": "max by (reason) (eiok_jobs_oldest_pending_seconds{env!=\"staging\"}) / 60",
      "legendFormat": "oldest {{reason}} (min)"
     }
    ],
@@ -2734,7 +2734,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "1 - avg by (host) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))",
+     "expr": "1 - avg by (host) (rate(node_cpu_seconds_total{env!=\"staging\",mode=\"idle\"}[5m]))",
      "legendFormat": "{{host}}"
     }
    ],
@@ -2783,7 +2783,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (host) (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)",
+     "expr": "max by (host) (node_memory_MemAvailable_bytes{env!=\"staging\"} / node_memory_MemTotal_bytes{env!=\"staging\"})",
      "legendFormat": "{{host}}"
     }
    ],
@@ -2832,7 +2832,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (host) (node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"})",
+     "expr": "max by (host) (node_filesystem_avail_bytes{env!=\"staging\",mountpoint=\"/\"} / node_filesystem_size_bytes{env!=\"staging\",mountpoint=\"/\"})",
      "legendFormat": "{{host}}"
     }
    ],
@@ -2881,7 +2881,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (job) (probe_success)",
+     "expr": "max by (job) (probe_success{env!=\"staging\"})",
      "legendFormat": "{{job}}"
     },
     {
@@ -2890,7 +2890,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (job) (probe_duration_seconds)",
+     "expr": "max by (job) (probe_duration_seconds{env!=\"staging\"})",
      "legendFormat": "{{job}} seconds"
     }
    ],
@@ -2939,7 +2939,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (host, name) (node_systemd_unit_state{state=\"failed\"}) > 0",
+     "expr": "sum by (host, name) (node_systemd_unit_state{env!=\"staging\",state=\"failed\"}) > 0",
      "legendFormat": "{{host}} {{name}}"
     }
    ],
@@ -3000,7 +3000,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{source=\"world:prod\",metric=\"version\"})",
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"version\"})",
      "legendFormat": "production"
     },
     {
@@ -3009,7 +3009,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{source=\"world:test\",metric=\"version\"})",
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:test\",metric=\"version\"})",
      "legendFormat": "TEST"
     }
    ],
@@ -3061,7 +3061,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (source, version) (eiok_release_timestamp_seconds) * 1000",
+     "expr": "max by (source, version) (eiok_release_timestamp_seconds{env!=\"staging\"}) * 1000",
      "legendFormat": "",
      "instant": true,
      "format": "table"
@@ -3134,7 +3134,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max by (host, commit, outcome) (eiok_deploy_timestamp_seconds) * 1000",
+     "expr": "max by (host, commit, outcome) (eiok_deploy_timestamp_seconds{env!=\"staging\"}) * 1000",
      "legendFormat": "",
      "instant": true,
      "format": "table"

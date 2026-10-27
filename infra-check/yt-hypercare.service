@@ -1,0 +1,10 @@
+[Unit]
+Description=YT Search hourly hypercare (read-only checks; Discord and a world-repo issue only when something is abnormal)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node /opt/japharsworld-yt-relay/infra-check/hypercare.mjs
+TimeoutStartSec=10min

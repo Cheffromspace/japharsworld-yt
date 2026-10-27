@@ -93,8 +93,9 @@ class Base(unittest.TestCase):
 
 
 class Tests(Base):
-    def test_only_a_mass_outage_pings_the_owner(self):
-        # Owner, 2026-10-26: one outage or flash fail stays unmentioned; MASS_DOWN shown slots out at once pings.
+    def test_a_mass_outage_alerts_once_without_a_ping(self):
+        # Owner, 2026-10-26: one outage or flash fail is the monitor's own; MASS_DOWN shown slots out at once alert,
+        # with no mention (#246).
         with mock.patch.object(config, "MASS_DOWN", 2):
             self.api.world["CAMCAMCAM01"] = st("CAMCAMCAM01", "ended")
             self.check()
@@ -104,12 +105,50 @@ class Tests(Base):
             self.con.execute("UPDATE slots SET auto_hidden=1, auto_reason='flash fail' WHERE key='radio'")
             self.con.execute("UPDATE slots SET auto_hidden=1, auto_reason='down' WHERE key='spare'")  # baked hidden: not counted
             core.outage_watch(self.con, OVERRIDES)
-            self.assertEqual(self.mentions, ["2 channels down or hidden at once"])
+            self.assertEqual(self.alerts[-1], ("urgent", "2 channels down or hidden at once"))
+            self.assertEqual(self.mentions, [], "no ping (#246)")
             db.set_meta(self.con, "alert:mass-down", time.time())  # as discord.send records it
             self.con.execute("UPDATE slots SET auto_hidden=0, auto_reason=NULL WHERE key='radio'")
             core.outage_watch(self.con, OVERRIDES)
             self.assertEqual(self.alerts[-1], ("good", "Channels back"))
-            self.assertEqual(len(self.mentions), 1, "the all-clear does not ping")
+            self.assertEqual(self.mentions, [], "nor the all-clear")
+
+    def test_flash_worker_refusals_are_counted_by_class_only(self):
+        # Owner, 2026-10-26: the same classes as src/refusal.js; the monitor keeps an event per refusal, class only.
+        from slotmon import probe
+        self.assertEqual(probe.refusal_class("ERROR: [youtube] x: Sign in to confirm you're not a bot"), "bot")
+        self.assertEqual(probe.refusal_class("HTTP Error 429: Too Many Requests"), "rate")
+        self.assertEqual(probe.refusal_class("Server returned 403 Forbidden (access denied)"), "forbidden")
+        self.assertEqual(probe.refusal_class("something else"), "other")
+        with mock.patch.object(probe, "extract", side_effect=RuntimeError("ERROR: Sign in to confirm you're not a bot")):
+            r = probe.run_job({"id": 1, "video_id": "CAMCAMCAM01"}, "optiplex")
+        self.assertEqual((r["error"][:5], r["refusal"]), ("ERROR", "bot"))
+        # ffmpeg's stream fetch refused: too few frames, classified from its stderr.
+        with mock.patch.object(probe.subprocess, "run", lambda cmd, **k: mock.Mock(stdout=b"", stderr=b"Server returned 403 Forbidden")), \
+                mock.patch.object(probe, "ffmpeg_path", lambda: "ffmpeg"):
+            self.assertEqual(probe.flash_check("https://x"), {"frames": 0, "verdict": "too-few-frames", "refusal": "forbidden"})
+        self.check()
+        job = self.jobs()[0]
+        core.submit_results(self.con, self.api, [{"id": job["id"], "video_id": job["video_id"], "runner": "optiplex", "ts": time.time(),
+                                                   "error": "ERROR: Sign in to confirm", "refusal": "bot"}], OVERRIDES)
+        core.submit_results(self.con, self.api, [{"id": job["id"], "video_id": job["video_id"], "runner": "pc", "ts": time.time(),
+                                                   "error": "HTTP Error 429"}], OVERRIDES)  # an older worker: classified here
+        core.submit_results(self.con, self.api, [{"id": job["id"], "video_id": job["video_id"], "runner": "pc", "ts": time.time(),
+                                                   "error": "timeout"}], OVERRIDES)  # our own timeout is not a refusal
+        rows = self.con.execute("SELECT detail FROM events WHERE kind='yt_refusal' ORDER BY id").fetchall()
+        self.assertEqual([r["detail"] for r in rows], ["bot", "rate"])
+
+    def test_flash_sample_length_is_a_setting_with_room_to_finish(self):
+        # Owner, 2026-10-26: 60 s by default (15 before); ffmpeg gets the sample plus 120 s.
+        from slotmon import probe
+        seen = []
+        with mock.patch.object(probe.subprocess, "run", lambda cmd, **k: seen.append((cmd, k["timeout"])) or mock.Mock(stdout=b"", stderr=b"")), \
+                mock.patch.object(probe, "ffmpeg_path", lambda: "ffmpeg"):
+            probe.frames("https://x")
+            with mock.patch.object(config, "FLASH_SECONDS", 120):
+                probe.frames("https://x")
+        self.assertEqual(config.FLASH_SECONDS, 60)
+        self.assertEqual([(c[c.index("-t") + 1], t) for c, t in seen], [("60", 180), ("120", 240)])
 
     def test_mention_payload_pings_that_user_only(self):
         from slotmon import discord
@@ -127,6 +166,24 @@ class Tests(Base):
             self.assertEqual(discord.mention_id(), "123456789012")
         with mock.patch.object(config, "DISCORD_MENTION", "@here"):
             self.assertIsNone(discord.mention_id())
+
+    def test_critical_alerts_go_to_the_critical_webhook_when_set(self):
+        from slotmon import discord
+        urls = []
+        real_send = self.p[0].temp_original
+        with mock.patch.object(config, "DISCORD_WEBHOOK", "https://usual"),                 mock.patch.object(discord, "http", lambda url, data=None, **k: urls.append(url)):
+            real_send(self.con, "8 channels down or hidden at once", "b", "urgent", mention=True)
+            with mock.patch.object(config, "DISCORD_CRITICAL_WEBHOOK", "https://critical"):
+                real_send(self.con, "8 channels down or hidden at once", "b", "urgent", mention=True)
+                real_send(self.con, "Stream down: x", "b", "urgent")
+                real_send(self.con, "Channels back", "b", "good", critical=True)
+        self.assertEqual(urls, ["https://usual", "https://critical", "https://usual", "https://critical"])
+
+    def test_mass_outage_stays_on_the_usual_channel_unmentioned(self):
+        import inspect
+        src = inspect.getsource(core.outage_watch)
+        self.assertNotIn("mention=True", src)
+        self.assertNotIn("critical=True", src)
     def test_api_warnings_get_an_all_clear_once_the_api_answers(self):
         core.statuses(self.con, self.api, ["CAMCAMCAM01"])
         self.assertEqual(self.alerts, [])  # nothing was wrong: no all-clear

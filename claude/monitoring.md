@@ -94,10 +94,32 @@ The domain itself is the owner's to renew (auto-renew, several years ahead), bec
    GRAFANA_URL=https://calmcanoe396.grafana.net
    GRAFANA_SA_TOKEN=glsa_...
    GRAFANA_DISCORD_WEBHOOK=https://discord.com/api/webhooks/...   # for now the same channel as ALERT_WEBHOOK
+   DISCORD_CRITICAL_WEBHOOK=https://discord.com/api/webhooks/...  # optional: the critical channel (below)
    ```
    then `node tools/grafana.mjs push`. It creates the folder, the dashboard (`/d/everything-is-ok`), the Discord
    contact point and the alert rules, and is safe to re-run. To send alerts elsewhere, change
    `GRAFANA_DISCORD_WEBHOOK` and push again. (`GRAFANA_TOKEN` in the same file is the write-only token Alloy uses.)
+
+**Critical channel** (world #195, owner 2026-10-26, card #234): a separate Discord channel, with its own sound and the
+@mention, for critical alerts only; warnings stay where they are. One env var, `DISCORD_CRITICAL_WEBHOOK`, in each
+sender's own env file; unset, that sender posts everything to its usual webhook as before:
+- Grafana (the repo's `.env` where `tools/grafana.mjs push` runs): every `severity=critical` rule goes to the contact
+  point "Everything is OK Discord critical" (search or public address down, an unknown SSH login, keys/sshd/ufw
+  changed, sshd hardening off, the Linode disk at 88 %, a domain within 48 hours). The Channels mass outage and the domain
+  within 7 days are plain warnings on the usual channel: no ping, no triage (owner, #246).
+- The Channels monitor (`/etc/japharsworld-yt-monitor.env` on the Linode): nothing for now (its mass outage is a plain
+  alert on the usual channel, #246); a send marked critical would go there.
+- Severe-alert triage (`~/yt-infra-check/.env` on the Optiplex): every SEVERE post.
+- Hypercare (the same `.env`): the "Fix:" findings (owner tasks) and their recoveries.
+The weekly report and the search service's own alerts (`ALERT_WEBHOOK`) stay on the usual channel.
+
+**Tonight board** (world #248, owner 2026-10-26): `/d/everything-is-ok-tonight`, "Everything is OK · Tonight", pushed with
+the ops dashboard (`tonight()` in `tools/grafana.mjs`, `grafana/tonight.json`). "How cozy is it right now": the vibe word
+from occupancy (0 quiet, 1–3 cozy, 4+ lively), people and rooms, the range's new visits and favorites, plays by length,
+Channels vs searches, captions, languages, Quest vs PC, the night's occupancy curve and "stayed past 03:00". Existing
+aggregates only (counts, no IDs); panels from the service's counters say they include the owner's testing. Tokyo Night
+accents, no red, refresh 1 min, the last 12 h. The vibe, heat and stayed-past-03:00 tiles are Canvas panels drawing
+line icons from the service's Pages (`docs/icons/*.svg`), coloured through their stroke, instead of emoji.
 
 ## Changing things
 
@@ -142,6 +164,20 @@ wants done becomes an issue for the coordinator (the Everything is OK coordinati
    **It never closes an issue**; the coordinator does.
 4. Suggestions that aren't findings (cost savings, tuning) go in the weekly comment, not in new issues, unless they
    need a decision from the owner.
+5. **Owner task** (owner, 2026-10-26, world #216): when something needs the owner (a restart, a reboot, a config
+   edit, a decision, anything it may not do itself), it also files one `owner-task` issue in the private
+   `Cheffromspace/Everything-is-OK`, which lands on the owner's "Your tasks" board (user project 4). First search the
+   open ones (`gh issue list -R Cheffromspace/Everything-is-OK --label owner-task --state open`) and comment on a
+   duplicate instead. Every comment it posts on an `owner-task` issue ends with the line `<!-- coordinator -->`:
+   agents and the owner post from the same GitHub account, and the coordinator's board watcher counts an unmarked
+   comment as the owner's (coordinator, 2026-10-26). The issue follows that repo's `.github/ISSUE_TEMPLATE/owner-task.md`: one small job per issue,
+   a title starting with a verb, **Why / Time / Where / Do first** up front, numbered checkboxes with at most one
+   copyable block each, **Done when**, and "close this issue when done". It links the public finding in this repo,
+   which stays as it is. Create it with `gh issue create -R Cheffromspace/Everything-is-OK --label owner-task
+   --project "Your tasks" --title … --body-file …`; if `--project` fails (the Optiplex's `gh` token has no `project`
+   scope as of 2026-10-26), create it without `--project` and say so in the report. A security finding gets at most a
+   card titled "Security finding on <host>, see the local report of <date>", with no details. No secrets, tokens or
+   webhook URLs there either.
 
 **Public repo:** reports and issues are public. No secrets, tokens or webhook URLs, no IP addresses or SSH account
 names, no visitor data (search text, video IDs from visitors' plays, VRChat user or instance IDs). Counts and
@@ -155,6 +191,35 @@ an issue without details. A red item makes the Discord summary start with "SECUR
 two maintenance commands on the Optiplex.
 The copies installed on 2026-10-24 also allowed service restarts (on the Linode including the owner's mediamtx). The
 rule above forbids those either way; the owner reinstalls the narrowed files.
+
+## Hourly hypercare (Optiplex timer)
+
+`infra-check/hypercare.mjs` and the `yt-hypercare` user timer (world #208, owner 2026-10-26; it replaced the
+coordinator's 30-minute loop). Every hour at :17, read only and without Claude, it checks the last hour: the search
+service and Caddy active on the Linode and the public `/healthz` answering 200; the Linode's `/` use; in the search
+service's journal the 5xx answers, error and `*_failed` events, `youtube_error` and `backoff` events, `captions_via`
+with zero tracks against with tracks, `home_evict` and `home_over_cap`; fail2ban's currently banned sshd count; on the
+Optiplex the relay worker, `bgutil-pot-relay` and the flash worker's timer active and its last run successful; and
+MediaMTX on the media-mtx Linode, by a TCP connect to its public RTSP port 8554 (that host has no check account;
+its address is `HYPERCARE_MEDIAMTX_HOST` in `~/yt-infra-check/.env`, never in the repo; unset = skipped, logged as
+`"mediamtx":"unchecked"`). The journal is counted on the Linode with `awk` over `ssh linode-check`, so no log line,
+video ID or address reaches the Optiplex. Limits per hour are in `LIMITS` (from the 48 h before 2026-10-26: no 5xx
+or backoff at all), each overridable as `HYPERCARE_<NAME>` in the same `.env`.
+
+All normal: one JSON log line (`"event":"hypercare"`, counts only) in its user journal, nothing else. Something new:
+one Discord post to the weekly check's webhook, pinging `DISCORD_MENTION_ID`, and one issue per finding in the private
+`Cheffromspace/Everything-is-OK` (an open issue with the same title gets a comment instead). Findings the owner has
+to act on (a unit down, `/healthz` failing, MediaMTX not answering, the disk at 80 %) are `owner-task` cards in that
+repo's template, titled "Fix: …" with the copyable commands; the rest are "Hypercare: …" issues for an agent. Still
+abnormal 6 hours later: Discord again and a comment. Gone: a quiet Discord line and a "recovered" comment; it never
+closes an issue. Every comment ends with `<!-- coordinator -->`. Its state is `~/yt-infra-check/hypercare-state.json`.
+`node /opt/japharsworld-yt-relay/infra-check/hypercare.mjs --dry-run` runs the real checks and prints what it would
+post and file.
+
+It ends itself (world #236, owner 2026-10-26): it counts consecutive clean runs in the state file (`clean`,
+`cleanSince`), and any finding starts the count again. After 168 clean runs that also span 7 days by the clock (167 h from the first to the last), it posts one
+Discord line and a comment on world #208, then runs `systemctl --user disable --now yt-hypercare.timer`. To turn it
+back on: `systemctl --user enable --now yt-hypercare.timer` (the saved count was reset when it ended, so another 7 days).
 
 ## Severe alert triage (Optiplex agent)
 
@@ -172,12 +237,15 @@ with its read-only sudo, local checks, Grafana's API), a diagnosis and a suggest
 coordinator. It writes `~/yt-infra-check/reports/<date>-<hhmm>-triage-<rule>.md` (local) and a short note that
 `triage.mjs` posts to Discord as "SEVERE: <alert>, firing since …" with the report attached. A non-security alert
 also gets a GitHub issue under the weekly "New finding" rule (or a comment on the open one); **a security alert goes
-nowhere on GitHub,** and its note carries no addresses, keys, ports or account names (those stay in the attachment).
+nowhere in the public repo,** and its note carries no addresses, keys, ports or account names (those stay in the
+attachment). A next step that needs the owner also gets the weekly "Owner task" card; for a security alert that card
+is only "Security finding on <host>, see the local report of <date>".
 
 The critical rules (`tools/grafana.mjs`, 2026-10-26): `eiok-search-down`, `eiok-public-down`, `eiok-short-down`
 (owner: "search service much more critical"), `eiok-ssh-unknown-login`, `eiok-security-change`,
-`eiok-sshd-not-hardened`, `eiok-linode-disk-80`, `eiok-domain-expiry-urgent` and `eiok-channels-mass-down` (8 or
-more shown Channels slots down or hidden; the monitor's own `MASS_DOWN` ping counts the same). With `GRAFANA_DISCORD_MENTION` in
+`eiok-sshd-not-hardened`, `eiok-linode-disk-88` (80 % is a warning; 70 %/80 % until 2026-10-27, when a full home
+cache at `HOME_MAX_GB=12` put `/` at ~76 %), `eiok-domain-expiry-critical` (48 hours; the 7-day one is a warning
+since #246); `eiok-channels-mass-down` is a warning since #246. With `GRAFANA_DISCORD_MENTION` in
 the repo's local `.env` the contact point pings the owner on these (firing only), and `DISCORD_MENTION_ID` in
 `~/yt-infra-check/.env` makes every "SEVERE:" triage post ping them; both IDs stay out of the repo. A rule raised to critical is triaged
 from its next firing. Test the path with `node /opt/japharsworld-yt-relay/infra-check/triage.mjs --synthetic

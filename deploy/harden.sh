@@ -14,7 +14,20 @@ HOME_TCP=${HARDEN_HOME_TCP:-22 1935}
 PUBLIC_TCP=${HARDEN_PUBLIC_TCP:-80 443 8554}
 [ "$(id -u)" = 0 ] || { echo "Run as root."; exit 1; }
 [ -f "$ENVF" ] || { echo "Write $ENVF (SSH_KNOWN_SOURCES=<address>[,<address>]) first."; exit 1; }
-. "$ENVF"
+# KEY=VALUE lines read as systemd's EnvironmentFile reads them, never run as shell code: an unquoted DISCORD_MENTION=<@id>
+# is a redirection to bash, a syntax error that dropped every line after it (#246, 2026-10-26). One pair of outer quotes
+# is removed, nothing is expanded.
+load_env() {
+  local line key val
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+    key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
+    if [[ "$val" =~ ^\"(.*)\"$ || "$val" =~ ^\'(.*)\'$ ]]; then val="${BASH_REMATCH[1]}"; fi
+    export "$key=$val"
+  done < "$1"
+}
+load_env "$ENVF"
 sources=$(echo "${SSH_KNOWN_SOURCES:-}" | tr ',' ' ')
 [ -n "${sources// /}" ] || { echo "SSH_KNOWN_SOURCES is empty in $ENVF."; exit 1; }
 chown root:root "$ENVF"; chmod 600 "$ENVF"

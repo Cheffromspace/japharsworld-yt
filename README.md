@@ -12,8 +12,10 @@ This service works within that rule:
   ticket numbers. Loading a video ticket is a 302 to the video; no video passes through this server.
 - **HD playback (Tunelio).** With `TUNELIO_API_KEY` set, an ordinary video's ticket redirects to a
   [Tunelio](https://tunelio.dev) tunnel link (720p/1080p): a progressive mp4 (full seeking) up to
-  `TUNELIO_PROGRESSIVE_MAX_MINUTES` and `TUNELIO_PROGRESSIVE_MAX_MB`, Tunelio's HLS playlist for longer or larger
-  videos (and when the mp4 build is refused). Tunelio builds a file on its first request at about 60 MB/s, so a
+  `TUNELIO_PROGRESSIVE_MAX_MINUTES` (720) and `TUNELIO_PROGRESSIVE_MAX_MB` (6000), Tunelio's HLS playlist for longer
+  or larger videos (and when the mp4 build is refused). Since Tunelio's fix of 2026-10-25 a progressive file streams
+  before its build ends, while an HLS playlist still waits for the whole build and is lost at ~125 s, so long videos stay
+  progressive; a progressive 503 (~115 s, the build carries on) is asked again on the same link, at no cost. Tunelio builds a file on its first request at about 60 MB/s, so a
   1080p file above `TUNELIO_MAX_MB` is made again at `TUNELIO_LOWER_QUALITY` (10 more credits, half the wait).
   One link per video is cached until 20 minutes before it expires (about 6 h), so a room, its late joiners and
   replays share one paid call (10 credits).
@@ -169,7 +171,8 @@ up (YouTube may flag an IP that downloads a lot). Otherwise, or when the first s
 `HOME_READY_SECONDS`, the play takes the Tunelio path as before.
 
 **Quality and concurrency** (owner, 2026-10-25): home builds the room's own pick, or `HOME_QUALITY` (1080p) when
-the room hasn't picked. It streams, so 1080p starts about as fast as 720p (first segments 6.2 s vs 2.9 s on the
+the room hasn't picked, but 720p for a video whose 1080p files would be over `HOME_ITEM_MAX_GB` (`HOME_MAX_GB` by default,
+so only an item bigger than the whole cache; world #240 and #242: a 4 h 1080p mix came to 8.4 GB, more than the 8 GB cache). It streams, so 1080p starts about as fast as 720p (first segments 6.2 s vs 2.9 s on the
 Optiplex, 2026-10-23). The worker runs up to `RELAY_MEDIA_MAX` (4) streams at once and answers "busy" beyond that;
 four 1080p plays need about 1.1 MB/s of the home connection's ~12 MB/s upload.
 

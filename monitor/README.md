@@ -47,7 +47,7 @@ Secrets go in `/etc/japharsworld-yt-monitor.env`:
 
 1. **Deploy key** (publishing): setup prints `deploy_key.pub`. Add it under GitHub repo > Settings > Deploy keys with
    **Allow write access**. Until then the files are only written to `/var/lib/japharsworld-yt-monitor/out/`.
-2. **Discord**: `DISCORD_WEBHOOK=https://discord.com/api/webhooks/...`, and optionally `DISCORD_MENTION=<@your id>`: pinged only when `MASS_DOWN` (default 8) or more shown slots are down or hidden at once (owner, 2026-10-26; single outages and flash fails stay unmentioned).
+2. **Discord**: `DISCORD_WEBHOOK=https://discord.com/api/webhooks/...`, and optionally `DISCORD_MENTION=<@your id>` (no alert pings it since #246). `MASS_DOWN` (default 8) or more shown slots down or hidden at once is one plain alert a day while it lasts, with an all-clear; single outages and flash fails stay the monitor's own. `DISCORD_CRITICAL_WEBHOOK` (world #195) is for sends marked critical, none today.
 3. **YouTube API key** (optional, more exact start times, saves page loads): `YT_API_KEY=`.
 4. **OAuth** (playlist swaps): `YT_CLIENT_ID`, `YT_CLIENT_SECRET` (from `client_secret.json`) and `YT_REFRESH_TOKEN`
    (from `token.json`, written by the world repo's `Tools/youtube-slots`). Publish the Google OAuth app to production

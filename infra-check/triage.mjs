@@ -134,7 +134,8 @@ async function discord(text, file, dryRun) {
   } else {
     body = payload; headers = { 'content-type': 'application/json' };
   }
-  const r = await fetch(process.env.DISCORD_WEBHOOK_URL, { method: 'POST', body, headers, signal: AbortSignal.timeout(30_000) });
+  // Every triage post is about a critical alert: the critical channel when there is one (world #195, owner 2026-10-26).
+  const r = await fetch(process.env.DISCORD_CRITICAL_WEBHOOK || process.env.DISCORD_WEBHOOK_URL, { method: 'POST', body, headers, signal: AbortSignal.timeout(30_000) });
   if (!r.ok) throw new Error(`Discord: HTTP ${r.status}`);
 }
 
@@ -149,8 +150,8 @@ function triage(alerts, now, test) {
 ${test ? 'SYNTHETIC TEST: these alerts are made up to test this path. Check the real state as you would, but open and comment on no GitHub issues; say in the note what you would have filed.\n\n' : ''}Now: ${day(now)} ${clock(now)} (America/Chicago). Report: ${report}. Discord note: ${note}.
 Alerts (JSON):
 ${JSON.stringify(context, null, 2)}`;
-  // Claude posts nothing to Discord itself; the webhook stays with this script.
-  const { DISCORD_WEBHOOK_URL, ...env } = process.env;
+  // Claude posts nothing to Discord itself; the webhooks stay with this script.
+  const { DISCORD_WEBHOOK_URL, DISCORD_CRITICAL_WEBHOOK, ...env } = process.env;
   const r = spawnSync('claude', ['-p', prompt, '--allowedTools', 'Bash,Read,Write', '--permission-prompts', 'none', '--output-format', 'json'],
     { cwd: BASE, env, encoding: 'utf8', timeout: CLAUDE_TIMEOUT_MS, maxBuffer: 64 << 20 });
   writeFileSync(join(BASE, 'logs', `${name}.json`), r.stdout ?? '');

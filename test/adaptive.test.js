@@ -369,9 +369,9 @@ test('forced plan: a test plan for one video wins over the prediction, a room pi
   assert.equal(await a.plan({ id: 'fjords20000', seconds: 1211 }), 'lower', 'cleared');
 });
 
-test('a plain HLS build (a video over 3 hours) reached through the redirect goes to our copy with absolute links', async (t) => {
+test('a plain HLS build (a video over 12 hours) reached through the redirect goes to our copy with absolute links', async (t) => {
   const f = fakes();
-  const long = { id: 'LongRain001', title: 't', channel: 'c', length: '10:00:00', seconds: 36000, views: '', age: '', live: false };
+  const long = { id: 'LongRain001', title: 't', channel: 'c', length: '13:00:00', seconds: 46800, views: '', age: '', live: false };
   const store = new Store({ path: ':memory:', shards: 4, pool: 100, pinHours: 24 });
   const app = createApp({ config: { ...base, shards: 4, pool: 100, metricsPath: '', tunelioKey: '', tunelioQuality: '720p', tunelioQualities: ['720p', '1080p'] },
     store, youtube: { async search() { return { videos: [long], more: null }; }, thumbnailUrl: () => '' }, tunelio: f.tunelio, playback: f.playback,

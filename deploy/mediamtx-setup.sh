@@ -29,9 +29,23 @@ EOT
   echo "Fill in $CRED, then run this again."; exit 1
 fi
 chown root:root "$CRED"; chmod 600 "$CRED"
-set -a; . "$CRED"; set +a
+# KEY=VALUE lines read as systemd's EnvironmentFile reads them, never run as shell code: an unquoted DISCORD_MENTION=<@id>
+# is a redirection to bash, a syntax error that dropped every line after it (#246, 2026-10-26). One pair of outer quotes
+# is removed, nothing is expanded.
+load_env() {
+  local line key val
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
+    key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
+    if [[ "$val" =~ ^\"(.*)\"$ || "$val" =~ ^\'(.*)\'$ ]]; then val="${BASH_REMATCH[1]}"; fi
+    export "$key=$val"
+  done < "$1"
+}
+load_env "$CRED"
 [ -n "${PUBLISH_USER:-}" ] && [ "$PUBLISH_USER" != any ] && [ -n "${PUBLISH_PASS:-}" ] || { echo "PUBLISH_USER (not 'any') and PUBLISH_PASS must be set in $CRED."; exit 1; }
-export LIVE_FROM_INGEST="${LIVE_FROM_INGEST:-ffmpeg -nostdin -loglevel warning -i rtsp://localhost:8554/ingest -c copy -f rtsp rtsp://localhost:8554/live}"
+# TCP both ways: over local UDP the copy lost RTP packets ("invalid FU-A packet") and the live picture broke up (2026-10-26).
+export LIVE_FROM_INGEST="${LIVE_FROM_INGEST:-ffmpeg -nostdin -loglevel warning -rtsp_transport tcp -i rtsp://localhost:8554/ingest -c copy -rtsp_transport tcp -f rtsp rtsp://localhost:8554/live}"
 
 echo "== MediaMTX $VERSION"
 if [ "$(/usr/local/bin/mediamtx --version 2>/dev/null || true)" != "$VERSION" ]; then

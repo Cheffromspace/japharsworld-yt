@@ -31,8 +31,10 @@ QUOTA_WARN = _int("QUOTA_WARN", 8000)      # alert once a day past this
 QUOTA_RESERVE = _int("QUOTA_RESERVE", 9000)  # past this, only swaps and flash-fail removals spend units
 
 DISCORD_WEBHOOK = _env("DISCORD_WEBHOOK")
-# e.g. <@123456789>: pinged only when MASS_DOWN or more shown slots are down or hidden at once (owner, 2026-10-26: single
-# outages and flash fails are handled by the monitor and stay unmentioned).
+# The critical-alerts channel (world #195, owner 2026-10-26) for sends marked critical (none today); unset = DISCORD_WEBHOOK.
+DISCORD_CRITICAL_WEBHOOK = _env("DISCORD_CRITICAL_WEBHOOK")
+# e.g. <@123456789>: who a send with mention=True pings. None does since #246 (the owner: no ping for the mass outage);
+# MASS_DOWN shown slots down or hidden at once is a plain alert.
 DISCORD_MENTION = _env("DISCORD_MENTION")
 MASS_DOWN = _int("MASS_DOWN", 8)
 
@@ -57,6 +59,7 @@ LOCAL_JOBS = _int("LOCAL_JOBS", 6)  # jobs the server runs itself per pass when 
 MIN_HEIGHT = _int("MIN_HEIGHT", 720)
 MIN_HOURS = _int("MIN_HOURS", 40)
 FLASH_LIMIT = _int("FLASH_LIMIT", 3)  # fail at more than this many flashes in any 1 s
+FLASH_SECONDS = _int("FLASH_SECONDS", 60)  # seconds of stream each flash check samples (15 before 2026-10-26)
 DAILY_HOUR_UTC = _int("DAILY_HOUR_UTC", 14)  # 09:00 CDT
 WORKER_STALE_HOURS = _int("WORKER_STALE_HOURS", 36)
 BANNED_WORDS = ["asmr", "yellow brick cinema", "yellowbrickcinema"]

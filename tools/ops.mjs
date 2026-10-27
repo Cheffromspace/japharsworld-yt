@@ -8,6 +8,8 @@
 //                                                         force a video's play plan for a while (max 240 min); no --id lists
 // Needs STATS_TOKEN (from /etc/japharsworld-yt.env on the Linode) in .env or the environment; OPS_URL defaults to
 // https://yt.japharsworld.com. Events print one JSON object per line.
+// --staging (anywhere on the line, #160): the staging server instead, https://staging-yt.eiok.cc (OPS_STAGING_URL) with
+// its own token, STATS_TOKEN_STAGING (staging's STATS_TOKEN; it can't read production).
 // Errors set process.exitCode rather than calling exit(): exiting while fetch's sockets close trips a libuv
 // assertion on Windows (2026-10-22).
 import { readFileSync, existsSync } from 'node:fs';
@@ -15,12 +17,15 @@ import { readFileSync, existsSync } from 'node:fs';
 const file = new URL('../.env', import.meta.url);
 const env = { ...(existsSync(file) ? Object.fromEntries(readFileSync(file, 'utf8').split(/\r?\n/).filter((l) => /^[A-Z_]+=/.test(l))
   .map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1).trim().replace(/^["']|["']$/g, '')])) : {}), ...process.env };
-const base = (env.OPS_URL ?? 'https://yt.japharsworld.com').replace(/\/$/, '');
+const args = process.argv.slice(2);
+const staging = args.includes('--staging');
+const base = (staging ? env.OPS_STAGING_URL ?? 'https://staging-yt.eiok.cc' : env.OPS_URL ?? 'https://yt.japharsworld.com').replace(/\/$/, '');
+const token = staging ? env.STATS_TOKEN_STAGING : env.STATS_TOKEN;
 
-const [cmd = 'state', ...rest] = process.argv.slice(2);
+const [cmd = 'state', ...rest] = args.filter((a) => a !== '--staging');
 const opt = (k) => { const i = rest.indexOf(`--${k}`); return i >= 0 ? rest[i + 1] : undefined; };
 const call = async (path, method = 'GET') => {
-  const r = await fetch(base + path, { method, headers: { authorization: `Bearer ${env.STATS_TOKEN}` }, signal: AbortSignal.timeout(15_000) });
+  const r = await fetch(base + path, { method, headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000) });
   return { status: r.status, ok: r.ok, body: await r.json().catch(() => null) };
 };
 const fail = (message) => { console.error(message); process.exitCode = 1; };
@@ -68,5 +73,5 @@ async function show() {
   } else console.log(JSON.stringify(r.body, null, 1));
 }
 
-if (!env.STATS_TOKEN) fail('set STATS_TOKEN (in .env or the environment)');
+if (!token) fail(`set ${staging ? 'STATS_TOKEN_STAGING' : 'STATS_TOKEN'} (in .env or the environment)`);
 else await (cmd === 'refill' ? refill() : show());

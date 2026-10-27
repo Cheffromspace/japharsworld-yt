@@ -30,6 +30,7 @@ claude setup-token
 cat > .env <<'EOF'
 CLAUDE_CODE_OAUTH_TOKEN=<token from step 3>
 DISCORD_WEBHOOK_URL=<the Channels monitor's webhook>
+DISCORD_CRITICAL_WEBHOOK=<optional: the critical-alerts channel's webhook; SEVERE triage and hypercare "Fix:" posts go there>
 GRAFANA_URL=https://<your-stack>.grafana.net
 GRAFANA_TOKEN=<Grafana Cloud service account token, Viewer role>
 DISCORD_MENTION_ID=<optional: the owner's Discord user ID; every SEVERE triage post pings it>
@@ -96,6 +97,14 @@ cp $KIT/yt-infra-triage.service $KIT/yt-infra-triage.timer ~/.config/systemd/use
 systemctl --user daemon-reload
 systemctl --user enable --now yt-infra-triage.timer
 journalctl --user -u yt-infra-triage -e                 # quiet while nothing critical fires
+
+# 11. Hourly hypercare (world #208; needs steps 1-8, no Claude, no sudo): MediaMTX's host goes in .env, not the repo
+echo 'HYPERCARE_MEDIAMTX_HOST=<the media-mtx Linode address>' >> ~/yt-infra-check/.env
+node $KIT/hypercare.mjs --dry-run                       # the real checks; prints what it would post and file
+cp $KIT/yt-hypercare.service $KIT/yt-hypercare.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now yt-hypercare.timer
+systemctl --user list-timers yt-hypercare.timer
 ```
 
 ## Notes
@@ -107,6 +116,9 @@ journalctl --user -u yt-infra-triage -e                 # quiet while nothing cr
 - Updating: nothing to copy. `run.sh`, `prompt.md` and the rules in `claude/monitoring.md` are read from the checkout at
   each run. Only a change to the units (copy them again, `daemon-reload`) or the sudoers files (reinstall them) needs a step.
 - Reports: `~/yt-infra-check/reports/`, raw run output: `~/yt-infra-check/logs/` (kept 26 weeks).
+- Hourly hypercare (`hypercare.mjs`, rules in `claude/monitoring.md`, "Hourly hypercare"): read-only counts every hour
+  at :17; quiet when normal, otherwise Discord plus a world-repo issue (an `owner-task` card when you have to act).
+  After 7 clean days in a row it says so on Discord and world #208 and disables its own timer (world #236).
 - Severe-alert triage (`triage.mjs`, `triage-prompt.md`, rules in `claude/monitoring.md`, "Severe alert triage"):
   on a new firing `severity=critical` alert it runs a read-only Claude triage and posts "SEVERE: …" to Discord with the
   report attached (`reports/<date>-<hhmm>-triage-<rule>.md`); a GitHub issue only for non-security alerts. Once per

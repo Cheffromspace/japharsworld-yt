@@ -46,7 +46,7 @@ function fakeTunelio({ fail = null, expires = 1_000_000, mb = {} } = {}) {
 }
 
 test('Playback: huge files are made again at 720p, and served as HLS above the progressive limit', async () => {
-  const tunelio = fakeTunelio({ expires: Math.floor(Date.now() / 1000) + 3600, mb: { 'big:1080p': 3500, 'big:720p': 1700, 'huge:1080p': 4000, 'huge:720p': 2200, small: 200 } });
+  const tunelio = fakeTunelio({ expires: Math.floor(Date.now() / 1000) + 3600, mb: { 'big:1080p': 3500, 'big:720p': 1700, 'huge:1080p': 9000, 'huge:720p': 6200, small: 200 } });
   const p = new Playback({ tunelio });
   assert.equal((await p.location({ id: 'small', seconds: 600 })).location, 'https://tunelio.dev/tunnel?id=small&q=1080p&progressive=1');
   assert.equal((await p.location({ id: 'big', seconds: 3600 })).location, 'https://tunelio.dev/tunnel?id=big&q=720p&progressive=1');
@@ -77,6 +77,36 @@ test('Playback: a refused progressive build uses HLS', async () => {
   const p = new Playback({ tunelio: fakeTunelio(), probe: async (u) => { probed.push(u); return u.includes('progressive') ? { ok: false, refused: true } : { ok: true, refused: false }; } });
   assert.ok((await p.location({ id: 'big', seconds: 60 })).location.endsWith('&hls=1'));
   assert.equal(probed.length, 2, 'progressive probed, refused, then HLS');
+});
+
+test('Playback: long and large videos stay progressive (Tunelio streams them since 2026-10-25); only the very largest go HLS', async () => {
+  const p = new Playback({ tunelio: fakeTunelio({ mb: { long: 3800, huge: 6500 } }), maxMbForQuality: 1e6 });
+  assert.ok((await p.location({ id: 'long', seconds: 3.3 * 3600 })).location.endsWith('&progressive=1'), 'a 3.3 h, 3.8 GB file');
+  assert.ok((await p.location({ id: 'huge', seconds: 3600 })).location.endsWith('&hls=1'), 'over 6000 MB');
+  assert.ok((await p.location({ id: 'day', seconds: 13 * 3600 })).location.endsWith('&hls=1'), 'over 12 h');
+});
+
+test('Playback: a progressive 503 is asked again on the same link (joins the running build, no new /create); HLS is not', async () => {
+  const tunelio = fakeTunelio();
+  const logs = [];
+  let answers = [{ ok: false, refused: false, status: 503 }, { ok: true, refused: false, status: 206 }];
+  const probed = [];
+  const p = new Playback({ tunelio, log: (o) => logs.push(o), probe: async (u) => { probed.push(u); return answers.shift(); } });
+  const r = await p.location({ id: 'slow', seconds: 4 * 3600 });
+  assert.deepEqual([r.via, r.location], ['tunelio', 'https://tunelio.dev/tunnel?id=slow&q=1080p&progressive=1']);
+  assert.deepEqual(probed, [r.location, r.location], 'the same link twice');
+  assert.equal(tunelio.calls.length, 1, 'one paid /create');
+  assert.deepEqual(logs.filter((o) => o.event === 'build_retry').map((o) => [o.attempt, o.status]), [[1, 503]]);
+  // Still 503 after the retries: the build fails as before (the play falls back), after 1 + 2 tries.
+  answers = Array.from({ length: 5 }, () => ({ ok: false, refused: false, status: 503 }));
+  probed.length = 0;
+  assert.equal((await p.location({ id: 'stuck', seconds: 60 })).reason, 'build_failed');
+  assert.equal(probed.length, 3);
+  // An HLS 524 is not retried: Tunelio discards a cut-off HLS build.
+  answers = [{ ok: false, refused: false, status: 524 }, { ok: true, refused: false, status: 200 }];
+  probed.length = 0;
+  assert.equal((await p.location({ id: 'hls', seconds: 60 }, { hls: true })).reason, 'build_failed');
+  assert.equal(probed.length, 1);
 });
 
 test('Playback: status, warm, hold cap and learned ETA', async () => {

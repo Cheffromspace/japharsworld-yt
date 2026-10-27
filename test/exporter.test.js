@@ -41,6 +41,9 @@ function fixtures() {
     CREATE TABLE flash (id INTEGER PRIMARY KEY, ts REAL, verdict TEXT);
     CREATE TABLE jobs (id INTEGER PRIMARY KEY, created REAL, video_id TEXT, claimed REAL, runner TEXT, done REAL, reason TEXT);
     CREATE TABLE quota (day TEXT, ts REAL, units INTEGER, what TEXT);
+    CREATE TABLE events (id INTEGER PRIMARY KEY, ts REAL, slot_key TEXT, kind TEXT, video_id TEXT, detail TEXT);
+    INSERT INTO events (ts, slot_key, kind, video_id, detail) VALUES (1, 'lofi-study', 'yt_refusal', 'vidB', 'bot'),
+      (2, 'lofi-study', 'yt_refusal', 'vidB', 'bot'), (3, 'jack-retro', 'yt_refusal', 'vidC', 'Sign in vidD'), (4, 'lofi-study', 'down', 'vidB', 'x');
     INSERT INTO slots VALUES ('lofi-study', 0, 'PL1', 'vidA', 'vidB', 'live', 'music', 't', 'c', 'UC', 0, 0, NULL);
     INSERT INTO slots VALUES ('jack-retro', 1, NULL, 'vidC', NULL, 'live', 'games', 't', 'c', 'UC', 0, 1, 'flash: 9/s');
     INSERT INTO streams VALUES ('vidB', 1080, 'pass', 1, 1760970000, 'live', 1760970000);
@@ -87,6 +90,10 @@ test('exporter: usage counters, histograms, polls, slots, flash checks, jobs, he
     has('eiok_slot_flash_pass{slot="jack-retro",kind="live",category="games"} 0');
     has('eiok_slot_height{slot="lofi-study",kind="live",category="music"} 1080');
     has('eiok_flash_checks_total{verdict="fail"} 1');
+    // The flash worker's YouTube refusals, by class only (a detail that isn't a class is dropped).
+    has('eiok_events_total{metric="yt_refusal",key="flash:bot"} 2');
+    has('eiok_events_total{metric="yt_refusal",key="flash:rate"} 0');
+    assert.doesNotMatch(text, /flash:Sign/);
     has('eiok_jobs_pending 1');
     has('eiok_jobs_oldest_pending_seconds{reason="daily"} 0');
     has('eiok_jobs_oldest_pending_seconds{reason="other"} 600');

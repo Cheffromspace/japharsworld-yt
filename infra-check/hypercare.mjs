@@ -44,13 +44,15 @@ export function limits(env = process.env) {
 }
 
 // Runs on the Linode as ytcheck (systemd-journal group; sudo only for fail2ban-client status sshd). Prints counts only.
+// A refused Tunelio /create logs tunelio_error and then build_failed (reason tunelio_failed) for the same build, so the
+// second is not counted (2026-10-27: one video Tunelio said "not found" for, played 3 times, was 6 of 10 errors).
 export const LINODE_PROBE = `
 for u in ${LINODE_UNITS.join(' ')}; do echo "unit:$u $(systemctl is-active $u)"; done
 echo "disk $(df --output=pcent / | tail -1 | tr -dc 0-9)"
 echo "banned $(sudo -n fail2ban-client status sshd 2>/dev/null | sed -n 's/.*Currently banned:[[:space:]]*//p')"
 journalctl -u japharsworld-yt --since -60min -o cat --no-pager | awk '
 /"status":5[0-9][0-9]/ { s5++ }
-/"event":"(error|[a-z_]*_error|[a-z_]*_failed)"/ { errors++ }
+/"event":"(error|[a-z_]*_error|[a-z_]*_failed)"/ && !(/"event":"build_failed"/ && /"reason":"tunelio_failed"/) { errors++ }
 /"event":"youtube_error"/ { yt++ }
 /"event":"backoff"/ { backoff++ }
 /"event":"captions_via"/ { if (/"tracks":0[,}]/) cap0++; else if (/"tracks":[1-9]/) cap1++ }

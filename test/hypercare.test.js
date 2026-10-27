@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { END_AFTER, LIMITS, LINODE_PROBE, evaluate, issueBody, issueTitle, limits, logLine, parseProbe, plan, posts, streak, webhookFor } from '../infra-check/hypercare.mjs';
 
 const kit = (f) => readFileSync(new URL(`../infra-check/${f}`, import.meta.url), 'utf8');
@@ -110,6 +111,20 @@ test('hypercare: owner-task cards follow the world repo template and carry no ad
     assert.match(body, /### When finished\nClose this issue\./, f.key);
     for (const step of body.split('- [ ] ').slice(1)) assert.ok((step.match(/```/g) ?? []).length <= 2, `${f.key}: one copyable block a step`);
   }
+});
+
+test('hypercare: a refused Tunelio build counts as one error, not two (tunelio_error, then its build_failed)', (t) => {
+  const prog = LINODE_PROBE.match(/awk '([^']*)'/)[1];
+  const lines = [
+    '{"event":"tunelio_error","id":"x","status":404}',
+    '{"event":"build_failed","id":"x","reason":"tunelio_failed"}',
+    '{"event":"build_failed","id":"y","reason":"build_failed","status":503}',
+    '{"event":"home_failed","id":"z","reason":"uneven"}',
+    '{"event":"play","id":"z"}',
+  ].join('\n') + '\n';
+  const r = spawnSync('awk', [prog], { input: lines, encoding: 'utf8' });
+  if (r.error) return t.skip('no awk here');
+  assert.match(r.stdout, /^errors 3$/m);
 });
 
 test('hypercare: the probe reads counts only, read only, and the units run the checkout hourly', () => {

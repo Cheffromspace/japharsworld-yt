@@ -341,18 +341,19 @@ export function tonight() {
 
   p.push(row('What\'s on'));
   p.push(bars('Plays by length', [[inRange('play_length', 'lt10m'), 'under 10 min'], [inRange('play_length', 'lt1h'), '10 min – 1 h'], [inRange('play_length', 'lt3h'), '1–3 h'],
-    [inRange('play_length', 'longer'), '3 h+ (sleep)'], [inRange('play_length', 'live'), 'live']], { w: 6, description: `Search videos played, once per room, by length, over the time range. ${OWN_TESTS}` }));
+    [inRange('play_length', 'longer'), '3 h+ (sleep)'], [inRange('play_length', 'live'), 'live']], { description: `Search videos played, once per room, by length, over the time range. ${OWN_TESTS}` }));
   p.push(bars('Channels and searches', [[inRange('channel', 'redirect'), 'Channels'], [inRange('search', ''), 'searches'], [inRange('play', ''), 'plays']],
-    { w: 6, description: `Channels: a slot opened from the Channels tab. Searches with a query, and videos played once per room, over the time range. ${OWN_TESTS}` }));
+    { description: `Channels: a slot opened from the Channels tab. Searches with a query, and videos played once per room, over the time range. ${OWN_TESTS}` }));
   p.push(bars('Captions and quality', [[inRange('cc_list', ''), 'captions shown'], [inRange('cc_track', ''), 'tracks picked'], [inRange('quality_pick', '1080p'), '1080p picked'], [inRange('quality_pick', '720p'), '720p picked']],
-    { w: 6, description: `"Show captions" list loads and tracks picked on the tablet, and rooms that picked a playback quality, over the time range. ${OWN_TESTS}` }));
+    { description: `"Show captions" list loads and tracks picked on the tablet, and rooms that picked a playback quality, over the time range. ${OWN_TESTS}` }));
 
-  p.push(bars('Quest and PC', [[inRange('play_platform', 'pc'), 'PC'], [inRange('play_platform', 'android'), 'Quest'], [inRange('join', ''), 'joins']],
-    { w: 6, description: `Plays by player platform, once per room and platform, and joins that loaded the search address (untrusted URLs allowed), over the time range. ${OWN_TESTS}` }));
   p.push(row('Who, broadly'));
-  // Joins, not presence: a square lights as people of that language arrive and goes dark 2 h after the last one.
-  p.push(squares('Here lately', 'join_lang', { w: 12, h: 7, description: 'All 16 VRChat client languages; a square lights up when that language had joins in the last 2 hours (whatever the time range), from visitors who allow untrusted URLs: the bare search address the world loads once after join. It counts arrivals, not who is still here, so a square stays lit for 2 h after its last join. Dark: none; 1 join grey; 2–3 blue; 4 or more purple.' }));
-  p.push(squares('Search languages', 'search_lang', { w: 12, h: 7, description: `The same squares for searches with a query in the last 2 hours, by VRChat client language. ${OWN_TESTS}` }));
+  // Joins, not presence: a square lights as people of that language arrive and goes dark 2 h after the last one. A quarter
+  // of the width each (owner, #248), so the 16 squares sit 4 × 4.
+  p.push(squares('Here lately', 'join_lang', { w: 6, h: 10, description: 'All 16 VRChat client languages; a square lights up when that language had joins in the last 2 hours (whatever the time range), from visitors who allow untrusted URLs: the bare search address the world loads once after join. It counts arrivals, not who is still here, so a square stays lit for 2 h after its last join. Dark: none; 1 join grey; 2–3 blue; 4 or more purple.' }));
+  p.push(squares('Search languages', 'search_lang', { w: 6, h: 10, description: `The same squares for searches with a query in the last 2 hours, by VRChat client language. ${OWN_TESTS}` }));
+  p.push(bars('Quest and PC', [[inRange('play_platform', 'pc'), 'PC plays'], [inRange('play_platform', 'android'), 'Quest plays'], [inRange('join', ''), 'joins']],
+    { w: 12, h: 10, description: `Plays by player platform, once per room and platform, and joins that loaded the search address (untrusted URLs allowed), over the time range. ${OWN_TESTS}` }));
 
   p.push(row('The night\'s shape'));
   const curve = series('Through the night (Chicago time)', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 18, h: 9, stack: true, min: 0, decimals: 0,

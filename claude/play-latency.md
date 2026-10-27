@@ -247,3 +247,24 @@ the first bytes; the build carries on) is asked again on the same link up to twi
 joins the running build at no cost; HLS is not retried, since each try starts over. A player's 90 s hold usually ends
 before a retry answers, but the room's next play and late joiners get the link. `TUNELIO_MAX_MB` (1500, the 1080p →
 720p re-create) is unchanged.
+
+## Segments cut on time (B, staging 2026-10-27)
+
+World #250 option B (owner: "A then B"): `RELAY_SPLIT_BY_TIME=on` on the worker makes ffmpeg cut every 4 s
+(`split_by_time`, `-c copy`), so the worker predicts the whole VOD playlist for every video, not only evenly keyed ones,
+and nothing leaves home for "uneven" keyframes. Staging worker runs, 2026-10-27:
+
+- Cuts land on the first frame at or after each 4 s mark but can run late: 29.97 fps documentaries with B-frames made
+  3.871–4.137 s segments, one cut 0.153 s late (never early, no drift). A one-frame check on the lengths missed both
+  (tickets 2 and 7); the check is now each of the first 8 cut points within 0.5 s of k × 4 s (`media_steady` logs the
+  decision), and the playlist is predicted at exactly 4 s per segment (the 4.004 s median would be 2 segments short
+  over 3 h).
+- A 3.9 h 25 fps documentary: ready in 7.6 s, VOD with ENDLIST from the first playlist, 3510 segments predicted and
+  made, 1578 MB in 250 s. Owner: seek bar from the start on PC and Quest (cached copy), seeking works, "not instant
+  like other vids but as I would expect".
+- A 3.1 h 24 fps lofi mix at 1080p: the first run failed at segment 966 with a 413 that most likely was an upload that
+  broke off (the server answered 413 for any body read error; now 503, which the worker retries; ffmpeg's output for
+  that stretch was normal, 0.9 MB at most). The replay: 2767 segments predicted and made, 1982 MB in 298 s.
+- A 1 h 60 fps video at 1080p: 910 segments predicted and made, 831 MB in 159 s.
+- Cost, measured on a test clip: a segment can start between keyframes, so a player that starts or seeks there shows
+  the picture from the next keyframe (60 fps, 5 s GOPs: 176 and 112 of 240 frames decodable from seg1 and seg2 alone).

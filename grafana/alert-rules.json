@@ -1134,8 +1134,8 @@
   ]
  },
  {
-  "uid": "eiok-linode-disk-70",
-  "title": "Linode disk 70 % full",
+  "uid": "eiok-linode-disk-80",
+  "title": "Linode disk 80 % full",
   "folderUID": "everything-is-ok",
   "ruleGroup": "everything-is-ok",
   "condition": "C",
@@ -1143,7 +1143,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "The Linode’s / is over 70 % full. Check `du -sh /var/lib/japharsworld-yt/*` (home sessions, SQLite) and the journal."
+   "summary": "The Linode’s / is over 80 % full (a full home cache at HOME_MAX_GB=12 is ~76 %, so something else grew). Check `du -sh /var/lib/japharsworld-yt/*` (home sessions, SQLite) and the journal."
   },
   "labels": {
    "project": "everything-is-ok",
@@ -1162,7 +1162,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max(1 - node_filesystem_avail_bytes{env!=\"staging\",host=\"linode\",mountpoint=\"/\"} / node_filesystem_size_bytes{env!=\"staging\",host=\"linode\",mountpoint=\"/\"}) > 0.7",
+     "expr": "max(1 - node_filesystem_avail_bytes{env!=\"staging\",host=\"linode\",mountpoint=\"/\"} / node_filesystem_size_bytes{env!=\"staging\",host=\"linode\",mountpoint=\"/\"}) > 0.8",
      "instant": true
     }
    },
@@ -1188,8 +1188,8 @@
   ]
  },
  {
-  "uid": "eiok-linode-disk-80",
-  "title": "Linode disk 80 % full",
+  "uid": "eiok-linode-disk-88",
+  "title": "Linode disk 88 % full",
   "folderUID": "everything-is-ok",
   "ruleGroup": "everything-is-ok",
   "condition": "C",
@@ -1197,7 +1197,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "The Linode’s / is over 80 % full: free space before SQLite writes and home uploads fail. Check `du -sh /var/lib/japharsworld-yt/*` and lower HOME_MAX_GB if the home files grew."
+   "summary": "The Linode’s / is over 88 % full (a full home cache at HOME_MAX_GB=12 is ~76 %): free space before SQLite writes and home uploads fail. Check `du -sh /var/lib/japharsworld-yt/*` and lower HOME_MAX_GB if the home files grew."
   },
   "labels": {
    "project": "everything-is-ok",
@@ -1216,7 +1216,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max(1 - node_filesystem_avail_bytes{env!=\"staging\",host=\"linode\",mountpoint=\"/\"} / node_filesystem_size_bytes{env!=\"staging\",host=\"linode\",mountpoint=\"/\"}) > 0.8",
+     "expr": "max(1 - node_filesystem_avail_bytes{env!=\"staging\",host=\"linode\",mountpoint=\"/\"} / node_filesystem_size_bytes{env!=\"staging\",host=\"linode\",mountpoint=\"/\"}) > 0.88",
      "instant": true
     }
    },

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CHICAGO_HOUR, alertRules, contactPoint, dashboard, prodOnly, tonight } from '../tools/grafana.mjs';
+import { CHICAGO_HOUR, RETIRED_RULES, alertRules, contactPoint, dashboard, prodOnly, tonight } from '../tools/grafana.mjs';
 
 // Staging (#160) sends the same metrics with env="staging": every selector of every query and rule leaves them out.
 test('every dashboard query and alert rule excludes staging', () => {
@@ -29,17 +29,23 @@ test('contact point: the mention only with an ID, only for firing critical alert
   // The search service being down wakes the triage and the mention (owner, 2026-10-26).
   const sev = Object.fromEntries(alertRules('ds').map((r) => [r.uid, r.labels.severity]));
   for (const uid of ['eiok-search-down', 'eiok-public-down', 'eiok-short-down']) assert.equal(sev[uid], 'critical', uid);
-  assert.equal(sev['eiok-linode-disk-70'], 'warning');
+  assert.equal(sev['eiok-linode-disk-80'], 'warning');
+  // A full home cache (HOME_MAX_GB=12) is ~76 % of the Linode's /: 80 % warns, 88 % is critical; the renamed 70 % rule
+  // is deleted on push, not left firing (2026-10-27).
+  assert.equal(sev['eiok-linode-disk-88'], 'critical');
+  const disk = Object.fromEntries(alertRules('ds').filter((r) => r.uid.startsWith('eiok-linode-disk')).map((r) => [r.uid, r.data[0].model.expr.match(/> ([\d.]+)$/)[1]]));
+  assert.deepEqual(disk, { 'eiok-linode-disk-80': '0.8', 'eiok-linode-disk-88': '0.88' });
+  for (const uid of RETIRED_RULES) assert.equal(sev[uid], undefined, uid);
 });
 
 // Critical alerts in their own channel (world #195, owner 2026-10-26); without DISCORD_CRITICAL_WEBHOOK all go to one.
 test('alert rules: critical ones go to the critical contact point when it is set, warnings stay', () => {
   const to = (o) => Object.fromEntries(alertRules('ds', o).map((r) => [r.uid, r.notification_settings.receiver]));
   const split = to({ critical: true });
-  for (const uid of ['eiok-search-down', 'eiok-public-down', 'eiok-ssh-unknown-login', 'eiok-security-change', 'eiok-sshd-not-hardened', 'eiok-linode-disk-80']) {
+  for (const uid of ['eiok-search-down', 'eiok-public-down', 'eiok-ssh-unknown-login', 'eiok-security-change', 'eiok-sshd-not-hardened', 'eiok-linode-disk-88']) {
     assert.equal(split[uid], 'Everything is OK Discord critical', uid);
   }
-  assert.equal(split['eiok-linode-disk-70'], 'Everything is OK Discord');
+  assert.equal(split['eiok-linode-disk-80'], 'Everything is OK Discord');
   // The owner's answer (#246): the mass outage and the 7-day domain alert are plain warnings (no ping, no triage).
   assert.equal(split['eiok-channels-mass-down'], 'Everything is OK Discord');
   const sev = Object.fromEntries(alertRules('ds').map((r) => [r.uid, r.labels.severity]));

@@ -637,6 +637,39 @@ test('ticket → home: a long play whose home playlist grows (uneven keyframes) 
   assert.match((await broke.play(PC, '')).headers.get('location'), /\/home\/[a-f0-9]{18}\/index\.m3u8$/, 'over budget: home even when it grows');
 });
 
+test('ticket → home: with HOME_ANDROID_GROWING a .m3u8 ticket (Quest) keeps the growing home playlist, started at exactly 0; a PC still leaves (world #250)', async (t) => {
+  const { Adaptive } = await import('../src/adaptive.js');
+  const job = { id: 'aaaaaaaaaaa', quality: '1080p', state: 'ready', url: 'https://tunelio.dev/t?id=x' };
+  const playback = { jobs: new Map(), peek: () => job, status: () => ({ state: 'ready' }), start() {},
+    async location() { return { location: job.url, via: 'tunelio', ready: true }; } };
+  const adaptive = new Adaptive({ playback, base: 'http://pub/hls' });
+  adaptive.pacer = { check: () => ({ ok: true }) };
+  const QUEST = 'AVProMobileVideo/2026.3.3 (Linux;Android 14) ExoPlayer';
+  const app = await homeApp(t, { playback, adaptive, tunelio: { enabled: true }, config: { homeLongMinutes: 5, homeAndroid: true, homeAndroidGrowing: true } });
+  const tablet = await (await fetch(`${app.url}/v1/0/${app.n}.m3u8`, { headers: { 'user-agent': 'UnityPlayer/2022.3 (UnityWebRequest/1.0)' } })).json();
+  assert.equal(tablet.plan, 'home', 'the Quest tablet keeps the home session');
+  const loc = (await app.play(QUEST)).headers.get('location');
+  assert.match(loc, /\/home\/[a-f0-9]{18}\/index\.m3u8$/);
+  const pl = await (await fetch(app.url + loc.replace('http://pub', ''))).text();
+  assert.match(pl, /^#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n/, 'growing: start at 0 exactly, not the live edge');
+  assert.doesNotMatch((await app.play('NSPlayer/12.00.26100 WMFSDK/12.00', '')).headers.get('location'), /\/home\//, 'PC: Tunelio as before');
+  // Off (the default): the Quest leaves too, and the playlist keeps the plain start.
+  const off = await homeApp(t, { playback, adaptive, tunelio: { enabled: true }, config: { homeLongMinutes: 5, homeAndroid: true } });
+  assert.doesNotMatch((await off.play(QUEST)).headers.get('location') ?? '', /\/home\//);
+});
+
+test('home: PRECISE=YES only while the playlist grows, and only with startPrecise', async (t) => {
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), base: 'https://yt/home', enabled: true, startPrecise: true });
+  const s = home.start({ id: 'aaaaaaaaaaa', seconds: 600 }, '720p');
+  home.put(s.token, 'seg0.ts', Buffer.from('ts0'));
+  home.put(s.token, 'index.m3u8', Buffer.from(PL1));
+  assert.match((await home.file(s.token, 'index.m3u8')).body.toString(), /^#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n/);
+  home.put(s.token, 'index.m3u8', Buffer.from(PL2));
+  home.put(s.token, 'seg1.ts', Buffer.from('ts1'));
+  assert.equal(s.ended, true);
+  assert.match((await home.file(s.token, 'index.m3u8')).body.toString(), /^#EXTM3U\n#EXT-X-START:TIME-OFFSET=0\n/, 'finished: VOD, plain start');
+});
+
 test('relay polls: the worker\'s bytes-sent counter is counted as home transfer (src/net.js)', async (t) => {
   const counts = [];
   const metrics = { inc: (m, k, n = 1) => { if (m === 'transfer') counts.push([k, n]); }, gauge() {}, latency() {}, shard() {}, flush() { return 0; }, start() { return this; }, close() {} };

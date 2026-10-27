@@ -136,8 +136,10 @@ export function dashboard() {
   ], { w: 24, h: 6 }));
   p.push(series('Search latency', [
     ['histogram_quantile(0.5, sum by (le) (increase(eiok_search_seconds_bucket[3h])))', 'p50'],
-    ['histogram_quantile(0.95, sum by (le) (increase(eiok_search_seconds_bucket[3h])))', 'p95'],
-  ], { w: 8, unit: 's', description: 'From the daily buckets, over 3 h windows.' }));
+    ['histogram_quantile(0.95, sum by (le) (increase(eiok_search_seconds_bucket[3h]))) and on() sum(increase(eiok_search_seconds_count[3h])) >= 20', 'p95'],
+    ['sum(increase(eiok_search_seconds_count[3h]))', 'searches in window'],
+  ], { w: 8, unit: 's', min: 0, overrides: [{ matcher: { id: 'byName', options: 'searches in window' }, properties: [{ id: 'unit', value: 'short' }, { id: 'decimals', value: 0 }, { id: 'custom.axisPlacement', value: 'right' }, { id: 'custom.lineStyle', value: { fill: 'dash', dash: [4, 4] } }, { id: 'custom.lineWidth', value: 1 }] }],
+    description: 'From the daily buckets, over 3 h windows. p95 shows only when the window holds 20 or more searches: with fewer, one slow search sets it for 3 h (the plateaus). Searches in window on the right axis.' }));
   p.push(series('Search failure rate', [
     ['sum(increase(eiok_events_total{metric="search_fail"}[3h])) / clamp_min(sum(increase(eiok_events_total{metric="search",key=""}[3h])) + sum(increase(eiok_events_total{metric="search_fail"}[3h])), 1)', 'failures'],
   ], { w: 8, unit: 'percentunit', min: 0 }));

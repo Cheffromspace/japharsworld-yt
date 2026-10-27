@@ -96,6 +96,7 @@ test('captions come from the worker with word timing; the picker lists uploader 
   assert.equal(r.body.track, 0);
   assert.equal(r.body.source, 'manual');
   assert.equal(r.body.words, 'estimated', 'an uploader track has no word timing');
+  assert.ok(r.body.chunks.every((c) => c[4] === ''), 'so no word offsets go to the world');
   assert.ok(r.body.lines.length > 10 && r.body.chunks.length > 10);
   assert.equal(job.calls.length, 1, 'list and the visitor\'s track in one yt-dlp job');
   assert.deepEqual(job.calls[0].want, { lang: 'en' });

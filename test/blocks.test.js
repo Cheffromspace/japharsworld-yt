@@ -17,8 +17,8 @@ function checkChunks(chunks, maxChars) {
     assert.ok(brk >= 0 && brk <= 3);
     assert.ok(text.length > 0 && !/^\s|\s$/.test(text), `chunk ${i} text is trimmed: ${JSON.stringify(text)}`);
     if (text.includes(' ')) assert.ok(text.length <= maxChars + 3, `chunk ${i} too long (${text.length}): ${text}`);
-    const pairs = offsets.split(',').map((p) => p.split(':').map(Number));
-    assert.ok(pairs.length >= 1);
+    // An estimated track sends no word times.
+    const pairs = offsets === '' ? [] : offsets.split(',').map((p) => p.split(':').map(Number));
     let lastCs = -1, lastCh = -1;
     for (const [cs, ch] of pairs) {
       assert.ok(cs >= lastCs, `offsets go backwards in chunk ${i}`);
@@ -62,6 +62,7 @@ test('uploader track: words are spread by character weight, lines match the old 
   assert.deepEqual(linesFromCues(cues), parseJson3(raw), 'the lines field stays what the world has always read');
   const { chunks, words } = chunksFromCues(cues, 'en');
   assert.equal(words, 'estimated');
+  assert.ok(chunks.every((c) => c[4] === ''), 'estimated word times are not sent');
   checkChunks(chunks, 42);
   // Word times inside a cue rise monotonically and stay within it.
   const ws = wordsFromCues(cues, layoutFor('en'));
@@ -77,7 +78,7 @@ test('Japanese auto track: one segment per sentence, chunked by character into 1
   for (const [, , text, , offsets] of chunks) {
     assert.ok(Array.from(text).length <= 18, `too wide: ${text}`);
     assert.ok(!/^[。、！？」]/.test(text), `starts with punctuation: ${text}`);
-    assert.ok(offsets.split(',').length >= 1);
+    assert.equal(offsets, '', 'estimated word times are not sent');
   }
   assert.equal(chunks.map((c) => c[2]).join(''), cues.map((c) => c[2].map((s) => s[1]).join('')).join('').replace(/\s+/g, ''));
 });

@@ -204,7 +204,9 @@ MediaMTX on the media-mtx Linode, by a TCP connect to its public RTSP port 8554 
 its address is `HYPERCARE_MEDIAMTX_HOST` in `~/yt-infra-check/.env`, never in the repo; unset = skipped, logged as
 `"mediamtx":"unchecked"`). The journal is counted on the Linode with `awk` over `ssh linode-check`, so no log line,
 video ID or address reaches the Optiplex. Limits per hour are in `LIMITS` (from the 48 h before 2026-10-26: no 5xx
-or backoff at all), each overridable as `HYPERCARE_<NAME>` in the same `.env`.
+or backoff at all), each overridable as `HYPERCARE_<NAME>` in the same `.env`. The disk limit is 88 %, Grafana's
+critical level: hypercare reads `df` once an hour, so a passing minute at 80 % (2026-10-27 22:17, before a home cache
+eviction) is left to Grafana's 15-minute 80 % warning.
 
 All normal: one JSON log line (`"event":"hypercare"`, counts only) in its user journal, nothing else. Something new:
 one Discord post to the weekly check's webhook, pinging `DISCORD_MENTION_ID`, and one issue per finding in the private

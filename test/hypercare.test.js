@@ -43,6 +43,10 @@ test('hypercare: each abnormal reading is one finding, and only owner actions be
   // An unreachable host is one finding, not a unit storm.
   assert.deepEqual(evaluate({ linode: { error: 'ssh linode-check failed: timeout' } }, LIMITS).map((x) => x.key), ['probe:linode']);
   assert.equal(limits({ HYPERCARE_DISK: '70' }).DISK, 70);
+  // The disk limit is Grafana's critical level: 2026-10-27 22:17's one reading at 80 % is not a finding, 88 % is.
+  assert.equal(LIMITS.DISK, 88);
+  assert.ok(!evaluate({ linode: { ...normal().linode, disk: 80 } }, LIMITS).length);
+  assert.deepEqual(evaluate({ linode: { ...normal().linode, disk: 88 } }, LIMITS).map((x) => x.key), ['linode:disk']);
   assert.equal(limits({ HYPERCARE_DISK: '' }).DISK, LIMITS.DISK);
 });
 

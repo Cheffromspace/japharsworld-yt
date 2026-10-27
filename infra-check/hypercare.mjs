@@ -35,7 +35,10 @@ const OPTIPLEX_UNITS = ['japharsworld-yt-relay', 'bgutil-pot-relay', 'japharswor
 
 // Limits per hour, overridable in ~/yt-infra-check/.env as HYPERCARE_<NAME>. Set from the 48 h before 2026-10-26 19:30
 // UTC: no 5xx, no backoff, no evictions, 3 home_failed, 1 of 17 captions with zero tracks, 39 % disk, 0 banned.
-export const LIMITS = { DISK: 80, S5: 3, ERRORS: 5, YT: 3, BACKOFF: 1, CAP0: 3, EVICT: 20, OVERCAP: 1, BANNED: 20 };
+// DISK is Grafana's critical level, not its 80 % warning: this is one df reading at :17, and on 2026-10-27 22:17 it
+// caught the one minute the Linode stood at 80 % before the home cache evicted 2.4 GB (Grafana's 15-minute rule
+// stayed quiet). The sustained 80 % warning is Grafana's eiok-linode-disk-80; this stays a check if Grafana is down.
+export const LIMITS = { DISK: 88, S5: 3, ERRORS: 5, YT: 3, BACKOFF: 1, CAP0: 3, EVICT: 20, OVERCAP: 1, BANNED: 20 };
 export function limits(env = process.env) {
   return Object.fromEntries(Object.entries(LIMITS).map(([k, v]) => {
     const n = Number(env[`HYPERCARE_${k}`]);

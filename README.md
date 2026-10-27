@@ -41,7 +41,8 @@ This service works within that rule:
   without a Tunelio key), then Tunelio's `/transcript` (6 credits per track, segment timing only). Every answer
   has the same shape: `lines` (cue timing, as before) and `chunks` (readable lines of about 42 characters, broken
   at sentences, clauses and pauses, each with the time and position of every word; `src/blocks.js`), plus
-  `words: "real" | "estimated"` and `via`. Results are cached 7 days per video and track, except an empty list:
+  `words: "real" | "estimated"` and `via`. Only `"real"` tracks carry word positions; an `"estimated"` track (uploader
+  tracks, Tunelio, one-segment-per-sentence auto tracks) sends empty offsets, so the world shows no spoken-word highlight. Results are cached 7 days per video and track, except an empty list:
   YouTube sometimes answers with no captions for a video that has them, so the relay worker asks once more at once
   from the `web,mweb` clients, a first empty list stands for 3 minutes and is then looked up once more on the next
   request, and a second is kept only `CAPTION_EMPTY_MINUTES` (30). The worker keeps yt-dlp's warnings

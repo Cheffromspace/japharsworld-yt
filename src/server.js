@@ -508,7 +508,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (eta != null && eta <= config.homeSettleMs) return false;
     const p = adaptive.pacer?.check?.();
     if (p && !p.ok) return false;
-    home.giveUp(s, 'uneven');
+    // A Quest player may be on this session (world #250): the PC goes to Tunelio and the video is remembered as uneven,
+    // but the session keeps growing.
+    if (config.homeAndroidGrowing) home.markUneven(s);
+    else home.giveUp(s, 'uneven');
     return true;
   }
   // A home play whose quality can't be built (the worker busy or failing, or no worker): the video's session at another

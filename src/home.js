@@ -36,8 +36,8 @@ const PLAYING_MS = 5 * 60_000;
 
 export class Home {
   constructor({ relay, dir, base = 'https://yt.japharsworld.com/home', enabled = false, dailyBuilds = 40, dailyMb = 10_000,
-    keepHours = 12, maxGb = 8, readyMs = 30_000, segmentHoldMs = 20_000, now = () => Date.now(), log = () => {}, onEvent = () => {} }) {
-    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, keepHours, maxGb, readyMs, segmentHoldMs, now, log, onEvent });
+    keepHours = 12, maxGb = 8, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, now = () => Date.now(), log = () => {}, onEvent = () => {} }) {
+    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, keepHours, maxGb, readyMs, segmentHoldMs, startPrecise, now, log, onEvent });
     this.sessions = new Map(); // "videoId@quality" → session
     this.byToken = new Map();  // token → session
     this.day = { date: '', builds: 0, mb: 0 };
@@ -314,7 +314,8 @@ export class Home {
 
   // A file for a player: { body, type } or null. A segment that isn't here yet is waited for up to segmentHoldMs while
   // the session is still uploading. The playlist gets absolute links (AVPro resolves relative ones against the ticket
-  // URL it was handed, fe6612a) and a start at 0.
+  // URL it was handed, fe6612a) and a start at 0; exactly 0 (PRECISE=YES) on a growing playlist with startPrecise
+  // (HOME_ANDROID_GROWING, world #250): ExoPlayer otherwise starts one without ENDLIST at its live edge.
   async file(token, file) {
     const s = this.byToken.get(token);
     if (!s || !(file === 'index.m3u8' || SEGMENT.test(file))) return null;
@@ -340,7 +341,7 @@ export class Home {
     // seek, while ffmpeg seeks it fine: PTS and EXTINFs match). The predicted whole playlists are VOD already.
     let text = body.toString('utf8').split(/\r?\n/)
       .map((l) => (l && !l.startsWith('#') ? `${this.base}/${s.token}/${l}` : l))
-      .join('\n').replace('#EXTM3U', '#EXTM3U\n#EXT-X-START:TIME-OFFSET=0');
+      .join('\n').replace('#EXTM3U', `#EXTM3U\n#EXT-X-START:TIME-OFFSET=0${this.startPrecise && !s.ended ? ',PRECISE=YES' : ''}`);
     if (s.ended) text = text.replace('#EXT-X-PLAYLIST-TYPE:EVENT', '#EXT-X-PLAYLIST-TYPE:VOD');
     return { body: Buffer.from(text), type: 'application/vnd.apple.mpegurl' };
   }

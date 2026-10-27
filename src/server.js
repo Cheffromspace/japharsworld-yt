@@ -127,7 +127,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   home ??= new Home({ relay, dir: join(dirname(config.dbPath), 'home'), base: `${config.publicUrl}/home`, enabled: config.homeRelay && relay.enabled,
     dailyBuilds: config.homeDailyBuilds, dailyMb: config.homeDailyMb, keepHours: config.homeKeepHours, maxGb: config.homeMaxGb, readyMs: config.homeReadyMs,
     segmentHoldMs: config.homeSegmentHoldMs,
-    log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
+    startPrecise: config.homeAndroidGrowing, log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
   if (home.enabled) setInterval(() => home.sweep(), 10 * 60_000).unref();
   channels ??= new ChannelSlots({ monitorDb: config.monitorDb });
   // The Linode's own bytes sent, every minute (the transfer alerts, src/net.js).
@@ -500,8 +500,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // A ready home session that went home only for being long and whose playlist grows (uneven keyframes, not due to
   // finish within HOME_SETTLE_SECONDS): given up for Tunelio while the pacer allows (#127 a, owner 2026-10-24). Home
   // keeps even-keyframe videos (their whole playlist goes up at once) and every play while over budget.
-  function leaveHome(s) {
+  function leaveHome(s, hlsTicket = false) {
     if (s?.state === 'failed' && s.reason === 'uneven') return true; // another player of it gave it up meanwhile
+    if (hlsTicket && config.homeAndroidGrowing) return false; // the Quest stays on the growing playlist (world #250)
     if (s?.state !== 'ready' || s.why !== 'long' || s.ended || s.endlist) return false;
     const eta = home.eta(s);
     if (eta != null && eta <= config.homeSettleMs) return false;
@@ -550,7 +551,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         const hq = homeQuality(shard, t.data);
         const hw = hlsTicket && !config.homeAndroid ? null : homeWhy(t.data, hq);
         const hs = hw ? homeKeep(t.data, hq, startHome(shard, t.data, hq, hw)) : null;
-        if (hs && hs.state !== 'failed' && !leaveHome(hs)) return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(hs), ...meta(t.data) });
+        if (hs && hs.state !== 'failed' && !leaveHome(hs, hlsTicket)) return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(hs), ...meta(t.data) });
         let c = await choice(shard, t.data);
         if (hlsTicket) c = hlsChoice(c);
         const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
@@ -591,7 +592,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         if (hs.state === 'failed') hs = homeKeep(t.data, hq, hs); // the worker said "busy" only now
         if (hs.state === 'ready') where = await homeWhere(hs);
         else metrics.inc('home', 'timeout');
-        if (where && leaveHome(hs)) where = null;
+        if (where && leaveHome(hs, hlsTicket)) where = null;
       }
       let c = null;
       if (!where) {

@@ -116,6 +116,11 @@ export const config = {
   // as a PC player, and for an AV1 Tunelio build, which the Quest 2 can't decode (home is always H.264). Off until
   // verified on the Quest (2026-10-23).
   homeAndroid: (process.env.HOME_ANDROID ?? 'off') === 'on',
+  // A .m3u8 ticket (Quest) keeps its home session while the playlist still grows, instead of the give-up to Tunelio
+  // for uneven keyframes, which exists for PC Media Foundation (#127); such a playlist then also starts at 0 exactly
+  // (EXT-X-START PRECISE=YES), since ExoPlayer starts a playlist without ENDLIST at the live edge. Off: being tested on
+  // staging (world #250, 2026-10-27): the Quest's Tunelio HLS fallback for those videos failed at ~125 s on prod.
+  homeAndroidGrowing: (process.env.HOME_ANDROID_GROWING ?? 'off') === 'on',
   homeLongMinutes: int('HOME_LONG_MINUTES', 30),
   // The quality home builds when the room hasn't picked one (owner, 2026-10-25: 1080p; home streams, so 1080p starts
   // about as fast as 720p: first segments 6.2 s vs 2.9 s on the Optiplex, 2026-10-23). A room's own pick wins.

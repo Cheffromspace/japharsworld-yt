@@ -10,7 +10,7 @@ import { Store } from '../src/store.js';
 import { Relay } from '../src/relay.js';
 import { Home } from '../src/home.js';
 import { createWorker } from '../relay/worker.js';
-import { mediaJob, ffmpegArgs, formatFor, rangeProxy, predictPlaylist } from '../relay/media.js';
+import { mediaJob, ffmpegArgs, formatFor, rangeProxy, predictPlaylist, steadyLength } from '../relay/media.js';
 import { config as base } from '../src/config.js';
 
 const TOKEN = 'secret-token';
@@ -316,6 +316,45 @@ test('mediaJob: steady segments → the whole playlist goes up first (the real o
   assert.match(growing.at(-1), /seg8\.ts\n#EXT-X-ENDLIST\n$/);
 });
 
+test('steadyLength: equal within a frame (29.97 fps cuts print as 4.004 / 3.971 s), from the median; scene cuts are not', () => {
+  const ntsc = [4.004, 4.004, 3.970633, 4.004, 4.004, 4.004, 4.004, 4.004, 3.970633];
+  assert.equal(steadyLength(ntsc), 4.004);
+  assert.equal(steadyLength([3.970633, ...ntsc.slice(1)]), 4.004, 'not the first one');
+  assert.equal(steadyLength(Array(8).fill(5.071733)), 5.071733);
+  assert.equal(steadyLength(ntsc.slice(0, 7)), null, 'too few yet');
+  assert.equal(steadyLength([4, 4, 4, 4, 4.1, 4, 4, 4]), null, 'more than a frame off');
+  assert.equal(steadyLength([7, 6.72, 3, 6.96, 7, 1.04, 7, 6.4]), null);
+});
+
+test('mediaJob splitByTime: ffmpeg cuts on time, and the whole playlist is predicted at 4 s, not the 4.004 s median', async () => {
+  const pl = (ds) => `#EXTM3U\n${ds.map((d, i) => `#EXTINF:${d},\nseg${i}.ts\n`).join('')}`;
+  const segs = (from, to) => Array.from({ length: to - from }, (_, i) => `seg${from + i}.ts`);
+  // 1000 segments of a 29.97 fps video, 4000 s: 4.004 s with a 3.971 s one every 8 (ffmpeg 8, 2026-10-27).
+  const ds = Array.from({ length: 1000 }, (_, i) => (i % 8 === 7 ? 3.970633 : 4.004));
+  ds[999] = 4000 - ds.slice(0, 999).reduce((a, b) => a + b, 0);
+  const steps = [[pl(ds.slice(0, 8)), segs(0, 8)], [`${pl(ds)}#EXT-X-ENDLIST\n`, segs(8, 1000)]];
+  const run = async (splitByTime) => {
+    const uploads = [];
+    const ff = fakeFfmpeg({ steps });
+    const logs = [];
+    const first = await mediaJob({ videoId: 'aaaaaaaaaaa', quality: '720p', token: 'x', seconds: 4000 }, { ytdlp: 'yt-dlp', runner, spawnFn: ff.spawnFn,
+      pollMs: 10, splitByTime, log: (o) => logs.push(o.event), upload: async (file, body) => { uploads.push([file, body.toString()]); return 204; } });
+    await first.done;
+    return { args: ff.calls[0].args, playlists: uploads.filter(([f]) => f === 'index.m3u8').map(([, b]) => b), logs };
+  };
+  const on = await run(true);
+  assert.equal(on.args[on.args.indexOf('-hls_flags') + 1], 'temp_file+split_by_time');
+  assert.equal(on.playlists.length, 1, 'predicted once, and it held');
+  assert.match(on.playlists[0], /^#EXTM3U[\s\S]*VOD\n#EXTINF:4\.000000,\nseg0\.ts[\s\S]*seg999\.ts\n#EXT-X-ENDLIST\n$/);
+  assert.ok(on.logs.includes('media_predicted') && !on.logs.includes('media_mismatch'));
+  const off = await run(false); // the same cuts without the flag: predicted from the median at 999 segments, so the real 1000 go up at the end
+  assert.equal(off.args[off.args.indexOf('-hls_flags') + 1], 'temp_file');
+  assert.match(off.playlists[0], /VOD\n#EXTINF:4\.004000,/);
+  assert.equal(off.playlists.length, 2);
+  assert.ok(off.logs.includes('media_mismatch'));
+  assert.match(off.playlists[1], /seg999\.ts\n#EXT-X-ENDLIST\n$/);
+});
+
 test('mediaJob: an upload that fails (server restarting) is tried again', async () => {
   let fails = 2;
   const uploads = [];
@@ -331,6 +370,11 @@ test('media formats: H.264 + m4a at the quality\'s height; one input when YouTub
   const one = ffmpegArgs(['https://v'], '/tmp/x');
   assert.equal(one.filter((a) => a === '-i').length, 1);
   assert.ok(!one.includes('-map'));
+  assert.equal(one[one.indexOf('-hls_flags') + 1], 'temp_file', 'keyframe cuts by default');
+  assert.ok(one.includes('h264_mp4toannexb,dump_extra=freq=keyframe'));
+  const split = ffmpegArgs(['https://v'], '/tmp/x', { splitByTime: true });
+  assert.equal(split[split.indexOf('-hls_flags') + 1], 'temp_file+split_by_time');
+  assert.deepEqual(split.slice(split.indexOf('-c'), split.indexOf('-c') + 4), ['-c', 'copy', '-bsf:v', 'h264_mp4toannexb,dump_extra=freq=keyframe']);
 });
 
 test('ticket → home: a PC player gets the home playlist when Tunelio is off; the resolver is sent on, Android goes to YouTube', async (t) => {

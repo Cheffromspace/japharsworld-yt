@@ -11,6 +11,14 @@
 // videos have keyframes at scene cuts (segments of 0.1–8.6 s, four 20-minute videos measured 2026-10-23); they get the
 // growing playlist.
 //
+// RELAY_SPLIT_BY_TIME=on (splitByTime, the worker's env; default off, a staging trial for world #250, 2026-10-27): ffmpeg
+// cuts every 4 s whether or not a keyframe is there (`-hls_flags split_by_time`, still `-c copy`), so every video is
+// steady and gets the whole playlist. The cut lands on the first frame at or after each multiple of 4 s: a 29.97 fps
+// clip made 4.004 s segments with a 3.971 s one every ~8, 75 of them exactly 300 s (ffmpeg 8, 2026-10-27), so the rest
+// are predicted at 4 s, not at the median (4.004 s would be 2 segments short over 3 h). The cost: a segment may start
+// mid-GOP, so a player that starts or seeks there shows the picture from the next keyframe (a 60 fps clip with 5 s GOPs:
+// 176 and 112 of 240 frames decoded from seg1 and seg2 on their own); sequential play is unaffected.
+//
 // The job's answer goes back as soon as the first playlist is uploaded (the server can send players then); the rest
 // uploads in the background. If ffmpeg dies part way, the playlist is closed where it got to. A 410 from the server
 // (session dropped) stops the stream; other failed uploads are retried (a deploy restarts the server in seconds).
@@ -121,23 +129,37 @@ export function predictPlaylist(known, gop, duration) {
 
 const extinfs = (text) => [...text.matchAll(/#EXTINF:([\d.]+)/g)].map((m) => Number(m[1]));
 const STEADY = 8;
+const HLS_TIME = 4;
+// One frame: segments of the same number of frames at 29.97 fps print as 4.004 or 3.971 s (2026-10-27).
+const FRAME = 0.05;
 
-export function ffmpegArgs(urls, dir) {
+// The usual segment length if the first STEADY segments are all within a frame of their median, else null.
+export function steadyLength(known) {
+  if (known.length < STEADY) return null;
+  const first = known.slice(0, STEADY);
+  const median = [...first].sort((a, b) => a - b)[STEADY / 2];
+  return first.every((d) => Math.abs(d - median) <= FRAME) ? median : null;
+}
+
+export function ffmpegArgs(urls, dir, { splitByTime = false } = {}) {
   const inputs = urls.flatMap((u) => ['-i', u]);
   const maps = urls.length > 1 ? ['-map', '0:v:0', '-map', '1:a:0'] : [];
   // h264_mp4toannexb,dump_extra: the H.264 parameter sets (SPS/PPS) before every keyframe. Copied from YouTube's mp4
   // they were only in seg0 (its keyframes aren't IDR, the only frames mp4toannexb repeats them for), so every later
   // segment failed to decode on its own ("non-existing PPS 0", 2026-10-23; a 12 s open-GOP test file on the Optiplex:
-  // seg1 0 frames → 118 with the filter): a player that starts or seeks past seg0 had nothing to decode with.
+  // seg1 0 frames → 118 with the filter): a player that starts or seeks past seg0 had nothing to decode with. With
+  // splitByTime a segment can start between keyframes; it still gets the parameter sets at its first keyframe, which is
+  // where a decoder starts anyway. freq=all (before every frame) only if a player is seen needing them at the cut.
   return ['-hide_banner', '-loglevel', 'error', '-nostdin', ...inputs, ...maps, '-c', 'copy', '-bsf:v', 'h264_mp4toannexb,dump_extra=freq=keyframe',
-    '-f', 'hls', '-hls_time', '4', '-hls_list_size', '0', '-hls_playlist_type', 'event', '-hls_flags', 'temp_file',
+    '-f', 'hls', '-hls_time', String(HLS_TIME), '-hls_list_size', '0', '-hls_playlist_type', 'event',
+    '-hls_flags', splitByTime ? 'temp_file+split_by_time' : 'temp_file',
     '-hls_segment_type', 'mpegts', '-hls_segment_filename', join(dir, 'seg%d.ts'), join(dir, 'index.m3u8')];
 }
 
 // → Promise that resolves { ready: true, segments } once the first playlist is up, or rejects before that.
 // upload(file, body, type) → HTTP status. spawnFn/runner are injectable for tests.
 export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], upload: put, runner = run, spawnFn = spawn,
-  fetcher = fetch, tmp = tmpdir(), pollMs = 500, maxMs = 4 * 3600_000, retryMs = 1000, cache = null, log = () => {} }) {
+  fetcher = fetch, tmp = tmpdir(), pollMs = 500, maxMs = 4 * 3600_000, retryMs = 1000, cache = null, splitByTime = false, log = () => {} }) {
   const videoId = String(job.videoId ?? '');
   const quality = String(job.quality ?? '720p');
   if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) throw new Error('bad videoId');
@@ -165,7 +187,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   }
   const dir = cache ? cache.staging() : await mkdtemp(join(tmp, 'jyt-media-'));
   const proxy = await rangeProxy(urls, { fetcher });
-  const ff = spawnFn(ffmpeg, ffmpegArgs(proxy.urls, dir), { stdio: ['ignore', 'ignore', 'pipe'] });
+  const ff = spawnFn(ffmpeg, ffmpegArgs(proxy.urls, dir, { splitByTime }), { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   ff.stderr?.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
   let exit = null;
@@ -201,9 +223,8 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
     // up, so a player never gets the growing playlist first and the whole one after.
     if (predicted === null && !final && duration > 0 && segs.length < STEADY) return;
     if (predicted === null) {
-      const known = extinfs(text);
-      const steady = duration > 0 && known.length >= STEADY && new Set(known.slice(0, STEADY).map((d) => d.toFixed(3))).size === 1;
-      predicted = steady ? predictPlaylist([], known[0], duration) : false;
+      const gop = duration > 0 ? steadyLength(extinfs(text)) : null;
+      predicted = gop ? predictPlaylist([], splitByTime ? HLS_TIME : gop, duration) : false;
     }
     if (predicted) {
       const actual = extinfs(text);

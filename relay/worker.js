@@ -6,7 +6,8 @@
 // YTDLP (found in the flash-check venv or PATH when unset), YTDLP_ARGS (--js-runtimes node), FFMPEG (ffmpeg),
 // RELAY_MEDIA (on; off = never announce media jobs), RELAY_MEDIA_MAX (4 streams at once; owner, 2026-10-25: four
 // 1080p plays need ~1.1 MB/s of the ~12 MB/s upload), RELAY_CACHE_GB (40; 0 = no cache of finished streams, relay/cache.js) in RELAY_CACHE_DIR (else systemd's CACHE_DIRECTORY), YT_BACKOFF_MINUTES (10)
-// and YT_BACKOFF_MAX_MINUTES (120): how long a kind of job pauses after YouTube refuses it (see refused() below).
+// and YT_BACKOFF_MAX_MINUTES (120): how long a kind of job pauses after YouTube refuses it (see refused() below),
+// RELAY_SPLIT_BY_TIME (off; on = media segments cut on time, not keyframes, relay/media.js).
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -26,7 +27,7 @@ export const PAUSE_KINDS = ['search', 'captions', 'media'];
 const pauseKind = (kind) => (kind === 'more' ? 'search' : kind);
 
 export function createWorker({ url, token, name = 'worker', version = '', polls = 3, youtube = defaultYoutube, reset = resetClient,
-  txBytes = defaultTxBytes, captions = null, ytdlp = null, ytdlpExtraArgs = ytdlpArgs(), media = null, caps = [], mediaMax = 4, ffmpeg = 'ffmpeg', cache = null,
+  txBytes = defaultTxBytes, captions = null, ytdlp = null, ytdlpExtraArgs = ytdlpArgs(), media = null, caps = [], mediaMax = 4, ffmpeg = 'ffmpeg', cache = null, splitByTime = false,
   backoffMinutes = 10, backoffMaxMinutes = 120, fetcher = fetch, log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o })), now = () => Date.now(),
   sleep = (ms, signal) => new Promise((r) => { const t = setTimeout(r, ms); signal?.addEventListener('abort', () => { clearTimeout(t); r(); }); }) }) {
   // Caption jobs: an injected function (tests) or yt-dlp, found once on first use.
@@ -48,7 +49,7 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
       try { await res.body?.cancel(); } catch { /* ignore */ }
       return res.status;
     };
-    const attempt = () => mediaJob(job, { ytdlp: ytdlpPath, ffmpeg, extraArgs: ytdlpExtraArgs, upload, cache, log: (o) => log({ ...o, quality: job.quality }) });
+    const attempt = () => mediaJob(job, { ytdlp: ytdlpPath, ffmpeg, extraArgs: ytdlpExtraArgs, upload, cache, splitByTime, log: (o) => log({ ...o, quality: job.quality }) });
     // ffmpeg that can't open the streams: once more from a fresh yt-dlp resolve (2026-10-23, 1 of 8 test videos: its
     // fresh stream URLs answered 403 for a minute or two).
     return attempt().catch((err) => (/ffmpeg exited/.test(err?.message ?? '') ? attempt() : Promise.reject(err)));
@@ -192,7 +193,7 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
 
   return {
     handle, conts, paused, get streaming() { return streaming; },
-    start() { log({ event: 'start', worker: name, version, relay: base, polls, mediaMax, cacheGb: cache?.maxGb ?? 0, cacheDir: cache?.dir }); return Promise.all(Array.from({ length: polls }, (_, i) => loop(i))); },
+    start() { log({ event: 'start', worker: name, version, relay: base, polls, mediaMax, cacheGb: cache?.maxGb ?? 0, cacheDir: cache?.dir, splitByTime }); return Promise.all(Array.from({ length: polls }, (_, i) => loop(i))); },
     stop() { stopping.abort(); },
   };
 }
@@ -204,7 +205,7 @@ function gitVersion() {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const { RELAY_URL, RELAY_TOKEN, WORKER_NAME = 'worker', RELAY_POLLS = '3', FFMPEG = 'ffmpeg', RELAY_MEDIA = 'on', RELAY_MEDIA_MAX = '4',
-    RELAY_CACHE_GB = '40', RELAY_CACHE_DIR = process.env.CACHE_DIRECTORY,
+    RELAY_CACHE_GB = '40', RELAY_CACHE_DIR = process.env.CACHE_DIRECTORY, RELAY_SPLIT_BY_TIME = 'off',
     YT_BACKOFF_MINUTES = '10', YT_BACKOFF_MAX_MINUTES = '120' } = process.env;
   if (!RELAY_URL || !RELAY_TOKEN) { console.error('Set RELAY_URL and RELAY_TOKEN.'); process.exit(2); }
   // Media jobs only when ffmpeg runs here; the server sends them only to workers that announce caps=media.
@@ -218,7 +219,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     catch (err) { log({ event: 'media_cache_off', message: String(err?.message ?? err).slice(0, 200) }); }
   }
   const worker = createWorker({ url: RELAY_URL, token: RELAY_TOKEN, name: WORKER_NAME, version: gitVersion(), polls: Number(RELAY_POLLS) || 3,
-    caps, ffmpeg: FFMPEG, mediaMax: Number(RELAY_MEDIA_MAX) || 2, cache,
+    caps, ffmpeg: FFMPEG, mediaMax: Number(RELAY_MEDIA_MAX) || 2, cache, splitByTime: RELAY_SPLIT_BY_TIME === 'on',
     backoffMinutes: Number(YT_BACKOFF_MINUTES) || 10, backoffMaxMinutes: Number(YT_BACKOFF_MAX_MINUTES) || 120 });
   for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { worker.stop(); setTimeout(() => process.exit(0), 500).unref(); });
   worker.start();

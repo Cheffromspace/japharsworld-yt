@@ -35,6 +35,8 @@ YT_CLIENT_SECRET=
 YT_REFRESH_TOKEN=
 DISCORD_WEBHOOK=
 DISCORD_MENTION=
+# Optional: the critical-alerts channel (the mass outage goes there; world #195).
+DISCORD_CRITICAL_WEBHOOK=
 EOT
   chmod 600 "$ENVF"
 fi

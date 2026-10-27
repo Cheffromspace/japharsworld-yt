@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { END_AFTER, LIMITS, LINODE_PROBE, evaluate, issueBody, issueTitle, limits, logLine, parseProbe, plan, streak } from '../infra-check/hypercare.mjs';
+import { END_AFTER, LIMITS, LINODE_PROBE, evaluate, issueBody, issueTitle, limits, logLine, parseProbe, plan, posts, streak, webhookFor } from '../infra-check/hypercare.mjs';
 
 const kit = (f) => readFileSync(new URL(`../infra-check/${f}`, import.meta.url), 'utf8');
 
@@ -74,6 +74,21 @@ test('hypercare: 7 days of clean runs in a row end it, and any finding starts th
   assert.match(src, /s\.done \? \{ clean: 0, cleanSince: null \}/, 're-enabled, it counts 7 days again');
   assert.match(src, /const HYPERCARE_ISSUE = 208;/);
   assert.match(src, /try \{ await discord\(`🟢 \*\*YT hypercare:\*\* \$\{text\}`, \{ mention: false, dry \}\); \} catch/, 'one quiet Discord line; a failed post still ends it');
+});
+
+test('hypercare: "Fix:" findings go to the critical channel, the rest to the usual one (world #195)', () => {
+  const open = { a: { issue: 7, since: 0 }, b: { issue: 8, since: 0 }, c: { issue: 9, since: 0 } };
+  const p = posts({ fresh: [{ key: 'a', owner: true, title: 'caddy is not active', detail: 'd' }, { key: 'b', owner: false, title: 'Errors', detail: 'd' }],
+    repeat: [], recovered: [{ key: 'c', owner: true, title: 'Disk', issue: 9 }, { key: 'x', owner: false, title: 'Backoff', issue: 3 }] }, open);
+  assert.deepEqual(p.map((x) => [x.critical, x.mention, x.text.slice(0, 22)]), [
+    [true, true, '🔴 **YT hypercare:** 1'], [true, false, '🟢 **YT hypercare reco'], [false, true, '🔴 **YT hypercare:** 1'], [false, false, '🟢 **YT hypercare reco']]);
+  assert.match(p[0].text, /caddy is not active.*#7\) \[owner task\]/);
+  assert.doesNotMatch(p[2].text, /caddy/);
+  assert.deepEqual(posts({ fresh: [], repeat: [], recovered: [] }, {}), [], 'quiet when normal');
+  const env = { DISCORD_WEBHOOK_URL: 'usual', DISCORD_CRITICAL_WEBHOOK: 'critical' };
+  assert.equal(webhookFor(true, env), 'critical');
+  assert.equal(webhookFor(false, env), 'usual');
+  assert.equal(webhookFor(true, { DISCORD_WEBHOOK_URL: 'usual' }), 'usual', 'unset: the usual channel');
 });
 
 test('hypercare: owner-task cards follow the world repo template and carry no addresses', () => {

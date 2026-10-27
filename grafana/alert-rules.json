@@ -124,7 +124,7 @@
    "severity": "critical"
   },
   "notification_settings": {
-   "receiver": "Everything is OK Discord"
+   "receiver": "Everything is OK Discord critical"
   },
   "data": [
    {
@@ -178,7 +178,7 @@
    "severity": "critical"
   },
   "notification_settings": {
-   "receiver": "Everything is OK Discord"
+   "receiver": "Everything is OK Discord critical"
   },
   "data": [
    {
@@ -232,7 +232,7 @@
    "severity": "critical"
   },
   "notification_settings": {
-   "receiver": "Everything is OK Discord"
+   "receiver": "Everything is OK Discord critical"
   },
   "data": [
    {
@@ -394,7 +394,7 @@
    "severity": "critical"
   },
   "notification_settings": {
-   "receiver": "Everything is OK Discord"
+   "receiver": "Everything is OK Discord critical"
   },
   "data": [
    {
@@ -610,7 +610,7 @@
    "severity": "critical"
   },
   "notification_settings": {
-   "receiver": "Everything is OK Discord"
+   "receiver": "Everything is OK Discord critical"
   },
   "data": [
    {
@@ -1150,7 +1150,7 @@
    "severity": "critical"
   },
   "notification_settings": {
-   "receiver": "Everything is OK Discord"
+   "receiver": "Everything is OK Discord critical"
   },
   "data": [
    {
@@ -1204,7 +1204,7 @@
    "severity": "critical"
   },
   "notification_settings": {
-   "receiver": "Everything is OK Discord"
+   "receiver": "Everything is OK Discord critical"
   },
   "data": [
    {
@@ -1258,7 +1258,7 @@
    "severity": "critical"
   },
   "notification_settings": {
-   "receiver": "Everything is OK Discord"
+   "receiver": "Everything is OK Discord critical"
   },
   "data": [
    {
@@ -1312,7 +1312,7 @@
    "severity": "critical"
   },
   "notification_settings": {
-   "receiver": "Everything is OK Discord"
+   "receiver": "Everything is OK Discord critical"
   },
   "data": [
    {

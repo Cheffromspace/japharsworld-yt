@@ -81,3 +81,10 @@ test('triage: the units run the checkout under the weekly lock, and the prompt i
   assert.doesNotMatch(p, /ssh linode[^-]/, 'never the root login');
   assert.match(readFileSync(new URL('../claude/monitoring.md', import.meta.url), 'utf8'), /^## Severe alert triage/m);
 });
+
+// Critical alerts get their own channel (world #195, owner 2026-10-26); Claude never sees either webhook.
+test('triage: posts to DISCORD_CRITICAL_WEBHOOK when set, else the usual one, and keeps both from Claude', () => {
+  const src = kit('triage.mjs');
+  assert.match(src, /fetch\(process\.env\.DISCORD_CRITICAL_WEBHOOK \|\| process\.env\.DISCORD_WEBHOOK_URL,/);
+  assert.match(src, /const \{ DISCORD_WEBHOOK_URL, DISCORD_CRITICAL_WEBHOOK, \.\.\.env \} = process\.env;/);
+});

@@ -6,6 +6,8 @@
 //   GRAFANA_SA_TOKEN          a service account token (glsa_…, Editor role); not GRAFANA_TOKEN, Alloy's write-only token
 //   GRAFANA_DISCORD_WEBHOOK   where the alerts go (the contact point). Change it and push again to move them.
 //   GRAFANA_DISCORD_MENTION   optional: a Discord user ID mentioned on firing critical alerts only (kept out of the repo)
+//   DISCORD_CRITICAL_WEBHOOK  optional: the critical-alerts channel (world #195, owner 2026-10-26). With it, severity=critical
+//                             rules go to their own contact point there; without it, everything goes to the one above.
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 
 const env = { ...dotenv('.env'), ...process.env };
@@ -23,6 +25,7 @@ const DS = { type: 'prometheus', uid: '${ds}' };
 const DASH_UID = 'everything-is-ok';
 const FOLDER = { uid: 'everything-is-ok', title: 'Everything is OK' };
 const RECEIVER = 'Everything is OK Discord';
+const CRITICAL_RECEIVER = 'Everything is OK Discord critical';
 
 // Staging (#160, deploy/alloy/staging.alloy) sends the same metrics with env="staging"; production's carry no env label,
 // so this matcher keeps every one of them. Added to every selector of every query and rule at build time (owner,
@@ -275,21 +278,24 @@ export function dashboard() {
 
 // The Discord contact point. With a mention (owner, 2026-10-26) a notification with a firing severity=critical alert
 // starts with <@id>, so it pings; warnings and resolved notices don't. Grafana's default text follows unchanged.
-export function contactPoint(url, mention) {
+export function contactPoint(url, mention, name = RECEIVER) {
   const settings = { url, use_discord_username: false };
   if (mention) {
     if (!/^\d{5,25}$/.test(mention)) throw new Error('GRAFANA_DISCORD_MENTION must be a Discord user ID (digits)');
     settings.message = `{{ $critical := false }}{{ range .Alerts.Firing }}{{ if eq .Labels.severity "critical" }}{{ $critical = true }}{{ end }}{{ end }}`
       + `{{ if $critical }}<@${mention}> {{ end }}{{ template "default.message" . }}`;
   }
-  return { name: RECEIVER, type: 'discord', settings, disableResolveMessage: false };
+  return { name, type: 'discord', settings, disableResolveMessage: false };
 }
 
 // Alerts for what the services can't report about themselves (they already alert Discord on their own problems).
-export function alertRules(dsUid) {
+// critical: severity=critical rules go to the critical channel's contact point (push: when DISCORD_CRITICAL_WEBHOOK is
+// set; build: always, so the reviewed copy shows the routing).
+export function alertRules(dsUid, { critical = false } = {}) {
   const rule = (uid, title, expr, { forM = 5, summary, noData = 'OK', severity = 'warning' }) => ({
     uid, title, folderUID: FOLDER.uid, ruleGroup: 'everything-is-ok', condition: 'C', for: `${forM}m`, noDataState: noData, execErrState: 'Error',
-    annotations: { summary }, labels: { project: 'everything-is-ok', severity }, notification_settings: { receiver: RECEIVER },
+    annotations: { summary }, labels: { project: 'everything-is-ok', severity },
+    notification_settings: { receiver: critical && severity === 'critical' ? CRITICAL_RECEIVER : RECEIVER },
     data: [
       { refId: 'A', relativeTimeRange: { from: 900, to: 0 }, datasourceUid: dsUid, model: { refId: 'A', expr, instant: true } },
       { refId: 'C', datasourceUid: '__expr__', model: { refId: 'C', type: 'threshold', expression: 'A', conditions: [{ evaluator: { type: 'gt', params: [0] } }] } },
@@ -393,7 +399,16 @@ async function push() {
   } else if (!(await api('/api/v1/provisioning/contact-points')).some((c) => c.name === RECEIVER)) {
     throw new Error('set GRAFANA_DISCORD_WEBHOOK the first time (the alert rules send to it)');
   }
-  for (const r of alertRules(prom.uid)) {
+  const critical = Boolean(env.DISCORD_CRITICAL_WEBHOOK);
+  if (critical) {
+    const points = await api('/api/v1/provisioning/contact-points');
+    const cp = contactPoint(env.DISCORD_CRITICAL_WEBHOOK, env.GRAFANA_DISCORD_MENTION, CRITICAL_RECEIVER);
+    const existing = points.find((c) => c.name === CRITICAL_RECEIVER);
+    if (existing) await api(`/api/v1/provisioning/contact-points/${existing.uid}`, { method: 'PUT', body: { ...cp, uid: existing.uid } });
+    else await api('/api/v1/provisioning/contact-points', { method: 'POST', body: cp });
+    console.log(`contact point: ${CRITICAL_RECEIVER}`);
+  }
+  for (const r of alertRules(prom.uid, { critical })) {
     try { await api(`/api/v1/provisioning/alert-rules/${r.uid}`, { method: 'PUT', body: r }); } catch (err) {
       if (err.status !== 404) throw err;
       await api('/api/v1/provisioning/alert-rules', { method: 'POST', body: r });
@@ -406,7 +421,7 @@ const cmd = process.argv[2];
 if (cmd === 'build') {
   mkdirSync('grafana', { recursive: true });
   writeFileSync('grafana/dashboard.json', `${JSON.stringify(dashboard(), null, 1)}\n`);
-  writeFileSync('grafana/alert-rules.json', `${JSON.stringify(alertRules('${ds}'), null, 1)}\n`);
+  writeFileSync('grafana/alert-rules.json', `${JSON.stringify(alertRules('${ds}', { critical: true }), null, 1)}\n`);
   console.log('wrote grafana/dashboard.json, grafana/alert-rules.json');
 } else if (cmd === 'push') {
   push().catch((err) => { console.error(err.message); process.exitCode = 1; });

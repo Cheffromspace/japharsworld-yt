@@ -30,6 +30,7 @@ claude setup-token
 cat > .env <<'EOF'
 CLAUDE_CODE_OAUTH_TOKEN=<token from step 3>
 DISCORD_WEBHOOK_URL=<the Channels monitor's webhook>
+DISCORD_CRITICAL_WEBHOOK=<optional: the critical-alerts channel's webhook; SEVERE triage and hypercare "Fix:" posts go there>
 GRAFANA_URL=https://<your-stack>.grafana.net
 GRAFANA_TOKEN=<Grafana Cloud service account token, Viewer role>
 DISCORD_MENTION_ID=<optional: the owner's Discord user ID; every SEVERE triage post pings it>

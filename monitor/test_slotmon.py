@@ -164,6 +164,18 @@ class Tests(Base):
             self.assertEqual(discord.mention_id(), "123456789012")
         with mock.patch.object(config, "DISCORD_MENTION", "@here"):
             self.assertIsNone(discord.mention_id())
+
+    def test_critical_alerts_go_to_the_critical_webhook_when_set(self):
+        from slotmon import discord
+        urls = []
+        real_send = self.p[0].temp_original
+        with mock.patch.object(config, "DISCORD_WEBHOOK", "https://usual"),                 mock.patch.object(discord, "http", lambda url, data=None, **k: urls.append(url)):
+            real_send(self.con, "8 channels down or hidden at once", "b", "urgent", mention=True)
+            with mock.patch.object(config, "DISCORD_CRITICAL_WEBHOOK", "https://critical"):
+                real_send(self.con, "8 channels down or hidden at once", "b", "urgent", mention=True)
+                real_send(self.con, "Stream down: x", "b", "urgent")
+                real_send(self.con, "Channels back", "b", "good", critical=True)
+        self.assertEqual(urls, ["https://usual", "https://critical", "https://usual", "https://critical"])
     def test_api_warnings_get_an_all_clear_once_the_api_answers(self):
         core.statuses(self.con, self.api, ["CAMCAMCAM01"])
         self.assertEqual(self.alerts, [])  # nothing was wrong: no all-clear

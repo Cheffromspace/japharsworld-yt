@@ -447,7 +447,7 @@ def outage_watch(con, overrides):
                      "%d of %d shown slots: %s" % (len(out), len(shown), ", ".join("%s (%s)" % (r["key"], r["auto_reason"] or "down") for r in out))[:3900],
                      "urgent", dedupe="mass-down", every_hours=24, mention=True)
     else:
-        discord.resolve(con, "mass-down", "Channels back", "%d of %d shown slots down or hidden now." % (len(out), len(shown)))
+        discord.resolve(con, "mass-down", "Channels back", "%d of %d shown slots down or hidden now." % (len(out), len(shown)), critical=True)
 
 
 def summary(con, api, overrides, queued):

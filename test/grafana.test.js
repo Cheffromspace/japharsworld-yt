@@ -31,6 +31,18 @@ test('contact point: the mention only with an ID, only for firing critical alert
   assert.equal(sev['eiok-linode-disk-70'], 'warning');
 });
 
+// Critical alerts in their own channel (world #195, owner 2026-10-26); without DISCORD_CRITICAL_WEBHOOK all go to one.
+test('alert rules: critical ones go to the critical contact point when it is set, warnings stay', () => {
+  const to = (o) => Object.fromEntries(alertRules('ds', o).map((r) => [r.uid, r.notification_settings.receiver]));
+  const split = to({ critical: true });
+  for (const uid of ['eiok-search-down', 'eiok-public-down', 'eiok-ssh-unknown-login', 'eiok-security-change', 'eiok-sshd-not-hardened', 'eiok-linode-disk-80']) {
+    assert.equal(split[uid], 'Everything is OK Discord critical', uid);
+  }
+  assert.equal(split['eiok-linode-disk-70'], 'Everything is OK Discord');
+  assert.deepEqual(new Set(Object.values(to())), new Set(['Everything is OK Discord']), 'unset: one channel, as before');
+  assert.equal(contactPoint('https://hook', '123456789012', 'Everything is OK Discord critical').name, 'Everything is OK Discord critical');
+});
+
 // Every rule's condition is "A > 0" (tools/grafana.mjs rule()), so an expression must be positive when it fires. A
 // trailing "< n" filter keeps the series but leaves its value at or under n (0 for "up < 1": never fired, 2026-10-26).
 test('alert rules: every expression is positive when it fires (no trailing < or == filter)', () => {

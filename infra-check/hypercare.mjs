@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { discordPayload } from './triage.mjs';
 
-const BASE = join(homedir(), 'yt-infra-check');   // .env (DISCORD_WEBHOOK_URL, DISCORD_MENTION_ID), the state file
+const BASE = join(homedir(), 'yt-infra-check');   // .env (DISCORD_WEBHOOK_URL, DISCORD_CRITICAL_WEBHOOK, DISCORD_MENTION_ID), the state file
 const REPO = 'Cheffromspace/Everything-is-OK';
 const HEALTHZ = 'https://yt.japharsworld.com/healthz';
 const REPEAT_MS = 6 * 3600_000;
@@ -250,14 +250,36 @@ function comment(n, text, dry) {
   if (!r.ok) console.error(`hypercare: gh issue comment failed: ${r.err}`);
 }
 
-async function discord(text, { mention, dry }) {
+// critical: the critical channel when DISCORD_CRITICAL_WEBHOOK is set, else the usual one.
+export const webhookFor = (critical, env = process.env) => (critical && env.DISCORD_CRITICAL_WEBHOOK) || env.DISCORD_WEBHOOK_URL;
+
+async function discord(text, { mention, critical = false, dry }) {
   const p = discordPayload(text.slice(0, 1900), mention ? process.env.DISCORD_MENTION_ID : null);
-  if (dry) { console.log(`--- Discord (dry run${mention ? ', pings the owner' : ''}) ---\n${p.content}\n---`); return; }
-  const r = await fetch(process.env.DISCORD_WEBHOOK_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(p), signal: AbortSignal.timeout(30_000) });
+  const where = critical && process.env.DISCORD_CRITICAL_WEBHOOK ? 'critical channel' : 'usual channel';
+  if (dry) { console.log(`--- Discord (dry run, ${where}${mention ? ', pings the owner' : ''}) ---\n${p.content}\n---`); return; }
+  const r = await fetch(webhookFor(critical), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(p), signal: AbortSignal.timeout(30_000) });
   if (!r.ok) throw new Error(`Discord: HTTP ${r.status}`);
 }
 
 const ref = (n) => (n ? ` (Everything-is-OK#${n})` : '');
+
+// The Discord posts for one run. Owner findings (the "Fix:" cards) are critical: they go to the critical channel
+// (DISCORD_CRITICAL_WEBHOOK, world #195, owner 2026-10-26), the rest to the usual one; problems ping, recoveries don't.
+export function posts({ fresh, repeat, recovered }, open) {
+  const out = [];
+  for (const critical of [true, false]) {
+    const f = fresh.filter((x) => !!x.owner === critical);
+    const r = repeat.filter((x) => !!x.owner === critical);
+    if (f.length || r.length) {
+      const lines = [...f.map((x) => `• ${x.title}: ${x.detail}${ref(open[x.key].issue)}${x.owner ? ' [owner task]' : ''}`),
+        ...r.map((x) => `• still, since ${chicago(open[x.key].since)}: ${x.title}${ref(open[x.key].issue)}`)];
+      out.push({ critical, mention: true, text: `🔴 **YT hypercare:** ${f.length ? `${f.length} new` : ''}${f.length && r.length ? ', ' : ''}${r.length ? `${r.length} still open` : ''}\n${lines.join('\n')}` });
+    }
+    const back = recovered.filter((x) => !!x.owner === critical);
+    if (back.length) out.push({ critical, mention: false, text: `🟢 **YT hypercare recovered:** ${back.map((x) => `${x.title}${ref(x.issue)}`).join('; ')}` });
+  }
+  return out;
+}
 
 async function main(argv) {
   const dry = argv.includes('--dry-run');
@@ -276,12 +298,7 @@ async function main(argv) {
   for (const f of fresh) open[f.key] = { since: now, alerted: now, title: f.title, owner: f.owner, issue: fileIssue(f, dry) };
   for (const f of repeat) { open[f.key].alerted = now; comment(open[f.key].issue, `Still abnormal ${chicago(now)} Central: ${f.detail}`, dry); }
   for (const r of recovered) { comment(r.issue, `Recovered as of ${chicago(now)} Central (hypercare). Close this if nothing else is left.`, dry); delete open[r.key]; }
-  if (fresh.length || repeat.length) {
-    const lines = [...fresh.map((f) => `• ${f.title}: ${f.detail}${ref(open[f.key].issue)}${f.owner ? ' [owner task]' : ''}`),
-      ...repeat.map((f) => `• still, since ${chicago(open[f.key].since)}: ${f.title}${ref(open[f.key].issue)}`)];
-    await discord(`🔴 **YT hypercare:** ${fresh.length ? `${fresh.length} new` : ''}${fresh.length && repeat.length ? ', ' : ''}${repeat.length ? `${repeat.length} still open` : ''}\n${lines.join('\n')}`, { mention: true, dry });
-  }
-  if (recovered.length) await discord(`🟢 **YT hypercare recovered:** ${recovered.map((r) => `${r.title}${ref(r.issue)}`).join('; ')}`, { mention: false, dry });
+  for (const p of posts({ fresh, repeat, recovered }, open)) await discord(p.text, { ...p, dry });
   const s = streak(state, findings, now);
   if (!dry) { writeFileSync(`${stateFile}.tmp`, JSON.stringify({ open, ...(s.done ? { clean: 0, cleanSince: null } : { clean: s.clean, cleanSince: s.cleanSince }) })); renameSync(`${stateFile}.tmp`, stateFile); }
   if (s.done) await end(s, dry);

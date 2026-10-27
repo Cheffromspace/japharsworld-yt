@@ -94,10 +94,22 @@ The domain itself is the owner's to renew (auto-renew, several years ahead), bec
    GRAFANA_URL=https://calmcanoe396.grafana.net
    GRAFANA_SA_TOKEN=glsa_...
    GRAFANA_DISCORD_WEBHOOK=https://discord.com/api/webhooks/...   # for now the same channel as ALERT_WEBHOOK
+   DISCORD_CRITICAL_WEBHOOK=https://discord.com/api/webhooks/...  # optional: the critical channel (below)
    ```
    then `node tools/grafana.mjs push`. It creates the folder, the dashboard (`/d/everything-is-ok`), the Discord
    contact point and the alert rules, and is safe to re-run. To send alerts elsewhere, change
    `GRAFANA_DISCORD_WEBHOOK` and push again. (`GRAFANA_TOKEN` in the same file is the write-only token Alloy uses.)
+
+**Critical channel** (world #195, owner 2026-10-26, card #234): a separate Discord channel, with its own sound and the
+@mention, for critical alerts only; warnings stay where they are. One env var, `DISCORD_CRITICAL_WEBHOOK`, in each
+sender's own env file; unset, that sender posts everything to its usual webhook as before:
+- Grafana (the repo's `.env` where `tools/grafana.mjs push` runs): every `severity=critical` rule goes to the contact
+  point "Everything is OK Discord critical" (search or public address down, an unknown SSH login, keys/sshd/ufw
+  changed, sshd hardening off, the Linode disk at 80 %, a Linode unit down, Channels mass outage, a domain within 7 days).
+- The Channels monitor (`/etc/japharsworld-yt-monitor.env` on the Linode): the mass outage ping and its all-clear.
+- Severe-alert triage (`~/yt-infra-check/.env` on the Optiplex): every SEVERE post.
+- Hypercare (the same `.env`): the "Fix:" findings (owner tasks) and their recoveries.
+The weekly report and the search service's own alerts (`ALERT_WEBHOOK`) stay on the usual channel.
 
 ## Changing things
 

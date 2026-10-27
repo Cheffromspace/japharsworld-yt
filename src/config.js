@@ -24,6 +24,9 @@ export const config = {
   // Tunelio. RELAY_CAPTION_WAIT_MS is how long a worker gets for one video (two yt-dlp runs).
   captionLocalYtdlp: (process.env.CAPTION_LOCAL_YTDLP ?? 'off') === 'on',
   relayCaptionWaitMs: int('RELAY_CAPTION_WAIT_MS', 40_000),
+  // on: a track without real word timing (uploader tracks, Tunelio) sends no word offsets, so the world shows no
+  // spoken-word highlight instead of one spread by character count (world #260; turn on with the world update).
+  captionRealWordsOnly: (process.env.CAPTION_REAL_WORDS_ONLY ?? 'off') === 'on',
   // A routed IPv6 /64 of our own (e.g. 2600:3c06:e001:35e::/64). When set, each yt-dlp lookup goes out from a
   // random address in it. The box must accept that: see README, "Sending from your own IPv6 range".
   sourcePrefix: process.env.SOURCE_IPV6_PREFIX ?? '',

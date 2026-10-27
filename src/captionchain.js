@@ -30,7 +30,7 @@ const EMPTY_KEY = 'tracks-empty';
 
 export class CaptionChain {
   constructor({ store, relay = null, local = null, tunelio = null, cacheDays = 7, emptyMinutes = 30, emptyRetryMinutes = 3, scripts = DEFAULT_SCRIPTS,
-    relayWaitMs = 40_000, metrics = null, log = () => {} }) {
+    relayWaitMs = 40_000, realWordsOnly = false, metrics = null, log = () => {} }) {
     this.store = store;
     this.relay = relay;
     this.local = local;      // a Captions instance (yt-dlp on this server) or null
@@ -41,6 +41,7 @@ export class CaptionChain {
     this.looking = new Map(); // video id → its lookup in flight (any want), so the CC list can wait for the play's warm-up
     this.scripts = scripts;
     this.relayWaitMs = relayWaitMs;
+    this.realWordsOnly = realWordsOnly; // estimated tracks send no word offsets (src/blocks.js chunksFromCues)
     this.metrics = metrics;
     this.log = log;
     this.inflight = new Map();
@@ -125,7 +126,7 @@ export class CaptionChain {
     }
     if (!c?.cues) return { ...base, available: false, reason: 'temporarily_unavailable' };
     const lines = linesFromCues(c.cues);
-    const { chunks, words } = chunksFromCues(c.cues, t.code);
+    const { chunks, words } = chunksFromCues(c.cues, t.code, { realWordsOnly: this.realWordsOnly });
     this.metrics?.inc('cc_words', words);
     return { ...base, available: lines.length > 0, source: t.auto ? 'auto' : 'manual', key: t.code, words, via: c.via, lines, chunks };
   }

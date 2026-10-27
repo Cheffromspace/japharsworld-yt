@@ -113,6 +113,13 @@ sender's own env file; unset, that sender posts everything to its usual webhook 
 - Hypercare (the same `.env`): the "Fix:" findings (owner tasks) and their recoveries.
 The weekly report and the search service's own alerts (`ALERT_WEBHOOK`) stay on the usual channel.
 
+**Tonight board** (world #248, owner 2026-10-26): `/d/everything-is-ok-tonight`, "Everything is OK · Tonight", pushed with
+the ops dashboard (`tonight()` in `tools/grafana.mjs`, `grafana/tonight.json`). "How cozy is it right now": the vibe word
+from occupancy (0 quiet, 1–3 cozy, 4+ lively), people and rooms, the range's new visits and favorites, plays by length,
+Channels vs searches, captions, languages, Quest vs PC, the night's occupancy curve and "stayed past 03:00". Existing
+aggregates only (counts, no IDs); panels from the service's counters say they include the owner's testing. Tokyo Night
+accents, no red, refresh 1 min, the last 12 h.
+
 ## Changing things
 
 - **Dashboard or alerts:** edit `tools/grafana.mjs`, `node tools/grafana.mjs build` (refreshes the reviewed copies in

@@ -1,6 +1,6 @@
 // Grafana Cloud dashboard and alert rules for Everything is OK (claude/monitoring.md), kept in the repo.
-//   node tools/grafana.mjs build    writes grafana/dashboard.json and grafana/alert-rules.json
-//   node tools/grafana.mjs push     uploads both to the stack (and the Discord contact point)
+//   node tools/grafana.mjs build    writes grafana/dashboard.json, grafana/tonight.json and grafana/alert-rules.json
+//   node tools/grafana.mjs push     uploads them to the stack (and the Discord contact points)
 // push reads its settings from the environment or the repo's .env (gitignored; the environment wins):
 //   GRAFANA_URL               https://<stack>.grafana.net
 //   GRAFANA_SA_TOKEN          a service account token (glsa_…, Editor role); not GRAFANA_TOKEN, Alloy's write-only token
@@ -23,6 +23,7 @@ function dotenv(path) {
 
 const DS = { type: 'prometheus', uid: '${ds}' };
 const DASH_UID = 'everything-is-ok';
+const TONIGHT_UID = 'everything-is-ok-tonight';
 const FOLDER = { uid: 'everything-is-ok', title: 'Everything is OK' };
 const RECEIVER = 'Everything is OK Discord';
 const CRITICAL_RECEIVER = 'Everything is OK Discord critical';
@@ -276,6 +277,84 @@ export function dashboard() {
   });
 }
 
+// "Everything is OK · Tonight" (world #248, owner 2026-10-26: "how cozy the current vibe is and who and what people are
+// doing"): a separate, friendly board from aggregates the service already keeps (claude/metrics.md), counts only. Tokyo
+// Night accents, no red; big tiles first. Grafana's own theme sets the page ground, so the tiles carry the colours.
+const NIGHT = { blue: '#7aa2f7', purple: '#bb9af7', green: '#9ece6a', dim: '#414868' };
+const OWN_TESTS = 'Includes the owner\'s own testing: the TEST world uses the same service and these counts can\'t tell them apart (most of 10-26\'s Channels plays were testing).';
+const inRange = (metric, key) => `sum(increase(eiok_events_total{metric="${metric}"${key == null ? '' : `,key="${key}"`}}[$__range])) or vector(0)`;
+const occ = (m) => `max(eiok_poll{source="world:prod",metric="${m}"})`;
+// Bars of named counts for the time range ([expr, name] pairs), in the accents.
+function bars(title, list, { w = 8, h = 7, description } = {}) {
+  return {
+    type: 'bargauge', id: ++id, title, description, datasource: DS, gridPos: place(w, h),
+    targets: targets(list.map(([e, l]) => [e, l, { instant: true }])),
+    options: { orientation: 'horizontal', displayMode: 'gradient', showUnfilled: true, valueMode: 'color', namePlacement: 'left', reduceOptions: { calcs: ['lastNotNull'] } },
+    fieldConfig: { defaults: { unit: 'short', decimals: 0, min: 0, color: { mode: 'continuous-BlPu' }, thresholds: { mode: 'absolute', steps: [{ color: NIGHT.blue, value: null }] } }, overrides: [] },
+  };
+}
+// The same, one bar per label value (languages).
+function barsBy(title, metric, { w = 8, h = 7, description } = {}) {
+  return bars(title, [[`sum by (key) (increase(eiok_events_total{metric="${metric}"}[$__range])) > 0`, '{{key}}']], { w, h, description });
+}
+const tile = (color) => [{ color, value: null }];
+
+export function tonight() {
+  id = 0; grid.x = 0; grid.y = 0; grid.rowH = 0;
+  const p = [];
+  p.push(row('Right now'));
+  // Against the world's 6-per-room design (owner's thresholds, #248): 0 quiet, 1–3 cozy, 4 and up lively.
+  p.push(stat('The vibe', occ('occupants'), { w: 6, thresholds: tile(NIGHT.dim), description: 'People in the production world now (VRChat, polled every ~15 min): 0 quiet, 1–3 cozy, 4 or more lively.',
+    mappings: [{ type: 'value', options: { 0: { text: 'quiet 🌙', color: NIGHT.dim } } },
+      { type: 'range', options: { from: 1, to: 3, result: { text: 'cozy ☕', color: NIGHT.purple } } },
+      { type: 'range', options: { from: 4, to: 1e6, result: { text: 'lively ✨', color: NIGHT.green } } }] }));
+  p.push(stat('People here', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 6, thresholds: tile(NIGHT.blue),
+    description: 'Production world occupants by instance type (VRChat\'s counts, polled every ~15 min).' }));
+  p.push(stat('Rooms', [[occ('instances'), 'instances'], ['count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)', 'tablets in use, last hour']], { w: 6, thresholds: tile(NIGHT.purple),
+    description: `Instances of the production world (VRChat), and the tablet shards that made any request in the last hour (hourly rows). ${OWN_TESTS}` }));
+  p.push(stat('Warmth, this range', [[`${occ('visits')} - min(min_over_time(eiok_poll{source="world:prod",metric="visits"}[$__range]))`, 'new visits'],
+    [`${occ('favorites')} - min(min_over_time(eiok_poll{source="world:prod",metric="favorites"}[$__range]))`, 'new favorites']], { w: 6, decimals: 0, thresholds: tile(NIGHT.green),
+    description: 'Growth of the production world\'s visit and favorite totals over the selected time range (VRChat\'s public numbers; unfavorites net out).' }));
+
+  p.push(row('What\'s on'));
+  p.push(bars('Plays by length', [[inRange('play_length', 'lt10m'), 'under 10 min'], [inRange('play_length', 'lt1h'), '10 min – 1 h'], [inRange('play_length', 'lt3h'), '1–3 h'],
+    [inRange('play_length', 'longer'), '3 h and longer (sleep length)'], [inRange('play_length', 'live'), 'live']], { description: `Search videos played, once per room, by length, over the time range. ${OWN_TESTS}` }));
+  p.push(bars('Channels and searches', [[inRange('channel', 'redirect'), 'Channels tuned in'], [inRange('search', ''), 'searches'], [inRange('play', ''), 'search videos played']],
+    { description: `Channels: a slot opened from the Channels tab. Searches with a query, and videos played once per room, over the time range. ${OWN_TESTS}` }));
+  p.push(bars('Captions and quality', [[inRange('cc_list', ''), 'captions shown'], [inRange('cc_track', ''), 'tracks picked'], [inRange('quality_pick', '1080p'), '1080p picked'], [inRange('quality_pick', '720p'), '720p picked']],
+    { description: `"Show captions" list loads and tracks picked on the tablet, and rooms that picked a playback quality, over the time range. ${OWN_TESTS}` }));
+
+  p.push(row('Who, broadly'));
+  p.push(barsBy('Languages at join', 'join_lang', { description: 'VRChat client language of visitors who allow untrusted URLs (the bare search address the world loads once after join), over the time range.' }));
+  p.push(barsBy('Search languages', 'search_lang', { description: `VRChat client language of searches with a query, over the time range. ${OWN_TESTS}` }));
+  p.push(bars('Quest and PC', [[inRange('play_platform', 'pc'), 'PC plays'], [inRange('play_platform', 'android'), 'Quest (Android) plays'], [inRange('join', ''), 'joins with untrusted URLs on']],
+    { description: `Plays by player platform, once per room and platform, and joins that loaded the search address (untrusted URLs allowed), over the time range. ${OWN_TESTS}` }));
+
+  p.push(row('The night\'s shape'));
+  const curve = series('Through the night (Chicago time)', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 18, h: 9, stack: true, min: 0, decimals: 0,
+    description: 'Production world occupants, stacked by instance type, in America/Chicago time.' });
+  curve.fieldConfig.defaults.color = { mode: 'continuous-BlPu' };
+  curve.fieldConfig.defaults.custom.lineInterpolation = 'smooth';
+  p.push(curve);
+  // 03:00–06:00 Chicago is 08:00–11:00 UTC in summer time (CDT); in winter (CST, from 2026-11-01) it reads 02:00–05:00.
+  const late = stat('Stayed past 03:00', 'max(eiok_poll{source="world:prod",metric="occupants"}) and on() (hour() >= 8) and on() (hour() < 11)', { w: 6, decimals: 0, thresholds: tile(NIGHT.purple),
+    description: 'The most people in the world between 03:00 and 06:00 Chicago time in the last 24 h (UTC 08–11: right in summer time; in winter time it reads 02:00–05:00). Do people sleep here?',
+    mappings: [{ type: 'value', options: { 0: { text: 'no one 💤', color: NIGHT.dim } } }, { type: 'special', options: { match: 'null', result: { text: 'no one 💤', color: NIGHT.dim } } }] });
+  Object.assign(late.targets[0], { instant: false, range: true, interval: '15m' });
+  late.options.reduceOptions = { calcs: ['max'] };
+  late.timeFrom = '24h';
+  late.gridPos = { ...late.gridPos, h: 9 };
+  p.push(late);
+
+  return scoped({
+    uid: TONIGHT_UID, title: 'Everything is OK · Tonight', tags: ['everything-is-ok'], timezone: 'America/Chicago', refresh: '1m',
+    time: { from: 'now-12h', to: 'now' }, schemaVersion: 39, editable: true, graphTooltip: 1,
+    description: 'The vibe right now: counts only (world #248). Ops stay on the Everything is OK dashboard.',
+    templating: { list: [{ name: 'ds', label: 'Data source', type: 'datasource', query: 'prometheus', regex: '.*-prom$', current: {} }] },
+    panels: p,
+  });
+}
+
 // The Discord contact point. With a mention (owner, 2026-10-26) a notification with a firing severity=critical alert
 // starts with <@id>, so it pings; warnings and resolved notices don't. Grafana's default text follows unchanged.
 export function contactPoint(url, mention, name = RECEIVER) {
@@ -390,6 +469,8 @@ async function push() {
   try { await api('/api/folders', { method: 'POST', body: FOLDER }); } catch (err) { if (err.status !== 409 && err.status !== 412) throw err; }
   await api('/api/dashboards/db', { method: 'POST', body: { dashboard: dashboard(), folderUid: FOLDER.uid, overwrite: true, message: 'tools/grafana.mjs push' } });
   console.log(`dashboard: ${env.GRAFANA_URL.replace(/\/$/, '')}/d/${DASH_UID}`);
+  await api('/api/dashboards/db', { method: 'POST', body: { dashboard: tonight(), folderUid: FOLDER.uid, overwrite: true, message: 'tools/grafana.mjs push' } });
+  console.log(`dashboard: ${env.GRAFANA_URL.replace(/\/$/, '')}/d/${TONIGHT_UID}`);
 
   if (env.GRAFANA_DISCORD_WEBHOOK) {
     const points = await api('/api/v1/provisioning/contact-points');
@@ -423,8 +504,9 @@ const cmd = process.argv[2];
 if (cmd === 'build') {
   mkdirSync('grafana', { recursive: true });
   writeFileSync('grafana/dashboard.json', `${JSON.stringify(dashboard(), null, 1)}\n`);
+  writeFileSync('grafana/tonight.json', `${JSON.stringify(tonight(), null, 1)}\n`);
   writeFileSync('grafana/alert-rules.json', `${JSON.stringify(alertRules('${ds}', { critical: true }), null, 1)}\n`);
-  console.log('wrote grafana/dashboard.json, grafana/alert-rules.json');
+  console.log('wrote grafana/dashboard.json, grafana/tonight.json, grafana/alert-rules.json');
 } else if (cmd === 'push') {
   push().catch((err) => { console.error(err.message); process.exitCode = 1; });
 } else if (cmd) {

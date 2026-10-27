@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { alertRules, contactPoint, dashboard, prodOnly } from '../tools/grafana.mjs';
+import { alertRules, contactPoint, dashboard, prodOnly, tonight } from '../tools/grafana.mjs';
 
 // Staging (#160) sends the same metrics with env="staging": every selector of every query and rule leaves them out.
 test('every dashboard query and alert rule excludes staging', () => {
@@ -10,7 +10,7 @@ test('every dashboard query and alert rule excludes staging', () => {
   assert.equal(prodOnly('x{source="domain:eiok.cc"}'), 'x{source="domain:eiok.cc"}', 'label values are left alone');
   const exprs = [];
   const walk = (o) => { if (Array.isArray(o)) o.forEach(walk); else if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) (k === 'expr' && typeof v === 'string' ? exprs.push(v) : walk(v)); };
-  walk(dashboard()); walk(alertRules('ds'));
+  walk(dashboard()); walk(tonight()); walk(alertRules('ds'));
   assert.ok(exprs.length > 50, `${exprs.length} expressions`);
   for (const e of exprs) {
     for (const m of e.matchAll(/\b(?:eiok|probe|node)_[A-Za-z0-9_]+(\{[^}]*\})?/g)) assert.match(m[1] ?? '', /^\{env!="staging"/, e);
@@ -65,4 +65,20 @@ test('alert rules: every expression is positive when it fires (no trailing < or 
     // (2026-10-26: "security counters stale" fired while they were 60 s old). The value itself must carry it.
     if (r.noDataState === 'Alerting') assert.doesNotMatch(expr, /(>=?|<=?|==|!=)\s*-?[\d.e*\s]+$/, `${r.uid}: ${expr}`);
   }
+});
+
+// World #248: the "Tonight" board, its own dashboard, soft colours, counts only.
+test('tonight: its own dashboard, refresh 1 min, the last 12 h in Chicago time, no alarm red', () => {
+  const d = tonight();
+  assert.equal(d.uid, 'everything-is-ok-tonight');
+  assert.notEqual(d.uid, dashboard().uid);
+  assert.deepEqual([d.refresh, d.time.from, d.timezone], ['1m', 'now-12h', 'America/Chicago']);
+  const text = JSON.stringify(d);
+  assert.doesNotMatch(text, /#f7768e|"red"/i, 'no red');
+  const ids = d.panels.map((p) => p.id);
+  assert.equal(new Set(ids).size, ids.length);
+  const vibe = d.panels.find((p) => p.title === 'The vibe');
+  assert.deepEqual(vibe.fieldConfig.defaults.mappings.map((m) => m.type), ['value', 'range', 'range'], 'quiet 0, cozy 1-3, lively 4+');
+  // Only the existing aggregates: events_total keys, the VRChat poll, the hourly shard rows.
+  for (const m of text.matchAll(/(eiok_[a-z_]+)/g)) assert.ok(['eiok_events_total', 'eiok_poll', 'eiok_shard_active_hours_total'].includes(m[1]), m[1]);
 });

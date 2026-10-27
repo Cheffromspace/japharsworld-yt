@@ -298,6 +298,12 @@ function barsBy(title, metric, { w = 8, h = 7, description } = {}) {
   return bars(title, [[`sum by (key) (increase(eiok_events_total{metric="${metric}"}[$__range])) > 0`, '{{key}}']], { w, h, description });
 }
 const tile = (color) => [{ color, value: null }];
+// The hour in Chicago, in PromQL (which only knows UTC). US summer time runs from the second Sunday of March to the first
+// Sunday of November (day_of_week: Sunday = 0, so day_of_month - day_of_week is the date of the latest Sunday): UTC-5
+// then, UTC-6 otherwise. It switches at 00:00 UTC of the switch day instead of 02:00 local (07:00 or 08:00 UTC), so those
+// 7–8 hours read an hour off; 03:00 local is 08:00 UTC or later, past them.
+const CHICAGO_DST = '(month() > 3 and month() < 11) or (month() == 3 and (day_of_month() - day_of_week()) >= 8) or (month() == 11 and (day_of_month() - day_of_week()) <= 0)';
+export const CHICAGO_HOUR = `((hour() + 18 + ((vector(1) and on() (${CHICAGO_DST})) or vector(0))) % 24)`;
 
 export function tonight() {
   id = 0; grid.x = 0; grid.y = 0; grid.rowH = 0;
@@ -336,9 +342,8 @@ export function tonight() {
   curve.fieldConfig.defaults.color = { mode: 'continuous-BlPu' };
   curve.fieldConfig.defaults.custom.lineInterpolation = 'smooth';
   p.push(curve);
-  // 03:00–06:00 Chicago is 08:00–11:00 UTC in summer time (CDT); in winter (CST, from 2026-11-01) it reads 02:00–05:00.
-  const late = stat('Stayed past 03:00', 'max(eiok_poll{source="world:prod",metric="occupants"}) and on() (hour() >= 8) and on() (hour() < 11)', { w: 6, decimals: 0, thresholds: tile(NIGHT.purple),
-    description: 'The most people in the world between 03:00 and 06:00 Chicago time in the last 24 h (UTC 08–11: right in summer time; in winter time it reads 02:00–05:00). Do people sleep here?',
+  const late = stat('Stayed past 03:00', `max(eiok_poll{source="world:prod",metric="occupants"}) and on() (${CHICAGO_HOUR} >= 3) and on() (${CHICAGO_HOUR} < 6)`, { w: 6, decimals: 0, thresholds: tile(NIGHT.purple),
+    description: 'The most people in the world between 03:00 and 06:00 Chicago time (summer and winter time alike) in the last 24 h. Do people sleep here?',
     mappings: [{ type: 'value', options: { 0: { text: 'no one 💤', color: NIGHT.dim } } }, { type: 'special', options: { match: 'null', result: { text: 'no one 💤', color: NIGHT.dim } } }] });
   Object.assign(late.targets[0], { instant: false, range: true, interval: '15m' });
   late.options.reduceOptions = { calcs: ['max'] };

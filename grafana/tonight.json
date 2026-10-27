@@ -896,7 +896,7 @@
    "type": "stat",
    "id": 16,
    "title": "Stayed past 03:00",
-   "description": "The most people in the world between 03:00 and 06:00 Chicago time in the last 24 h (UTC 08–11: right in summer time; in winter time it reads 02:00–05:00). Do people sleep here?",
+   "description": "The most people in the world between 03:00 and 06:00 Chicago time (summer and winter time alike) in the last 24 h. Do people sleep here?",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -914,7 +914,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"occupants\"}) and on() (hour() >= 8) and on() (hour() < 11)",
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"occupants\"}) and on() (((hour() + 18 + ((vector(1) and on() ((month() > 3 and month() < 11) or (month() == 3 and (day_of_month() - day_of_week()) >= 8) or (month() == 11 and (day_of_month() - day_of_week()) <= 0))) or vector(0))) % 24) >= 3) and on() (((hour() + 18 + ((vector(1) and on() ((month() > 3 and month() < 11) or (month() == 3 and (day_of_month() - day_of_week()) >= 8) or (month() == 11 and (day_of_month() - day_of_week()) <= 0))) or vector(0))) % 24) < 6)",
      "legendFormat": "",
      "instant": false,
      "range": true,

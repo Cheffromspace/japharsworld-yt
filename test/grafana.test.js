@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { alertRules, contactPoint, dashboard, prodOnly, tonight } from '../tools/grafana.mjs';
+import { CHICAGO_HOUR, alertRules, contactPoint, dashboard, prodOnly, tonight } from '../tools/grafana.mjs';
 
 // Staging (#160) sends the same metrics with env="staging": every selector of every query and rule leaves them out.
 test('every dashboard query and alert rule excludes staging', () => {
@@ -81,4 +81,24 @@ test('tonight: its own dashboard, refresh 1 min, the last 12 h in Chicago time, 
   assert.deepEqual(vibe.fieldConfig.defaults.mappings.map((m) => m.type), ['value', 'range', 'range'], 'quiet 0, cozy 1-3, lively 4+');
   // Only the existing aggregates: events_total keys, the VRChat poll, the hourly shard rows.
   for (const m of text.matchAll(/(eiok_[a-z_]+)/g)) assert.ok(['eiok_events_total', 'eiok_poll', 'eiok_shard_active_hours_total'].includes(m[1]), m[1]);
+});
+
+// PromQL knows only UTC: "Stayed past 03:00" computes Chicago's hour with the US summer-time rule (#248). The same rule
+// in JS, against Intl's America/Chicago, at every hour that can fall in the window (UTC 08–12) for two years.
+test('tonight: Chicago hour follows summer and winter time (the 03:00–06:00 window)', () => {
+  const late = tonight().panels.find((p) => p.title === 'Stayed past 03:00');
+  assert.ok(late.targets[0].expr.includes('>= 3') && late.targets[0].expr.includes('< 6'));
+  assert.match(CHICAGO_HOUR, /month\(\) == 3 and \(day_of_month\(\) - day_of_week\(\)\) >= 8/);
+  assert.match(CHICAGO_HOUR, /month\(\) == 11 and \(day_of_month\(\) - day_of_week\(\)\) <= 0/);
+  const promql = (d) => {
+    const m = d.getUTCMonth() + 1, sunday = d.getUTCDate() - d.getUTCDay();
+    const dst = (m > 3 && m < 11) || (m === 3 && sunday >= 8) || (m === 11 && sunday <= 0);
+    return (d.getUTCHours() + 18 + (dst ? 1 : 0)) % 24;
+  };
+  const real = (d) => Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hour: 'numeric', hourCycle: 'h23' }).format(d));
+  for (let t = Date.UTC(2026, 0, 1, 8); t < Date.UTC(2028, 0, 1); t += 3600_000) {
+    const d = new Date(t);
+    if (d.getUTCHours() < 8 || d.getUTCHours() > 12) continue;
+    assert.equal(promql(d), real(d), d.toISOString());
+  }
 });

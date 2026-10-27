@@ -13,7 +13,7 @@ const alert = (fp, alertname, extra = {}) => ({
 
 test('triage: only firing, unsilenced, critical alerts of this project', () => {
   const list = [
-    alert('a', 'Linode disk 80 % full'),
+    alert('a', 'Linode disk 88 % full'),
     { ...alert('b', 'Search service down'), labels: { alertname: 'Search service down', severity: 'warning', project: 'everything-is-ok' } },
     { ...alert('c', 'x'), status: { state: 'suppressed' } },
     { ...alert('d', 'x'), labels: { alertname: 'x', severity: 'critical', project: 'other' } },
@@ -42,7 +42,7 @@ test('triage: the security rules are told apart (they go nowhere on GitHub)', ()
   }
   assert.ok(isSecurity(alert('x', 'Something new', { summary: 'SECURITY: something' })));
   assert.equal(kindOf(alert('x', 'Search service down')), 'down');
-  assert.equal(kindOf(alert('x', 'Linode disk 80 % full')), 'other');
+  assert.equal(kindOf(alert('x', 'Linode disk 88 % full')), 'other');
   assert.equal(kindOf(alert('x', 'Many Channels slots down or hidden')), 'channels', 'not the service "down" checks');
   assert.equal(kindOf(alert('x', 'Domain expires within 7 days')), 'other');
   assert.equal(kindOf(syntheticAlert('security', 0)), 'security');
@@ -60,7 +60,7 @@ test('triage: the Discord text starts with SEVERE:, fits Discord, and says when 
   const f = fallbackText({ alerts: a, reason: 'the Claude Code login expired.' });
   assert.match(f, /^SEVERE: /);
   assert.match(f, /Triage couldn't run: the Claude Code login expired\.$/);
-  assert.equal(slug('Linode disk 80 % full'), 'linode-disk-80-full');
+  assert.equal(slug('Linode disk 88 % full'), 'linode-disk-88-full');
 });
 
 test('triage: DISCORD_MENTION_ID pings that user only; unset or not an ID, nobody', () => {

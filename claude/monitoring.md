@@ -105,7 +105,7 @@ The domain itself is the owner's to renew (auto-renew, several years ahead), bec
 sender's own env file; unset, that sender posts everything to its usual webhook as before:
 - Grafana (the repo's `.env` where `tools/grafana.mjs push` runs): every `severity=critical` rule goes to the contact
   point "Everything is OK Discord critical" (search or public address down, an unknown SSH login, keys/sshd/ufw
-  changed, sshd hardening off, the Linode disk at 80 %, a domain within 48 hours). The Channels mass outage and the domain
+  changed, sshd hardening off, the Linode disk at 88 %, a domain within 48 hours). The Channels mass outage and the domain
   within 7 days are plain warnings on the usual channel: no ping, no triage (owner, #246).
 - The Channels monitor (`/etc/japharsworld-yt-monitor.env` on the Linode): nothing for now (its mass outage is a plain
   alert on the usual channel, #246); a send marked critical would go there.
@@ -243,7 +243,8 @@ is only "Security finding on <host>, see the local report of <date>".
 
 The critical rules (`tools/grafana.mjs`, 2026-10-26): `eiok-search-down`, `eiok-public-down`, `eiok-short-down`
 (owner: "search service much more critical"), `eiok-ssh-unknown-login`, `eiok-security-change`,
-`eiok-sshd-not-hardened`, `eiok-linode-disk-80`, `eiok-domain-expiry-critical` (48 hours; the 7-day one is a warning
+`eiok-sshd-not-hardened`, `eiok-linode-disk-88` (80 % is a warning; 70 %/80 % until 2026-10-27, when a full home
+cache at `HOME_MAX_GB=12` put `/` at ~76 %), `eiok-domain-expiry-critical` (48 hours; the 7-day one is a warning
 since #246); `eiok-channels-mass-down` is a warning since #246. With `GRAFANA_DISCORD_MENTION` in
 the repo's local `.env` the contact point pings the owner on these (firing only), and `DISCORD_MENTION_ID` in
 `~/yt-infra-check/.env` makes every "SEVERE:" triage post ping them; both IDs stay out of the repo. A rule raised to critical is triaged

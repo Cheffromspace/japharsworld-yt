@@ -468,8 +468,10 @@ export function alertRules(dsUid, { critical = false } = {}) {
     rule('eiok-home-egress-month', 'Home sent over 500 GB this month', 'max(eiok_transfer_bytes{host="home",period="month"}) > 500e9', { forM: 5, summary: 'The Optiplex has sent over 500 GB this month.' }),
     rule('eiok-linode-egress-month', 'Linode sent over 700 GB this month', 'max(eiok_transfer_bytes{host="linode",period="month"}) > 700e9', { forM: 5, summary: 'The Linode has sent over 700 GB this month, of its 1 TB transfer (overage about $5 per TB).' }),
     // The Linode's / is 25 GB (47 % used 2026-10-25, the home session files capped at HOME_MAX_GB=8): earlier warnings there.
-    rule('eiok-linode-disk-70', 'Linode disk 70 % full', 'max(1 - node_filesystem_avail_bytes{host="linode",mountpoint="/"} / node_filesystem_size_bytes{host="linode",mountpoint="/"}) > 0.7', { forM: 15, summary: 'The Linode’s / is over 70 % full. Check `du -sh /var/lib/japharsworld-yt/*` (home sessions, SQLite) and the journal.' }),
-    rule('eiok-linode-disk-80', 'Linode disk 80 % full', 'max(1 - node_filesystem_avail_bytes{host="linode",mountpoint="/"} / node_filesystem_size_bytes{host="linode",mountpoint="/"}) > 0.8', { forM: 15, severity: 'critical', summary: 'The Linode’s / is over 80 % full: free space before SQLite writes and home uploads fail. Check `du -sh /var/lib/japharsworld-yt/*` and lower HOME_MAX_GB if the home files grew.' }),
+    // With the home cache full at HOME_MAX_GB=12, / sits at ~76 % (2026-10-27), so the old 70 % warning fired for good;
+    // 80 % warns and 88 % is critical (owner, option 1).
+    rule('eiok-linode-disk-80', 'Linode disk 80 % full', 'max(1 - node_filesystem_avail_bytes{host="linode",mountpoint="/"} / node_filesystem_size_bytes{host="linode",mountpoint="/"}) > 0.8', { forM: 15, summary: 'The Linode’s / is over 80 % full (a full home cache at HOME_MAX_GB=12 is ~76 %, so something else grew). Check `du -sh /var/lib/japharsworld-yt/*` (home sessions, SQLite) and the journal.' }),
+    rule('eiok-linode-disk-88', 'Linode disk 88 % full', 'max(1 - node_filesystem_avail_bytes{host="linode",mountpoint="/"} / node_filesystem_size_bytes{host="linode",mountpoint="/"}) > 0.88', { forM: 15, severity: 'critical', summary: 'The Linode’s / is over 88 % full (a full home cache at HOME_MAX_GB=12 is ~76 %): free space before SQLite writes and home uploads fail. Check `du -sh /var/lib/japharsworld-yt/*` and lower HOME_MAX_GB if the home files grew.' }),
     // Linode security (owner, 2026-10-26): metrics/security.js counts every minute, over the last 10 minutes. Each
     // expression is positive when it fires (the condition is > 0).
     rule('eiok-ssh-unknown-login', 'SSH login from an unknown address', 'max(eiok_ssh_accepted_10m{host="linode",source="unknown"})', { forM: 0, severity: 'critical', summary: 'SECURITY: an SSH login on the Linode from an address not in SSH_KNOWN_SOURCES. Check `journalctl -t sshd -t sshd-session` there now.' }),
@@ -544,7 +546,13 @@ async function push() {
     }
     console.log(`alert: ${r.title}`);
   }
+  // Push only creates and updates by uid, so a rule renamed away would stay in Grafana and keep firing.
+  for (const uid of RETIRED_RULES) {
+    try { await api(`/api/v1/provisioning/alert-rules/${uid}`, { method: 'DELETE' }); console.log(`alert removed: ${uid}`); } catch (err) { if (err.status !== 404) throw err; }
+  }
 }
+// Rule uids no longer defined (2026-10-27: the 70 % Linode disk warning became 80 %, the 80 % critical 88 %).
+export const RETIRED_RULES = ['eiok-linode-disk-70'];
 
 const cmd = process.argv[2];
 if (cmd === 'build') {

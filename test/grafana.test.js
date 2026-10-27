@@ -39,6 +39,14 @@ test('alert rules: critical ones go to the critical contact point when it is set
     assert.equal(split[uid], 'Everything is OK Discord critical', uid);
   }
   assert.equal(split['eiok-linode-disk-70'], 'Everything is OK Discord');
+  // The owner's answer (#246): the mass outage stays critical (ping, triage) on the usual channel; the domain warning.
+  assert.equal(split['eiok-channels-mass-down'], 'Everything is OK Discord');
+  const sev = Object.fromEntries(alertRules('ds').map((r) => [r.uid, r.labels.severity]));
+  assert.equal(sev['eiok-channels-mass-down'], 'critical');
+  assert.equal(sev['eiok-domain-expiry-urgent'], 'warning');
+  assert.equal(split['eiok-domain-expiry-urgent'], 'Everything is OK Discord');
+  assert.equal(sev['eiok-domain-expiry-critical'], 'critical');
+  assert.equal(split['eiok-domain-expiry-critical'], 'Everything is OK Discord critical', 'the last 48 hours: the critical channel');
   assert.deepEqual(new Set(Object.values(to())), new Set(['Everything is OK Discord']), 'unset: one channel, as before');
   assert.equal(contactPoint('https://hook', '123456789012', 'Everything is OK Discord critical').name, 'Everything is OK Discord critical');
 });

@@ -176,6 +176,12 @@ class Tests(Base):
                 real_send(self.con, "Stream down: x", "b", "urgent")
                 real_send(self.con, "Channels back", "b", "good", critical=True)
         self.assertEqual(urls, ["https://usual", "https://critical", "https://usual", "https://critical"])
+
+    def test_mass_outage_stays_on_the_usual_channel(self):
+        import inspect
+        src = inspect.getsource(core.outage_watch)
+        self.assertIn("mention=True, critical=False)", src)
+        self.assertNotIn("critical=True", src)
     def test_api_warnings_get_an_all_clear_once_the_api_answers(self):
         core.statuses(self.con, self.api, ["CAMCAMCAM01"])
         self.assertEqual(self.alerts, [])  # nothing was wrong: no all-clear

@@ -391,6 +391,60 @@
   },
   "labels": {
    "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "7 - min by (source) (eiok_poll{env!=\"staging\",source=~\"domain:.*\",metric=\"expires\"} - time()) / 86400",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-domain-expiry-critical",
+  "title": "Domain expires within 48 hours",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "60m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "CRITICAL: {{ $labels.source }} expires within 48 hours. Renew it at the registrar now (Cloudflare for eiok.cc): when it lapses, the public world breaks."
+  },
+  "labels": {
+   "project": "everything-is-ok",
    "severity": "critical"
   },
   "notification_settings": {
@@ -406,7 +460,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "7 - min by (source) (eiok_poll{env!=\"staging\",source=~\"domain:.*\",metric=\"expires\"} - time()) / 86400",
+     "expr": "2 - min by (source) (eiok_poll{env!=\"staging\",source=~\"domain:.*\",metric=\"expires\"} - time()) / 86400",
      "instant": true
     }
    },
@@ -610,7 +664,7 @@
    "severity": "critical"
   },
   "notification_settings": {
-   "receiver": "Everything is OK Discord critical"
+   "receiver": "Everything is OK Discord"
   },
   "data": [
    {

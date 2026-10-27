@@ -111,11 +111,17 @@ test('tonight: heat shows as that many flames, and join languages as squares col
   assert.equal(heat.targets[0].range, true);
   assert.equal(heat.options.graphMode, 'area');
   assert.equal(heat.fieldConfig.defaults.mappings[0].options[4].text, '🔥🔥🔥🔥');
-  const sq = d.panels.find((p) => p.title === 'Here lately');
-  assert.match(sq.targets[0].expr, /metric="join_lang"\}\[2h\]\)\)\) > 0$/, 'joins in the last 2 h; no row without joins');
-  assert.equal(sq.targets[0].legendFormat, '{{key}}');
-  assert.equal(sq.options.textMode, 'name');
-  assert.deepEqual(sq.fieldConfig.defaults.thresholds.steps.map((x) => [x.color, x.value]), [['#414868', null], ['#7aa2f7', 2], ['#bb9af7', 4]]);
-  assert.match(sq.description, /arrivals, not who is still here/);
+  // A fixed grid of all 16 languages (Grafana stretches a lone tile), dark when none, lit by count.
+  for (const [title, metric] of [['Here lately', 'join_lang'], ['Search languages', 'search_lang']]) {
+    const sq = d.panels.find((p) => p.title === title);
+    assert.equal(sq.targets.length, 16, title);
+    assert.deepEqual(sq.targets.map((x) => x.legendFormat).slice(0, 3), ['en', 'fr', 'es']);
+    for (const x of sq.targets) assert.ok(x.expr.includes(`metric="${metric}",key="${x.legendFormat}"}[2h]`) && x.expr.endsWith('or vector(0)'), x.expr);
+    assert.equal(sq.options.textMode, 'name');
+    assert.equal(sq.options.colorMode, 'background_solid');
+    assert.deepEqual(sq.fieldConfig.defaults.thresholds.steps.map((x) => [x.color, x.value]), [['#24283b', null], ['#414868', 1], ['#7aa2f7', 2], ['#bb9af7', 4]]);
+  }
+  assert.match(d.panels.find((p) => p.title === 'Here lately').description, /arrivals, not who is still here/);
+  assert.equal(heat.options.text.valueSize, 64, 'the flames are the biggest thing in the tile');
   assert.ok(d.panels.some((p) => p.title === 'Search languages'));
 });

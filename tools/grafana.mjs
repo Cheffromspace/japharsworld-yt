@@ -57,10 +57,10 @@ const target = (expr, legendFormat = '', extra = {}) => ({ refId: String.fromCha
 const targets = (list) => list.map(([e, l, t], i) => target(e, l, { i, t }));
 
 // expr: one expression, or a list of [expr, legend] shown side by side with their names.
-function stat(title, expr, { unit = 'short', w = 4, thresholds, decimals, mappings, description } = {}) {
+function stat(title, expr, { unit = 'short', w = 4, h = 4, thresholds, decimals, mappings, description } = {}) {
   const list = Array.isArray(expr) ? expr.map(([e, l]) => [e, l, { instant: true }]) : [[expr, '', { instant: true }]];
   return {
-    type: 'stat', id: ++id, title, description, datasource: DS, gridPos: place(w, 4), targets: targets(list),
+    type: 'stat', id: ++id, title, description, datasource: DS, gridPos: place(w, h), targets: targets(list),
     options: { reduceOptions: { calcs: ['lastNotNull'] }, colorMode: 'background', graphMode: 'none', textMode: Array.isArray(expr) ? 'value_and_name' : 'value' },
     fieldConfig: { defaults: { unit, decimals, mappings: mappings ?? [], thresholds: { mode: 'absolute', steps: thresholds ?? [{ color: 'blue', value: null }] } }, overrides: [] },
   };
@@ -280,7 +280,7 @@ export function dashboard() {
 // "Everything is OK · Tonight" (world #248, owner 2026-10-26: "how cozy the current vibe is and who and what people are
 // doing"): a separate, friendly board from aggregates the service already keeps (claude/metrics.md), counts only. Tokyo
 // Night accents, no red; big tiles first. Grafana's own theme sets the page ground, so the tiles carry the colours.
-const NIGHT = { blue: '#7aa2f7', purple: '#bb9af7', green: '#9ece6a', dim: '#414868' };
+const NIGHT = { ground: '#24283b', blue: '#7aa2f7', purple: '#bb9af7', green: '#9ece6a', dim: '#414868' };
 const OWN_TESTS = 'Includes the owner\'s own testing: the TEST world uses the same service and these counts can\'t tell them apart (most of 10-26\'s Channels plays were testing).';
 const inRange = (metric, key) => `sum(increase(eiok_events_total{metric="${metric}"${key == null ? '' : `,key="${key}"`}}[$__range])) or vector(0)`;
 const occ = (m) => `max(eiok_poll{source="world:prod",metric="${m}"})`;
@@ -293,9 +293,16 @@ function bars(title, list, { w = 8, h = 7, description } = {}) {
     fieldConfig: { defaults: { unit: 'short', decimals: 0, min: 0, color: { mode: 'continuous-BlPu' }, thresholds: { mode: 'absolute', steps: [{ color: NIGHT.blue, value: null }] } }, overrides: [] },
   };
 }
-// The same, one bar per label value (languages).
-function barsBy(title, metric, { w = 8, h = 7, description } = {}) {
-  return bars(title, [[`sum by (key) (increase(eiok_events_total{metric="${metric}"}[$__range])) > 0`, '{{key}}']], { w, h, description });
+// One square per VRChat client language (src/query.js LANGS), always all 16: Grafana 13 stretches stat and bar gauge
+// tiles to fill the panel (minVizWidth/minVizHeight and the bar gauge's manual sizing only set minimums; one "en" filled
+// the whole panel, 2026-10-27), so a fixed grid keeps them one size. Dark when the language had none in the last 2 h,
+// lit by count as people arrive (#248).
+const LANG_CODES = ['en', 'fr', 'es', 'it', 'ko', 'de', 'ja', 'pl', 'ru', 'pt-BR', 'zh-CN', 'zh-HK', 'he', 'tok', 'uk', 'th'];
+function squares(title, metric, { w = 12, h = 6, description } = {}) {
+  const p = stat(title, LANG_CODES.map((l) => [`sum(round(increase(eiok_events_total{metric="${metric}",key="${l}"}[2h]))) or vector(0)`, l]), { w, h, decimals: 0, description,
+    thresholds: [{ color: NIGHT.ground, value: null }, { color: NIGHT.dim, value: 1 }, { color: NIGHT.blue, value: 2 }, { color: NIGHT.purple, value: 4 }] });
+  Object.assign(p.options, { textMode: 'name', colorMode: 'background_solid', orientation: 'auto', wideLayout: false, justifyMode: 'center' });
+  return p;
 }
 const tile = (color) => [{ color, value: null }];
 // The hour in Chicago, in PromQL (which only knows UTC). US summer time runs from the second Sunday of March to the first
@@ -316,43 +323,36 @@ export function tonight() {
       { type: 'range', options: { from: 4, to: 1e6, result: { text: 'lively ✨', color: NIGHT.green } } }] }));
   p.push(stat('People here', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 5, thresholds: tile(NIGHT.blue),
     description: 'Production world occupants by instance type (VRChat\'s counts, polled every ~15 min).' }));
-  p.push(stat('Rooms', [[occ('instances'), 'instances'], ['count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)', 'tablets in use, last hour']], { w: 5, thresholds: tile(NIGHT.purple),
+  p.push(stat('Rooms', [[occ('instances'), 'instances'], ['count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)', 'tablets in use, last hour']], { w: 4, thresholds: tile(NIGHT.purple),
     description: `Instances of the production world (VRChat), and the tablet shards that made any request in the last hour (hourly rows). ${OWN_TESTS}` }));
   p.push(stat('Warmth, this range', [[`${occ('visits')} - min(min_over_time(eiok_poll{source="world:prod",metric="visits"}[$__range]))`, 'new visits'],
-    [`${occ('favorites')} - min(min_over_time(eiok_poll{source="world:prod",metric="favorites"}[$__range]))`, 'new favorites']], { w: 5, decimals: 0, thresholds: tile(NIGHT.green),
+    [`${occ('favorites')} - min(min_over_time(eiok_poll{source="world:prod",metric="favorites"}[$__range]))`, 'new favorites']], { w: 4, decimals: 0, thresholds: tile(NIGHT.green),
     description: 'Growth of the production world\'s visit and favorite totals over the selected time range (VRChat\'s public numbers; unfavorites net out).' }));
 
   // VRChat's world heat (0–6 or so, its trending flames), as that many 🔥, with its line over the range.
-  const heat = stat('Heat', occ('heat'), { w: 4, decimals: 0, thresholds: tile(NIGHT.purple),
+  const heat = stat('Heat', occ('heat'), { w: 6, decimals: 0, thresholds: tile(NIGHT.purple),
     description: 'VRChat\'s heat for the production world (the flames on its world page), polled every ~15 min, and how it moved over the range.',
     mappings: [{ type: 'value', options: Object.fromEntries(Array.from({ length: 11 }, (_, n) => [n, { text: n ? '🔥'.repeat(n) : 'no flames yet' }])) }] });
   Object.assign(heat.targets[0], { instant: false, range: true });
-  Object.assign(heat.options, { graphMode: 'area', colorMode: 'none' });   // the flames on the panel ground, a purple line
+  // The flames on the panel ground, as big as the tile takes (the biggest thing in it, owner #248), a purple line.
+  Object.assign(heat.options, { graphMode: 'area', colorMode: 'none', justifyMode: 'center', text: { valueSize: 64 } });
   heat.fieldConfig.defaults.color = { mode: 'fixed', fixedColor: NIGHT.purple };
   p.push(heat);
 
   p.push(row('What\'s on'));
   p.push(bars('Plays by length', [[inRange('play_length', 'lt10m'), 'under 10 min'], [inRange('play_length', 'lt1h'), '10 min – 1 h'], [inRange('play_length', 'lt3h'), '1–3 h'],
-    [inRange('play_length', 'longer'), '3 h and longer (sleep length)'], [inRange('play_length', 'live'), 'live']], { description: `Search videos played, once per room, by length, over the time range. ${OWN_TESTS}` }));
-  p.push(bars('Channels and searches', [[inRange('channel', 'redirect'), 'Channels tuned in'], [inRange('search', ''), 'searches'], [inRange('play', ''), 'search videos played']],
-    { description: `Channels: a slot opened from the Channels tab. Searches with a query, and videos played once per room, over the time range. ${OWN_TESTS}` }));
+    [inRange('play_length', 'longer'), '3 h+ (sleep)'], [inRange('play_length', 'live'), 'live']], { w: 6, description: `Search videos played, once per room, by length, over the time range. ${OWN_TESTS}` }));
+  p.push(bars('Channels and searches', [[inRange('channel', 'redirect'), 'Channels'], [inRange('search', ''), 'searches'], [inRange('play', ''), 'plays']],
+    { w: 6, description: `Channels: a slot opened from the Channels tab. Searches with a query, and videos played once per room, over the time range. ${OWN_TESTS}` }));
   p.push(bars('Captions and quality', [[inRange('cc_list', ''), 'captions shown'], [inRange('cc_track', ''), 'tracks picked'], [inRange('quality_pick', '1080p'), '1080p picked'], [inRange('quality_pick', '720p'), '720p picked']],
-    { description: `"Show captions" list loads and tracks picked on the tablet, and rooms that picked a playback quality, over the time range. ${OWN_TESTS}` }));
+    { w: 6, description: `"Show captions" list loads and tracks picked on the tablet, and rooms that picked a playback quality, over the time range. ${OWN_TESTS}` }));
 
-  p.push(row('Who, broadly'));
-  // One square per language with joins in the last 2 h: it appears as people of that language arrive and drops out two
-  // hours later (#248). Joins, not presence: nobody's leaving is known.
-  const langs = stat('Here lately', 'sum by (key) (round(increase(eiok_events_total{metric="join_lang"}[2h]))) > 0', { w: 12, decimals: 0,
-    thresholds: [{ color: NIGHT.dim, value: null }, { color: NIGHT.blue, value: 2 }, { color: NIGHT.purple, value: 4 }],
-    description: 'One square per VRChat client language with joins in the last 2 hours (whatever the time range), from visitors who allow untrusted URLs: the bare search address the world loads once after join. It counts arrivals, not who is still here, so a square stays for 2 h after its last join. 1 join dark, 2–3 blue, 4 or more purple.' });
-  langs.targets[0].legendFormat = '{{key}}';
-  Object.assign(langs.options, { textMode: 'name', orientation: 'vertical', wideLayout: false, text: { titleSize: 26 } });
-  langs.fieldConfig.defaults.noValue = 'no joins in 2 h 🌙';
-  langs.gridPos = { ...langs.gridPos, h: 7 };
-  p.push(langs);
-  p.push(barsBy('Search languages', 'search_lang', { w: 6, description: `VRChat client language of searches with a query, over the time range. ${OWN_TESTS}` }));
-  p.push(bars('Quest and PC', [[inRange('play_platform', 'pc'), 'PC plays'], [inRange('play_platform', 'android'), 'Quest (Android) plays'], [inRange('join', ''), 'joins with untrusted URLs on']],
+  p.push(bars('Quest and PC', [[inRange('play_platform', 'pc'), 'PC'], [inRange('play_platform', 'android'), 'Quest'], [inRange('join', ''), 'joins']],
     { w: 6, description: `Plays by player platform, once per room and platform, and joins that loaded the search address (untrusted URLs allowed), over the time range. ${OWN_TESTS}` }));
+  p.push(row('Who, broadly'));
+  // Joins, not presence: a square lights as people of that language arrive and goes dark 2 h after the last one.
+  p.push(squares('Here lately', 'join_lang', { w: 12, h: 7, description: 'All 16 VRChat client languages; a square lights up when that language had joins in the last 2 hours (whatever the time range), from visitors who allow untrusted URLs: the bare search address the world loads once after join. It counts arrivals, not who is still here, so a square stays lit for 2 h after its last join. Dark: none; 1 join grey; 2–3 blue; 4 or more purple.' }));
+  p.push(squares('Search languages', 'search_lang', { w: 12, h: 7, description: `The same squares for searches with a query in the last 2 hours, by VRChat client language. ${OWN_TESTS}` }));
 
   p.push(row('The night\'s shape'));
   const curve = series('Through the night (Chicago time)', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 18, h: 9, stack: true, min: 0, decimals: 0,

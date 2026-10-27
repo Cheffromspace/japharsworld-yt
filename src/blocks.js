@@ -197,13 +197,14 @@ export function timedChunks(cues, code) {
   return { chunks, words: words.length && real >= words.length / 2 ? 'real' : 'estimated' };
 }
 
-// What the world gets: the same chunks, with the offsets of an estimated track left empty.
-export function chunksFromCues(cues, code) {
+// What the world gets. With realWordsOnly (CAPTION_REAL_WORDS_ONLY=on) an estimated track's offsets are left empty.
+export function chunksFromCues(cues, code, { realWordsOnly = false } = {}) {
   const { chunks, words } = timedChunks(cues, code);
-  if (words === 'real') return { chunks, words };
+  if (words === 'real' || !realWordsOnly) return { chunks, words };
   // Word times spread by character count are not sent (owner, 2026-10-27: "I would prefer to not attempt to estimate
   // word timings if we don't have them"). The world highlights a block only when its chunks carry offsets, so these
   // tracks show whole lines with no spoken-word highlight. The estimates still place the line breaks at pauses.
+  // Behind a flag (world #260) so it turns on together with the world update that hides the "estimated" note.
   for (const c of chunks) c[4] = '';
   return { chunks, words: 'estimated' };
 }

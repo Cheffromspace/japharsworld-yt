@@ -52,12 +52,12 @@ function fakeTunelio() {
   };
 }
 
-async function start({ tunelio = fakeTunelio() } = {}) {
+async function start({ tunelio = fakeTunelio(), realWordsOnly = false } = {}) {
   const store = new Store({ path: ':memory:', shards: config.shards, pool: config.pool, pinHours: 24 });
   const logs = [];
   const log = (l) => logs.push(typeof l === 'string' ? JSON.parse(l) : l);
   const relay = new Relay({ token: TOKEN, pollMs: 300 });
-  const chain = new CaptionChain({ store, relay, tunelio, relayWaitMs: 1500, log });
+  const chain = new CaptionChain({ store, relay, tunelio, relayWaitMs: 1500, realWordsOnly, log });
   const red = await sharp({ create: { width: 32, height: 18, channels: 3, background: '#f7768e' } }).jpeg().toBuffer();
   const app = createApp({ config, store, captions: chain, relay, sheetOpts: { fetcher: async () => red }, log });
   const server = http.createServer(app);
@@ -96,7 +96,7 @@ test('captions come from the worker with word timing; the picker lists uploader 
   assert.equal(r.body.track, 0);
   assert.equal(r.body.source, 'manual');
   assert.equal(r.body.words, 'estimated', 'an uploader track has no word timing');
-  assert.ok(r.body.chunks.every((c) => c[4] === ''), 'so no word offsets go to the world');
+  assert.ok(r.body.chunks.every((c) => /^\d+:\d+(,\d+:\d+)*$/.test(c[4])), 'flag off: estimated word offsets go to the world');
   assert.ok(r.body.lines.length > 10 && r.body.chunks.length > 10);
   assert.equal(job.calls.length, 1, 'list and the visitor\'s track in one yt-dlp job');
   assert.deepEqual(job.calls[0].want, { lang: 'en' });
@@ -113,6 +113,21 @@ test('captions come from the worker with word timing; the picker lists uploader 
   assert.deepEqual(job.calls[1].want, { code: 'en', auto: true });
   assert.deepEqual(s.tunelio.calls, [], 'Tunelio was never asked');
   assert.deepEqual(s.logs.filter((l) => l.event === 'captions_via').map((l) => l.via), ['worker', 'worker']);
+});
+
+test('CAPTION_REAL_WORDS_ONLY: an uploader track sends no word offsets, the auto track keeps its real ones (world #260)', async (t) => {
+  const s = await start({ realWordsOnly: true });
+  t.after(s.close);
+  s.startWorker(fakeCaptionsJob());
+  await s.waitOnline();
+  s.store.markPlayed(1, 7, 'dQw4w9WgXcQ');
+  const r = await s.get('/v1/1/cc/en');
+  assert.equal(r.body.source, 'manual');
+  assert.equal(r.body.words, 'estimated', 'the field the world reads for its note is unchanged');
+  assert.ok(r.body.chunks.length > 10 && r.body.chunks.every((c) => c.length === 5 && c[4] === ''));
+  const auto = await s.get('/v1/1/cc/5');
+  assert.equal(auto.body.words, 'real');
+  assert.ok(auto.body.chunks.every((c) => /^\d+:\d+(,\d+:\d+)*$/.test(c[4])));
 });
 
 test('a language the video lacks: no_track_in_language, and the list still shows', async (t) => {

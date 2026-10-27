@@ -658,6 +658,37 @@ test('ticket → home: with HOME_ANDROID_GROWING a .m3u8 ticket (Quest) keeps th
   assert.doesNotMatch((await off.play(QUEST)).headers.get('location') ?? '', /\/home\//);
 });
 
+test('ticket → home: with HOME_ANDROID_GROWING a PC leaving for Tunelio keeps the session a Quest is on growing (world #250, prod 2026-10-27)', async (t) => {
+  const { Adaptive } = await import('../src/adaptive.js');
+  const job = { id: 'aaaaaaaaaaa', quality: '1080p', state: 'ready', url: 'https://tunelio.dev/t?id=x' };
+  const playback = { jobs: new Map(), peek: () => job, status: () => ({ state: 'ready' }), start() {},
+    async location() { return { location: job.url, via: 'tunelio', ready: true }; } };
+  const adaptive = new Adaptive({ playback, base: 'http://pub/hls' });
+  adaptive.pacer = { check: () => ({ ok: true }) };
+  const lines = [];
+  const app = await homeApp(t, { playback, adaptive, tunelio: { enabled: true }, log: (l) => lines.push(typeof l === 'string' ? JSON.parse(l) : l),
+    config: { homeLongMinutes: 5, homeAndroid: true, homeAndroidGrowing: true } });
+  const PC = 'NSPlayer/12.00.26100 WMFSDK/12.00';
+  const loc = (await app.play(QUEST)).headers.get('location');
+  assert.match(loc, /\/home\/[a-f0-9]{18}\/index\.m3u8$/);
+  assert.equal((await app.play(PC, '')).headers.get('location'), job.url, 'the PC gets Tunelio');
+  assert.ok(lines.some((e) => e.event === 'home_uneven' && e.kept), 'the video is remembered as uneven');
+  assert.ok(!lines.some((e) => e.event === 'home_failed'), 'the session is not given up');
+  // The worker's next segment is still taken (it got 410 before), and the Quest's playlist and segments still answer.
+  const put = await fetch(`${app.url}/relay/media/${app.jobs[0].token}/seg1.ts`, { method: 'PUT', headers: { authorization: `Bearer ${TOKEN}` }, body: 'ts1' });
+  assert.ok(put.ok, `segment upload answered ${put.status}`);
+  const path = loc.replace('http://pub', '');
+  assert.equal((await fetch(app.url + path)).status, 200);
+  assert.equal((await fetch(app.url + path.replace('index.m3u8', 'seg1.ts'))).status, 200);
+  const tablet = await (await fetch(`${app.url}/v1/0/${app.n}.m3u8`, { headers: { 'user-agent': 'UnityPlayer/2022.3 (UnityWebRequest/1.0)' } })).json();
+  assert.equal(tablet.state, 'ready');
+  assert.equal(tablet.plan, 'home', 'a Quest joining later still gets the session');
+  // Later PC plays keep going to Tunelio, and nothing is built twice.
+  assert.equal((await app.play(PC, '')).headers.get('location'), job.url);
+  assert.equal(app.jobs.length, 1);
+  assert.equal(lines.filter((e) => e.event === 'home_uneven').length, 1, 'marked once');
+});
+
 test('home: PRECISE=YES only while the playlist grows, and only with startPrecise', async (t) => {
   const home = new Home({ relay: fakeRelay(), dir: tmp(t), base: 'https://yt/home', enabled: true, startPrecise: true });
   const s = home.start({ id: 'aaaaaaaaaaa', seconds: 600 }, '720p');

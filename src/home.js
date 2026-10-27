@@ -134,6 +134,17 @@ export class Home {
     this.log({ event: 'home_failed', id: s.id, quality: s.quality, reason, ms: s.endedMs - s.startedMs });
     this.#wake(s);
   }
+  // The same memory without ending the session: with HOME_ANDROID_GROWING a Quest may be on the growing playlist when a
+  // PC player of the video leaves for Tunelio (src/server.js leaveHome), so the session keeps going for it (world #250,
+  // 2026-10-27: three plays given up that way within 21 minutes on prod; the worker's next upload got 410 and the
+  // Quest froze at the last segment it had, 45 s of seg1 404s the last time).
+  markUneven(s) {
+    if (this.isUneven(s)) return;
+    this.uneven.set(s.id, this.now() + this.keepHours * 3600_000);
+    this.#saveUneven();
+    this.onEvent('uneven');
+    this.log({ event: 'home_uneven', id: s.id, quality: s.quality, kept: true, ms: this.now() - s.startedMs });
+  }
   isUneven(data) {
     const until = this.uneven.get(data.id);
     if (until && until < this.now()) { this.uneven.delete(data.id); this.#saveUneven(); }

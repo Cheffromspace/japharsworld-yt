@@ -15,7 +15,7 @@ const FIELDS = new Set(['at', 'event', 'via', 'reason', 'client', 'held', 'quali
   'status', 'code', 'message', 'format', 'createMs', 'startMs', 'playlistMs', 'ok', 'warm', 'step', 'error', 'skipped',
   'route', 'ms', 'results', 'failed', 'worker', 'from', 'to', 'kind', 'lang', 'text', 'units', 'pair',
   'cached', 'rungs', 'mode', 'why', 'predicted', 'lowerMb', 'lowerPredicted', 'allowance', 'spent', 'file', 'ended', 'eta',
-  'qLen', 'pad', 'arrow', 'before', 'prompt', 'after', 'len', 'chars', 'control', 'device', 'ses', 'seg', 'found', 'range']); // play_plan: the plan and why (2026-10-23); search_shape: no search text (#143, 2026-10-24)
+  'qLen', 'attempt', 'pad', 'arrow', 'before', 'prompt', 'after', 'len', 'chars', 'control', 'device', 'ses', 'seg', 'found', 'range']); // play_plan: the plan and why (2026-10-23); search_shape: no search text (#143, 2026-10-24)
 
 // An 11-character YouTube-ID-shaped token with a digit, "-", "_" or an inner capital (so ordinary words such as
 // "unavailable" or "Information" stay), and URL query strings (v=, sig=, tokens).

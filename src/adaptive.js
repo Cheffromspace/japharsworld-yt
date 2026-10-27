@@ -32,7 +32,7 @@
 //
 // Every link we hand out is absolute: a player that reached a playlist through the ticket's redirect resolves relative
 // links against the ticket URL (2026-10-22: "<token>/720p.m3u8" and Tunelio's "tunnel?id=…" both became /v1/3/… 404s
-// and AVPro failed with "Loading failed"). The same goes for a plain HLS build (videos over 3 hours): the ticket
+// and AVPro failed with "Loading failed"). The same goes for a plain HLS build (videos over 12 hours): the ticket
 // redirects to our copy of its playlist, `single()`, not to Tunelio's.
 import { randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';

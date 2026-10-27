@@ -7,6 +7,29 @@ the hourly probe 2026-10-22) and `metrics.db`. All times UTC, with Chicago time 
 example video IDs are from our own speed probe, which picks public videos from generic searches ("documentary",
 "lecture", …). None of them is a visitor's play, and nothing here identifies a visitor.
 
+## Tunelio's answer (2026-10-25 15:08 UTC)
+
+Tunelio engineering's reply, forwarded by the owner, point by point against the questions in the draft below (their
+claims; the plan for using them is in the world repo's `docs/service/tunelio-plan.md`):
+
+1. Progressive mp4 used to be built whole before the first byte. Since **2026-10-25 07:38 UTC** a file is served as
+   soon as its layout is known: 1.6–4.5 GB starts in about 17–25 s, smaller files in a few seconds. They also added
+   capacity. There were no maintenance windows.
+2. No status page.
+3. The 503 at ~115 s is their wait for the first bytes, and the progressive build carries on. The 524 at ~125 s is
+   their proxy's timeout. An HLS playlist returns only after the whole build, and a cut-off HLS build is not kept. HLS
+   is being reworked; until then, **prefer progressive links for long videos**. On their side the three 62.9 s
+   requests ended with 200 after 38–61 s.
+4. Readiness: on a progressive link `Range: bytes=0-0` answers once the file can stream, with the exact size in
+   `Content-Range`. HLS has no such check yet.
+5. A dedicated setup costs more (not needed).
+6. Retrying the same link is free and joins the build already running. A new `/create` costs 10 credits again; only
+   an HTTP 400 is refunded.
+
+What we did with it: 2026-10-27, long and large files stay progressive (`TUNELIO_PROGRESSIVE_MAX_MINUTES` 180 → 720,
+`TUNELIO_PROGRESSIVE_MAX_MB` 1800 → 6000) and a progressive 503 is asked again on the same link, up to twice, never with
+a new `/create` (claude/play-latency.md, "Long videos stay progressive").
+
 ## Evidence summary
 
 **What we call.** `GET /create?url=&quality=` (360p/720p/1080p, progressive mp4 or HLS), then the player (or our

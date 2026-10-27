@@ -67,12 +67,15 @@ export const config = {
   publicUrl: (process.env.PUBLIC_URL ?? 'https://yt.japharsworld.com').replace(/\/$/, ''),
   // Build time follows file size (~17 ms per MB, 2026-10-19). A 1080p file above TUNELIO_MAX_MB is made again at
   // TUNELIO_LOWER_QUALITY (10 more credits, about half the wait); a file above TUNELIO_PROGRESSIVE_MAX_MB, or a video
-  // longer than TUNELIO_PROGRESSIVE_MAX_MINUTES, is served as HLS instead of a progressive mp4 (which Tunelio builds
-  // whole first and refuses or times out on when very large).
+  // longer than TUNELIO_PROGRESSIVE_MAX_MINUTES, is served as HLS instead of a progressive mp4. Until 2026-10-27 that
+  // was 1800 MB / 180 min, because Tunelio built a progressive file whole first. Since its fix of 2026-10-25 07:38 UTC
+  // a progressive file streams once its layout is known (Tunelio: 1.6–4.5 GB start in 17–25 s), while an HLS playlist
+  // still answers only after the whole build and a build cut off at ~125 s (524) is thrown away: both long-video
+  // build failures of 10-26/27 were HLS (1 h, and 3.3 h / 3.8 GB at 720p), so long and large files stay progressive.
   tunelioLowerQuality: process.env.TUNELIO_LOWER_QUALITY ?? '720p',
   tunelioMaxMb: int('TUNELIO_MAX_MB', 1500),
-  progressiveMaxMb: int('TUNELIO_PROGRESSIVE_MAX_MB', 1800),
-  progressiveMaxSeconds: int('TUNELIO_PROGRESSIVE_MAX_MINUTES', 180) * 60,
+  progressiveMaxMb: int('TUNELIO_PROGRESSIVE_MAX_MB', 6000),
+  progressiveMaxSeconds: int('TUNELIO_PROGRESSIVE_MAX_MINUTES', 720) * 60,
   lowCredits: int('TUNELIO_LOW_CREDITS', 5000),
   // How long a played ticket may keep VRChat's resolver (yt-dlp, 20 s socket timeout) waiting for a Tunelio build
   // before answering it with a quick "not a video" page so VRChat hands the URL to AVPro, which is then held until the

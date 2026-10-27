@@ -36,6 +36,7 @@ test('auto track: every word keeps YouTube\'s timing; chunks are readable lines'
   const { chunks, words: quality } = chunksFromCues(cues, 'en');
   assert.equal(quality, 'real');
   checkChunks(chunks, 42);
+  assert.deepEqual(chunksFromCues(cues, 'en', { realWordsOnly: true }).chunks, chunks, 'real word times are always sent');
   // A line's word count matches its offsets.
   for (const [, , text, , offsets] of chunks) assert.equal(offsets.split(',').length, text.split(' ').length);
   // Nothing is lost or repeated: the words read in order.
@@ -62,8 +63,13 @@ test('uploader track: words are spread by character weight, lines match the old 
   assert.deepEqual(linesFromCues(cues), parseJson3(raw), 'the lines field stays what the world has always read');
   const { chunks, words } = chunksFromCues(cues, 'en');
   assert.equal(words, 'estimated');
-  assert.ok(chunks.every((c) => c[4] === ''), 'estimated word times are not sent');
+  assert.ok(chunks.every((c) => c[4] !== ''), 'flag off: estimated word times are sent');
   checkChunks(chunks, 42);
+  const only = chunksFromCues(cues, 'en', { realWordsOnly: true });
+  assert.equal(only.words, 'estimated');
+  assert.deepEqual(only.chunks.map((c) => c.slice(0, 4)), chunks.map((c) => c.slice(0, 4)), 'the same lines');
+  assert.ok(only.chunks.every((c) => c[4] === ''), 'CAPTION_REAL_WORDS_ONLY: estimated word times are not sent');
+  checkChunks(only.chunks, 42);
   // Word times inside a cue rise monotonically and stay within it.
   const ws = wordsFromCues(cues, layoutFor('en'));
   for (let i = 1; i < ws.length; i++) assert.ok(ws[i].t >= ws[i - 1].t);
@@ -72,7 +78,7 @@ test('uploader track: words are spread by character weight, lines match the old 
 test('Japanese auto track: one segment per sentence, chunked by character into 16-wide lines', () => {
   const cues = cuesFromJson3(fixture('W_Jnd53UB4U.ja-orig.json3'));
   assert.deepEqual(layoutFor('ja'), { maxChars: 16, units: 'chars', join: '' });
-  const { chunks, words } = chunksFromCues(cues, 'ja');
+  const { chunks, words } = chunksFromCues(cues, 'ja', { realWordsOnly: true });
   assert.equal(words, 'estimated');
   assert.ok(chunks.length > 50);
   for (const [, , text, , offsets] of chunks) {

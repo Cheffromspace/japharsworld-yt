@@ -186,15 +186,21 @@ function make(words, from, to, brk, join) {
   return { from, to, count: ws.length, brk, out: [sec(ws[0].t), sec(end), text, brk, offsets.join(',')] };
 }
 
-// cues of one track → { chunks, words: 'real' | 'estimated' }
-export function chunksFromCues(cues, code) {
+// cues of one track → { chunks, words: 'real' | 'estimated' }, every chunk with its word offsets, estimated or not
+export function timedChunks(cues, code) {
   const layout = layoutFor(code);
   const words = wordsFromCues(cues, layout);
   const chunks = chunkWords(words, layout);
   // Each chunk ends no later than the next one begins.
   for (let i = 0; i + 1 < chunks.length; i++) if (chunks[i][1] > chunks[i + 1][0]) chunks[i][1] = Math.max(chunks[i][0], chunks[i + 1][0]);
   const real = words.filter((w) => w.real).length;
-  if (words.length && real >= words.length / 2) return { chunks, words: 'real' };
+  return { chunks, words: words.length && real >= words.length / 2 ? 'real' : 'estimated' };
+}
+
+// What the world gets: the same chunks, with the offsets of an estimated track left empty.
+export function chunksFromCues(cues, code) {
+  const { chunks, words } = timedChunks(cues, code);
+  if (words === 'real') return { chunks, words };
   // Word times spread by character count are not sent (owner, 2026-10-27: "I would prefer to not attempt to estimate
   // word timings if we don't have them"). The world highlights a block only when its chunks carry offsets, so these
   // tracks show whole lines with no spoken-word highlight. The estimates still place the line breaks at pauses.

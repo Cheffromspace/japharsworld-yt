@@ -353,13 +353,16 @@ export function tonight() {
     [`${occ('favorites')} - min(min_over_time(eiok_poll{source="world:prod",metric="favorites"}[$__range]))`, 'new favorites']], { w: 4, decimals: 0, thresholds: tile(NIGHT.green),
     description: 'Growth of the production world\'s visit and favorite totals over the selected time range (VRChat\'s public numbers; unfavorites net out).' }));
 
-  // VRChat's world heat (its trending flames, 0–6 or so): six flame slots, lit up to the heat (Canvas can't repeat an
-  // element by value), Tokyo Night orange, the rest dim.
-  const SLOTS = 6;
-  p.push(canvas('Heat', Array.from({ length: SLOTS }, (_, k) => [`${occ('heat')} >= bool ${k + 1}`, `flame${k + 1}`]),
-    Array.from({ length: SLOTS }, (_, k) => icon(`flame${k + 1}`, 'flame', `flame${k + 1}`, [1 + k * (98 / SLOTS), 99 - (k + 1) * (98 / SLOTS), 8, 8])),
-    { w: 6, description: 'VRChat\'s heat for the production world (the flames on its world page), polled every ~15 min: one lit flame per point, up to 6.',
-      colors: Object.fromEntries(Array.from({ length: SLOTS }, (_, k) => [`flame${k + 1}`, [{ color: NIGHT.dim, value: null }, { color: NIGHT.orange, value: 1 }]])) }));
+  // VRChat's world heat (its trending flames; the owner believes 7 is the top, unconfirmed): seven flame slots, lit up to
+  // the heat (Canvas can't repeat an element by value), Tokyo Night orange, the rest dim. Above 7 the number shows
+  // beside them (transparent until then), so a higher ceiling is never hidden.
+  const SLOTS = 7, SPAN = 86;
+  p.push(canvas('Heat', [...Array.from({ length: SLOTS }, (_, k) => [`${occ('heat')} >= bool ${k + 1}`, `flame${k + 1}`]), [occ('heat'), 'heat']],
+    [...Array.from({ length: SLOTS }, (_, k) => icon(`flame${k + 1}`, 'flame', `flame${k + 1}`, [1 + k * (SPAN / SLOTS), 99 - 1 - (k + 1) * (SPAN / SLOTS), 10, 10])),
+      label('over', 'heat', 28, [SPAN + 1, 1, 10, 10])],
+    { w: 6, description: 'VRChat\'s heat for the production world (the flames on its world page), polled every ~15 min: one lit flame per point, up to 7; above 7 the number shows beside them.',
+      colors: { ...Object.fromEntries(Array.from({ length: SLOTS }, (_, k) => [`flame${k + 1}`, [{ color: NIGHT.dim, value: null }, { color: NIGHT.orange, value: 1 }]])),
+        heat: [{ color: 'transparent', value: null }, { color: NIGHT.orange, value: SLOTS + 1 }] } }));
 
   p.push(row('What\'s on'));
   p.push(bars('Plays by length', [[inRange('play_length', 'lt10m'), 'under 10 min'], [inRange('play_length', 'lt1h'), '10 min – 1 h'], [inRange('play_length', 'lt3h'), '1–3 h'],

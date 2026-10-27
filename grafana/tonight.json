@@ -651,7 +651,7 @@
    "type": "canvas",
    "id": 6,
    "title": "Heat",
-   "description": "VRChat's heat for the production world (the flames on its world page), polled every ~15 min: one lit flame per point, up to 6.",
+   "description": "VRChat's heat for the production world (the flames on its world page), polled every ~15 min: one lit flame per point, up to 7; above 7 the number shows beside them.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -722,6 +722,26 @@
      "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"heat\"}) >= bool 6",
      "legendFormat": "flame6",
      "instant": true
+    },
+    {
+     "refId": "G",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"heat\"}) >= bool 7",
+     "legendFormat": "flame7",
+     "instant": true
+    },
+    {
+     "refId": "H",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"heat\"})",
+     "legendFormat": "heat",
+     "instant": true
     }
    ],
    "options": {
@@ -756,9 +776,9 @@
        },
        "placement": {
         "left": 1,
-        "right": 82.66666666666667,
-        "top": 8,
-        "bottom": 8
+        "right": 85.71428571428571,
+        "top": 10,
+        "bottom": 10
        },
        "background": {
         "color": {
@@ -796,10 +816,10 @@
         "vertical": "scale"
        },
        "placement": {
-        "left": 17.333333333333332,
-        "right": 66.33333333333334,
-        "top": 8,
-        "bottom": 8
+        "left": 13.285714285714286,
+        "right": 73.42857142857143,
+        "top": 10,
+        "bottom": 10
        },
        "background": {
         "color": {
@@ -837,10 +857,10 @@
         "vertical": "scale"
        },
        "placement": {
-        "left": 33.666666666666664,
-        "right": 50,
-        "top": 8,
-        "bottom": 8
+        "left": 25.571428571428573,
+        "right": 61.14285714285714,
+        "top": 10,
+        "bottom": 10
        },
        "background": {
         "color": {
@@ -878,10 +898,10 @@
         "vertical": "scale"
        },
        "placement": {
-        "left": 50,
-        "right": 33.66666666666667,
-        "top": 8,
-        "bottom": 8
+        "left": 37.85714285714286,
+        "right": 48.857142857142854,
+        "top": 10,
+        "bottom": 10
        },
        "background": {
         "color": {
@@ -919,10 +939,10 @@
         "vertical": "scale"
        },
        "placement": {
-        "left": 66.33333333333333,
-        "right": 17.333333333333343,
-        "top": 8,
-        "bottom": 8
+        "left": 50.142857142857146,
+        "right": 36.57142857142857,
+        "top": 10,
+        "bottom": 10
        },
        "background": {
         "color": {
@@ -960,10 +980,90 @@
         "vertical": "scale"
        },
        "placement": {
-        "left": 82.66666666666666,
+        "left": 62.42857142857143,
+        "right": 24.285714285714278,
+        "top": 10,
+        "bottom": 10
+       },
+       "background": {
+        "color": {
+         "fixed": "transparent"
+        }
+       },
+       "border": {
+        "color": {
+         "fixed": "transparent"
+        },
+        "width": 0
+       }
+      },
+      {
+       "type": "icon",
+       "name": "flame7",
+       "config": {
+        "path": {
+         "mode": "fixed",
+         "fixed": "https://cheffromspace.github.io/japharsworld-yt/icons/flame.svg"
+        },
+        "fill": {
+         "fixed": "transparent"
+        },
+        "stroke": {
+         "width": 2,
+         "color": {
+          "field": "flame7",
+          "fixed": "transparent"
+         }
+        }
+       },
+       "constraint": {
+        "horizontal": "scale",
+        "vertical": "scale"
+       },
+       "placement": {
+        "left": 74.71428571428572,
+        "right": 12,
+        "top": 10,
+        "bottom": 10
+       },
+       "background": {
+        "color": {
+         "fixed": "transparent"
+        }
+       },
+       "border": {
+        "color": {
+         "fixed": "transparent"
+        },
+        "width": 0
+       }
+      },
+      {
+       "type": "metric-value",
+       "name": "over",
+       "config": {
+        "text": {
+         "mode": "field",
+         "field": "heat",
+         "fixed": ""
+        },
+        "color": {
+         "field": "heat",
+         "fixed": "#c0caf5"
+        },
+        "size": 28,
+        "align": "center",
+        "valign": "middle"
+       },
+       "constraint": {
+        "horizontal": "scale",
+        "vertical": "scale"
+       },
+       "placement": {
+        "left": 87,
         "right": 1,
-        "top": 8,
-        "bottom": 8
+        "top": 10,
+        "bottom": 10
        },
        "background": {
         "color": {
@@ -1177,6 +1277,66 @@
           {
            "color": "#ff9e64",
            "value": 1
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "flame7"
+      },
+      "properties": [
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#414868",
+           "value": null
+          },
+          {
+           "color": "#ff9e64",
+           "value": 1
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "heat"
+      },
+      "properties": [
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "transparent",
+           "value": null
+          },
+          {
+           "color": "#ff9e64",
+           "value": 8
           }
          ]
         }

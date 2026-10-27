@@ -108,12 +108,16 @@ test('tonight: Chicago hour follows summer and winter time (the 03:00–06:00 wi
 test('tonight: heat shows as that many flames, and join languages as squares coloured by count', () => {
   const d = tonight();
   const heat = d.panels.find((p) => p.title === 'Heat');
-  // Canvas: six flame slots, slot k lit (Tokyo Night orange) when heat >= k, dim otherwise.
+  // Canvas: seven flame slots, slot k lit (Tokyo Night orange) when heat >= k, dim otherwise; above 7, the number.
   assert.equal(heat.type, 'canvas');
-  assert.deepEqual(heat.targets.map((t) => t.expr.match(/>= bool (\d)$/)[1]), ['1', '2', '3', '4', '5', '6']);
+  assert.deepEqual(heat.targets.slice(0, 7).map((t) => t.expr.match(/>= bool (\d)$/)[1]), ['1', '2', '3', '4', '5', '6', '7']);
   assert.ok(heat.targets.every((t) => t.expr.includes('metric="heat"')));
-  const flames = heat.options.root.elements;
-  assert.equal(flames.length, 6);
+  const flames = heat.options.root.elements.filter((e) => e.type === 'icon');
+  assert.equal(flames.length, 7);
+  const over = heat.options.root.elements.find((e) => e.name === 'over');
+  assert.equal(over.config.text.field, 'heat');
+  const steps = heat.fieldConfig.overrides.find((o) => o.matcher.options === 'heat').properties[0].value.steps;
+  assert.deepEqual(steps.map((x) => [x.color, x.value]), [['transparent', null], ['#ff9e64', 8]], 'the number only above 7');
   for (const e of flames) assert.equal(e.config.path.fixed, 'https://cheffromspace.github.io/japharsworld-yt/icons/flame.svg');
   assert.deepEqual(heat.fieldConfig.overrides[0].properties[0].value.steps.map((x) => x.color), ['#414868', '#ff9e64']);
   // A fixed grid of all 16 languages (Grafana stretches a lone tile), dark when none, lit by count.

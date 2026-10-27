@@ -194,5 +194,10 @@ export function chunksFromCues(cues, code) {
   // Each chunk ends no later than the next one begins.
   for (let i = 0; i + 1 < chunks.length; i++) if (chunks[i][1] > chunks[i + 1][0]) chunks[i][1] = Math.max(chunks[i][0], chunks[i + 1][0]);
   const real = words.filter((w) => w.real).length;
-  return { chunks, words: words.length && real >= words.length / 2 ? 'real' : 'estimated' };
+  if (words.length && real >= words.length / 2) return { chunks, words: 'real' };
+  // Word times spread by character count are not sent (owner, 2026-10-27: "I would prefer to not attempt to estimate
+  // word timings if we don't have them"). The world highlights a block only when its chunks carry offsets, so these
+  // tracks show whole lines with no spoken-word highlight. The estimates still place the line breaks at pauses.
+  for (const c of chunks) c[4] = '';
+  return { chunks, words: 'estimated' };
 }

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { CHICAGO_HOUR, alertRules, contactPoint, dashboard, prodOnly, tonight } from '../tools/grafana.mjs';
 
 // Staging (#160) sends the same metrics with env="staging": every selector of every query and rule leaves them out.
@@ -103,14 +104,18 @@ test('tonight: Chicago hour follows summer and winter time (the 03:00–06:00 wi
   }
 });
 
-// #248 round 2: heat as flames with its line; one square per join language of the last 2 h.
+// #248: heat as lit flame slots; one square per language, lit by joins or searches in the last 2 h.
 test('tonight: heat shows as that many flames, and join languages as squares coloured by count', () => {
   const d = tonight();
   const heat = d.panels.find((p) => p.title === 'Heat');
-  assert.match(heat.targets[0].expr, /metric="heat"/);
-  assert.equal(heat.targets[0].range, true);
-  assert.equal(heat.options.graphMode, 'area');
-  assert.equal(heat.fieldConfig.defaults.mappings[0].options[4].text, '🔥🔥🔥🔥');
+  // Canvas: six flame slots, slot k lit (Tokyo Night orange) when heat >= k, dim otherwise.
+  assert.equal(heat.type, 'canvas');
+  assert.deepEqual(heat.targets.map((t) => t.expr.match(/>= bool (\d)$/)[1]), ['1', '2', '3', '4', '5', '6']);
+  assert.ok(heat.targets.every((t) => t.expr.includes('metric="heat"')));
+  const flames = heat.options.root.elements;
+  assert.equal(flames.length, 6);
+  for (const e of flames) assert.equal(e.config.path.fixed, 'https://cheffromspace.github.io/japharsworld-yt/icons/flame.svg');
+  assert.deepEqual(heat.fieldConfig.overrides[0].properties[0].value.steps.map((x) => x.color), ['#414868', '#ff9e64']);
   // A fixed grid of all 16 languages (Grafana stretches a lone tile), dark when none, lit by count.
   for (const [title, metric] of [['Here lately', 'join_lang'], ['Search languages', 'search_lang']]) {
     const sq = d.panels.find((p) => p.title === title);
@@ -122,6 +127,21 @@ test('tonight: heat shows as that many flames, and join languages as squares col
     assert.deepEqual(sq.fieldConfig.defaults.thresholds.steps.map((x) => [x.color, x.value]), [['#24283b', null], ['#414868', 1], ['#7aa2f7', 2], ['#bb9af7', 4]]);
   }
   assert.match(d.panels.find((p) => p.title === 'Here lately').description, /arrivals, not who is still here/);
-  assert.equal(heat.options.text.valueSize, 64, 'the flames are the biggest thing in the tile');
   assert.ok(d.panels.some((p) => p.title === 'Search languages'));
+});
+
+// Icons, not emoji (#248): the vibe, heat and stayed-past-03:00 tiles draw the Pages icons (docs/icons) in the palette.
+test('tonight: Tokyo Night line icons from Pages instead of system-coloured emoji', () => {
+  const d = tonight();
+  const vibe = d.panels.find((p) => p.title === 'The vibe');
+  assert.deepEqual(vibe.options.root.elements.filter((e) => e.type === 'icon').map((e) => e.config.path.fixed.split('/').pop()), ['moon.svg', 'cup.svg', 'sparkle.svg']);
+  const colour = (p, name) => p.fieldConfig.overrides.find((o) => o.matcher.options === name).properties[0].value.steps.at(-1).color;
+  assert.deepEqual(['quiet', 'cozy', 'lively'].map((n) => colour(vibe, n)), ['#565f89', '#e0af68', '#bb9af7']);
+  const late = d.panels.find((p) => p.title === 'Stayed past 03:00');
+  assert.equal(late.options.root.elements[0].config.path.fixed.split('/').pop(), 'zzz.svg');
+  assert.equal(colour(late, 'late'), '#7aa2f7');
+  assert.doesNotMatch(JSON.stringify(d), /\u{1F319}|☕|✨|\u{1F525}|\u{1F4A4}/u, 'no emoji left');
+  for (const f of ['moon', 'cup', 'sparkle', 'flame', 'zzz']) {
+    assert.match(readFileSync(new URL(`../docs/icons/${f}.svg`, import.meta.url), 'utf8'), /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 24 24" fill="none" stroke=/, f);
+  }
 });

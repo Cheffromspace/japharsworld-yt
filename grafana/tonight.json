@@ -41,7 +41,7 @@
    "panels": []
   },
   {
-   "type": "stat",
+   "type": "canvas",
    "id": 2,
    "title": "The vibe",
    "description": "People in the production world now (VRChat, polled every ~15 min): 0 quiet, 1–3 cozy, 4 or more lively.",
@@ -63,30 +63,235 @@
       "uid": "${ds}"
      },
      "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"occupants\"})",
-     "legendFormat": "",
+     "legendFormat": "vibe",
+     "instant": true
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"occupants\"}) == bool 0",
+     "legendFormat": "quiet",
+     "instant": true
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "(max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"occupants\"}) >= bool 1) * (max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"occupants\"}) <= bool 3)",
+     "legendFormat": "cozy",
+     "instant": true
+    },
+    {
+     "refId": "D",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"occupants\"}) >= bool 4",
+     "legendFormat": "lively",
      "instant": true
     }
    ],
    "options": {
-    "reduceOptions": {
-     "calcs": [
-      "lastNotNull"
-     ]
-    },
-    "colorMode": "background",
-    "graphMode": "none",
-    "textMode": "value"
+    "inlineEditing": false,
+    "showAdvancedTypes": true,
+    "root": {
+     "type": "frame",
+     "name": "root",
+     "elements": [
+      {
+       "type": "icon",
+       "name": "moon",
+       "config": {
+        "path": {
+         "mode": "fixed",
+         "fixed": "https://cheffromspace.github.io/japharsworld-yt/icons/moon.svg"
+        },
+        "fill": {
+         "fixed": "transparent"
+        },
+        "stroke": {
+         "width": 2,
+         "color": {
+          "field": "quiet",
+          "fixed": "transparent"
+         }
+        }
+       },
+       "constraint": {
+        "horizontal": "scale",
+        "vertical": "scale"
+       },
+       "placement": {
+        "left": 4,
+        "right": 60,
+        "top": 10,
+        "bottom": 10
+       },
+       "background": {
+        "color": {
+         "fixed": "transparent"
+        }
+       },
+       "border": {
+        "color": {
+         "fixed": "transparent"
+        },
+        "width": 0
+       }
+      },
+      {
+       "type": "icon",
+       "name": "cup",
+       "config": {
+        "path": {
+         "mode": "fixed",
+         "fixed": "https://cheffromspace.github.io/japharsworld-yt/icons/cup.svg"
+        },
+        "fill": {
+         "fixed": "transparent"
+        },
+        "stroke": {
+         "width": 2,
+         "color": {
+          "field": "cozy",
+          "fixed": "transparent"
+         }
+        }
+       },
+       "constraint": {
+        "horizontal": "scale",
+        "vertical": "scale"
+       },
+       "placement": {
+        "left": 4,
+        "right": 60,
+        "top": 10,
+        "bottom": 10
+       },
+       "background": {
+        "color": {
+         "fixed": "transparent"
+        }
+       },
+       "border": {
+        "color": {
+         "fixed": "transparent"
+        },
+        "width": 0
+       }
+      },
+      {
+       "type": "icon",
+       "name": "sparkle",
+       "config": {
+        "path": {
+         "mode": "fixed",
+         "fixed": "https://cheffromspace.github.io/japharsworld-yt/icons/sparkle.svg"
+        },
+        "fill": {
+         "fixed": "transparent"
+        },
+        "stroke": {
+         "width": 2,
+         "color": {
+          "field": "lively",
+          "fixed": "transparent"
+         }
+        }
+       },
+       "constraint": {
+        "horizontal": "scale",
+        "vertical": "scale"
+       },
+       "placement": {
+        "left": 4,
+        "right": 60,
+        "top": 10,
+        "bottom": 10
+       },
+       "background": {
+        "color": {
+         "fixed": "transparent"
+        }
+       },
+       "border": {
+        "color": {
+         "fixed": "transparent"
+        },
+        "width": 0
+       }
+      },
+      {
+       "type": "metric-value",
+       "name": "word",
+       "config": {
+        "text": {
+         "mode": "field",
+         "field": "vibe",
+         "fixed": ""
+        },
+        "color": {
+         "field": "vibe",
+         "fixed": "#c0caf5"
+        },
+        "size": 44,
+        "align": "center",
+        "valign": "middle"
+       },
+       "constraint": {
+        "horizontal": "scale",
+        "vertical": "scale"
+       },
+       "placement": {
+        "left": 40,
+        "right": 2,
+        "top": 10,
+        "bottom": 10
+       },
+       "background": {
+        "color": {
+         "fixed": "transparent"
+        }
+       },
+       "border": {
+        "color": {
+         "fixed": "transparent"
+        },
+        "width": 0
+       }
+      }
+     ],
+     "background": {
+      "color": {
+       "fixed": "transparent"
+      }
+     },
+     "border": {
+      "color": {
+       "fixed": "transparent"
+      }
+     },
+     "constraint": {
+      "horizontal": "left",
+      "vertical": "top"
+     }
+    }
    },
    "fieldConfig": {
     "defaults": {
-     "unit": "short",
+     "decimals": 0,
      "mappings": [
       {
        "type": "value",
        "options": {
         "0": {
-         "text": "quiet 🌙",
-         "color": "#414868"
+         "text": "quiet"
         }
        }
       },
@@ -96,8 +301,7 @@
         "from": 1,
         "to": 3,
         "result": {
-         "text": "cozy ☕",
-         "color": "#bb9af7"
+         "text": "cozy"
         }
        }
       },
@@ -107,8 +311,7 @@
         "from": 4,
         "to": 1000000,
         "result": {
-         "text": "lively ✨",
-         "color": "#9ece6a"
+         "text": "lively"
         }
        }
       }
@@ -117,13 +320,138 @@
       "mode": "absolute",
       "steps": [
        {
-        "color": "#414868",
+        "color": "transparent",
         "value": null
        }
       ]
      }
     },
-    "overrides": []
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "vibe"
+      },
+      "properties": [
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#565f89",
+           "value": null
+          },
+          {
+           "color": "#e0af68",
+           "value": 1
+          },
+          {
+           "color": "#bb9af7",
+           "value": 4
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "quiet"
+      },
+      "properties": [
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "transparent",
+           "value": null
+          },
+          {
+           "color": "#565f89",
+           "value": 1
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "cozy"
+      },
+      "properties": [
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "transparent",
+           "value": null
+          },
+          {
+           "color": "#e0af68",
+           "value": 1
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "lively"
+      },
+      "properties": [
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "transparent",
+           "value": null
+          },
+          {
+           "color": "#bb9af7",
+           "value": 1
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       }
+      ]
+     }
+    ]
    }
   },
   {
@@ -320,10 +648,10 @@
    }
   },
   {
-   "type": "stat",
+   "type": "canvas",
    "id": 6,
    "title": "Heat",
-   "description": "VRChat's heat for the production world (the flames on its world page), polled every ~15 min, and how it moved over the range.",
+   "description": "VRChat's heat for the production world (the flames on its world page), polled every ~15 min: one lit flame per point, up to 6.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -341,85 +669,527 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"heat\"})",
-     "legendFormat": "",
-     "instant": false,
-     "range": true
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"heat\"}) >= bool 1",
+     "legendFormat": "flame1",
+     "instant": true
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"heat\"}) >= bool 2",
+     "legendFormat": "flame2",
+     "instant": true
+    },
+    {
+     "refId": "C",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"heat\"}) >= bool 3",
+     "legendFormat": "flame3",
+     "instant": true
+    },
+    {
+     "refId": "D",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"heat\"}) >= bool 4",
+     "legendFormat": "flame4",
+     "instant": true
+    },
+    {
+     "refId": "E",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"heat\"}) >= bool 5",
+     "legendFormat": "flame5",
+     "instant": true
+    },
+    {
+     "refId": "F",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"heat\"}) >= bool 6",
+     "legendFormat": "flame6",
+     "instant": true
     }
    ],
    "options": {
-    "reduceOptions": {
-     "calcs": [
-      "lastNotNull"
-     ]
-    },
-    "colorMode": "none",
-    "graphMode": "area",
-    "textMode": "value",
-    "justifyMode": "center",
-    "text": {
-     "valueSize": 64
+    "inlineEditing": false,
+    "showAdvancedTypes": true,
+    "root": {
+     "type": "frame",
+     "name": "root",
+     "elements": [
+      {
+       "type": "icon",
+       "name": "flame1",
+       "config": {
+        "path": {
+         "mode": "fixed",
+         "fixed": "https://cheffromspace.github.io/japharsworld-yt/icons/flame.svg"
+        },
+        "fill": {
+         "fixed": "transparent"
+        },
+        "stroke": {
+         "width": 2,
+         "color": {
+          "field": "flame1",
+          "fixed": "transparent"
+         }
+        }
+       },
+       "constraint": {
+        "horizontal": "scale",
+        "vertical": "scale"
+       },
+       "placement": {
+        "left": 1,
+        "right": 82.66666666666667,
+        "top": 8,
+        "bottom": 8
+       },
+       "background": {
+        "color": {
+         "fixed": "transparent"
+        }
+       },
+       "border": {
+        "color": {
+         "fixed": "transparent"
+        },
+        "width": 0
+       }
+      },
+      {
+       "type": "icon",
+       "name": "flame2",
+       "config": {
+        "path": {
+         "mode": "fixed",
+         "fixed": "https://cheffromspace.github.io/japharsworld-yt/icons/flame.svg"
+        },
+        "fill": {
+         "fixed": "transparent"
+        },
+        "stroke": {
+         "width": 2,
+         "color": {
+          "field": "flame2",
+          "fixed": "transparent"
+         }
+        }
+       },
+       "constraint": {
+        "horizontal": "scale",
+        "vertical": "scale"
+       },
+       "placement": {
+        "left": 17.333333333333332,
+        "right": 66.33333333333334,
+        "top": 8,
+        "bottom": 8
+       },
+       "background": {
+        "color": {
+         "fixed": "transparent"
+        }
+       },
+       "border": {
+        "color": {
+         "fixed": "transparent"
+        },
+        "width": 0
+       }
+      },
+      {
+       "type": "icon",
+       "name": "flame3",
+       "config": {
+        "path": {
+         "mode": "fixed",
+         "fixed": "https://cheffromspace.github.io/japharsworld-yt/icons/flame.svg"
+        },
+        "fill": {
+         "fixed": "transparent"
+        },
+        "stroke": {
+         "width": 2,
+         "color": {
+          "field": "flame3",
+          "fixed": "transparent"
+         }
+        }
+       },
+       "constraint": {
+        "horizontal": "scale",
+        "vertical": "scale"
+       },
+       "placement": {
+        "left": 33.666666666666664,
+        "right": 50,
+        "top": 8,
+        "bottom": 8
+       },
+       "background": {
+        "color": {
+         "fixed": "transparent"
+        }
+       },
+       "border": {
+        "color": {
+         "fixed": "transparent"
+        },
+        "width": 0
+       }
+      },
+      {
+       "type": "icon",
+       "name": "flame4",
+       "config": {
+        "path": {
+         "mode": "fixed",
+         "fixed": "https://cheffromspace.github.io/japharsworld-yt/icons/flame.svg"
+        },
+        "fill": {
+         "fixed": "transparent"
+        },
+        "stroke": {
+         "width": 2,
+         "color": {
+          "field": "flame4",
+          "fixed": "transparent"
+         }
+        }
+       },
+       "constraint": {
+        "horizontal": "scale",
+        "vertical": "scale"
+       },
+       "placement": {
+        "left": 50,
+        "right": 33.66666666666667,
+        "top": 8,
+        "bottom": 8
+       },
+       "background": {
+        "color": {
+         "fixed": "transparent"
+        }
+       },
+       "border": {
+        "color": {
+         "fixed": "transparent"
+        },
+        "width": 0
+       }
+      },
+      {
+       "type": "icon",
+       "name": "flame5",
+       "config": {
+        "path": {
+         "mode": "fixed",
+         "fixed": "https://cheffromspace.github.io/japharsworld-yt/icons/flame.svg"
+        },
+        "fill": {
+         "fixed": "transparent"
+        },
+        "stroke": {
+         "width": 2,
+         "color": {
+          "field": "flame5",
+          "fixed": "transparent"
+         }
+        }
+       },
+       "constraint": {
+        "horizontal": "scale",
+        "vertical": "scale"
+       },
+       "placement": {
+        "left": 66.33333333333333,
+        "right": 17.333333333333343,
+        "top": 8,
+        "bottom": 8
+       },
+       "background": {
+        "color": {
+         "fixed": "transparent"
+        }
+       },
+       "border": {
+        "color": {
+         "fixed": "transparent"
+        },
+        "width": 0
+       }
+      },
+      {
+       "type": "icon",
+       "name": "flame6",
+       "config": {
+        "path": {
+         "mode": "fixed",
+         "fixed": "https://cheffromspace.github.io/japharsworld-yt/icons/flame.svg"
+        },
+        "fill": {
+         "fixed": "transparent"
+        },
+        "stroke": {
+         "width": 2,
+         "color": {
+          "field": "flame6",
+          "fixed": "transparent"
+         }
+        }
+       },
+       "constraint": {
+        "horizontal": "scale",
+        "vertical": "scale"
+       },
+       "placement": {
+        "left": 82.66666666666666,
+        "right": 1,
+        "top": 8,
+        "bottom": 8
+       },
+       "background": {
+        "color": {
+         "fixed": "transparent"
+        }
+       },
+       "border": {
+        "color": {
+         "fixed": "transparent"
+        },
+        "width": 0
+       }
+      }
+     ],
+     "background": {
+      "color": {
+       "fixed": "transparent"
+      }
+     },
+     "border": {
+      "color": {
+       "fixed": "transparent"
+      }
+     },
+     "constraint": {
+      "horizontal": "left",
+      "vertical": "top"
+     }
     }
    },
    "fieldConfig": {
     "defaults": {
-     "unit": "short",
      "decimals": 0,
-     "mappings": [
-      {
-       "type": "value",
-       "options": {
-        "0": {
-         "text": "no flames yet"
-        },
-        "1": {
-         "text": "🔥"
-        },
-        "2": {
-         "text": "🔥🔥"
-        },
-        "3": {
-         "text": "🔥🔥🔥"
-        },
-        "4": {
-         "text": "🔥🔥🔥🔥"
-        },
-        "5": {
-         "text": "🔥🔥🔥🔥🔥"
-        },
-        "6": {
-         "text": "🔥🔥🔥🔥🔥🔥"
-        },
-        "7": {
-         "text": "🔥🔥🔥🔥🔥🔥🔥"
-        },
-        "8": {
-         "text": "🔥🔥🔥🔥🔥🔥🔥🔥"
-        },
-        "9": {
-         "text": "🔥🔥🔥🔥🔥🔥🔥🔥🔥"
-        },
-        "10": {
-         "text": "🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥"
-        }
-       }
-      }
-     ],
+     "mappings": [],
      "thresholds": {
       "mode": "absolute",
       "steps": [
        {
-        "color": "#bb9af7",
+        "color": "transparent",
         "value": null
        }
       ]
-     },
-     "color": {
-      "mode": "fixed",
-      "fixedColor": "#bb9af7"
      }
     },
-    "overrides": []
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "flame1"
+      },
+      "properties": [
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#414868",
+           "value": null
+          },
+          {
+           "color": "#ff9e64",
+           "value": 1
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "flame2"
+      },
+      "properties": [
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#414868",
+           "value": null
+          },
+          {
+           "color": "#ff9e64",
+           "value": 1
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "flame3"
+      },
+      "properties": [
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#414868",
+           "value": null
+          },
+          {
+           "color": "#ff9e64",
+           "value": 1
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "flame4"
+      },
+      "properties": [
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#414868",
+           "value": null
+          },
+          {
+           "color": "#ff9e64",
+           "value": 1
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "flame5"
+      },
+      "properties": [
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#414868",
+           "value": null
+          },
+          {
+           "color": "#ff9e64",
+           "value": 1
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "flame6"
+      },
+      "properties": [
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#414868",
+           "value": null
+          },
+          {
+           "color": "#ff9e64",
+           "value": 1
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       }
+      ]
+     }
+    ]
    }
   },
   {
@@ -1316,7 +2086,7 @@
    }
   },
   {
-   "type": "stat",
+   "type": "canvas",
    "id": 17,
    "title": "Stayed past 03:00",
    "description": "The most people in the world between 03:00 and 06:00 Chicago time (summer and winter time alike) in the last 24 h. Do people sleep here?",
@@ -1337,44 +2107,124 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"occupants\"}) and on() (((hour() + 18 + ((vector(1) and on() ((month() > 3 and month() < 11) or (month() == 3 and (day_of_month() - day_of_week()) >= 8) or (month() == 11 and (day_of_month() - day_of_week()) <= 0))) or vector(0))) % 24) >= 3) and on() (((hour() + 18 + ((vector(1) and on() ((month() > 3 and month() < 11) or (month() == 3 and (day_of_month() - day_of_week()) >= 8) or (month() == 11 and (day_of_month() - day_of_week()) <= 0))) or vector(0))) % 24) < 6)",
-     "legendFormat": "",
-     "instant": false,
-     "range": true,
-     "interval": "15m"
+     "expr": "max_over_time((max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"occupants\"}) and on() (((hour() + 18 + ((vector(1) and on() ((month() > 3 and month() < 11) or (month() == 3 and (day_of_month() - day_of_week()) >= 8) or (month() == 11 and (day_of_month() - day_of_week()) <= 0))) or vector(0))) % 24) >= 3) and on() (((hour() + 18 + ((vector(1) and on() ((month() > 3 and month() < 11) or (month() == 3 and (day_of_month() - day_of_week()) >= 8) or (month() == 11 and (day_of_month() - day_of_week()) <= 0))) or vector(0))) % 24) < 6))[24h:15m]) or vector(0)",
+     "legendFormat": "late",
+     "instant": true
     }
    ],
    "options": {
-    "reduceOptions": {
-     "calcs": [
-      "max"
-     ]
-    },
-    "colorMode": "background",
-    "graphMode": "none",
-    "textMode": "value"
+    "inlineEditing": false,
+    "showAdvancedTypes": true,
+    "root": {
+     "type": "frame",
+     "name": "root",
+     "elements": [
+      {
+       "type": "icon",
+       "name": "zzz",
+       "config": {
+        "path": {
+         "mode": "fixed",
+         "fixed": "https://cheffromspace.github.io/japharsworld-yt/icons/zzz.svg"
+        },
+        "fill": {
+         "fixed": "transparent"
+        },
+        "stroke": {
+         "width": 2,
+         "color": {
+          "field": "late",
+          "fixed": "transparent"
+         }
+        }
+       },
+       "constraint": {
+        "horizontal": "scale",
+        "vertical": "scale"
+       },
+       "placement": {
+        "left": 6,
+        "right": 52,
+        "top": 14,
+        "bottom": 14
+       },
+       "background": {
+        "color": {
+         "fixed": "transparent"
+        }
+       },
+       "border": {
+        "color": {
+         "fixed": "transparent"
+        },
+        "width": 0
+       }
+      },
+      {
+       "type": "metric-value",
+       "name": "count",
+       "config": {
+        "text": {
+         "mode": "field",
+         "field": "late",
+         "fixed": ""
+        },
+        "color": {
+         "field": "late",
+         "fixed": "#c0caf5"
+        },
+        "size": 64,
+        "align": "center",
+        "valign": "middle"
+       },
+       "constraint": {
+        "horizontal": "scale",
+        "vertical": "scale"
+       },
+       "placement": {
+        "left": 46,
+        "right": 4,
+        "top": 10,
+        "bottom": 10
+       },
+       "background": {
+        "color": {
+         "fixed": "transparent"
+        }
+       },
+       "border": {
+        "color": {
+         "fixed": "transparent"
+        },
+        "width": 0
+       }
+      }
+     ],
+     "background": {
+      "color": {
+       "fixed": "transparent"
+      }
+     },
+     "border": {
+      "color": {
+       "fixed": "transparent"
+      }
+     },
+     "constraint": {
+      "horizontal": "left",
+      "vertical": "top"
+     }
+    }
    },
    "fieldConfig": {
     "defaults": {
-     "unit": "short",
      "decimals": 0,
      "mappings": [
       {
        "type": "value",
        "options": {
         "0": {
-         "text": "no one 💤",
-         "color": "#414868"
-        }
-       }
-      },
-      {
-       "type": "special",
-       "options": {
-        "match": "null",
-        "result": {
-         "text": "no one 💤",
-         "color": "#414868"
+         "text": "no one"
         }
        }
       }
@@ -1383,15 +2233,45 @@
       "mode": "absolute",
       "steps": [
        {
-        "color": "#bb9af7",
+        "color": "transparent",
         "value": null
        }
       ]
      }
     },
-    "overrides": []
-   },
-   "timeFrom": "24h"
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "late"
+      },
+      "properties": [
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#414868",
+           "value": null
+          },
+          {
+           "color": "#7aa2f7",
+           "value": 1
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       }
+      ]
+     }
+    ]
+   }
   }
  ]
 }

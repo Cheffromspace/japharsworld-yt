@@ -280,7 +280,7 @@ export function dashboard() {
 // "Everything is OK · Tonight" (world #248, owner 2026-10-26: "how cozy the current vibe is and who and what people are
 // doing"): a separate, friendly board from aggregates the service already keeps (claude/metrics.md), counts only. Tokyo
 // Night accents, no red; big tiles first. Grafana's own theme sets the page ground, so the tiles carry the colours.
-const NIGHT = { ground: '#24283b', blue: '#7aa2f7', purple: '#bb9af7', green: '#9ece6a', dim: '#414868' };
+const NIGHT = { ground: '#24283b', blue: '#7aa2f7', purple: '#bb9af7', green: '#9ece6a', dim: '#414868', quiet: '#565f89', amber: '#e0af68', orange: '#ff9e64' };
 const OWN_TESTS = 'Includes the owner\'s own testing: the TEST world uses the same service and these counts can\'t tell them apart (most of 10-26\'s Channels plays were testing).';
 const inRange = (metric, key) => `sum(increase(eiok_events_total{metric="${metric}"${key == null ? '' : `,key="${key}"`}}[$__range])) or vector(0)`;
 const occ = (m) => `max(eiok_poll{source="world:prod",metric="${m}"})`;
@@ -305,6 +305,26 @@ function squares(title, metric, { w = 12, h = 6, description } = {}) {
   return p;
 }
 const tile = (color) => [{ color, value: null }];
+// Line-style icons on the service's GitHub Pages (docs/icons, CORS open), drawn by Grafana's Canvas panel and coloured
+// through their stroke: Tokyo Night instead of the system's emoji colours (owner, #248).
+const ICONS = 'https://cheffromspace.github.io/japharsworld-yt/icons/';
+const CLEAR = { color: { fixed: 'transparent' } };
+// One Canvas element; placement in percent of the tile (constraint "scale").
+const element = (type, name, config, [left, right, top, bottom]) => ({ type, name, config, constraint: { horizontal: 'scale', vertical: 'scale' },
+  placement: { left, right, top, bottom }, background: CLEAR, border: { color: { fixed: 'transparent' }, width: 0 } });
+const icon = (name, file, field, at) => element('icon', name, { path: { mode: 'fixed', fixed: `${ICONS}${file}.svg` }, fill: { fixed: 'transparent' },
+  stroke: { width: 2, color: { field, fixed: 'transparent' } } }, at);
+const label = (name, field, size, at) => element('metric-value', name, { text: { mode: 'field', field, fixed: '' }, color: { field, fixed: '#c0caf5' }, size, align: 'center', valign: 'middle' }, at);
+// A Canvas tile: list of [expr, field name] (instant), its elements, the fields' colours ({ field: steps }), mappings.
+function canvas(title, list, elements, { w = 6, h = 4, colors = {}, mappings = [], description, decimals = 0 } = {}) {
+  return {
+    type: 'canvas', id: ++id, title, description, datasource: DS, gridPos: place(w, h), targets: targets(list.map(([e, l]) => [e, l, { instant: true }])),
+    options: { inlineEditing: false, showAdvancedTypes: true, root: { type: 'frame', name: 'root', elements, background: CLEAR, border: { color: { fixed: 'transparent' } }, constraint: { horizontal: 'left', vertical: 'top' } } },
+    fieldConfig: { defaults: { decimals, mappings, thresholds: { mode: 'absolute', steps: tile('transparent') } },
+      overrides: Object.entries(colors).map(([name, steps]) => ({ matcher: { id: 'byName', options: name }, properties: [{ id: 'thresholds', value: { mode: 'absolute', steps } }, { id: 'color', value: { mode: 'thresholds' } }] })) },
+  };
+}
+const lit = (color) => [{ color: 'transparent', value: null }, { color, value: 1 }];   // a 0/1 field: hidden or this colour
 // The hour in Chicago, in PromQL (which only knows UTC). US summer time runs from the second Sunday of March to the first
 // Sunday of November (day_of_week: Sunday = 0, so day_of_month - day_of_week is the date of the latest Sunday): UTC-5
 // then, UTC-6 otherwise. It switches at 00:00 UTC of the switch day instead of 02:00 local (07:00 or 08:00 UTC), so those
@@ -317,10 +337,14 @@ export function tonight() {
   const p = [];
   p.push(row('Right now'));
   // Against the world's 6-per-room design (owner's thresholds, #248): 0 quiet, 1–3 cozy, 4 and up lively.
-  p.push(stat('The vibe', occ('occupants'), { w: 5, thresholds: tile(NIGHT.dim), description: 'People in the production world now (VRChat, polled every ~15 min): 0 quiet, 1–3 cozy, 4 or more lively.',
-    mappings: [{ type: 'value', options: { 0: { text: 'quiet 🌙', color: NIGHT.dim } } },
-      { type: 'range', options: { from: 1, to: 3, result: { text: 'cozy ☕', color: NIGHT.purple } } },
-      { type: 'range', options: { from: 4, to: 1e6, result: { text: 'lively ✨', color: NIGHT.green } } }] }));
+  // The icon for the word: Canvas can't pick an icon by value mapping (tried, 2026-10-27), so the three sit on one spot
+  // and only the matching one is lit.
+  const people = occ('occupants');
+  p.push(canvas('The vibe', [[people, 'vibe'], [`${people} == bool 0`, 'quiet'], [`(${people} >= bool 1) * (${people} <= bool 3)`, 'cozy'], [`${people} >= bool 4`, 'lively']],
+    [icon('moon', 'moon', 'quiet', [4, 60, 10, 10]), icon('cup', 'cup', 'cozy', [4, 60, 10, 10]), icon('sparkle', 'sparkle', 'lively', [4, 60, 10, 10]), label('word', 'vibe', 44, [40, 2, 10, 10])],
+    { w: 5, description: 'People in the production world now (VRChat, polled every ~15 min): 0 quiet, 1–3 cozy, 4 or more lively.',
+      colors: { vibe: [{ color: NIGHT.quiet, value: null }, { color: NIGHT.amber, value: 1 }, { color: NIGHT.purple, value: 4 }], quiet: lit(NIGHT.quiet), cozy: lit(NIGHT.amber), lively: lit(NIGHT.purple) },
+      mappings: [{ type: 'value', options: { 0: { text: 'quiet' } } }, { type: 'range', options: { from: 1, to: 3, result: { text: 'cozy' } } }, { type: 'range', options: { from: 4, to: 1e6, result: { text: 'lively' } } }] }));
   p.push(stat('People here', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 5, thresholds: tile(NIGHT.blue),
     description: 'Production world occupants by instance type (VRChat\'s counts, polled every ~15 min).' }));
   p.push(stat('Rooms', [[occ('instances'), 'instances'], ['count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)', 'tablets in use, last hour']], { w: 4, thresholds: tile(NIGHT.purple),
@@ -329,15 +353,13 @@ export function tonight() {
     [`${occ('favorites')} - min(min_over_time(eiok_poll{source="world:prod",metric="favorites"}[$__range]))`, 'new favorites']], { w: 4, decimals: 0, thresholds: tile(NIGHT.green),
     description: 'Growth of the production world\'s visit and favorite totals over the selected time range (VRChat\'s public numbers; unfavorites net out).' }));
 
-  // VRChat's world heat (0–6 or so, its trending flames), as that many 🔥, with its line over the range.
-  const heat = stat('Heat', occ('heat'), { w: 6, decimals: 0, thresholds: tile(NIGHT.purple),
-    description: 'VRChat\'s heat for the production world (the flames on its world page), polled every ~15 min, and how it moved over the range.',
-    mappings: [{ type: 'value', options: Object.fromEntries(Array.from({ length: 11 }, (_, n) => [n, { text: n ? '🔥'.repeat(n) : 'no flames yet' }])) }] });
-  Object.assign(heat.targets[0], { instant: false, range: true });
-  // The flames on the panel ground, as big as the tile takes (the biggest thing in it, owner #248), a purple line.
-  Object.assign(heat.options, { graphMode: 'area', colorMode: 'none', justifyMode: 'center', text: { valueSize: 64 } });
-  heat.fieldConfig.defaults.color = { mode: 'fixed', fixedColor: NIGHT.purple };
-  p.push(heat);
+  // VRChat's world heat (its trending flames, 0–6 or so): six flame slots, lit up to the heat (Canvas can't repeat an
+  // element by value), Tokyo Night orange, the rest dim.
+  const SLOTS = 6;
+  p.push(canvas('Heat', Array.from({ length: SLOTS }, (_, k) => [`${occ('heat')} >= bool ${k + 1}`, `flame${k + 1}`]),
+    Array.from({ length: SLOTS }, (_, k) => icon(`flame${k + 1}`, 'flame', `flame${k + 1}`, [1 + k * (98 / SLOTS), 99 - (k + 1) * (98 / SLOTS), 8, 8])),
+    { w: 6, description: 'VRChat\'s heat for the production world (the flames on its world page), polled every ~15 min: one lit flame per point, up to 6.',
+      colors: Object.fromEntries(Array.from({ length: SLOTS }, (_, k) => [`flame${k + 1}`, [{ color: NIGHT.dim, value: null }, { color: NIGHT.orange, value: 1 }]])) }));
 
   p.push(row('What\'s on'));
   p.push(bars('Plays by length', [[inRange('play_length', 'lt10m'), 'under 10 min'], [inRange('play_length', 'lt1h'), '10 min – 1 h'], [inRange('play_length', 'lt3h'), '1–3 h'],
@@ -361,14 +383,11 @@ export function tonight() {
   curve.fieldConfig.defaults.color = { mode: 'continuous-BlPu' };
   curve.fieldConfig.defaults.custom.lineInterpolation = 'smooth';
   p.push(curve);
-  const late = stat('Stayed past 03:00', `max(eiok_poll{source="world:prod",metric="occupants"}) and on() (${CHICAGO_HOUR} >= 3) and on() (${CHICAGO_HOUR} < 6)`, { w: 6, decimals: 0, thresholds: tile(NIGHT.purple),
-    description: 'The most people in the world between 03:00 and 06:00 Chicago time (summer and winter time alike) in the last 24 h. Do people sleep here?',
-    mappings: [{ type: 'value', options: { 0: { text: 'no one 💤', color: NIGHT.dim } } }, { type: 'special', options: { match: 'null', result: { text: 'no one 💤', color: NIGHT.dim } } }] });
-  Object.assign(late.targets[0], { instant: false, range: true, interval: '15m' });
-  late.options.reduceOptions = { calcs: ['max'] };
-  late.timeFrom = '24h';
-  late.gridPos = { ...late.gridPos, h: 9 };
-  p.push(late);
+  // The most people at any 15-minute step of the last 24 h whose Chicago hour was 3–5.
+  const lateExpr = `max_over_time((max(eiok_poll{source="world:prod",metric="occupants"}) and on() (${CHICAGO_HOUR} >= 3) and on() (${CHICAGO_HOUR} < 6))[24h:15m]) or vector(0)`;
+  p.push(canvas('Stayed past 03:00', [[lateExpr, 'late']], [icon('zzz', 'zzz', 'late', [6, 52, 14, 14]), label('count', 'late', 64, [46, 4, 10, 10])],
+    { w: 6, h: 9, description: 'The most people in the world between 03:00 and 06:00 Chicago time (summer and winter time alike) in the last 24 h. Do people sleep here?',
+      colors: { late: [{ color: NIGHT.dim, value: null }, { color: NIGHT.blue, value: 1 }] }, mappings: [{ type: 'value', options: { 0: { text: 'no one' } } }] }));
 
   return scoped({
     uid: TONIGHT_UID, title: 'Everything is OK · Tonight', tags: ['everything-is-ok'], timezone: 'America/Chicago', refresh: '1m',

@@ -118,7 +118,8 @@ the ops dashboard (`tonight()` in `tools/grafana.mjs`, `grafana/tonight.json`). 
 from occupancy (0 quiet, 1–3 cozy, 4+ lively), people and rooms, the range's new visits and favorites, plays by length,
 Channels vs searches, captions, languages, Quest vs PC, the night's occupancy curve and "stayed past 03:00". Existing
 aggregates only (counts, no IDs); panels from the service's counters say they include the owner's testing. Tokyo Night
-accents, no red, refresh 1 min, the last 12 h.
+accents, no red, refresh 1 min, the last 12 h. The vibe, heat and stayed-past-03:00 tiles are Canvas panels drawing
+line icons from the service's Pages (`docs/icons/*.svg`), coloured through their stroke, instead of emoji.
 
 ## Changing things
 

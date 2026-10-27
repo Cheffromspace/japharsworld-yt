@@ -326,13 +326,15 @@ test('steadyLength: equal within a frame (29.97 fps cuts print as 4.004 / 3.971 
   assert.equal(steadyLength([7, 6.72, 3, 6.96, 7, 1.04, 7, 6.4]), null);
 });
 
-test('onTime: time cuts within ~4 frames of each 4 s mark (the B-frame documentary of 2026-10-27, ±2 frames); scene cuts are not', () => {
+test('onTime: time cuts within 0.5 s of each 4 s mark (B-frame documentaries of 2026-10-27, up to 0.153 s late); scene cuts are not', () => {
   const doc = [4.004, 4.070733, 4.004, 3.970633, 3.970633, 4.037367, 4.037367, 3.937267];
   assert.equal(steadyLength(doc), null, 'a frame of tolerance on the lengths missed it');
   assert.equal(onTime(doc), true);
+  const late = [4.070733, 3.937267, 4.004, 4.004, 4.137467, 3.8712, 4.037367, 4.004]; // a cut 0.153 s late
+  assert.equal(onTime(late), true);
   assert.equal(onTime([4.004, 4.004, 3.970633, 4.004, 4.004, 4.004, 4.004, 4.004]), true);
   assert.equal(onTime(doc.slice(0, 7)), false, 'too few yet');
-  assert.equal(onTime([4, 4, 4.2, 4, 4, 4, 4, 4]), false, 'a cut 0.2 s off');
+  assert.equal(onTime([4, 4, 4.6, 4, 4, 4, 4, 4]), false, 'a cut 0.6 s off');
   assert.equal(onTime([5, 6.28, 4.32, 1.32, 3.08, 5, 6.2, 4.08]), false, 'scene cuts (the Quest test video, keyframe-cut)');
   assert.equal(onTime([7, 6.72, 3, 6.96, 7, 1.04, 7, 6.4]), false);
 });
@@ -358,6 +360,7 @@ test('mediaJob splitByTime: ffmpeg cuts on time, and the whole playlist is predi
   assert.equal(on.playlists.length, 1, 'predicted once, and it held');
   assert.match(on.playlists[0], /^#EXTM3U[\s\S]*VOD\n#EXTINF:4\.000000,\nseg0\.ts[\s\S]*seg999\.ts\n#EXT-X-ENDLIST\n$/);
   assert.ok(on.logs.includes('media_predicted') && !on.logs.includes('media_mismatch'));
+  assert.ok(on.logs.includes('media_steady'));
   const off = await run(false); // the same cuts without the flag: predicted from the median at 999 segments, so the real 1000 go up at the end
   assert.equal(off.args[off.args.indexOf('-hls_flags') + 1], 'temp_file');
   assert.match(off.playlists[0], /VOD\n#EXTINF:4\.004000,/);

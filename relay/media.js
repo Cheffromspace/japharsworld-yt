@@ -130,6 +130,19 @@ export function predictPlaylist(known, gop, duration) {
   return { text: `${lines.join('\n')}\n`, count: durations.length };
 }
 
+// The playlist cut back to the segments the server has, closed (ENDLIST): for a job that fails part way after players
+// were sent, so they end there instead of waiting on segments that will never come (a predicted playlist lists them all).
+export function closedAt(text, sent) {
+  const out = [];
+  const lines = text.split(/\r?\n/).filter((l) => l && l !== '#EXT-X-ENDLIST');
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].startsWith('#EXTINF:')) { if (!SEGMENT.test(lines[i])) out.push(lines[i]); continue; }
+    if (!sent.has(lines[i + 1])) break;
+    out.push(lines[i], lines[++i]);
+  }
+  return `${out.join('\n')}\n#EXT-X-ENDLIST\n`;
+}
+
 const extinfs = (text) => [...text.matchAll(/#EXTINF:([\d.]+)/g)].map((m) => Number(m[1]));
 const STEADY = 8;
 const HLS_TIME = 4;
@@ -211,11 +224,12 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   let ready, failed, background;
   const first = new Promise((res, rej) => { ready = res; failed = rej; });
   const sent = new Set();
-  let mb = 0, gone = false, isReady = false, lastPlaylist = '', predicted = null;
+  let mb = 0, gone = false, isReady = false, lastPlaylist = '', realText = '', predicted = null;
 
   async function pass(final) {
     let text;
     try { text = await readFile(join(dir, 'index.m3u8'), 'utf8'); } catch { return; }
+    realText = text;
     const segs = text.split(/\r?\n/).filter((l) => SEGMENT.test(l));
     for (const s of segs) {
       if (sent.has(s)) continue;
@@ -226,7 +240,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       const body = await readFile(join(dir, s));
       const status = await upload(s, body, 'video/mp2t');
       if (status === 410) { gone = true; return; }
-      if (status !== 204) throw new Error(`upload ${s} answered ${status}`);
+      if (status !== 204) throw new Error(`upload ${s} (${(body.length / 1e6).toFixed(1)} MB) answered ${status}`);
       sent.add(s);
       mb += body.length / 1e6;
       if (!cache) rm(join(dir, s), { force: true }).catch(() => {}); // with a cache, kept for it
@@ -280,6 +294,10 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       ff.kill('SIGKILL');
       log({ event: 'media_failed', ms: Date.now() - started, mb: Math.round(mb), message: String(err?.message ?? err).slice(0, 200) });
       if (!isReady) failed(err);
+      else if (!gone && realText) {
+        const status = await upload('index.m3u8', Buffer.from(closedAt(realText, sent)), 'application/vnd.apple.mpegurl').catch(() => 0);
+        log({ event: 'media_closed', segments: sent.size, status });
+      }
     } finally {
       clearTimeout(killer);
       await exited;

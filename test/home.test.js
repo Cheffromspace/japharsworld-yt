@@ -10,7 +10,7 @@ import { Store } from '../src/store.js';
 import { Relay } from '../src/relay.js';
 import { Home } from '../src/home.js';
 import { createWorker } from '../relay/worker.js';
-import { mediaJob, ffmpegArgs, formatFor, rangeProxy, predictPlaylist, steadyLength, onTime } from '../relay/media.js';
+import { mediaJob, ffmpegArgs, formatFor, rangeProxy, predictPlaylist, steadyLength, onTime, closedAt } from '../relay/media.js';
 import { config as base } from '../src/config.js';
 
 const TOKEN = 'secret-token';
@@ -367,6 +367,31 @@ test('mediaJob splitByTime: ffmpeg cuts on time, and the whole playlist is predi
   assert.equal(off.playlists.length, 2);
   assert.ok(off.logs.includes('media_mismatch'));
   assert.match(off.playlists[1], /seg999\.ts\n#EXT-X-ENDLIST\n$/);
+});
+
+test('closedAt: the playlist cut back to the uploaded segments, with ENDLIST', () => {
+  const text = '#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:4.000000,\nseg0.ts\n#EXTINF:4.000000,\nseg1.ts\n#EXTINF:4.000000,\nseg2.ts\n#EXT-X-ENDLIST\n';
+  assert.equal(closedAt(text, new Set(['seg0.ts', 'seg1.ts'])),
+    '#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:4.000000,\nseg0.ts\n#EXTINF:4.000000,\nseg1.ts\n#EXT-X-ENDLIST\n');
+  assert.equal(closedAt(text, new Set(['seg0.ts', 'seg2.ts'])).match(/seg\d/g).join(), 'seg0', 'stops at the first missing one');
+});
+
+test('mediaJob: a segment the server refuses after players were sent → the playlist closes at the last uploaded one (the 1080p lofi, 2026-10-27)', async () => {
+  const pl = (n) => `#EXTM3U\n${Array.from({ length: n }, (_, i) => `#EXTINF:4,\nseg${i}.ts\n`).join('')}`;
+  const segs = (from, to) => Array.from({ length: to - from }, (_, i) => `seg${from + i}.ts`);
+  const ff = fakeFfmpeg({ steps: [[pl(8), segs(0, 8)], [pl(12), segs(8, 12)], [`${pl(14)}#EXT-X-ENDLIST\n`, segs(12, 14)]] });
+  const uploads = [];
+  const logs = [];
+  const first = await mediaJob({ videoId: 'aaaaaaaaaaa', quality: '720p', token: 'x', seconds: 56 }, { ytdlp: 'yt-dlp', runner, spawnFn: ff.spawnFn,
+    pollMs: 10, splitByTime: true, log: (o) => logs.push(o),
+    upload: async (file, body) => { uploads.push([file, body.toString()]); return file === 'seg10.ts' ? 413 : 204; } });
+  await first.done;
+  const playlists = uploads.filter(([f]) => f === 'index.m3u8').map(([, b]) => b);
+  assert.match(playlists[0], /VOD[\s\S]*seg13\.ts\n#EXT-X-ENDLIST\n$/, 'predicted first');
+  assert.match(playlists.at(-1), /seg9\.ts\n#EXT-X-ENDLIST\n$/);
+  assert.doesNotMatch(playlists.at(-1), /seg10\.ts/);
+  assert.match(logs.find((o) => o.event === 'media_failed').message, /seg10\.ts \([\d.]+ MB\) answered 413/);
+  assert.deepEqual(logs.find((o) => o.event === 'media_closed'), { event: 'media_closed', segments: 10, status: 204 });
 });
 
 test('mediaJob: an upload that fails (server restarting) is tried again', async () => {

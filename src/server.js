@@ -798,7 +798,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const m = url.pathname.match(/^\/relay\/media\/([a-f0-9]{18})\/([\w.-]{1,32})$/);
     if (m && req.method === 'PUT') {
       let body;
-      try { body = await readBody(req, 64 << 20); } catch { return fail(res, 413, 'too_large', 'Too large.'); }
+      // Only a body over the limit is a 413 (the worker gives up on it); a read that broke off is worth another try (503).
+      try { body = await readBody(req, 64 << 20); } catch (err) {
+        return err?.message === 'body too large' ? fail(res, 413, 'too_large', 'Too large.') : fail(res, 503, 'upload_broken', 'Upload broke off.');
+      }
       const status = home.put(m[1], m[2], body, { cached: req.headers['x-media-cached'] === '1' });
       if (status === 204) { res.writeHead(204); return res.end(); }
       return fail(res, status, status === 410 ? 'gone' : status === 413 ? 'too_large' : 'bad_file', 'Not stored.');

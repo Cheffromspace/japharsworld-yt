@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { cuesFromJson3, cuesFromSrv3, cuesFromVtt, linesFromCues, cuesFromLines, codeOfKey, tracksFromInfo, keyFor } from '../src/cues.js';
-import { chunksFromCues, chunkWords, wordsFromCues, layoutFor, breakAfter } from '../src/blocks.js';
+import { chunksFromCues, timedChunks, chunkWords, wordsFromCues, layoutFor, breakAfter } from '../src/blocks.js';
 import { parseJson3 } from '../src/captions.js';
 
 // Real YouTube tracks fetched on 2026-10-22 (first four minutes): auto tracks with word timing, uploader tracks without.
@@ -116,7 +116,7 @@ test('overlapping cues (Tunelio segments) still give word times that run forward
   const words = wordsFromCues(cues, layoutFor('nl'));
   for (let i = 1; i < words.length; i++) assert.ok(words[i].t >= words[i - 1].t, `word ${i} goes back in time`);
   for (const w of words) assert.ok(w.e >= w.t);
-  const { chunks } = chunksFromCues(cues, 'nl');
+  const { chunks } = timedChunks(cues, 'nl');
   for (const c of chunks) {
     const cs = c[4].split(',').map((p) => Number(p.split(':')[0]));
     for (let i = 1; i < cs.length; i++) assert.ok(cs[i] >= cs[i - 1], `offsets go back in ${c[2]}`);
@@ -168,7 +168,7 @@ test('track keys: variant ids and -orig fold to the language code; the key to do
 
 test('Thai captions: no unit starts with a mark or a following vowel, leading vowels take their consonant, spaces kept (#129)', () => {
   const src = 'สวัสดีครับ ยินดีต้อนรับสู่ห้องนอนที่สงบ ฝันดีนะ';
-  const { chunks } = chunksFromCues(cuesFromLines([[0, 2.5, src]]), 'th');
+  const { chunks } = timedChunks(cuesFromLines([[0, 2.5, src]]), 'th');
   const texts = chunks.map((c) => c[2]);
   for (const [text, offs] of chunks.map((c) => [c[2], c[4]])) {
     assert.match(text, /^[^ะ-ฺๅ-๎]/, text);

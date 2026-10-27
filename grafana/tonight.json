@@ -52,7 +52,7 @@
    "gridPos": {
     "x": 0,
     "y": 1,
-    "w": 6,
+    "w": 5,
     "h": 4
    },
    "targets": [
@@ -136,9 +136,9 @@
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 6,
+    "x": 5,
     "y": 1,
-    "w": 6,
+    "w": 5,
     "h": 4
    },
    "targets": [
@@ -200,9 +200,9 @@
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 12,
+    "x": 10,
     "y": 1,
-    "w": 6,
+    "w": 5,
     "h": 4
    },
    "targets": [
@@ -264,9 +264,9 @@
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 18,
+    "x": 15,
     "y": 1,
-    "w": 6,
+    "w": 5,
     "h": 4
    },
    "targets": [
@@ -320,8 +320,107 @@
    }
   },
   {
-   "type": "row",
+   "type": "stat",
    "id": 6,
+   "title": "Heat",
+   "description": "VRChat's heat for the production world (the flames on its world page), polled every ~15 min, and how it moved over the range.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 20,
+    "y": 1,
+    "w": 4,
+    "h": 4
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"heat\"})",
+     "legendFormat": "",
+     "instant": false,
+     "range": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "none",
+    "graphMode": "area",
+    "textMode": "value"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "decimals": 0,
+     "mappings": [
+      {
+       "type": "value",
+       "options": {
+        "0": {
+         "text": "no flames yet"
+        },
+        "1": {
+         "text": "🔥"
+        },
+        "2": {
+         "text": "🔥🔥"
+        },
+        "3": {
+         "text": "🔥🔥🔥"
+        },
+        "4": {
+         "text": "🔥🔥🔥🔥"
+        },
+        "5": {
+         "text": "🔥🔥🔥🔥🔥"
+        },
+        "6": {
+         "text": "🔥🔥🔥🔥🔥🔥"
+        },
+        "7": {
+         "text": "🔥🔥🔥🔥🔥🔥🔥"
+        },
+        "8": {
+         "text": "🔥🔥🔥🔥🔥🔥🔥🔥"
+        },
+        "9": {
+         "text": "🔥🔥🔥🔥🔥🔥🔥🔥🔥"
+        },
+        "10": {
+         "text": "🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥"
+        }
+       }
+      }
+     ],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#bb9af7",
+        "value": null
+       }
+      ]
+     },
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "#bb9af7"
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "row",
+   "id": 7,
    "title": "What's on",
    "collapsed": false,
    "gridPos": {
@@ -334,7 +433,7 @@
   },
   {
    "type": "bargauge",
-   "id": 7,
+   "id": 8,
    "title": "Plays by length",
    "description": "Search videos played, once per room, by length, over the time range. Includes the owner's own testing: the TEST world uses the same service and these counts can't tell them apart (most of 10-26's Channels plays were testing).",
    "datasource": {
@@ -434,7 +533,7 @@
   },
   {
    "type": "bargauge",
-   "id": 8,
+   "id": 9,
    "title": "Channels and searches",
    "description": "Channels: a slot opened from the Channels tab. Searches with a query, and videos played once per room, over the time range. Includes the owner's own testing: the TEST world uses the same service and these counts can't tell them apart (most of 10-26's Channels plays were testing).",
    "datasource": {
@@ -514,7 +613,7 @@
   },
   {
    "type": "bargauge",
-   "id": 9,
+   "id": 10,
    "title": "Captions and quality",
    "description": "\"Show captions\" list loads and tracks picked on the tablet, and rooms that picked a playback quality, over the time range. Includes the owner's own testing: the TEST world uses the same service and these counts can't tell them apart (most of 10-26's Channels plays were testing).",
    "datasource": {
@@ -604,7 +703,7 @@
   },
   {
    "type": "row",
-   "id": 10,
+   "id": 11,
    "title": "Who, broadly",
    "collapsed": false,
    "gridPos": {
@@ -616,10 +715,10 @@
    "panels": []
   },
   {
-   "type": "bargauge",
-   "id": 11,
-   "title": "Languages at join",
-   "description": "VRChat client language of visitors who allow untrusted URLs (the bare search address the world loads once after join), over the time range.",
+   "type": "stat",
+   "id": 12,
+   "title": "Here lately",
+   "description": "One square per VRChat client language with joins in the last 2 hours (whatever the time range), from visitors who allow untrusted URLs: the bare search address the world loads once after join. It counts arrivals, not who is still here, so a square stays for 2 h after its last join. 1 join dark, 2–3 blue, 4 or more purple.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -627,7 +726,7 @@
    "gridPos": {
     "x": 0,
     "y": 14,
-    "w": 8,
+    "w": 12,
     "h": 7
    },
    "targets": [
@@ -637,47 +736,56 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\"}[$__range])) > 0",
+     "expr": "sum by (key) (round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\"}[2h]))) > 0",
      "legendFormat": "{{key}}",
      "instant": true
     }
    ],
    "options": {
-    "orientation": "horizontal",
-    "displayMode": "gradient",
-    "showUnfilled": true,
-    "valueMode": "color",
-    "namePlacement": "left",
     "reduceOptions": {
      "calcs": [
       "lastNotNull"
      ]
+    },
+    "colorMode": "background",
+    "graphMode": "none",
+    "textMode": "name",
+    "orientation": "vertical",
+    "wideLayout": false,
+    "text": {
+     "titleSize": 26
     }
    },
    "fieldConfig": {
     "defaults": {
      "unit": "short",
      "decimals": 0,
-     "min": 0,
-     "color": {
-      "mode": "continuous-BlPu"
-     },
+     "mappings": [],
      "thresholds": {
       "mode": "absolute",
       "steps": [
        {
-        "color": "#7aa2f7",
+        "color": "#414868",
         "value": null
+       },
+       {
+        "color": "#7aa2f7",
+        "value": 2
+       },
+       {
+        "color": "#bb9af7",
+        "value": 4
        }
       ]
-     }
+     },
+     "noValue": "no joins in 2 h 🌙"
     },
     "overrides": []
    }
   },
   {
    "type": "bargauge",
-   "id": 12,
+   "id": 13,
    "title": "Search languages",
    "description": "VRChat client language of searches with a query, over the time range. Includes the owner's own testing: the TEST world uses the same service and these counts can't tell them apart (most of 10-26's Channels plays were testing).",
    "datasource": {
@@ -685,9 +793,9 @@
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 8,
+    "x": 12,
     "y": 14,
-    "w": 8,
+    "w": 6,
     "h": 7
    },
    "targets": [
@@ -737,7 +845,7 @@
   },
   {
    "type": "bargauge",
-   "id": 13,
+   "id": 14,
    "title": "Quest and PC",
    "description": "Plays by player platform, once per room and platform, and joins that loaded the search address (untrusted URLs allowed), over the time range. Includes the owner's own testing: the TEST world uses the same service and these counts can't tell them apart (most of 10-26's Channels plays were testing).",
    "datasource": {
@@ -745,9 +853,9 @@
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 16,
+    "x": 18,
     "y": 14,
-    "w": 8,
+    "w": 6,
     "h": 7
    },
    "targets": [
@@ -817,7 +925,7 @@
   },
   {
    "type": "row",
-   "id": 14,
+   "id": 15,
    "title": "The night's shape",
    "collapsed": false,
    "gridPos": {
@@ -830,7 +938,7 @@
   },
   {
    "type": "timeseries",
-   "id": 15,
+   "id": 16,
    "title": "Through the night (Chicago time)",
    "description": "Production world occupants, stacked by instance type, in America/Chicago time.",
    "datasource": {
@@ -894,7 +1002,7 @@
   },
   {
    "type": "stat",
-   "id": 16,
+   "id": 17,
    "title": "Stayed past 03:00",
    "description": "The most people in the world between 03:00 and 06:00 Chicago time (summer and winter time alike) in the last 24 h. Do people sleep here?",
    "datasource": {

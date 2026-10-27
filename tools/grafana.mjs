@@ -310,17 +310,26 @@ export function tonight() {
   const p = [];
   p.push(row('Right now'));
   // Against the world's 6-per-room design (owner's thresholds, #248): 0 quiet, 1–3 cozy, 4 and up lively.
-  p.push(stat('The vibe', occ('occupants'), { w: 6, thresholds: tile(NIGHT.dim), description: 'People in the production world now (VRChat, polled every ~15 min): 0 quiet, 1–3 cozy, 4 or more lively.',
+  p.push(stat('The vibe', occ('occupants'), { w: 5, thresholds: tile(NIGHT.dim), description: 'People in the production world now (VRChat, polled every ~15 min): 0 quiet, 1–3 cozy, 4 or more lively.',
     mappings: [{ type: 'value', options: { 0: { text: 'quiet 🌙', color: NIGHT.dim } } },
       { type: 'range', options: { from: 1, to: 3, result: { text: 'cozy ☕', color: NIGHT.purple } } },
       { type: 'range', options: { from: 4, to: 1e6, result: { text: 'lively ✨', color: NIGHT.green } } }] }));
-  p.push(stat('People here', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 6, thresholds: tile(NIGHT.blue),
+  p.push(stat('People here', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 5, thresholds: tile(NIGHT.blue),
     description: 'Production world occupants by instance type (VRChat\'s counts, polled every ~15 min).' }));
-  p.push(stat('Rooms', [[occ('instances'), 'instances'], ['count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)', 'tablets in use, last hour']], { w: 6, thresholds: tile(NIGHT.purple),
+  p.push(stat('Rooms', [[occ('instances'), 'instances'], ['count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)', 'tablets in use, last hour']], { w: 5, thresholds: tile(NIGHT.purple),
     description: `Instances of the production world (VRChat), and the tablet shards that made any request in the last hour (hourly rows). ${OWN_TESTS}` }));
   p.push(stat('Warmth, this range', [[`${occ('visits')} - min(min_over_time(eiok_poll{source="world:prod",metric="visits"}[$__range]))`, 'new visits'],
-    [`${occ('favorites')} - min(min_over_time(eiok_poll{source="world:prod",metric="favorites"}[$__range]))`, 'new favorites']], { w: 6, decimals: 0, thresholds: tile(NIGHT.green),
+    [`${occ('favorites')} - min(min_over_time(eiok_poll{source="world:prod",metric="favorites"}[$__range]))`, 'new favorites']], { w: 5, decimals: 0, thresholds: tile(NIGHT.green),
     description: 'Growth of the production world\'s visit and favorite totals over the selected time range (VRChat\'s public numbers; unfavorites net out).' }));
+
+  // VRChat's world heat (0–6 or so, its trending flames), as that many 🔥, with its line over the range.
+  const heat = stat('Heat', occ('heat'), { w: 4, decimals: 0, thresholds: tile(NIGHT.purple),
+    description: 'VRChat\'s heat for the production world (the flames on its world page), polled every ~15 min, and how it moved over the range.',
+    mappings: [{ type: 'value', options: Object.fromEntries(Array.from({ length: 11 }, (_, n) => [n, { text: n ? '🔥'.repeat(n) : 'no flames yet' }])) }] });
+  Object.assign(heat.targets[0], { instant: false, range: true });
+  Object.assign(heat.options, { graphMode: 'area', colorMode: 'none' });   // the flames on the panel ground, a purple line
+  heat.fieldConfig.defaults.color = { mode: 'fixed', fixedColor: NIGHT.purple };
+  p.push(heat);
 
   p.push(row('What\'s on'));
   p.push(bars('Plays by length', [[inRange('play_length', 'lt10m'), 'under 10 min'], [inRange('play_length', 'lt1h'), '10 min – 1 h'], [inRange('play_length', 'lt3h'), '1–3 h'],
@@ -331,10 +340,19 @@ export function tonight() {
     { description: `"Show captions" list loads and tracks picked on the tablet, and rooms that picked a playback quality, over the time range. ${OWN_TESTS}` }));
 
   p.push(row('Who, broadly'));
-  p.push(barsBy('Languages at join', 'join_lang', { description: 'VRChat client language of visitors who allow untrusted URLs (the bare search address the world loads once after join), over the time range.' }));
-  p.push(barsBy('Search languages', 'search_lang', { description: `VRChat client language of searches with a query, over the time range. ${OWN_TESTS}` }));
+  // One square per language with joins in the last 2 h: it appears as people of that language arrive and drops out two
+  // hours later (#248). Joins, not presence: nobody's leaving is known.
+  const langs = stat('Here lately', 'sum by (key) (round(increase(eiok_events_total{metric="join_lang"}[2h]))) > 0', { w: 12, decimals: 0,
+    thresholds: [{ color: NIGHT.dim, value: null }, { color: NIGHT.blue, value: 2 }, { color: NIGHT.purple, value: 4 }],
+    description: 'One square per VRChat client language with joins in the last 2 hours (whatever the time range), from visitors who allow untrusted URLs: the bare search address the world loads once after join. It counts arrivals, not who is still here, so a square stays for 2 h after its last join. 1 join dark, 2–3 blue, 4 or more purple.' });
+  langs.targets[0].legendFormat = '{{key}}';
+  Object.assign(langs.options, { textMode: 'name', orientation: 'vertical', wideLayout: false, text: { titleSize: 26 } });
+  langs.fieldConfig.defaults.noValue = 'no joins in 2 h 🌙';
+  langs.gridPos = { ...langs.gridPos, h: 7 };
+  p.push(langs);
+  p.push(barsBy('Search languages', 'search_lang', { w: 6, description: `VRChat client language of searches with a query, over the time range. ${OWN_TESTS}` }));
   p.push(bars('Quest and PC', [[inRange('play_platform', 'pc'), 'PC plays'], [inRange('play_platform', 'android'), 'Quest (Android) plays'], [inRange('join', ''), 'joins with untrusted URLs on']],
-    { description: `Plays by player platform, once per room and platform, and joins that loaded the search address (untrusted URLs allowed), over the time range. ${OWN_TESTS}` }));
+    { w: 6, description: `Plays by player platform, once per room and platform, and joins that loaded the search address (untrusted URLs allowed), over the time range. ${OWN_TESTS}` }));
 
   p.push(row('The night\'s shape'));
   const curve = series('Through the night (Chicago time)', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 18, h: 9, stack: true, min: 0, decimals: 0,

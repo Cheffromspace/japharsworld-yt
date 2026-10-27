@@ -102,3 +102,20 @@ test('tonight: Chicago hour follows summer and winter time (the 03:00–06:00 wi
     assert.equal(promql(d), real(d), d.toISOString());
   }
 });
+
+// #248 round 2: heat as flames with its line; one square per join language of the last 2 h.
+test('tonight: heat shows as that many flames, and join languages as squares coloured by count', () => {
+  const d = tonight();
+  const heat = d.panels.find((p) => p.title === 'Heat');
+  assert.match(heat.targets[0].expr, /metric="heat"/);
+  assert.equal(heat.targets[0].range, true);
+  assert.equal(heat.options.graphMode, 'area');
+  assert.equal(heat.fieldConfig.defaults.mappings[0].options[4].text, '🔥🔥🔥🔥');
+  const sq = d.panels.find((p) => p.title === 'Here lately');
+  assert.match(sq.targets[0].expr, /metric="join_lang"\}\[2h\]\)\)\) > 0$/, 'joins in the last 2 h; no row without joins');
+  assert.equal(sq.targets[0].legendFormat, '{{key}}');
+  assert.equal(sq.options.textMode, 'name');
+  assert.deepEqual(sq.fieldConfig.defaults.thresholds.steps.map((x) => [x.color, x.value]), [['#414868', null], ['#7aa2f7', 2], ['#bb9af7', 4]]);
+  assert.match(sq.description, /arrivals, not who is still here/);
+  assert.ok(d.panels.some((p) => p.title === 'Search languages'));
+});

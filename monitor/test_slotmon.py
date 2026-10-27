@@ -93,8 +93,9 @@ class Base(unittest.TestCase):
 
 
 class Tests(Base):
-    def test_only_a_mass_outage_pings_the_owner(self):
-        # Owner, 2026-10-26: one outage or flash fail stays unmentioned; MASS_DOWN shown slots out at once pings.
+    def test_a_mass_outage_alerts_once_without_a_ping(self):
+        # Owner, 2026-10-26: one outage or flash fail is the monitor's own; MASS_DOWN shown slots out at once alert,
+        # with no mention (#246).
         with mock.patch.object(config, "MASS_DOWN", 2):
             self.api.world["CAMCAMCAM01"] = st("CAMCAMCAM01", "ended")
             self.check()
@@ -104,12 +105,13 @@ class Tests(Base):
             self.con.execute("UPDATE slots SET auto_hidden=1, auto_reason='flash fail' WHERE key='radio'")
             self.con.execute("UPDATE slots SET auto_hidden=1, auto_reason='down' WHERE key='spare'")  # baked hidden: not counted
             core.outage_watch(self.con, OVERRIDES)
-            self.assertEqual(self.mentions, ["2 channels down or hidden at once"])
+            self.assertEqual(self.alerts[-1], ("urgent", "2 channels down or hidden at once"))
+            self.assertEqual(self.mentions, [], "no ping (#246)")
             db.set_meta(self.con, "alert:mass-down", time.time())  # as discord.send records it
             self.con.execute("UPDATE slots SET auto_hidden=0, auto_reason=NULL WHERE key='radio'")
             core.outage_watch(self.con, OVERRIDES)
             self.assertEqual(self.alerts[-1], ("good", "Channels back"))
-            self.assertEqual(len(self.mentions), 1, "the all-clear does not ping")
+            self.assertEqual(self.mentions, [], "nor the all-clear")
 
     def test_flash_worker_refusals_are_counted_by_class_only(self):
         # Owner, 2026-10-26: the same classes as src/refusal.js; the monitor keeps an event per refusal, class only.
@@ -177,10 +179,10 @@ class Tests(Base):
                 real_send(self.con, "Channels back", "b", "good", critical=True)
         self.assertEqual(urls, ["https://usual", "https://critical", "https://usual", "https://critical"])
 
-    def test_mass_outage_stays_on_the_usual_channel(self):
+    def test_mass_outage_stays_on_the_usual_channel_unmentioned(self):
         import inspect
         src = inspect.getsource(core.outage_watch)
-        self.assertIn("mention=True, critical=False)", src)
+        self.assertNotIn("mention=True", src)
         self.assertNotIn("critical=True", src)
     def test_api_warnings_get_an_all_clear_once_the_api_answers(self):
         core.statuses(self.con, self.api, ["CAMCAMCAM01"])

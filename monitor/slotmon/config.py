@@ -31,11 +31,10 @@ QUOTA_WARN = _int("QUOTA_WARN", 8000)      # alert once a day past this
 QUOTA_RESERVE = _int("QUOTA_RESERVE", 9000)  # past this, only swaps and flash-fail removals spend units
 
 DISCORD_WEBHOOK = _env("DISCORD_WEBHOOK")
-# The critical-alerts channel (world #195, owner 2026-10-26) for sends marked critical; unset = DISCORD_WEBHOOK. The mass outage
-# and its all-clear stay on DISCORD_WEBHOOK (owner, #246).
+# The critical-alerts channel (world #195, owner 2026-10-26) for sends marked critical (none today); unset = DISCORD_WEBHOOK.
 DISCORD_CRITICAL_WEBHOOK = _env("DISCORD_CRITICAL_WEBHOOK")
-# e.g. <@123456789>: pinged only when MASS_DOWN or more shown slots are down or hidden at once (owner, 2026-10-26: single
-# outages and flash fails are handled by the monitor and stay unmentioned).
+# e.g. <@123456789>: who a send with mention=True pings. None does since #246 (the owner: no ping for the mass outage);
+# MASS_DOWN shown slots down or hidden at once is a plain alert.
 DISCORD_MENTION = _env("DISCORD_MENTION")
 MASS_DOWN = _int("MASS_DOWN", 8)
 

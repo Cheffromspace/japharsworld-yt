@@ -292,12 +292,10 @@ export function contactPoint(url, mention, name = RECEIVER) {
 // critical: severity=critical rules go to the critical channel's contact point (push: when DISCORD_CRITICAL_WEBHOOK is
 // set; build: always, so the reviewed copy shows the routing).
 export function alertRules(dsUid, { critical = false } = {}) {
-  // usual: a critical rule that still pings and wakes the triage but posts to the usual channel (owner, #246: the
-  // Channels mass outage).
-  const rule = (uid, title, expr, { forM = 5, summary, noData = 'OK', severity = 'warning', usual = false }) => ({
+  const rule = (uid, title, expr, { forM = 5, summary, noData = 'OK', severity = 'warning' }) => ({
     uid, title, folderUID: FOLDER.uid, ruleGroup: 'everything-is-ok', condition: 'C', for: `${forM}m`, noDataState: noData, execErrState: 'Error',
     annotations: { summary }, labels: { project: 'everything-is-ok', severity },
-    notification_settings: { receiver: critical && severity === 'critical' && !usual ? CRITICAL_RECEIVER : RECEIVER },
+    notification_settings: { receiver: critical && severity === 'critical' ? CRITICAL_RECEIVER : RECEIVER },
     data: [
       { refId: 'A', relativeTimeRange: { from: 900, to: 0 }, datasourceUid: dsUid, model: { refId: 'A', expr, instant: true } },
       { refId: 'C', datasourceUid: '__expr__', model: { refId: 'C', type: 'threshold', expression: 'A', conditions: [{ evaluator: { type: 'gt', params: [0] } }] } },
@@ -329,7 +327,7 @@ export function alertRules(dsUid, { critical = false } = {}) {
     rule('eiok-captions-paid', 'Captions falling back to Tunelio', 'sum(increase(eiok_events_total{metric="cc_via",key="tunelio"}[6h])) - (sum(increase(eiok_events_total{metric="cc_via",key=~"worker|local"}[6h])) or vector(0)) > 0 and on() sum(increase(eiok_events_total{metric="cc_via",key="tunelio"}[6h])) >= 3', { forM: 30, summary: 'Over the last 6 hours Tunelio (credits, segment timing) answered more caption fetches than the free sources (home relay, yt-dlp): YouTube may be refusing caption requests (see YouTube refusals).' }),
     // Owner, 2026-10-26: one channel down is the monitor's job; 8 or more shown (not spare) slots down or hidden at once is
     // severe, as monitor/slotmon outage_watch (MASS_DOWN, default 8) also pings. 5 were hidden when this was added.
-    rule('eiok-channels-mass-down', 'Many Channels slots down or hidden', 'sum(eiok_slot_hidden * on(slot) (1 - eiok_slot_spare)) - 7', { forM: 10, severity: 'critical', usual: true, summary: '8 or more of the world\'s shown Channels slots are down or hidden at once (YouTube, the monitor or its worker).' }),
+    rule('eiok-channels-mass-down', 'Many Channels slots down or hidden', 'sum(eiok_slot_hidden * on(slot) (1 - eiok_slot_spare)) - 7', { forM: 10, summary: '8 or more of the world\'s shown Channels slots are down or hidden at once (YouTube, the monitor or its worker).' }),
     // Owner, 2026-10-26: the flash worker's YouTube refusals (metrics/exporter.js, yt_refusal flash:<class>), which the
     // search service's own refusal alert (src/refusal.js, the relay worker's) never sees. As there: 3 or more bot, rate,
     // PO-token or 403 refusals, here within 30 minutes (the worker runs every 20).

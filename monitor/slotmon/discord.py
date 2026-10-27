@@ -1,5 +1,5 @@
 """Discord webhook alerts. Without DISCORD_WEBHOOK they only go to the journal; a send marked critical goes to
-DISCORD_CRITICAL_WEBHOOK when it is set (none is today: the owner kept the mass outage on the usual channel, #246)."""
+DISCORD_CRITICAL_WEBHOOK when it is set (none is today: the mass outage is a plain alert, #246)."""
 import json, re, time
 
 from . import config, db
@@ -21,7 +21,7 @@ def webhook(critical):
 
 def send(con, title, body="", level="info", dedupe=None, every_hours=6, mention=False, critical=None):
     """dedupe: key that sends at most once per every_hours (service errors, quota). mention: ping DISCORD_MENTION's user
-    (only the mass outage, core.outage_watch); nothing else can ping anyone, whatever a stream title says.
+    (nothing passes it since #246); nothing else can ping anyone, whatever a stream title says.
     critical: to DISCORD_CRITICAL_WEBHOOK (default: what pings is critical; outage_watch says False)."""
     if dedupe:
         last = db.get_meta(con, "alert:" + dedupe, 0)

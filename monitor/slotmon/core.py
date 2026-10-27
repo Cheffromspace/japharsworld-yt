@@ -436,16 +436,15 @@ def maybe_daily(con, api, overrides):
 
 
 def outage_watch(con, overrides):
-    """Many channels out at once (owner, 2026-10-26): MASS_DOWN or more shown slots down or hidden is the only alert that
-    pings the owner, at most once a day while it lasts, with an all-clear when it is over. One outage or flash fail the
-    monitor handles itself. Grafana's eiok-channels-mass-down rule (tools/grafana.mjs) counts the same and wakes the
-    triage. Both stay on the usual channel, not DISCORD_CRITICAL_WEBHOOK's (owner, #246)."""
+    """Many channels out at once (owner, 2026-10-26): MASS_DOWN or more shown slots down or hidden, at most once a day
+    while it lasts, with an all-clear when it is over; one outage or flash fail the monitor handles itself. A plain
+    alert on the usual channel, no mention (owner, #246); Grafana's eiok-channels-mass-down warning counts the same."""
     shown = [r for r in slot_rows(con).values() if r["kind"] in ("live", "video") and is_shown(r, overrides)]
     out = [r for r in shown if r["auto_hidden"] or r["down_since"]]
     if len(out) >= config.MASS_DOWN:
         discord.send(con, "%d channels down or hidden at once" % len(out),
                      "%d of %d shown slots: %s" % (len(out), len(shown), ", ".join("%s (%s)" % (r["key"], r["auto_reason"] or "down") for r in out))[:3900],
-                     "urgent", dedupe="mass-down", every_hours=24, mention=True, critical=False)
+                     "urgent", dedupe="mass-down", every_hours=24)
     else:
         discord.resolve(con, "mass-down", "Channels back", "%d of %d shown slots down or hidden now." % (len(out), len(shown)))
 

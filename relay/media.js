@@ -13,9 +13,12 @@
 //
 // RELAY_SPLIT_BY_TIME=on (splitByTime, the worker's env; default off, a staging trial for world #250, 2026-10-27): ffmpeg
 // cuts every 4 s whether or not a keyframe is there (`-hls_flags split_by_time`, still `-c copy`), so every video is
-// steady and gets the whole playlist. The cut lands on the first frame at or after each multiple of 4 s: a 29.97 fps
-// clip made 4.004 s segments with a 3.971 s one every ~8, 75 of them exactly 300 s (ffmpeg 8, 2026-10-27), so the rest
-// are predicted at 4 s, not at the median (4.004 s would be 2 segments short over 3 h). The cost: a segment may start
+// steady and gets the whole playlist. The cut lands within a frame or two of each multiple of 4 s: a 29.97 fps clip
+// without B-frames made 4.004 s segments with a 3.971 s one every ~8, 75 of them exactly 300 s (ffmpeg 8, 2026-10-27);
+// a 4 h YouTube documentary (B-frames) made 3.937–4.071 s, but every cut within 0.1 s of k × 4 s (staging, the same
+// day), so the check is on the cut points (onTime), not the lengths. The rest are predicted at 4.000000 s each, not at
+// the median (4.004 s would be 2 segments short over 3 h): each listed length is off by up to 2 frames, but the cuts
+// don't drift, so the playlist's running time stays within a frame or two of the media. The cost: a segment may start
 // mid-GOP, so a player that starts or seeks there shows the picture from the next keyframe (a 60 fps clip with 5 s GOPs:
 // 176 and 112 of 240 frames decoded from seg1 and seg2 on their own); sequential play is unaffected.
 //
@@ -133,12 +136,22 @@ const HLS_TIME = 4;
 // One frame: segments of the same number of frames at 29.97 fps print as 4.004 or 3.971 s (2026-10-27).
 const FRAME = 0.05;
 
-// The usual segment length if the first STEADY segments are all within a frame of their median, else null.
+// Keyframe cuts (splitByTime off): the usual segment length if the first STEADY segments are all within a frame of
+// their median, else null.
 export function steadyLength(known) {
   if (known.length < STEADY) return null;
   const first = known.slice(0, STEADY);
   const median = [...first].sort((a, b) => a - b)[STEADY / 2];
   return first.every((d) => Math.abs(d - median) <= FRAME) ? median : null;
+}
+
+// Time cuts (splitByTime on): whether each of the first STEADY cut points (the running sum) is within CUT of a multiple
+// of HLS_TIME. 0.15 s is ~4 frames at 29.97 fps; scene-cut lists are seconds off by the second segment.
+const CUT = 0.15;
+export function onTime(known) {
+  if (known.length < STEADY) return false;
+  let at = 0;
+  return known.slice(0, STEADY).every((d, i) => Math.abs((at += d) - (i + 1) * HLS_TIME) <= CUT);
 }
 
 export function ffmpegArgs(urls, dir, { splitByTime = false } = {}) {
@@ -223,8 +236,9 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
     // up, so a player never gets the growing playlist first and the whole one after.
     if (predicted === null && !final && duration > 0 && segs.length < STEADY) return;
     if (predicted === null) {
-      const gop = duration > 0 ? steadyLength(extinfs(text)) : null;
-      predicted = gop ? predictPlaylist([], splitByTime ? HLS_TIME : gop, duration) : false;
+      const known = extinfs(text);
+      const gop = !(duration > 0) ? null : splitByTime ? (onTime(known) ? HLS_TIME : null) : steadyLength(known);
+      predicted = gop ? predictPlaylist([], gop, duration) : false;
     }
     if (predicted) {
       const actual = extinfs(text);

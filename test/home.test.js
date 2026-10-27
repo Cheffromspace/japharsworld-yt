@@ -10,7 +10,7 @@ import { Store } from '../src/store.js';
 import { Relay } from '../src/relay.js';
 import { Home } from '../src/home.js';
 import { createWorker } from '../relay/worker.js';
-import { mediaJob, ffmpegArgs, formatFor, rangeProxy, predictPlaylist, steadyLength } from '../relay/media.js';
+import { mediaJob, ffmpegArgs, formatFor, rangeProxy, predictPlaylist, steadyLength, onTime } from '../relay/media.js';
 import { config as base } from '../src/config.js';
 
 const TOKEN = 'secret-token';
@@ -324,6 +324,17 @@ test('steadyLength: equal within a frame (29.97 fps cuts print as 4.004 / 3.971 
   assert.equal(steadyLength(ntsc.slice(0, 7)), null, 'too few yet');
   assert.equal(steadyLength([4, 4, 4, 4, 4.1, 4, 4, 4]), null, 'more than a frame off');
   assert.equal(steadyLength([7, 6.72, 3, 6.96, 7, 1.04, 7, 6.4]), null);
+});
+
+test('onTime: time cuts within ~4 frames of each 4 s mark (the B-frame documentary of 2026-10-27, ±2 frames); scene cuts are not', () => {
+  const doc = [4.004, 4.070733, 4.004, 3.970633, 3.970633, 4.037367, 4.037367, 3.937267];
+  assert.equal(steadyLength(doc), null, 'a frame of tolerance on the lengths missed it');
+  assert.equal(onTime(doc), true);
+  assert.equal(onTime([4.004, 4.004, 3.970633, 4.004, 4.004, 4.004, 4.004, 4.004]), true);
+  assert.equal(onTime(doc.slice(0, 7)), false, 'too few yet');
+  assert.equal(onTime([4, 4, 4.2, 4, 4, 4, 4, 4]), false, 'a cut 0.2 s off');
+  assert.equal(onTime([5, 6.28, 4.32, 1.32, 3.08, 5, 6.2, 4.08]), false, 'scene cuts (the Quest test video, keyframe-cut)');
+  assert.equal(onTime([7, 6.72, 3, 6.96, 7, 1.04, 7, 6.4]), false);
 });
 
 test('mediaJob splitByTime: ffmpeg cuts on time, and the whole playlist is predicted at 4 s, not the 4.004 s median', async () => {

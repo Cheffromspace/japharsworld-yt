@@ -53,7 +53,7 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
 |---|---|
 | Home relay near its daily cap | today's home relay MB ≥ 90 % of `HOME_DAILY_MB`, 5 min |
 | Home relay has no worker | no media worker connected for 15 min (only while `HOME_RELAY=on`; the gauge isn't set otherwise) |
-| Home sent over 50 GB today / 500 GB this month | `eiok_transfer_bytes{host="home"}`: the Optiplex's bytes sent (every interface but `lo`), reported on each relay poll and counted in metrics.db (`transfer`), Chicago days and months, 5 min |
+| Home sent over 100 GB today / 2,000 GB this month (no ISP cap, owner 2026-10-27: unusual volume, not a limit) | `eiok_transfer_bytes{host="home"}`: the Optiplex's bytes sent (every interface but `lo`), reported on each relay poll and counted in metrics.db (`transfer`), Chicago days and months, 5 min |
 | Linode sent over 700 GB this month | `eiok_transfer_bytes{host="linode",period="month"}`: the Linode's bytes sent, of its 1 TB monthly transfer, 5 min |
 | Credits run out before renewal | the last 3 days' credit spend per day × days to the 1st > credits left, for 1 h |
 | Linode sends nothing | no `eiok_search_up` from the Linode for 10 min (server, Alloy or exporter down) |

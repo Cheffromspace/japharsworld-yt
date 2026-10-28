@@ -466,8 +466,10 @@ export function alertRules(dsUid, { critical = false } = {}) {
     // Renewal on the 1st (TUNELIO_RENEWS_DAY's default): the last 3 days' spend per day times the days left, minus the credits left.
     rule('eiok-credits-pace', 'Credits run out before renewal', '(sum(increase(eiok_events_total{metric="credits"}[3d])) / 3) * (days_in_month() - day_of_month() + 1) - max(eiok_credits_remaining) > 0', { forM: 60, summary: 'At the last 3 days’ spend, the Tunelio credits run out before the plan renews on the 1st (the pacer then keeps plays at 720p; at 0 they go to youtube.com).' }),
     // Transfer (owner, 2026-10-24): metrics.db counts from src/net.js; months are Chicago calendar months.
-    rule('eiok-home-egress-day', 'Home sent over 50 GB today', 'max(eiok_transfer_bytes{host="home",period="today"}) > 50e9', { forM: 5, summary: 'The Optiplex has sent over 50 GB today (home relay uploads and everything else on the box).' }),
-    rule('eiok-home-egress-month', 'Home sent over 500 GB this month', 'max(eiok_transfer_bytes{host="home",period="month"}) > 500e9', { forM: 5, summary: 'The Optiplex has sent over 500 GB this month.' }),
+    // The home connection has no ISP data cap (owner, 2026-10-27), so these are only alerts on unusual volume: 100 GB a day
+    // (2026-10-27 alone was ~19 GB of home builds) and 2,000 GB a month.
+    rule('eiok-home-egress-day', 'Home sent over 100 GB today', 'max(eiok_transfer_bytes{host="home",period="today"}) > 100e9', { forM: 5, summary: 'The Optiplex has sent over 100 GB today (home relay uploads and everything else on the box). No ISP cap (owner, 10-27): this is unusual volume, not a limit.' }),
+    rule('eiok-home-egress-month', 'Home sent over 2,000 GB this month', 'max(eiok_transfer_bytes{host="home",period="month"}) > 2000e9', { forM: 5, summary: 'The Optiplex has sent over 2,000 GB this month. No ISP cap (owner, 10-27): this is unusual volume, not a limit.' }),
     rule('eiok-linode-egress-month', 'Linode sent over 700 GB this month', 'max(eiok_transfer_bytes{host="linode",period="month"}) > 700e9', { forM: 5, summary: 'The Linode has sent over 700 GB this month, of its 1 TB transfer (overage about $5 per TB).' }),
     // The Linode's / is 25 GB (47 % used 2026-10-25, the home session files capped at HOME_MAX_GB=8): earlier warnings there.
     // With the home cache full at HOME_MAX_GB=12, / sits at ~76 % (2026-10-27), so the old 70 % warning fired for good;

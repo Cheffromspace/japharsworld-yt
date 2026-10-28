@@ -122,6 +122,12 @@ export const config = {
   // staging (world #250, 2026-10-27): the Quest's Tunelio HLS fallback for those videos failed at ~125 s on prod.
   homeAndroidGrowing: (process.env.HOME_ANDROID_GROWING ?? 'off') === 'on',
   homeLongMinutes: int('HOME_LONG_MINUTES', 30),
+  // One source per ticket once playing (#293): a ticket's answer is kept per ticket and client kind while it is played
+  // (until the video's length plus TICKET_PIN_MARGIN_MINUTES after its last play) instead of decided again on every
+  // request, which sent one PC ticket home → Tunelio → home within a minute and its players reloaded from 0 (prod
+  // 2026-10-28). Off: staging first.
+  ticketPin: (process.env.TICKET_PIN ?? 'off') === 'on',
+  ticketPinMarginMs: int('TICKET_PIN_MARGIN_MINUTES', 15) * 60_000,
   // The quality home builds when the room hasn't picked one (owner, 2026-10-25: 1080p; home streams, so 1080p starts
   // about as fast as 720p: first segments 6.2 s vs 2.9 s on the Optiplex, 2026-10-23). A room's own pick wins.
   homeQuality: process.env.HOME_QUALITY ?? '1080p',

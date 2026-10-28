@@ -485,7 +485,37 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (s.state !== 'ready') return null;
     holding++;
     try { await home.settle?.(s, config.homeSettleMs); } finally { holding--; }
-    return { location: home.url(s), via: 'home', reason: s.why, ready: true };
+    return { location: home.url(s), via: 'home', reason: s.why, ready: true, session: s };
+  }
+  // One source per ticket once playing (TICKET_PIN, #293). Each request used to decide again from the sessions' state,
+  // so a PC ticket went home, then Tunelio when the growing playlist was marked uneven, then home again once it ended
+  // (prod 2026-10-28 04:48–04:49Z), and every change was a new URL its players loaded from 0. Kept per ticket and client
+  // kind (plain or .m3u8 ticket; resolver, player): a resolver gets a progressive link where a player of the same plan
+  // gets a master. The start-time choice and the adaptive masters' own steps are unchanged. A pin ends when its window
+  // runs out (the video's length plus the margin after its last play: a later play gets the best source then) or when
+  // its source died (home session failed or stale, Tunelio link gone or expiring). youtube.com fallbacks aren't kept, so
+  // a ready build replaces them.
+  const pins = new Map(); // "shard:n:plain|m3u8:kind" → { id, via, reason, location, playlist, session, quality, hls, jobUrl, mode, until }
+  const pinKey = (shard, n, hlsTicket, kind) => `${shard}:${n}:${hlsTicket ? 'm3u8' : 'plain'}:${kind}`;
+  const pinWindow = (data) => (data.seconds ?? 0) * 1000 + config.ticketPinMarginMs;
+  function pinned(key, data, { touch = true } = {}) {
+    if (!config.ticketPin) return null;
+    const p = pins.get(key);
+    if (!p) return null;
+    const now = Date.now();
+    let alive = p.id === data.id && now < p.until;
+    if (alive && p.session) alive = p.session.state === 'ready' && home.peek(data, p.session.quality) === p.session;
+    else if (alive) {
+      const job = playback.peek?.(data, p.quality, { hls: p.hls });
+      alive = job?.state === 'ready' && job.url === p.jobUrl && !(job.expiresMs - now < 60_000);
+    }
+    if (!alive) {
+      pins.delete(key);
+      if (p.id === data.id) logJson({ event: 'ticket_unpin', id: data.id, via: p.via, reason: now >= p.until ? 'window' : 'dead' });
+      return null;
+    }
+    if (touch) p.until = now + pinWindow(data);
+    return p;
   }
   // A home session for this play, counted once by why it went home (a session that is already there is just used),
   // and once as `stepdown` when it is 720p only for its length.
@@ -551,6 +581,17 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       metrics.inc('ticket_client', kind);
       // The tablet asking (a row selected, or watching a build): start the build, report it, never redirect.
       if (kind === 'string') {
+        // A ticket being played reports the source its players were given (TICKET_PIN), not a new decision.
+        const pin = pinned(pinKey(shard, n, hlsTicket, 'avpro'), t.data, { touch: false });
+        if (pin?.session) return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(pin.session), ...meta(t.data) });
+        if (pin) {
+          const st = playback.status(t.data, { warm: false, quality: pin.quality, hls: pin.hls });
+          if (pin.mode) st.plan = pin.mode;
+          if (pin.hls && (pin.mode === 'adaptive' || pin.mode === 'start')) {
+            Object.assign(st, adaptive.progress(playback.peek?.(t.data, pin.quality, { hls: true })) ?? { rung: null, top: 'pending' });
+          }
+          return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...st, ...meta(t.data) });
+        }
         const hq = homeQuality(shard, t.data);
         const hw = hlsTicket && !config.homeAndroid ? null : homeWhy(t.data, hq);
         const hs = hw ? homeKeep(t.data, hq, startHome(shard, t.data, hq, hw)) : null;
@@ -573,6 +614,23 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const resolver = kind === 'ytdlp';
       const android = isAndroidPlayer(req.headers['user-agent']);
       const started = Date.now();
+      const key = pinKey(shard, n, hlsTicket, kind);
+      const pin = pinned(key, t.data);
+      if (pin) {
+        if (resolver && pin.playlist) {
+          // A playlist behind the ticket: sent on at once, as when it was first answered, so AVPro asks itself.
+          logJson({ event: 'play_defer', shard, n, id: t.data.id, held: 0, pinned: true });
+          const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+          return res.end(body);
+        }
+        store.markPlayed(shard, n, t.data.id);
+        captions.warm?.(t.data.id);
+        logJson({ event: 'play', shard, n, id: t.data.id, via: pin.via, reason: pin.reason, client: kind, held: 0, pinned: true, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
+        countPlay(shard, t.data, { via: pin.via, reason: pin.reason, location: pin.location }, android || hlsTicket ? 'android' : kind === 'avpro' ? 'pc' : null);
+        res.writeHead(302, { location: pin.location, 'cache-control': 'no-store' });
+        return res.end();
+      }
       let where = null;
       // Home relay first when it applies. HLS only, so never for an Android player on a plain ticket (f331bcc); on a
       // .m3u8 ticket (the world's Android build, which opens HLS) only with HOME_ANDROID=on (2026-10-23, to be verified
@@ -693,6 +751,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       logJson({ event: 'play', shard, n, id: t.data.id, via, reason, client: kind, held, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
       countPlay(shard, t.data, { via, reason, location }, android || hlsTicket ? 'android' : kind === 'avpro' ? 'pc' : null);
       if (warmed.delete(`${shard}:${t.data.id}`)) metrics.inc('warm_played');
+      if (config.ticketPin && via !== 'youtube') {
+        const session = via === 'home' ? where.session ?? null : null;
+        const job = !session && c ? playback.peek?.(t.data, c.quality, { hls: c.hls }) : null;
+        if (session || job?.url) {
+          pins.set(key, { id: t.data.id, via, reason, location, playlist: session ? true : Boolean(c.hls), session,
+            quality: c?.quality, hls: c?.hls, jobUrl: job?.url, mode: c?.mode ?? null, until: Date.now() + pinWindow(t.data) });
+        }
+      }
       res.writeHead(302, { location, 'cache-control': 'no-store' });
       return res.end();
     }

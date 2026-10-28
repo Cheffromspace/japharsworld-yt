@@ -409,7 +409,7 @@ async function homeApp(t, { config: c = {}, media = null, playlist = PL1, ...ove
   while (!relay.capable('media').length) await new Promise((r) => setTimeout(r, 20));
   const [n] = store.allocate(0, [{ kind: 'video', data: { id: 'aaaaaaaaaaa', title: 'T', seconds: 600, live: false } }]);
   const play = (ua, ext = '.m3u8') => fetch(`${url}/v1/0/${n}${ext}`, { redirect: 'manual', headers: { 'user-agent': ua } });
-  return { play, jobs, store, url, n };
+  return { play, jobs, store, url, n, app };
 }
 const QUEST = 'AVProMobileVideo/2026.3.3p2 (Linux;Android 14) ExoPlayer';
 
@@ -689,11 +689,12 @@ test('ticket → home: with HOME_ANDROID_GROWING a PC leaving for Tunelio keeps 
   assert.equal(lines.filter((e) => e.event === 'home_uneven').length, 1, 'marked once');
 });
 
-// #293 reproduction, today's behaviour (prod 2026-10-28 04:48–04:49Z): one ticket's answer for a PC player changes
-// twice during the build. home while the session is new, Tunelio once leaveHome marks it uneven, and home again once
-// the playlist ends (leaveHome returns false for an ended session and homeWhy's 'reuse' comes before isUneven). The
-// tablet's plan flips the same way. When a ticket's source is pinned once playing, the last two asserts flip.
-test('#293 repro: with HOME_ANDROID_GROWING a PC ticket goes home → Tunelio (uneven) → home again once the playlist ends', async (t) => {
+// #293 (prod 2026-10-28 04:48–04:49Z): with HOME_ANDROID_GROWING a Quest starts a home session that grows, the PC in
+// the same room is sent to Tunelio (leaveHome marks the video uneven), and once the playlist ends leaveHome returns
+// false and homeWhy's 'reuse' sends that same PC ticket home again: a new URL, which its players load from 0.
+// TICKET_PIN keeps a ticket's answer while it is played. pinApp: that room, a Tunelio link and the ticket's helpers.
+const ENDED = '#EXTM3U\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXTINF:4.0,\nseg0.ts\n#EXTINF:4.0,\nseg1.ts\n#EXT-X-ENDLIST\n';
+async function pinApp(t, config = {}, { playlist } = {}) {
   const { Adaptive } = await import('../src/adaptive.js');
   const job = { id: 'aaaaaaaaaaa', quality: '1080p', state: 'ready', url: 'https://tunelio.dev/t?id=x' };
   const playback = { jobs: new Map(), peek: () => job, status: () => ({ state: 'ready' }), start() {},
@@ -702,26 +703,92 @@ test('#293 repro: with HOME_ANDROID_GROWING a PC ticket goes home → Tunelio (u
   adaptive.pacer = { check: () => ({ ok: true }) };
   const lines = [];
   const app = await homeApp(t, { playback, adaptive, tunelio: { enabled: true }, log: (l) => lines.push(typeof l === 'string' ? JSON.parse(l) : l),
-    config: { homeLongMinutes: 5, homeAndroid: true, homeAndroidGrowing: true, homeSettleMs: 0 } });
-  const PC = 'NSPlayer/12.00.26100 WMFSDK/12.00';
+    ...(playlist ? { playlist } : {}),
+    config: { homeLongMinutes: 5, homeAndroid: true, homeAndroidGrowing: true, homeSettleMs: 0, ticketPin: true, ticketPinMarginMs: 60_000, ...config } });
+  const pc = async () => { const loc = (await app.play('NSPlayer/12.00.26100 WMFSDK/12.00', '')).headers.get('location'); return /\/home\//.test(loc) ? 'home' : loc === job.url ? 'tunelio' : loc; };
   const plan = async () => (await (await fetch(`${app.url}/v1/0/${app.n}`, { headers: { 'user-agent': 'UnityPlayer/2022.3 (UnityWebRequest/1.0)' } })).json()).plan;
-  const served = [];
-  const pc = async () => { const loc = (await app.play(PC, '')).headers.get('location'); served.push(/\/home\//.test(loc) ? 'home' : 'tunelio'); return loc; };
-  // A Quest starts the home session (it stays on the growing playlist); the PC in the same room is sent to Tunelio.
-  assert.match((await app.play(QUEST)).headers.get('location'), /\/home\//);
-  await pc();
-  const growingPlan = await plan();
-  assert.ok(lines.some((e) => e.event === 'home_uneven' && e.kept));
-  // The worker finishes: the rest of the segments and the playlist with ENDLIST (home_done).
-  const put = (file, body) => fetch(`${app.url}/relay/media/${app.jobs[0].token}/${file}`, { method: 'PUT', headers: { authorization: `Bearer ${TOKEN}` }, body });
-  await put('seg1.ts', 'ts1');
-  await put('index.m3u8', '#EXTM3U\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXTINF:4.0,\nseg0.ts\n#EXTINF:4.0,\nseg1.ts\n#EXT-X-ENDLIST\n');
-  // The same PC ticket asked again (a resync or a late joiner's reload).
-  await pc();
-  assert.deepEqual(served, ['tunelio', 'home'], 'today: the answer changes once the home playlist ends');
+  const finish = async () => {
+    const put = (file, body) => fetch(`${app.url}/relay/media/${app.jobs[0].token}/${file}`, { method: 'PUT', headers: { authorization: `Bearer ${TOKEN}` }, body });
+    await put('seg1.ts', 'ts1');
+    await put('index.m3u8', ENDED);
+  };
+  return { ...app, job, playback, lines, pc, plan, finish };
+}
+
+test('TICKET_PIN (#293): a PC ticket sent to Tunelio while home grew keeps Tunelio after the playlist ends, and so does its tablet; off, it flips home as before', async (t) => {
+  const app = await pinApp(t);
+  assert.match((await app.play(QUEST)).headers.get('location'), /\/home\//, 'the Quest starts the growing session');
+  assert.equal(await app.pc(), 'tunelio');
+  const growingPlan = await app.plan();
   assert.notEqual(growingPlan, 'home');
-  assert.equal(await plan(), 'home', "today: the tablet's plan changes too");
-  assert.equal(app.jobs.length, 1, 'no second build: the flip is only a change of answer');
+  assert.ok(app.lines.some((e) => e.event === 'home_uneven' && e.kept));
+  await app.finish();
+  assert.equal(await app.pc(), 'tunelio', 'the same answer once the home playlist ends');
+  assert.equal(await app.plan(), growingPlan, "the tablet's plan stays put");
+  assert.match((await app.play(QUEST)).headers.get('location'), /\/home\//, 'the Quest keeps its own (home) answer');
+  assert.ok(app.lines.some((e) => e.event === 'play' && e.pinned && e.via === 'tunelio'));
+  assert.equal(app.jobs.length, 1);
+  // Off (prod today): the flip this fixes.
+  const off = await pinApp(t, { ticketPin: false });
+  await off.play(QUEST);
+  assert.equal(await off.pc(), 'tunelio');
+  await off.finish();
+  assert.equal(await off.pc(), 'home');
+  assert.equal(await off.plan(), 'home');
+});
+
+test('TICKET_PIN (#293): a play after the window (the video\'s length plus the margin since the last play) gets the finished home copy', async (t) => {
+  const app = await pinApp(t);
+  await app.play(QUEST);
+  assert.equal(await app.pc(), 'tunelio');
+  await app.finish();
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  t.mock.timers.tick(500_000); // within 600 s + 60 s of the last play
+  assert.equal(await app.pc(), 'tunelio', 'still being played: kept, and the window starts again');
+  t.mock.timers.tick(600_000 + 59_000);
+  assert.equal(await app.pc(), 'tunelio', 'within the renewed window');
+  t.mock.timers.tick(660_001);
+  assert.equal(await app.pc(), 'home', 'after the window: the best source now, the finished home playlist');
+  assert.ok(app.lines.some((e) => e.event === 'ticket_unpin' && e.reason === 'window'));
+  assert.equal(await app.pc(), 'home', 'and that is kept in turn');
+});
+
+test('TICKET_PIN (#293): a dead pinned source is chosen again: a Tunelio link re-made, a home session given up', async (t) => {
+  // Tunelio: the link expired and was re-made (another URL): the pin goes, and this play decides again (home, ended).
+  const app = await pinApp(t);
+  await app.play(QUEST);
+  assert.equal(await app.pc(), 'tunelio');
+  await app.finish();
+  app.job.url = 'https://tunelio.dev/t?id=y';
+  assert.equal(await app.pc(), 'home');
+  assert.ok(app.lines.some((e) => e.event === 'ticket_unpin' && e.reason === 'dead' && e.via === 'tunelio'));
+  // Home: an even-keyframe video (whole playlist at once) keeps the PC home; the session is then given up.
+  const even = await pinApp(t, {}, { playlist: ENDED.replace('EVENT', 'VOD') });
+  assert.equal(await even.pc(), 'home');
+  even.app.home.giveUp(even.app.home.peek({ id: 'aaaaaaaaaaa' }, '1080p'), 'uneven');
+  assert.equal(await even.pc(), 'tunelio', 'its session failed: decided again, Tunelio');
+  assert.ok(even.lines.some((e) => e.event === 'ticket_unpin' && e.reason === 'dead' && e.via === 'home'));
+});
+
+test('TICKET_PIN (#293): a youtube.com fallback is not kept: the next play gets the ready build, which is then kept', async (t) => {
+  const job = { id: 'aaaaaaaaaaa', quality: '720p', state: 'building', url: null };
+  let calls = 0;
+  const playback = { jobs: new Map(), peek: () => job, status: () => ({ state: job.state }), start() {},
+    async location() {
+      calls++;
+      if (job.state !== 'ready') return { ready: false };
+      return { location: job.url, via: 'tunelio', ready: true };
+    } };
+  const lines = [];
+  const app = await homeApp(t, { playback, tunelio: { enabled: true }, log: (l) => lines.push(typeof l === 'string' ? JSON.parse(l) : l),
+    config: { ticketPin: true, ticketPinMarginMs: 60_000 } });
+  const PC = 'NSPlayer/12.00.26100 WMFSDK/12.00';
+  assert.match((await app.play(PC, '')).headers.get('location'), /youtube\.com\/watch/, 'the build timed out: youtube.com');
+  Object.assign(job, { state: 'ready', url: 'https://tunelio.dev/t?id=x' });
+  assert.equal((await app.play(PC, '')).headers.get('location'), job.url, 'upgraded to the ready build');
+  assert.equal((await app.play(PC, '')).headers.get('location'), 'https://tunelio.dev/t?id=x');
+  assert.equal(calls, 2, 'the third play was answered from the pin');
+  assert.ok(lines.some((e) => e.event === 'play' && e.pinned));
 });
 
 test('home: today\'s MB are saved while segments arrive (at most every 30 s) and on flush, so a restart mid-build keeps them', (t) => {

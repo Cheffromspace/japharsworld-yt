@@ -17,6 +17,7 @@
 // takes longer than ~18 s costs the visitor the whole wait twice. `location()` therefore holds for at most `holdMs`.
 
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { RESTRICTED } from './refusal.js';
 
 const watch = (id) => `https://www.youtube.com/watch?v=${id}`;
 
@@ -35,7 +36,7 @@ export const cachedBuild = (mb, buildMs) => buildMs < 3000 || mb / (buildMs / 10
 export class Playback {
   constructor({ tunelio, quality = '1080p', lowerQuality = '720p', maxMbForQuality = 1500, progressiveMaxMb = 6000,
     progressiveMaxSeconds = 12 * 3600, progressiveRetries = 2, marginSeconds = 20 * 60,
-    pauseMinutes = 10, alert = () => {}, log = () => {}, now = () => Date.now(), probe = null, onBuild = () => {}, stateFile = null, liveFile = null }) {
+    pauseMinutes = 10, restrictedHours = 24, alert = () => {}, log = () => {}, now = () => Date.now(), probe = null, onBuild = () => {}, stateFile = null, liveFile = null }) {
     this.tunelio = tunelio;
     this.quality = quality;
     // A file above maxMbForQuality MB at `quality` is made again at lowerQuality (10 more credits, roughly half the
@@ -52,6 +53,11 @@ export class Playback {
     this.progressiveRetries = progressiveRetries;
     this.marginMs = marginSeconds * 1000;
     this.pauseMs = pauseMinutes * 60_000;
+    // Videos Tunelio refused as age-restricted (world #305): videoId → until. youtube.com can't play them in VRChat either
+    // (it asks to sign in), so they get `restricted` at once instead of a /create per play and a youtube.com fallback,
+    // which VRChat retried every 2–6 s (prod 2026-10-28 21:56Z, ~25 plays in 70 s). Kept in memory only.
+    this.restrictedMs = restrictedHours * 3600_000;
+    this.restrictedIds = new Map();
     this.alert = alert;
     this.log = log;
     this.now = now;
@@ -146,8 +152,16 @@ export class Playback {
   }
 
   // Static answers that need no build: live streams, Tunelio off or paused.
+  // True while `id` is known to be age-restricted (see restrictedIds).
+  restricted(id) {
+    const until = this.restrictedIds.get(id);
+    if (until && this.now() >= until) this.restrictedIds.delete(id);
+    return Boolean(until && this.now() < until);
+  }
+
   #direct(data) {
     const id = data.id;
+    if (this.restricted(id)) return { location: null, via: 'restricted', reason: 'restricted' };
     if (data.live) return { location: watch(id), via: 'youtube', reason: 'live' };
     if (!this.tunelio?.enabled) return { location: watch(id), via: 'youtube', reason: 'disabled' };
     if (this.now() < this.pausedUntil) return { location: watch(id), via: 'youtube', reason: 'paused' };
@@ -167,6 +181,7 @@ export class Playback {
   start(data, quality = this.quality, { hls = false, maxMb = 0 } = {}) {
     if (data.live) return null; // Tunelio refuses live streams (400 "Live streams are not supported"); they play from youtube.com
     const id = data.id;
+    if (this.restricted(id)) return null; // refused as age-restricted: no more /create calls for it (world #305)
     const key = this.#key(data, quality, hls);
     const now = this.now();
     let job = this.jobs.get(key);
@@ -277,6 +292,11 @@ export class Playback {
       } else if (err.status === 503 || err.status >= 500 || err.status === 0) {
         this.alert('tunelio_down', `Tunelio is failing (${err.status || err.code}); videos fall back to YouTube at 360p.`);
       }
+      if (RESTRICTED.test(`${err.code ?? ''} ${err.message ?? ''}`)) {
+        this.restrictedIds.set(id, this.now() + this.restrictedMs);
+        while (this.restrictedIds.size > 5000) this.restrictedIds.delete(this.restrictedIds.keys().next().value);
+        return this.#finish(job, { ok: false, reason: 'restricted' });
+      }
       return this.#finish(job, { ok: false, reason: 'tunelio_failed' });
     }
     // /create answered: the all-clear for whichever of these alerted (sent only if it did).
@@ -332,11 +352,12 @@ export class Playback {
   //   { state: 'live'|'youtube'|'building'|'ready'|'failed', format?, elapsed?, eta?, progress? }
   status(data, { warm = true, quality = this.quality, hls = false } = {}) {
     const direct = this.#direct(data);
+    if (direct?.via === 'restricted') return { state: 'failed', reason: 'restricted', error: 'restricted' };
     if (direct) return { state: direct.reason === 'live' ? 'live' : 'youtube', reason: direct.reason };
     const job = warm ? this.start(data, quality, { hls }) : this.peek(data, quality, { hls });
     if (!job) return { state: 'idle' };
     if (job.state === 'ready') return { state: 'ready', format: job.format, quality: job.quality, mb: job.mb, elapsed: Math.round((job.endedMs - job.startedMs) / 1000) };
-    if (job.state === 'failed') return { state: 'failed', format: job.format, reason: job.reason };
+    if (job.state === 'failed') return { state: 'failed', format: job.format, reason: job.reason, ...(job.reason === 'restricted' ? { error: 'restricted' } : {}) };
     const elapsed = (this.now() - job.startedMs) / 1000;
     const eta = this.etaSeconds(job);
     return { state: 'building', format: job.format, quality: job.quality, mb: job.mb, elapsed: Math.round(elapsed), eta,
@@ -363,6 +384,7 @@ export class Playback {
     await this.wait(job, holdMs);
     if (job.state === 'building') return { location: job.url, via: 'tunelio', reason: 'building', ready: false };
     if (job.state === 'ready') return { location: job.url, via: 'tunelio', quality: job.quality, ready: true };
+    if (job.reason === 'restricted') return { location: null, via: 'restricted', reason: 'restricted', ready: true };
     return { location: watch(data.id), via: 'youtube', reason: job.reason ?? 'tunelio_failed', ready: true };
   }
 }

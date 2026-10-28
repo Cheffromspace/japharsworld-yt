@@ -1,9 +1,14 @@
 // YouTube refusals by class (claude/metrics.md, yt_refusal): the relay worker (relay/worker.js) sends only the class with
 // a failed job, never the message, and the server counts it with this host's own (search from the Linode, its yt-dlp
 // captions). Patterns from yt-dlp's and youtubei.js's error texts and the yt-dlp wiki (2026-10-25).
-export const REFUSAL_CLASSES = ['bot', 'rate', 'forbidden', 'potoken', 'other'];
+export const REFUSAL_CLASSES = ['bot', 'rate', 'forbidden', 'potoken', 'restricted', 'other'];
 export const REFUSAL_WHERE = ['home', 'linode', 'staging'];
+// An age-restricted (or otherwise sign-in-only) video: YouTube's verdict on the video, not on the address asking, so it
+// is matched before `bot`, whose "Sign in to confirm" it shares ("…your age" vs "…you're not a bot"), and never backs
+// off or alerts (world #305: prod 2026-10-28 21:56Z, one age-gated video paused the home worker's media for 10 min).
+export const RESTRICTED = /confirm your age|age[- ]restricted|inappropriate for some users/i;
 const PATTERNS = [
+  ['restricted', RESTRICTED],
   ['bot', /Sign in to confirm|LOGIN_REQUIRED/i],
   ['potoken', /PO Token|po_token/i],
   ['rate', /\b429\b|Too Many Requests|try again later|This content isn.t available/i],

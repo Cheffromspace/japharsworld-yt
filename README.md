@@ -70,7 +70,9 @@ This service works within that rule:
 | `GET /healthz` | `{"ok": true, "tunelio": bool, "credits": n, "workers": n, "lastSearchVia": "worker"/"local"/"api", "apiUnitsToday": n}` (credits as last reported by Tunelio) |
 
 Errors are JSON `{ "error": code, "message": … }` with codes `empty_query`, `rate_limited`, `youtube_failed`,
-`unknown_ticket`, `expired`, `bad_shard`, `bad_quality`, `nothing_playing`, `captions_failed`; the world shows its own
+`unknown_ticket`, `expired`, `bad_shard`, `bad_quality`, `nothing_playing`, `captions_failed`, `restricted` (an
+age-restricted video: no source can play it, so a player gets `403` at once and the tablet's ticket status
+`state: "failed"`, `error: "restricted"`; world #305); the world shows its own
 localized text per code.
 
 ### A YouTube link played straight from the search address (world #136)

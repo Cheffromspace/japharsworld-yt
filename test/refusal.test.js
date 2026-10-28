@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { refusalClass, RefusalWatch } from '../src/refusal.js';
 import { createWorker } from '../relay/worker.js';
+import { isBotWall } from '../src/captions.js';
 
 test('refusal classes from yt-dlp and InnerTube error texts', () => {
   // The bot wall as the Linode's yt-dlp printed it (monitor/test_slotmon.py has the page version).
@@ -14,6 +15,12 @@ test('refusal classes from yt-dlp and InnerTube error texts', () => {
   assert.equal(refusalClass({ stderr: 'WARNING: [youtube] x: The tv client requires a GVS PO Token\nERROR: HTTP Error 403: Forbidden' }), 'potoken');
   assert.equal(refusalClass(new Error('ffmpeg exited with 1')), 'other');
   assert.equal(refusalClass('timeout'), 'other');
+  // The age gate shares "Sign in to confirm" with the bot wall but is the video's verdict (world #305, prod 2026-10-28).
+  assert.equal(refusalClass({ stderr: 'ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm your age. This video may be inappropriate for some users. Use --cookies-from-browser or --cookies for the authentication.' }), 'restricted');
+  assert.equal(refusalClass(new Error('This video is age-restricted and cannot be downloaded.')), 'restricted');
+  assert.equal(isBotWall({ stderr: 'ERROR: [youtube] x: Sign in to confirm your age.' }), false, "the Linode's captions don't pause on an age gate");
+  assert.equal(isBotWall({ stderr: 'ERROR: [youtube] x: Sign in to confirm you’re not a bot.' }), true);
+  assert.equal(refusalClass({ stderr: 'ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication.' }), 'bot');
 });
 
 test('refusal watch: 3 in 15 minutes fire, forbidden and other never do, the window slides, quiet after an hour', () => {
@@ -22,6 +29,8 @@ test('refusal watch: 3 in 15 minutes fire, forbidden and other never do, the win
   assert.equal(w.add('bot'), false);
   assert.equal(w.add('forbidden'), false);
   assert.equal(w.add('other'), false);
+  assert.equal(w.add('restricted'), false);
+  assert.equal(w.times.length, 1, 'an age gate is not counted toward the alert');
   t += 10 * 60_000;
   assert.equal(w.add('rate'), false);
   t += 6 * 60_000; // the first one left the window

@@ -615,12 +615,23 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // its warm-up builds what the player will open.
   const hlsChoice = (c) => (c.hls ? { quality: adaptive.lower, hls: true, single: true, mode: 'lower' } : { ...c, hls: true, single: true });
 
+  // An age-restricted video (world #305): no source can play it, youtube.com included (VRChat can't sign in), so the
+  // tablet gets `error: "restricted"` in its status and a player a fast 403 with that code instead of a youtube.com link
+  // it would retry every few seconds.
+  function restrictedAnswer(res, kind, shard, n, t) {
+    metrics.inc('ticket_restricted');
+    if (kind === 'string') return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), state: 'failed', reason: 'restricted', error: 'restricted', ...meta(t.data) });
+    logJson({ event: 'play_restricted', shard, n, id: t.data.id, client: kind });
+    return fail(res, 403, 'restricted', "This video is age-restricted on YouTube and can't be played here.");
+  }
+
   async function ticket(req, res, shard, n, hlsTicket = false) {
     const t = store.get(shard, n);
     if (!t) return fail(res, 404, 'unknown_ticket', 'Nothing here yet. Search again.');
     if (t.kind === 'video') {
       const kind = clientKind(req.headers['user-agent']);
       metrics.inc('ticket_client', kind);
+      if (playback.restricted?.(t.data.id)) return restrictedAnswer(res, kind, shard, n, t);
       // The tablet asking (a row selected, or watching a build): start the build, report it, never redirect.
       if (kind === 'string') {
         // A ticket being played reports the source its players were given (TICKET_PIN), not a new decision.
@@ -777,6 +788,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       }
       const held = Date.now() - started;
       metrics.latency('ticket_hold_ms', held);
+      if (where.via === 'restricted') return restrictedAnswer(res, kind, shard, n, t);
       if (where.ready === false && resolver) {
         metrics.inc('ticket_fastfail');
         logJson({ event: 'play_defer', shard, n, id: t.data.id, held, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });

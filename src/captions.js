@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { LANGS } from './query.js';
 import { cuesFrom } from './cues.js';
 import { randomBytes } from 'node:crypto';
-import { refusalClass } from './refusal.js';
+import { refusalClass, RESTRICTED } from './refusal.js';
 
 const INFO_MAX_AGE_MS = 60 * 60_000; // signed caption URLs inside the info JSON expire after a few hours
 const MAX_LINES = 6000;
@@ -23,9 +23,11 @@ export const DEFAULT_ATTEMPTS = [
   ['--extractor-args', 'youtube:player_client=tv_simply,android_vr,mweb'],
 ];
 
-// YouTube's refusal of an address it does not trust (datacenter ranges, mostly).
+// YouTube's refusal of an address it does not trust (datacenter ranges, mostly). Not an age gate, which shares the
+// "Sign in to confirm" wording but is about the video (src/refusal.js RESTRICTED, world #305).
 export function isBotWall(err) {
-  return /Sign in to confirm/i.test(String(err?.stderr ?? '') + String(err?.message ?? ''));
+  const text = String(err?.stderr ?? '') + String(err?.message ?? '');
+  return /Sign in to confirm/i.test(text) && !RESTRICTED.test(text);
 }
 
 // The line worth logging: yt-dlp's ERROR line, not the cookie help text that follows it.

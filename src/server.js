@@ -897,18 +897,21 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   return Object.assign(handler, { relay, checkWorkers, metrics, probe, refusals, home });
 }
 
+// What SIGTERM/SIGINT do (deploys restart the service): answer the relay workers' held polls first, write the last
+// minute's counts and today's home use (so the daily caps count across the restart), then exit after a short wait that
+// lets those 204s reach Caddy. Exported so the tests cover it without a child process (SV-053).
+export function shutdown(app, server, { exit = (code) => process.exit(code), waitMs = 200 } = {}) {
+  app.relay?.drain();
+  server?.close();
+  app.metrics.close();
+  app.home?.flush?.();
+  setTimeout(() => exit(0), waitMs);
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const app = createApp();
-  // Write the last minute's counts before systemd stops us (deploys restart the service), and answer the relay
-  // workers' held polls first; the short wait lets those 204s reach Caddy before the process exits.
   let server;
-  for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {
-    app.relay?.drain();
-    server.close();
-    app.metrics.close();
-    app.home?.flush?.(); // today's home use, so the daily caps count across the restart
-    setTimeout(() => process.exit(0), 200);
-  });
+  for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => shutdown(app, server));
   server = http.createServer(app).listen(defaults.port, defaults.host, () => {
     console.log(`japharsworld-yt listening on ${defaults.host}:${defaults.port} (${defaults.shards} shards × ${defaults.pool} tickets)`);
   });

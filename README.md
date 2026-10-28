@@ -169,7 +169,8 @@ one, f331bcc) and never for live streams:
    below it (`android_av1_rung`), so the play tops out lower instead of failing at the step up.
 
 Only while a worker that announced `caps=media` is online and today's `HOME_DAILY_BUILDS` / `HOME_DAILY_MB` aren't used
-up (YouTube may flag an IP that downloads a lot). Otherwise, or when the first segments don't arrive within
+up (YouTube may flag an IP that downloads a lot; "today" is the `METRICS_TZ` day, America/Chicago, and the count is
+kept in `home/day.json` across restarts). Otherwise, or when the first segments don't arrive within
 `HOME_READY_SECONDS`, the play takes the Tunelio path as before.
 
 **Quality and concurrency** (owner, 2026-10-25): home builds the room's own pick, or `HOME_QUALITY` (1080p) when

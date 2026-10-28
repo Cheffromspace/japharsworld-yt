@@ -22,10 +22,12 @@
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, rmSync, renameSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
+import { dayOf } from './metrics.js';
 
 const SEGMENT = /^seg\d{1,5}\.ts$/;
 const TOKEN = /^[a-f0-9]{18}$/;
 const MAX_SEGMENT_BYTES = 64 << 20;
+const DAY_SAVE_MS = 30_000; // today's use goes to day.json at most this often while segments arrive (#saveDaySoon)
 const RETRY_MS = 60_000; // a failed session is tried again after this long
 // An unfinished session with no upload for this long has no worker stream behind it any more (it died or was stopped);
 // a live one uploads every few seconds, and a server restart only pauses it for seconds (the worker retries).
@@ -36,8 +38,9 @@ const PLAYING_MS = 5 * 60_000;
 
 export class Home {
   constructor({ relay, dir, base = 'https://yt.japharsworld.com/home', enabled = false, dailyBuilds = 40, dailyMb = 10_000,
-    keepHours = 12, maxGb = 8, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, now = () => Date.now(), log = () => {}, onEvent = () => {} }) {
-    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, keepHours, maxGb, readyMs, segmentHoldMs, startPrecise, now, log, onEvent });
+    keepHours = 12, maxGb = 8, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, tz = 'America/Chicago', now = () => Date.now(), log = () => {}, onEvent = () => {} }) {
+    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, keepHours, maxGb, readyMs, segmentHoldMs, startPrecise, tz, now, log, onEvent });
+    this.daySavedMs = 0;
     this.sessions = new Map(); // "videoId@quality" → session
     this.byToken = new Map();  // token → session
     this.day = { date: '', builds: 0, mb: 0 };
@@ -94,10 +97,18 @@ export class Home {
     try { writeFileSync(join(this.dir, s.token, 'meta.json'), JSON.stringify(meta)); s.metaSavedMs = this.now(); } catch { /* folder gone */ }
   }
   #saveUneven() { try { writeFileSync(join(this.dir, 'uneven.json'), JSON.stringify(Object.fromEntries(this.uneven))); } catch { /* no dir */ } }
-  #saveDay() { try { writeFileSync(join(this.dir, 'day.json'), JSON.stringify(this.day)); } catch { /* no dir */ } }
+  #saveDay() { this.daySavedMs = this.now(); try { writeFileSync(join(this.dir, 'day.json'), JSON.stringify(this.day)); } catch { /* no dir */ } }
+  // Today's use as it grows: at most every DAY_SAVE_MS while segments arrive. A predicted playlist goes up once at the
+  // start, so its MB were saved only when the next session started, and a deploy mid-build lost them (up to ~7 GB for
+  // a 4 h 1080p build, 2026-10-27). flush() saves the rest on shutdown (server.js, SIGTERM).
+  #saveDaySoon() { if (this.now() - this.daySavedMs >= DAY_SAVE_MS) this.#saveDay(); }
+  flush() { if (this.dir && this.enabled) this.#saveDay(); }
 
+  // The day the caps count: the reporting time zone's (METRICS_TZ), the day the metrics, the dashboard and the daily
+  // report use. It was the UTC date, which rolled over at 19:00 Chicago (2026-10-27: the dashboard's "today" read 0
+  // at 19:2x and looked like a restart had reset the count).
   #today() {
-    const d = new Date(this.now()).toISOString().slice(0, 10);
+    const d = dayOf(this.now(), this.tz);
     if (this.day.date !== d) this.day = { date: d, builds: 0, mb: 0, cacheHits: 0, cacheMb: 0 };
     return this.day;
   }
@@ -306,6 +317,7 @@ export class Home {
       s.mb += body.length / 1e6;
       const d = this.#today();
       if (s.cached) d.cacheMb = (d.cacheMb ?? 0) + body.length / 1e6; else d.mb += body.length / 1e6;
+      this.#saveDaySoon();
     }
     const ws = s.segmentWaiters.get(file);
     if (ws) { s.segmentWaiters.delete(file); for (const w of ws) w(); }

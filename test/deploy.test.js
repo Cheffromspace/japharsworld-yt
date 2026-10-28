@@ -14,6 +14,14 @@ test('update.sh: production defaults (main, monitor and poller on, the linode Al
   assert.doesNotMatch(s, /\|security\)\.[|)]/, 'the unit-name dots stay escaped');
 });
 
+test('update.sh: the shell setup script does not restart the search service; src/ still does', () => {
+  const re = new RegExp(/service_changed=\$\(echo "\$changed" \| grep -v -E '(.*)' \|\| true\)/.exec(script('update.sh'))[1]);
+  assert.ok(re.test('deploy/shell-setup.sh'), 'deploy/shell-setup.sh is on the no-restart list');
+  assert.ok(re.test('README.md'));
+  assert.ok(!re.test('src/server.js'), 'src/ restarts');
+  assert.ok(!/^(relay\/|src\/|package(-lock)?\.json$|deploy\/japharsworld-yt-relay)/.test('deploy/shell-setup.sh'), 'nor the relay worker (relay-update.sh)');
+});
+
 test('relay-update.sh: production defaults, and a staging worker touches only its own units', () => {
   const s = script('relay-update.sh');
   for (const d of ['APP=${RELAY_APP:-/opt/japharsworld-yt-relay}', 'BRANCH=${RELAY_BRANCH:-main}', 'UNIT=${RELAY_UNIT:-japharsworld-yt-relay}', 'SETUP=${RELAY_SETUP:-on}']) assert.ok(s.includes(d), d);

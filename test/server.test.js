@@ -128,6 +128,43 @@ test('ticket status carries the title, channel and description (Everything-is-OK
   assert.equal(l.body.results[0].link, undefined);
 });
 
+// World #136: the tablet's YouTube field hands its search address straight to the video player.
+test('pasted YouTube link (#136): a player or resolver gets the ticket answer, the tablet the search with the same ticket; other hosts never redirect', async (t) => {
+  const s = await start({ config: { ...config, searchesPerMinutePerIp: 50 } });
+  t.after(() => s.server.close());
+  const as = (ua) => async (path) => fetch(`${s.base}${path}`, { redirect: 'manual', headers: { 'user-agent': ua } });
+  const avpro = as('NSPlayer/12.00.19041.1 WMFSDK/12.00.19041.1'), ytdlp = as('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0'), tablet = as('UnityPlayer/2022.3 (UnityWebRequest/1.0)');
+  const q = `/v1/0/s?l=en&q=${encodeURIComponent('Paste a link → https://youtu.be/AbCdEfGhIjK')}`;
+
+  const resolved = await ytdlp(q);
+  assert.equal(resolved.status, 302);
+  assert.equal(resolved.headers.get('location'), 'https://www.youtube.com/watch?v=AbCdEfGhIjK', 'no Tunelio here: the youtube.com answer a ticket gives');
+  assert.equal((await avpro(q)).status, 302);
+  const st = await (await tablet(q)).json();
+  assert.equal(st.pasted, true);
+  assert.equal(st.results[0].id, 'AbCdEfGhIjK');
+  const played = s.store.get(0, st.results[0].t);
+  assert.equal(played.data.id, 'AbCdEfGhIjK', 'the first result is the ticket the player played');
+  assert.ok(played.pinnedUntil > Date.now(), 'and it was played (pinned for late joiners)');
+  assert.deepEqual(s.youtube.calls, ['AbCdEfGhIjK', 'AbCdEfGhIjK'], 'the player and resolver shared one lookup; the tablet ran its own search');
+  const status = await (await tablet(`/v1/0/${st.results[0].t}`)).json();
+  assert.deepEqual([status.t, status.title], [st.results[0].t, 'AbCdEfGhIjK'], 'the tablet follows it like a late joiner (#114); the fake search has no exact match, so the title is the id');
+  // The compact address and its .m3u8 form answer a player the same way.
+  assert.equal((await avpro(`/s/0e.m3u8?q=${encodeURIComponent('youtube.com/watch?v=AbCdEfGhIjK')}`)).status, 302);
+  assert.equal((await avpro(`/v1/0/s.m3u8?q=${encodeURIComponent('→ https://youtu.be/AbCdEfGhIjK')}`)).status, 302);
+
+  // Never a redirect for another host, even one carrying a YouTube-shaped id, nor for plain text: the search JSON.
+  for (const link of ['https://evil.example/watch?v=AbCdEfGhIjK', 'https://youtube.com.evil.example/watch?v=AbCdEfGhIjK',
+    'https://youtube.com@evil.example/watch?v=AbCdEfGhIjK', 'https://evil.example/?u=https://youtu.be/AbCdEfGhIjK', 'rain sounds']) {
+    for (const load of [avpro, ytdlp]) {
+      const r = await load(`/v1/0/s?q=${encodeURIComponent(`→ ${link}`)}`);
+      assert.equal(r.status, 200, link);
+      assert.equal(r.headers.get('location'), null, link);
+      assert.match(r.headers.get('content-type'), /json/, link);
+    }
+  }
+});
+
 // The compact search address for Quest (#143, 2026-10-25): /s/<shard><letter>?q=, the same search as /v1/<shard>/s.
 test('compact search /s/<shard><letter>: the same answer as /v1, with or without the arrow prompt', async (t) => {
   const roomy = { config: { ...config, searchesPerMinutePerIp: 50 } };

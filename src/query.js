@@ -56,6 +56,21 @@ export function youtubeIdFrom(text) {
 }
 export const isVideoId = (s) => ID.test(s ?? '');
 
+// A typed YouTube link's video ID, only when the link's host is YouTube's own (world #136: a video player loading the
+// search address gets a redirect, so this is the open-redirect check; decisions.md 2026-10-23). Anything else is null
+// and is searched as text, as before.
+const YT_HOSTS = /^(?:(?:www|m|music)\.)?youtube\.com$|^youtu\.be$/i;
+export function youtubeLinkId(text) {
+  const raw = String(text ?? '').trim();
+  if (/\s/.test(raw)) return null;
+  let u;
+  try { u = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`); } catch { return null; }
+  if (!YT_HOSTS.test(u.hostname) || u.username || u.password || u.port) return null;
+  const id = u.hostname.toLowerCase() === 'youtu.be' ? u.pathname.slice(1)
+    : u.pathname === '/watch' ? u.searchParams.get('v') : u.pathname.match(/^\/(?:shorts|live|embed)\/([^/]+)\/?$/)?.[1];
+  return ID.test(id ?? '') ? id : null;
+}
+
 // VRChat client language → YouTube caption language codes, best first.
 export const LANGS = {
   en: ['en', 'en-US', 'en-GB', 'en-CA', 'en-AU'],

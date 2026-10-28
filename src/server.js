@@ -127,7 +127,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   home ??= new Home({ relay, dir: join(dirname(config.dbPath), 'home'), base: `${config.publicUrl}/home`, enabled: config.homeRelay && relay.enabled,
     dailyBuilds: config.homeDailyBuilds, dailyMb: config.homeDailyMb, keepHours: config.homeKeepHours, maxGb: config.homeMaxGb, readyMs: config.homeReadyMs,
     segmentHoldMs: config.homeSegmentHoldMs,
-    startPrecise: config.homeAndroidGrowing, log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
+    startPrecise: config.homeAndroidGrowing, tz: config.metricsTz, log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
   if (home.enabled) setInterval(() => home.sweep(), 10 * 60_000).unref();
   channels ??= new ChannelSlots({ monitorDb: config.monitorDb });
   // The Linode's own bytes sent, every minute (the transfer alerts, src/net.js).
@@ -891,7 +891,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       else res.end();
     }
   }
-  return Object.assign(handler, { relay, checkWorkers, metrics, probe, refusals });
+  return Object.assign(handler, { relay, checkWorkers, metrics, probe, refusals, home });
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
@@ -903,6 +903,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     app.relay?.drain();
     server.close();
     app.metrics.close();
+    app.home?.flush?.(); // today's home use, so the daily caps count across the restart
     setTimeout(() => process.exit(0), 200);
   });
   server = http.createServer(app).listen(defaults.port, defaults.host, () => {

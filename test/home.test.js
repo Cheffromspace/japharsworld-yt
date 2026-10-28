@@ -689,6 +689,39 @@ test('ticket → home: with HOME_ANDROID_GROWING a PC leaving for Tunelio keeps 
   assert.equal(lines.filter((e) => e.event === 'home_uneven').length, 1, 'marked once');
 });
 
+test('home: today\'s MB are saved while segments arrive (at most every 30 s) and on flush, so a restart mid-build keeps them', (t) => {
+  const dir = tmp(t);
+  let now = Date.parse('2026-10-27T20:00:00Z');
+  const home = new Home({ relay: fakeRelay(), dir, base: 'https://yt/home', enabled: true, now: () => now });
+  const s = home.start({ id: 'aaaaaaaaaaa', seconds: 3600 }, '1080p');
+  home.put(s.token, 'seg0.ts', Buffer.alloc(1_000_000));
+  home.put(s.token, 'index.m3u8', Buffer.from(PL1)); // a predicted playlist goes up once, here
+  const reload = () => new Home({ relay: fakeRelay(), dir, base: 'https://yt/home', enabled: true, now: () => now }).state().today;
+  now += 10_000;
+  home.put(s.token, 'seg1.ts', Buffer.alloc(2_000_000));
+  assert.equal(reload().mb, 1, 'within 30 s of the last save: not written yet');
+  now += 30_000;
+  home.put(s.token, 'seg2.ts', Buffer.alloc(3_000_000));
+  assert.deepEqual([reload().mb, reload().builds], [6, 1], 'saved as it grew, before any further playlist');
+  now += 1_000;
+  home.put(s.token, 'seg3.ts', Buffer.alloc(4_000_000));
+  home.flush(); // SIGTERM
+  assert.equal(reload().mb, 10, 'the rest on shutdown');
+});
+
+test('home: the daily caps count the reporting time zone\'s day (Chicago), not the UTC date', (t) => {
+  const dir = tmp(t);
+  let now = Date.parse('2026-10-27T23:30:00Z'); // 18:30 CDT
+  const home = new Home({ relay: fakeRelay(), dir, base: 'https://yt/home', enabled: true, now: () => now });
+  home.start({ id: 'aaaaaaaaaaa', seconds: 600 }, '720p');
+  now = Date.parse('2026-10-28T00:25:00Z'); // 19:25 CDT, the same Chicago day (the UTC date rolled over)
+  assert.equal(home.state().today.builds, 1, 'still today');
+  now = Date.parse('2026-10-28T05:00:01Z'); // 00:00:01 CDT on the 28th
+  assert.equal(home.state().today.builds, 0, 'a new day at Chicago midnight');
+  const utc = new Home({ relay: fakeRelay(), dir: tmp(t), base: 'https://yt/home', enabled: true, tz: 'UTC', now: () => now });
+  assert.equal(utc.state().today.builds, 0, 'tz is configurable (METRICS_TZ)');
+});
+
 test('home: PRECISE=YES only while the playlist grows, and only with startPrecise', async (t) => {
   const home = new Home({ relay: fakeRelay(), dir: tmp(t), base: 'https://yt/home', enabled: true, startPrecise: true });
   const s = home.start({ id: 'aaaaaaaaaaa', seconds: 600 }, '720p');

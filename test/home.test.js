@@ -689,6 +689,41 @@ test('ticket → home: with HOME_ANDROID_GROWING a PC leaving for Tunelio keeps 
   assert.equal(lines.filter((e) => e.event === 'home_uneven').length, 1, 'marked once');
 });
 
+// #293 reproduction, today's behaviour (prod 2026-10-28 04:48–04:49Z): one ticket's answer for a PC player changes
+// twice during the build. home while the session is new, Tunelio once leaveHome marks it uneven, and home again once
+// the playlist ends (leaveHome returns false for an ended session and homeWhy's 'reuse' comes before isUneven). The
+// tablet's plan flips the same way. When a ticket's source is pinned once playing, the last two asserts flip.
+test('#293 repro: with HOME_ANDROID_GROWING a PC ticket goes home → Tunelio (uneven) → home again once the playlist ends', async (t) => {
+  const { Adaptive } = await import('../src/adaptive.js');
+  const job = { id: 'aaaaaaaaaaa', quality: '1080p', state: 'ready', url: 'https://tunelio.dev/t?id=x' };
+  const playback = { jobs: new Map(), peek: () => job, status: () => ({ state: 'ready' }), start() {},
+    async location() { return { location: job.url, via: 'tunelio', ready: true }; } };
+  const adaptive = new Adaptive({ playback, base: 'http://pub/hls' });
+  adaptive.pacer = { check: () => ({ ok: true }) };
+  const lines = [];
+  const app = await homeApp(t, { playback, adaptive, tunelio: { enabled: true }, log: (l) => lines.push(typeof l === 'string' ? JSON.parse(l) : l),
+    config: { homeLongMinutes: 5, homeAndroid: true, homeAndroidGrowing: true, homeSettleMs: 0 } });
+  const PC = 'NSPlayer/12.00.26100 WMFSDK/12.00';
+  const plan = async () => (await (await fetch(`${app.url}/v1/0/${app.n}`, { headers: { 'user-agent': 'UnityPlayer/2022.3 (UnityWebRequest/1.0)' } })).json()).plan;
+  const served = [];
+  const pc = async () => { const loc = (await app.play(PC, '')).headers.get('location'); served.push(/\/home\//.test(loc) ? 'home' : 'tunelio'); return loc; };
+  // A Quest starts the home session (it stays on the growing playlist); the PC in the same room is sent to Tunelio.
+  assert.match((await app.play(QUEST)).headers.get('location'), /\/home\//);
+  await pc();
+  const growingPlan = await plan();
+  assert.ok(lines.some((e) => e.event === 'home_uneven' && e.kept));
+  // The worker finishes: the rest of the segments and the playlist with ENDLIST (home_done).
+  const put = (file, body) => fetch(`${app.url}/relay/media/${app.jobs[0].token}/${file}`, { method: 'PUT', headers: { authorization: `Bearer ${TOKEN}` }, body });
+  await put('seg1.ts', 'ts1');
+  await put('index.m3u8', '#EXTM3U\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXTINF:4.0,\nseg0.ts\n#EXTINF:4.0,\nseg1.ts\n#EXT-X-ENDLIST\n');
+  // The same PC ticket asked again (a resync or a late joiner's reload).
+  await pc();
+  assert.deepEqual(served, ['tunelio', 'home'], 'today: the answer changes once the home playlist ends');
+  assert.notEqual(growingPlan, 'home');
+  assert.equal(await plan(), 'home', "today: the tablet's plan changes too");
+  assert.equal(app.jobs.length, 1, 'no second build: the flip is only a change of answer');
+});
+
 test('home: today\'s MB are saved while segments arrive (at most every 30 s) and on flush, so a restart mid-build keeps them', (t) => {
   const dir = tmp(t);
   let now = Date.parse('2026-10-27T20:00:00Z');

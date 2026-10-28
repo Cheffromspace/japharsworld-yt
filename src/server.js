@@ -1,6 +1,8 @@
 // Routes (all under the baked shard prefix):
 //   GET /v1/<shard>/s?l=<lang>&q=<prompt> → <query>   search; JSON with ticket numbers
 //   GET /s/<shard><letter>?q=<query>                  the same search, compact (Quest; language letters in src/query.js)
+//                                                      a video player or resolver whose q is a YouTube link (#136) gets
+//                                                      that video's ticket answer instead (s.m3u8: as a .m3u8 ticket)
 //   GET /v1/<shard>/<n>                                ticket: 302 to the video (Tunelio HD link, or YouTube), JPEG (thumbnail sheet),
 //                                                      JSON (next page)
 //   GET /v1/<shard>/cc/<lang>                          captions for the video last played in this shard (lang: VRChat code or
@@ -32,7 +34,7 @@ import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { config as defaults } from './config.js';
 import { Store } from './store.js';
-import { parseQuery, queryShape, youtubeIdFrom, normalizeLang, LANGS, SHORT_LANGS } from './query.js';
+import { parseQuery, queryShape, youtubeIdFrom, youtubeLinkId, normalizeLang, LANGS, SHORT_LANGS } from './query.js';
 import { youtube as defaultYoutube } from './youtube.js';
 import { cachedSheet } from './sheet.js';
 import { Captions, errorLine } from './captions.js';
@@ -226,8 +228,29 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return remote;
   }
 
+  // World #136: a YouTube link typed in the tablet's YouTube field, whose search address the world hands straight to the
+  // video player. "shard:videoId" → { n: Promise<ticket>, until }, so the player, VRChat's resolver and the tablet's own
+  // load of that address share one ticket (and its TICKET_PIN) instead of binding one each; kept 30 min after last use.
+  const pastedTickets = new Map();
+  const PASTED_MS = 30 * 60_000;
+  async function pastedTicket(shard, id, make) {
+    const key = `${shard}:${id}`;
+    const e = pastedTickets.get(key);
+    if (e && Date.now() < e.until) {
+      const n = await e.n.catch(() => null);
+      if (n != null && store.get(shard, n)?.data?.id === id) { e.until = Date.now() + PASTED_MS; return n; }
+    }
+    const fresh = { n: make(), until: Date.now() + PASTED_MS };
+    pastedTickets.set(key, fresh);
+    if (pastedTickets.size > 2000) pastedTickets.delete(pastedTickets.keys().next().value);
+    try { return await fresh.n; } catch (err) { if (pastedTickets.get(key) === fresh) pastedTickets.delete(key); throw err; }
+  }
+  const pastedVideo = (page, id) => page.videos.find((v) => v.id === id)
+    ?? { id, title: id, channel: '', length: '', seconds: 0, views: '', age: '', live: false, cc: false };
+
   // `lang`: from l= on /v1/<shard>/s, or from the compact address's language letter (/s/<shard><letter>, src/query.js).
-  async function search(req, res, shard, url, lang = normalizeLang(url.searchParams.get('l'))) {
+  // `hlsTicket`: the address ends in .m3u8 (/v1/<shard>/s.m3u8, /s/<shard><letter>.m3u8), for a pasted link's play (#136).
+  async function search(req, res, shard, url, lang = normalizeLang(url.searchParams.get('l')), hlsTicket = false) {
     if (rateLimited(clientIp(req))) { metrics.inc('search_fail', '429'); return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.'); }
     const query = parseQuery(url.searchParams.get('q') ?? '');
     const ua = String(req.headers['user-agent'] ?? '');
@@ -235,6 +258,22 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       ...queryShape(url.searchParams.get('q') ?? '') });
     // The world loads the bare search address once after join (visitors who allow untrusted URLs).
     if (!query) { metrics.inc('join'); metrics.inc('join_lang', lang); return fail(res, 400, 'empty_query', 'Type something after the arrow.'); }
+    // A video player or VRChat's resolver loading the address of a YouTube link (#136): play it as its ticket would be
+    // played. Only a link on YouTube's own hosts (youtubeLinkId); anything else, and every string load (the tablet),
+    // gets the search answer below, so this never redirects to another site.
+    const kind = clientKind(ua);
+    const linkId = kind === 'avpro' || kind === 'ytdlp' ? youtubeLinkId(query) : null;
+    if (linkId) {
+      let n;
+      try {
+        n = await pastedTicket(shard, linkId, async () => store.allocate(shard, [ticketData(pastedVideo(await searcher.search(linkId, config.resultsPerPage), linkId))])[0]);
+      } catch {
+        metrics.inc('search_fail', '502');
+        return fail(res, 502, 'youtube_failed', 'YouTube search is not answering right now.');
+      }
+      logJson({ event: 'pasted_play', shard, n, id: linkId, client: kind, hls: hlsTicket });
+      return await ticket(req, res, shard, n, hlsTicket);
+    }
     metrics.inc('search');
     metrics.inc('search_lang', lang);
     let page;
@@ -249,11 +288,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     metrics.inc('search_source', page.via);
     metrics.latency('search_ms', Date.now() - started);
     if (pasted) {
-      const exact = page.videos.find((v) => v.id === pasted);
       const rest = page.videos.filter((v) => v.id !== pasted);
-      page = { videos: [exact ?? { id: pasted, title: pasted, channel: '', length: '', seconds: 0, views: '', age: '', live: false, cc: false }, ...rest], more: page.more };
+      page = { videos: [pastedVideo(page, pasted), ...rest], more: page.more };
     }
-    return json(res, 200, publish(shard, page, { query, lang, page: 1, pasted: Boolean(pasted) }));
+    const body = publish(shard, page, { query, lang, page: 1, pasted: Boolean(pasted) });
+    // A YouTube link's first result is the ticket its player plays (#136), whichever of the two loads came first.
+    const linked = pasted && youtubeLinkId(query) === pasted ? pasted : null;
+    if (linked) body.results[0].t = await pastedTicket(shard, linked, async () => body.results[0].t);
+    return json(res, 200, body);
   }
 
   // Players held on a ticket and Tunelio builds in flight. A restart drops both (the visitor's video falls back to
@@ -931,7 +973,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         return res.end(req.method === 'HEAD' ? undefined : buf);
       }
       // The compact search address for Quest's short Enter URL line (Everything-is-OK#143): /s/<shard><language letter>?q=…
-      const c = url.pathname.match(/^\/s\/(\d)([a-z])?\/?$/);
+      const c = url.pathname.match(/^\/s\/(\d)([a-z])?(\.m3u8)?\/?$/);
       if (c) {
         const shard = Number(c[1]);
         const lang = c[2] ? SHORT_LANGS[c[2]] : 'en';
@@ -939,14 +981,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         if (!lang) return fail(res, 404, 'not_found', 'Unknown path.');
         metrics.shard(shard);
         route = 'search';
-        return await search(req, res, shard, url, lang);
+        return await search(req, res, shard, url, lang, Boolean(c[3]));
       }
-      const m = url.pathname.match(/^\/v1\/(\d+)\/(s|q(?:\/(?:\d{3,4}|auto))?|cc(?:\/(?:[A-Za-z-]+|\d{1,3}))?|\d+(?:\.m3u8)?)\/?$/);
+      const m = url.pathname.match(/^\/v1\/(\d+)\/(s(?:\.m3u8)?|q(?:\/(?:\d{3,4}|auto))?|cc(?:\/(?:[A-Za-z-]+|\d{1,3}))?|\d+(?:\.m3u8)?)\/?$/);
       if (!m) return fail(res, 404, 'not_found', 'Unknown path.');
       const shard = Number(m[1]);
       if (!store.validShard(shard)) return fail(res, 404, 'bad_shard', 'Unknown shard.');
       metrics.shard(shard);
-      if (m[2] === 's') { route = 'search'; return await search(req, res, shard, url); }
+      if (m[2] === 's' || m[2] === 's.m3u8') { route = 'search'; return await search(req, res, shard, url, undefined, m[2] === 's.m3u8'); }
       if (m[2] === 'cc' || m[2].startsWith('cc/')) { route = 'captions'; return await caption(req, res, shard, m[2].slice(3), url); }
       if (m[2] === 'q' || m[2].startsWith('q/')) { route = 'quality'; return quality(res, shard, m[2].slice(2)); }
       const hlsTicket = m[2].endsWith('.m3u8');

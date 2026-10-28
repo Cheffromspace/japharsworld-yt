@@ -59,7 +59,7 @@ This service works within that rule:
 | Path | Returns |
 |---|---|
 | `GET /v1/<shard>/s?l=<lang>&q=<…> → <query>` | JSON: `results[]` (`t`, `id`, `title`, `channel`, `length`, `seconds`, `views`, `age`, `live`, `cc`, `desc` = up to 240 characters of the description), `sheet`, `sheetCols`, `sheetRows`, `cellW`, `cellH`, `next` (`-1` = none) |
-| `GET /s/<shard><letter>?q=<query>` | the same search, in a shorter address for Quest (see *Compact search address* below). The query may still carry a `<prompt> → ` before it |
+| `GET /s/<shard><letter>?q=<query>` | the same search, in a shorter address for Quest (see *Compact search address* below). The query may still carry a `<prompt> → ` before it. From a video player with a YouTube link: that video's ticket answer (see *A YouTube link played straight from the search address*) |
 | `GET /v1/<shard>/<n>` | video: 302 to a Tunelio link or YouTube (from a `UnityPlayer` UA: JSON `t`, `state` = `building`/`ready`/`failed`/`live`/`youtube`, `format`, `quality`, `mb`, `elapsed`, `eta`, `progress`, and the video's `title`, `channel`, `desc` as stored when the results were published, `""` for older tickets; Everything-is-OK#114) · sheet: JPEG, cell *i* = result *i*, row-major · page: JSON like a search |
 | `GET /v1/<shard>/q` · `/v1/<shard>/q/<720|1080|auto>` | JSON `quality` (the room's playback quality for search videos), `pick` (`720p`/`1080p`/`auto`), `default`, `options`; the second form picks it (kept `QUALITY_HOURS`, 12; `auto` clears it: with playback plans on, 1080p when Tunelio is fast, else 720p). The tablet's ticket status carries it as `room` |
 | `GET /v1/ch/<key>` | a Channels slot by its `channels.json` key: `302` to `https://www.youtube.com/watch?v=<id>`, the slot's current video in the link monitor's DB (`slots.current_video`, so swaps apply), `no-store`. For Quest, where VRChat resolves watch links but not the PC's `playlist?list=` links (#145). `404 unknown_channel`; `503 channel_unavailable` for a spare without a video or a removed slot |
@@ -72,6 +72,20 @@ This service works within that rule:
 Errors are JSON `{ "error": code, "message": … }` with codes `empty_query`, `rate_limited`, `youtube_failed`,
 `unknown_ticket`, `expired`, `bad_shard`, `bad_quality`, `nothing_playing`, `captions_failed`; the world shows its own
 localized text per code.
+
+### A YouTube link played straight from the search address (world #136)
+
+The tablet's YouTube field can hand its own search address (`/v1/<shard>/s?l=…&q=<prompt> → <link>`, or the compact
+`/s/<shard><letter>?q=<link>`) to the video player. When the request comes from a video player or VRChat's resolver
+(not a `UnityPlayer` string load) and the query is a link on YouTube's own hosts (`youtube.com`, `www.`/`m.`/`music.`,
+`youtu.be`: `/watch?v=`, `/shorts/`, `/live/`, `/embed/`), the answer is that video's ticket answer, exactly as if
+`/v1/<shard>/<n>` had been played: 302 to the Tunelio link, a home stream or youtube.com, a live stream's watch link.
+The `.m3u8` forms, `/v1/<shard>/s.m3u8?…` and `/s/<shard><letter>.m3u8?…`, answer as a `.m3u8` ticket (Quest). Any
+other host, a link with a user or port, or plain text gets the search JSON and never a redirect. The player, the
+resolver and the tablet's string load of the same address share one ticket for 30 min after its last use (and its
+`TICKET_PIN`): the tablet's search answer has `pasted: true` and `results[0].t` is the ticket the player plays, so the
+tablet follows it with `/v1/<shard>/<t>` (title, channel, description, build status) and `/v1/<shard>/cc…` like any
+played ticket.
 
 Changing `SHARDS` or `POOL` changes the baked URLs: the world must be re-uploaded with regenerated URLs.
 

@@ -57,10 +57,10 @@ test('plans: 720p pick or no budget â†’ lower without the 1080p /create; fast â†
   assert.equal(await new Adaptive({ playback: f.playback, pacer: pacerNo }).plan({ id: 'always00001', seconds: 1200 }, 'always'), 'adaptive');
 });
 
-async function server(over = {}, opts = {}) {
+async function server(over = {}, opts = {}, { live = false } = {}) {
   const f = fakes(over);
   const store = new Store({ path: ':memory:', shards: 4, pool: 100, pinHours: 24 });
-  const youtube = { async search() { return { videos: [{ id: 'AbCdEfGh1jK', title: 't', channel: 'c', length: '20:00', seconds: 1200, views: '', age: '', live: false }], more: null }; }, thumbnailUrl: () => '' };
+  const youtube = { async search() { return { videos: [{ id: 'AbCdEfGh1jK', title: 't', channel: 'c', length: live ? '' : '20:00', seconds: live ? 0 : 1200, views: '', age: '', live }], more: null }; }, thumbnailUrl: () => '' };
   const config = { ...base, shards: 4, pool: 100, metricsPath: '', tunelioKey: '', tunelioQuality: '720p', tunelioQualities: ['720p', '1080p'],
     adaptiveHls: true, adaptiveShards: [3], adaptiveHoldMs: 200, publicUrl: 'http://pub.example' };
   const adaptive = new Adaptive({ playback: f.playback, pacer: { check: () => ({ ok: true }) }, fetcher: f.fetcher, holdMs: 200, base: 'http://pub.example/hls', ...opts });
@@ -217,6 +217,24 @@ test('.m3u8 ticket (the world\'s Android build): always HLS, the plan\'s quality
   const n0 = await s.ticket(0); // plans off
   assert.match((await s.get(`/v1/0/${n0}.m3u8`, QUEST)).headers.get('location'), /^http:\/\/pub\.example\/hls\/[a-f0-9]{18}\/720p\.m3u8$/);
   assert.equal((await s.get(`/v1/0/${n0}.mp4`, QUEST)).status, 404);
+});
+
+test('.m3u8 ticket for a live stream: the resolver gets the watch link at once, as on a plain ticket, and nothing is built (world #270)', async (t) => {
+  const s = await server({}, {}, { live: true });
+  t.after(() => s.srv.close());
+  const watch = 'https://www.youtube.com/watch?v=AbCdEfGh1jK';
+  for (const shard of [3, 0]) { // adaptive plans on, and off
+    const n = await s.ticket(shard);
+    const st = await (await s.get(`/v1/${shard}/${n}.m3u8`, 'UnityPlayer/2022')).json();
+    assert.equal(st.state, 'live', 'the tablet starts no build');
+    const r = await s.get(`/v1/${shard}/${n}.m3u8`, YTDLP);
+    assert.equal(r.status, 302, 'the resolver is not sent on with the preparing page');
+    assert.equal(r.headers.get('location'), watch, 'VRChat resolves the live stream itself');
+    assert.equal((await s.get(`/v1/${shard}/${n}.m3u8`, QUEST)).headers.get('location'), watch);
+    assert.equal((await s.get(`/v1/${shard}/${n}`, YTDLP)).headers.get('location'), watch, 'a plain ticket: as before');
+  }
+  assert.deepEqual(s.created, [], 'no Tunelio /create for a live stream');
+  assert.equal(s.playback.start({ id: 'AbCdEfGh1jK', live: true }, '720p', { hls: true }), null, 'start refuses live');
 });
 
 test('.m3u8 ticket on an adaptive plan: the 720p alone as a plain playlist, never a master (#209)', async (t) => {

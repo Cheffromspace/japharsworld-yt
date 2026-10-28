@@ -165,6 +165,7 @@ export class Playback {
   // The job for a video at a quality, started if there is none (or the old one expired or failed long enough ago to
   // retry). ticket data: { id, live?, seconds? }
   start(data, quality = this.quality, { hls = false, maxMb = 0 } = {}) {
+    if (data.live) return null; // Tunelio refuses live streams (400 "Live streams are not supported"); they play from youtube.com
     const id = data.id;
     const key = this.#key(data, quality, hls);
     const now = this.now();

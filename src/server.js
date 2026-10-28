@@ -556,7 +556,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         const hs = hw ? homeKeep(t.data, hq, startHome(shard, t.data, hq, hw)) : null;
         if (hs && hs.state !== 'failed' && !leaveHome(hs, hlsTicket)) return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(hs), ...meta(t.data) });
         let c = await choice(shard, t.data);
-        if (hlsTicket) c = hlsChoice(c);
+        if (hlsTicket && !t.data.live) c = hlsChoice(c); // live: the watch link, as on a plain ticket (world #270)
         const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
         const st = playback.status(t.data, { quality: c.quality, hls: c.hls });
         if (c.mode) st.plan = c.mode;
@@ -622,7 +622,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         // progressive build still get HLS, which an Android player can't play. A .m3u8 ticket (the world's Android build)
         // always gets HLS instead. Its resolver request is sent on at once like an adaptive one below, so VRChat hands the
         // .m3u8 ticket itself to AVPro (2026-10-23, Quest: the resolver got the finished mp4 link and AVPro hung loading).
-        if (hlsTicket) {
+        // Not for a live stream: the resolver gets the watch link at once and VRChat resolves YouTube's live HLS itself,
+        // as for Channels and the default video (world #270, staging 2026-10-28: sent on, AVPro got the watch page and
+        // the Quest errored in a loop, each try another Tunelio "Live streams are not supported").
+        if (hlsTicket && !t.data.live) {
           if (!c.hls && !resolver) metrics.inc('adaptive', 'hls_ticket');
           c = hlsChoice(c);
         } else if (c.hls && !resolver && android) {

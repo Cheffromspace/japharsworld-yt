@@ -973,7 +973,7 @@
  },
  {
   "uid": "eiok-home-egress-day",
-  "title": "Home sent over 50 GB today",
+  "title": "Home sent over 100 GB today",
   "folderUID": "everything-is-ok",
   "ruleGroup": "everything-is-ok",
   "condition": "C",
@@ -981,7 +981,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "The Optiplex has sent over 50 GB today (home relay uploads and everything else on the box)."
+   "summary": "The Optiplex has sent over 100 GB today (home relay uploads and everything else on the box). No ISP cap (owner, 10-27): this is unusual volume, not a limit."
   },
   "labels": {
    "project": "everything-is-ok",
@@ -1000,7 +1000,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max(eiok_transfer_bytes{env!=\"staging\",host=\"home\",period=\"today\"}) > 50e9",
+     "expr": "max(eiok_transfer_bytes{env!=\"staging\",host=\"home\",period=\"today\"}) > 100e9",
      "instant": true
     }
    },
@@ -1027,7 +1027,7 @@
  },
  {
   "uid": "eiok-home-egress-month",
-  "title": "Home sent over 500 GB this month",
+  "title": "Home sent over 2,000 GB this month",
   "folderUID": "everything-is-ok",
   "ruleGroup": "everything-is-ok",
   "condition": "C",
@@ -1035,7 +1035,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "The Optiplex has sent over 500 GB this month."
+   "summary": "The Optiplex has sent over 2,000 GB this month. No ISP cap (owner, 10-27): this is unusual volume, not a limit."
   },
   "labels": {
    "project": "everything-is-ok",
@@ -1054,7 +1054,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max(eiok_transfer_bytes{env!=\"staging\",host=\"home\",period=\"month\"}) > 500e9",
+     "expr": "max(eiok_transfer_bytes{env!=\"staging\",host=\"home\",period=\"month\"}) > 2000e9",
      "instant": true
     }
    },

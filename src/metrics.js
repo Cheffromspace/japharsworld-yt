@@ -105,6 +105,7 @@ export const METRICS = {
   ticket_hold_ms: ['daily', isBucket],
   ticket_fastfail: ['daily', none],   // resolver told "not a video" while the build ran on
   ticket_timeout: ['daily', none],    // a player waited the whole hold and got youtube.com instead
+  ticket_restricted: ['daily', none], // an age-restricted video answered `restricted` (world #305)
   build: ['daily', oneOf('ok', 'failed')],
   build_s_progressive: ['daily', isSBucket],
   build_s_hls: ['daily', isSBucket],

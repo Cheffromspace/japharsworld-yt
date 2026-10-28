@@ -157,6 +157,51 @@ test('Playback: out of credits falls back to YouTube, alerts once, pauses', asyn
   assert.deepEqual(alerts, ['credits_out']);
 });
 
+test('Playback: a video Tunelio refuses as age-restricted is remembered: restricted at once, no more /create, no youtube.com (world #305)', async () => {
+  let now = 1_000_000;
+  const calls = [];
+  const tunelio = { enabled: true, async create(id) { calls.push(id); const e = new Error('This video is age-restricted and cannot be downloaded.'); e.status = 404; e.code = 'This video is age-restricted and cannot be downloaded.'; throw e; } };
+  const p = new Playback({ tunelio, now: () => now, restrictedHours: 24 });
+  const r = await p.location({ id: 'agegate', seconds: 600 });
+  assert.deepEqual([r.via, r.reason, r.location], ['restricted', 'restricted', null]);
+  assert.deepEqual(p.status({ id: 'agegate' }), { state: 'failed', reason: 'restricted', error: 'restricted' });
+  assert.equal((await p.location({ id: 'agegate', seconds: 600 }, { quality: '720p', hls: true })).via, 'restricted');
+  assert.equal(p.start({ id: 'agegate' }), null);
+  assert.equal(calls.length, 1, 'one /create, then the verdict');
+  now += 25 * 3600_000;
+  assert.equal(p.restricted('agegate'), false, 'asked again after a day');
+  // Any other 404 still falls back to youtube.com.
+  const other = new Playback({ tunelio: { enabled: true, async create() { const e = new Error('Video is unavailable'); e.status = 404; throw e; } } });
+  assert.equal((await other.location({ id: 'gone' })).via, 'youtube');
+});
+
+test('server: an age-restricted video answers restricted to the tablet and fails fast for players (world #305)', async (t) => {
+  const store = new Store({ path: ':memory:', shards: 1, pool: 50, pinHours: 24 });
+  const youtube = { async search() { return { videos: [{ id: 'AAAAAAAAAAA', title: 'a', channel: 'c', length: '1:00', seconds: 60, views: '', age: '', live: false, cc: false }], more: null }; }, thumbnailUrl: (id) => id };
+  const calls = [];
+  const tunelio = { enabled: true, async create(id) { calls.push(id); const e = new Error('x'); e.status = 404; e.code = 'This video is age-restricted and cannot be downloaded.'; throw e; } };
+  const playback = new Playback({ tunelio });
+  const app = createApp({ config: { ...base, shards: 1, pool: 50, ticketPlayerHoldMs: 5000 }, store, youtube, playback, tunelio: { enabled: true }, log: () => {} });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const get = (p, ua) => fetch(`http://127.0.0.1:${server.address().port}${p}`, { redirect: 'manual', headers: { 'user-agent': ua } });
+  const unity = 'UnityPlayer/2022.3.22f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)';
+  const chrome = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
+  const mf = 'NSPlayer/12.00.26100.1234 WMFSDK/12.00.26100.1234';
+  const r = await (await get('/v1/0/s?q=x', unity)).json();
+  const ticket = `/v1/0/${r.results[0].t}`;
+  const first = await get(ticket, mf);
+  assert.equal(first.status, 403, 'the first play learns it and fails fast, no youtube.com redirect');
+  assert.equal(first.headers.get('location'), null);
+  assert.equal((await first.json()).error, 'restricted');
+  for (const ua of [mf, chrome, mf + ' (Android)']) assert.equal((await get(ticket, ua)).status, 403);
+  assert.equal((await get(`${ticket}.m3u8`, mf)).status, 403);
+  const st = await (await get(ticket, unity)).json();
+  assert.deepEqual([st.t, st.state, st.error, st.title], [r.results[0].t, 'failed', 'restricted', 'a']);
+  assert.equal(calls.length, 1, 'repeat plays never ask Tunelio again');
+});
+
 test('alerts are throttled per kind', () => {
   let t = 0; const sent = [];
   const alert = makeAlert({ webhook: 'https://example/hook', fetcher: async (u, o) => sent.push(JSON.parse(o.body).content), now: () => t });

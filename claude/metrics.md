@@ -25,6 +25,7 @@ Counted in memory and written to SQLite every minute and at shutdown (SIGTERM). 
 | `home_why` | `tunelio_off` `long` `pacer` `tunelio_failed` `av1` `tunelio_slow` | why a session went home, once per session (`av1`: an AV1 Tunelio build on a `.m3u8` ticket, `HOME_ANDROID=on`; `tunelio_slow`: a Tunelio call timed out in the last `TUNELIO_SUSPECT_SECONDS`) |
 | `home_start_s` | seconds bucket | session start to its first playlist |
 | `play_fallback` | `disabled` `paused` `tunelio_failed` | why a video went to YouTube at 360p |
+| `ticket_restricted` | – | a ticket answered `restricted` (an age-restricted video, world #305: the player's fast 403 or the tablet's status), per request, no video |
 | `play_platform` | `pc` `android` | once per room and platform (a mixed room counts one of each): the player's User-Agent (`isAndroidPlayer`) or a `.m3u8` ticket; resolver requests don't count |
 | `play_length` | `lt10m` `lt1h` `lt3h` `longer` `live` `unknown` | length bucket of the played video |
 | `tunelio_create_ms` | latency bucket | Tunelio `/create` |
@@ -33,7 +34,7 @@ Counted in memory and written to SQLite every minute and at shutdown (SIGTERM). 
 | `cc_list` / `cc_list_lang` | – / VRChat language or `native` | "Show captions" (list loads) |
 | `cc_track` / `cc_track_lang` | – / track language (`en`, `pt-BR`, `zh-Hans`) | tracks picked on the tablet |
 | `cc_unavailable` | reason (`no_captions`, `no_track_in_language`, `temporarily_unavailable`, `nothing_playing`, `failed`, …) | "not available" answers |
-| `yt_refusal` | `<where>:<class>`: `home` `linode` `staging` × `bot` `rate` `forbidden` `potoken` `other`; also `flash:<class>`, exported from the monitor DB (the flash-check worker, owner 2026-10-26: only the class is kept, as a monitor event) | a YouTube lookup that failed (src/refusal.js, owner 2026-10-25): the home relay worker sends only the class with its failed job (or `rate` for a caption track that failed after its list), the Linode counts its own searches and yt-dlp runs. Anything else lands as `other`; the error text, query and video never reach the count |
+| `yt_refusal` | `<where>:<class>`: `home` `linode` `staging` × `bot` `rate` `forbidden` `potoken` `restricted` `other` (`restricted`: an age gate, the video's verdict, never a back-off or alert; world #305); also `flash:<class>`, exported from the monitor DB (the flash-check worker, owner 2026-10-26: only the class is kept, as a monitor event) | a YouTube lookup that failed (src/refusal.js, owner 2026-10-25): the home relay worker sends only the class with its failed job (or `rate` for a caption track that failed after its list), the Linode counts its own searches and yt-dlp runs. Anything else lands as `other`; the error text, query and video never reach the count |
 | `credits` | `playback` (10 per successful `/create`), `captions` (6 per `/transcript`), `probe` (the speed probe below), `test` (player test slot refills, `src/slots.js`) | Tunelio credits spent |
 | `join` / `join_lang` | – / VRChat language | the bare search address the world loads once after join (answered `400 empty_query`). Only visitors who **allow untrusted URLs** send it: the closest thing to a per-language join count |
 

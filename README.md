@@ -260,6 +260,11 @@ fails its health check, and updates yt-dlp daily.
 
 Settings live in `/etc/japharsworld-yt.env`. Logs: `journalctl -u japharsworld-yt -f`.
 
+The login shell (each server, and the Optiplex): `bash deploy/shell-setup.sh prod|staging|optiplex` as root, from the
+checkout, installs stock neovim and bash-completion and writes `/etc/profile.d/eiok-shell.sh`: a prompt
+`user@<label>:path` with the host's label coloured (Tokyo Night: prod orange, staging magenta, Optiplex green),
+`EDITOR=nvim`, `vi` → nvim, coloured `ls`. Run it again after a rebuild; it is safe to repeat.
+
 Without SSH: `GET /ops/state` (builds in flight and recently finished, holds, relay workers, the speed probe, the
 deployed commit) and `GET /ops/events?event=a,b&minutes=&limit=` (the service's recent log events, kept in memory
 since the last restart), behind `STATS_TOKEN`. Both are read only and redacted (`src/ops.js`): an allowlist of fields,

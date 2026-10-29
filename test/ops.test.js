@@ -4,6 +4,10 @@ import http from 'node:http';
 import { createApp } from '../src/server.js';
 import { Store } from '../src/store.js';
 import { config as base } from '../src/config.js';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { EventRing, mask, redact, gitHead } from '../src/ops.js';
 import { Playback } from '../src/playback.js';
 
@@ -29,6 +33,24 @@ test('ops redaction: allowlisted fields only, IDs and query strings masked', () 
   assert.equal(ring.items.length, 3);
   assert.deepEqual(ring.query({ events: ['b'] }).map((x) => x.at), [new Date(1002).toISOString(), new Date(1004).toISOString()]);
   assert.match(gitHead() ?? '', /^[0-9a-f]{40}$/);
+});
+
+test('gitHead follows a worktree (.git is a "gitdir:" file; refs in the main git dir)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'githead-'));
+  try {
+    const sha = 'a'.repeat(40), other = 'b'.repeat(40);
+    const main = join(root, 'main.git'), wt = join(main, 'worktrees', 'golive');
+    mkdirSync(join(main, 'refs', 'heads'), { recursive: true });
+    mkdirSync(wt, { recursive: true });
+    writeFileSync(join(main, 'refs', 'heads', 'main'), `${sha}\n`);
+    writeFileSync(join(wt, 'commondir'), '../..\n');
+    writeFileSync(join(root, '.git'), `gitdir: ${wt}\n`);
+    const at = pathToFileURL(join(root, '.git')); // as the service passes it: the checkout's .git, here a file
+    writeFileSync(join(wt, 'HEAD'), 'ref: refs/heads/main\n');
+    assert.equal(gitHead(at), sha);
+    writeFileSync(join(wt, 'HEAD'), `${other}\n`); // detached
+    assert.equal(gitHead(at), other);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('ops routes: token required, state and redacted events', async (t) => {

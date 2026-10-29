@@ -7,7 +7,9 @@
 // Behind STATS_TOKEN like /stats (404 without one). Fixed answers only: no parameters reach a shell, a file path or
 // SQL. Events are the service's own `logJson` lines kept in memory (lost on restart) and reduced to an allowlist of
 // fields: video IDs, ticket numbers, shards and User-Agents never leave, and IDs inside messages are masked.
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tokenOk } from './stats.js';
 
 // Fields an event may carry out. Anything else (id, n, shard, ua, future fields) is dropped.
@@ -54,13 +56,21 @@ export class EventRing {
 }
 
 // The deployed commit, read from the checkout each time (deploys that don't restart the service still move it).
-export function gitHead(dir = new URL('../.git/', import.meta.url)) {
+// A worktree's .git is a file naming its own git dir, whose branches live in the main one (commondir); the owner's
+// go-live runs the tests in one (2026-10-29).
+export function gitHead(dir = new URL('../.git', import.meta.url)) {
   try {
-    const head = readFileSync(new URL('HEAD', dir), 'utf8').trim();
+    let git = fileURLToPath(dir).replace(/[\\/]$/, '');
+    let common = git;
+    if (statSync(git).isFile()) {
+      git = resolve(dirname(git), readFileSync(git, 'utf8').match(/^gitdir: (.+)$/m)[1].trim());
+      try { common = resolve(git, readFileSync(join(git, 'commondir'), 'utf8').trim()); } catch { /* not a worktree */ }
+    }
+    const head = readFileSync(join(git, 'HEAD'), 'utf8').trim();
     if (!head.startsWith('ref: ')) return head.slice(0, 40);
     const ref = head.slice(5);
-    try { return readFileSync(new URL(ref, dir), 'utf8').trim(); } catch { /* packed */ }
-    const line = readFileSync(new URL('packed-refs', dir), 'utf8').split('\n').find((l) => l.endsWith(` ${ref}`));
+    try { return readFileSync(join(common, ref), 'utf8').trim(); } catch { /* packed */ }
+    const line = readFileSync(join(common, 'packed-refs'), 'utf8').split('\n').find((l) => l.endsWith(` ${ref}`));
     return line ? line.slice(0, 40) : null;
   } catch { return null; }
 }

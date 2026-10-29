@@ -483,6 +483,8 @@ export function alertRules(dsUid, { critical = false } = {}) {
     rule('eiok-security-stale', 'Linode security counters stale', 'time() - max(eiok_security_updated_seconds{host="linode"}) - 600', { forM: 5, noData: 'Alerting', summary: 'metrics/security.js has not written its counters for 10 minutes (japharsworld-yt-security.timer on the Linode), so the security alerts are blind.' }),
     // The Tester tab's problem reports (world #353, 2026-10-29), one alert per kind, so the coordinator's watcher hears of
     // them while its session is open. Resync and autoresync (every visitor's) only count: as alerts they would be noise.
+    // It posts to the warning channel (owner, 2026-10-29: fine there for now). Its own channel later: a third contact
+    // point from its own webhook env var, pushed like DISCORD_CRITICAL_WEBHOOK's, and this rule's receiver set to it.
     rule('eiok-tester-report', 'Tester video report', 'sum by (kind) (increase(eiok_video_report_total{kind=~"frozen|stutter|sync|sound|load|quality"}[15m]))', { forM: 0, summary: 'A tester reported "{{ $labels.kind }}" from the world in the last 15 minutes. The play behind it: `node tools/ops.mjs events --event video_report`.' }),
     rule('eiok-disk-low', 'Disk almost full', 'max by (host) (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) > 0.9', { forM: 15, summary: 'Under 10 % free on / of {{ $labels.host }}.' }),
   ]);

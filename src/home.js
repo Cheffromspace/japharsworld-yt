@@ -18,7 +18,8 @@
 // (playable while the rest uploads), ended once the playlist has ENDLIST and every segment it lists is here. Sessions
 // are saved next to their files (meta.json) and reloaded on start, so a deploy doesn't cut plays off; the daily use is
 // saved too (day.json), so it doesn't reset the cap. Files stay keepHours, oldest finished first out above maxGb
-// (8 GB: 1080p sessions are 0.6–1.6 GB and the Linode's / is 25 GB, 2026-10-25), never one building or being played.
+// (8 GB: 1080p sessions are 0.6–1.6 GB and the Linode's / is 25 GB, 2026-10-25), never one building or being played;
+// a build counts its expected size against maxGb from its start (#expectedMb), so room is made before it grows.
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, rmSync, renameSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
@@ -35,6 +36,9 @@ const STALE_MS = 5 * 60_000;
 // A session a player fetched from this recently is being played: the sweep leaves it alone. Players fetch a segment
 // every few seconds, and a paused one picks up where it was.
 const PLAYING_MS = 5 * 60_000;
+// A 1080p home session's MB per second of video, the high end measured (0.46–0.57, 2026-10-26: a 4.1 h mix, 8404 MB):
+// what a build counts against maxGb before its first segments say better (#expectedMb).
+const MB_PER_SECOND = 0.57;
 
 export class Home {
   constructor({ relay, dir, base = 'https://yt.japharsworld.com/home', enabled = false, dailyBuilds = 40, dailyMb = 10_000,
@@ -183,10 +187,10 @@ export class Home {
     const worker = this.worker();
     if (!worker) { if (this.enabled && this.capped()) this.onEvent('capped'); return null; }
     this.#drop(this.sessions.get(`${data.id}@${quality}`));
-    this.sweep();
     const s = this.#session({ token: randomBytes(9).toString('hex'), id: data.id, quality, seconds: data.seconds ?? 0, worker });
     this.sessions.set(`${s.id}@${quality}`, s);
     this.byToken.set(s.token, s);
+    this.sweep(); // with the new build's expected size counted, so room is made before it grows
     this.#today().builds++;
     this.#saveDay();
     this.onEvent('start');
@@ -378,7 +382,18 @@ export class Home {
 
   #storedMb() { return [...this.byToken.values()].reduce((n, s) => n + s.mb, 0); }
 
-  // Old sessions out, then the oldest finished ones while the files take more than maxGb; one being played stays.
+  // What a session will take on disk: an unfinished one counts its expected final size, not what is here yet. Counting
+  // only the files let a long build grow past the cap between sweeps (prod 2026-10-28 21:48–21:53Z: a 4.5 h 1080p build
+  // grew ~5 GB after the sweep at its start, and the Linode's / reached 90.6 % with the cache at its 12 GB cap). From
+  // its own segments once the whole playlist is listed (the worker uploads it up front), else its length at MB_PER_SECOND.
+  #expectedMb(s) {
+    if (s.ended || s.state === 'failed' || this.#stale(s)) return s.mb;
+    const est = s.stored.size && s.listed.length > s.stored.size ? s.mb * s.listed.length / s.stored.size : s.seconds * MB_PER_SECOND;
+    return Math.max(s.mb, est);
+  }
+
+  // Old sessions out, then the oldest finished ones while the sessions take (or will take) more than maxGb; one
+  // building or being played stays.
   sweep() {
     const now = this.now();
     const playing = (s) => s.lastGetMs > 0 && now - s.lastGetMs < PLAYING_MS;
@@ -389,10 +404,10 @@ export class Home {
     }
     const done = [...this.byToken.values()].filter((s) => (s.ended || s.state === 'failed') && !playing(s))
       .sort((a, b) => (a.lastPutMs || a.startedMs) - (b.lastPutMs || b.startedMs));
-    let total = this.#storedMb();
+    let total = [...this.byToken.values()].reduce((n, s) => n + this.#expectedMb(s), 0);
     while (total > this.maxGb * 1000 && done.length) { const s = done.shift(); total -= s.mb; evict(s, 'size'); }
     // Builds and plays alone can take more; the disk alerts (tools/grafana.mjs) catch it if that ever fills /.
-    if (total > this.maxGb * 1000) this.log({ event: 'home_over_cap', storedMb: Math.round(total), maxGb: this.maxGb });
+    if (total > this.maxGb * 1000) this.log({ event: 'home_over_cap', storedMb: Math.round(this.#storedMb()), expectedMb: Math.round(total), maxGb: this.maxGb });
   }
 
   state() {
@@ -403,6 +418,7 @@ export class Home {
       cap: { builds: this.dailyBuilds, mb: this.dailyMb, storedGb: this.maxGb },
       building: all.filter((s) => s.state === 'building').length, ready: all.filter((s) => s.state === 'ready' && !s.ended).length,
       ended: all.filter((s) => s.ended).length, failed: all.filter((s) => s.state === 'failed').length,
-      storedMb: Math.round(this.#storedMb()) };
+      storedMb: Math.round(this.#storedMb()),
+      expectedMb: Math.round([...this.byToken.values()].reduce((n, s) => n + this.#expectedMb(s), 0)) };
   }
 }

@@ -107,6 +107,37 @@ test('home: old sessions are swept, and the oldest finished ones while over maxG
   assert.equal(await home.file(b.token, 'seg0.ts'), null, 'older than keepHours');
 });
 
+test('home: a build counts its expected size against maxGb, so finished sessions make room before it grows', async (t) => {
+  // prod 2026-10-28 21:48–21:53Z: a 4.5 h 1080p build grew ~5 GB past the 12 GB cap between two sweeps (/ at 90.6 %).
+  let now = 0;
+  const logs = [];
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, keepHours: 1, maxGb: 0.0000025, now: () => now, log: (l) => logs.push(l) }); // 2.5 kB
+  const a = home.start({ id: 'aaaaaaaaaaa' }, '720p');
+  home.put(a.token, 'seg0.ts', Buffer.alloc(1500));
+  home.put(a.token, 'seg1.ts', Buffer.alloc(10));
+  home.put(a.token, 'index.m3u8', Buffer.from(PL2));
+  now += 1000;
+  const b = home.start({ id: 'bbbbbbbbbbb' }, '720p'); // no length known: counts only its files
+  assert.equal(logs.filter((l) => l.event === 'home_evict').length, 0, 'room enough: kept'); // (a file() read would count as a play)
+  // The whole playlist up front (4 segments) and one 500-byte segment: ~2 kB to come, so 3.5 kB in all > 2.5 kB.
+  home.put(b.token, 'index.m3u8', Buffer.from(`${PL1}#EXTINF:4.0,\nseg1.ts\n#EXTINF:4.0,\nseg2.ts\n#EXTINF:4.0,\nseg3.ts\n#EXT-X-ENDLIST\n`));
+  home.put(b.token, 'seg0.ts', Buffer.alloc(500));
+  assert.equal(home.state().storedMb, 0, 'files alone ~2 kB, under the cap');
+  home.sweep();
+  assert.equal(await home.file(a.token, 'seg0.ts'), null, 'out for the build still to come');
+  assert.ok(await home.file(b.token, 'seg0.ts'), 'the build stays');
+  assert.deepEqual(logs.filter((l) => l.event === 'home_evict').map((l) => l.why), ['size']);
+  // Before its first segment, a build counts its length at ~0.57 MB/s: a finished session goes at its start.
+  const c = home.start({ id: 'ccccccccccc' }, '720p');
+  home.put(c.token, 'seg0.ts', Buffer.alloc(100));
+  home.put(c.token, 'index.m3u8', Buffer.from(`${PL1}#EXT-X-ENDLIST\n`));
+  now += 1000;
+  home.start({ id: 'ddddddddddd', seconds: 60 }, '1080p');
+  assert.equal(await home.file(c.token, 'seg0.ts'), null, "out at the long build's start");
+  const over = logs.find((l) => l.event === 'home_over_cap');
+  assert.ok(over && over.expectedMb >= 34 && over.storedMb === 0, 'logged as over the cap by what is to come');
+});
+
 test('home: a finished session being played survives the size cap and keepHours; evictions are logged', async (t) => {
   let now = 0;
   const logs = [];

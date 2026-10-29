@@ -217,7 +217,9 @@ player started). Sessions are saved
 next to their files and reloaded on restart (a deploy doesn't cut plays off, and the worker retries its uploads through
 it); the day's use is saved too. Files are kept `HOME_KEEP_HOURS`, oldest finished first out above `HOME_MAX_GB`
 (8 GB), never one that is building or was fetched by a player in the last 5 minutes (`home_evict` logs each one,
-`home_loaded` the stored size and cap at start).
+`home_loaded` the stored size and cap at start). A build counts its expected final size against the cap from its start
+(its whole playlist's segments at the rate of those here, or its length × ~0.57 MB/s before the first), so room is made
+before it grows; `/ops/state` home `expectedMb` is that total.
 
 **The worker's cache** (`relay/cache.js`, owner 2026-10-23: "be aggressive, the Optiplex has lots of disk"): every
 stream that finishes whole stays on the Optiplex too, one folder per video and quality, least recently used out above

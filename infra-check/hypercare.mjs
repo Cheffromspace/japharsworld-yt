@@ -9,12 +9,10 @@
 // It ends itself (world #236, owner 2026-10-26): after 7 days of consecutive clean runs (any finding starts the count
 // again) it posts one Discord line and a comment on world #208, then disables its own user timer.
 // The journal is counted on the Linode (awk), so no log line, video ID or address ever reaches this machine. MediaMTX
-// moved to its own Linode (2026-10-26), which has no check account: a TCP connect to its public RTSP port 8554
-// (open in its ufw by design) at HYPERCARE_MEDIAMTX_HOST from the .env, never in the repo; unset = skipped.
+// is its own project (media-mtx) and no longer checked here (owner, 2026-10-28, #38: "no probe").
 //   node hypercare.mjs              one run (the timer)
 //   node hypercare.mjs --dry-run    the real checks, but prints what it would post and file; state untouched
 import { spawnSync } from 'node:child_process';
-import { connect } from 'node:net';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -70,19 +68,18 @@ export function parseProbe(text) {
   return out;
 }
 
-const where = { linode: 'the Linode', media: 'the media-mtx Linode', optiplex: 'the Optiplex' };
+const where = { linode: 'the Linode', optiplex: 'the Optiplex' };
 
 // The measurements → findings. owner: the owner has to act (restart, clean up), so it becomes an owner-task card.
 export function evaluate(m, lim) {
   const f = [];
   const add = (key, owner, title, detail) => f.push({ key, owner, title, detail });
-  for (const host of ['linode', 'media', 'optiplex']) {
+  for (const host of ['linode', 'optiplex']) {
     const p = m[host];
-    if (!p) continue;   // not configured (media without HYPERCARE_MEDIAMTX_HOST)
+    if (!p) continue;
     if (p.error) { add(`probe:${host}`, false, `Hypercare can't read ${where[host]}`, p.error); continue; }
     for (const [k, v] of Object.entries(p)) {
       if (k.startsWith('unit:') && v !== 'active') add(`${host}:${k}`, true, `${k.slice(5)} is not active on ${where[host]}`, `systemctl is-active says "${v || 'nothing'}".`);
-      if (k === 'rtsp' && v !== 'open') add(`${host}:rtsp`, true, `MediaMTX is not answering on ${where[host]}`, `A TCP connect to its RTSP port 8554 gave: ${v}.`);
     }
   }
   const o = m.optiplex;
@@ -115,7 +112,7 @@ export function logLine(m, findings, at = new Date().toISOString()) {
     for (const [k, v] of Object.entries(m[host] ?? {})) if (k.startsWith('unit:')) units[k.slice(5)] = v;
   }
   return JSON.stringify({ at, event: 'hypercare', ok: findings.length === 0, findings: findings.map((x) => x.key),
-    healthz: m.healthz?.ok ?? null, units, mediamtx: m.media?.rtsp ?? 'unchecked',
+    healthz: m.healthz?.ok ?? null, units,
     disk: l.disk ?? null, s5: l.s5 ?? null, errors: l.errors ?? null, yt: l.yt ?? null, backoff: l.backoff ?? null,
     cap0: l.cap0 ?? null, cap1: l.cap1 ?? null, evict: l.evict ?? null, overcap: l.overcap ?? null, banned: l.banned ?? null });
 }
@@ -145,11 +142,6 @@ const linodeSteps = (unit) => [
   ['See why it stopped (from your PC)', `ssh linode 'journalctl -u ${unit} -n 40 --no-pager'`],
   ['Start it again', `ssh linode 'systemctl restart ${unit}'`],
 ];
-// The media-mtx Linode's SSH name is the owner's own (no alias for it in the repo).
-const mediaSteps = [
-  ['On the media-mtx Linode, see why MediaMTX stopped', 'journalctl -u mediamtx -n 40 --no-pager'],
-  ['Start it again', 'systemctl restart mediamtx'],
-];
 
 // The issue text, following the world repo's .github/ISSUE_TEMPLATE/owner-task.md for owner tasks. No addresses.
 export function issueBody(f) {
@@ -158,7 +150,6 @@ export function issueBody(f) {
   let steps, time = 5, at = 'your PC (`ssh linode`, root)';
   const unit = f.key.split(':unit:')[1];
   if (f.key.startsWith('optiplex:unit:')) { steps = optiplexSteps(unit); at = 'the Optiplex, as jonflatt (sudo)'; }
-  else if (f.key === 'media:rtsp') { steps = mediaSteps; at = 'the media-mtx Linode, as root'; }
   else if (f.key.startsWith('linode:unit:')) steps = linodeSteps(unit);
   else if (f.key === 'linode:disk') {
     time = 15;
@@ -212,21 +203,8 @@ function optiplex() {
   return out;
 }
 
-// "open", or why not (the error code only, never the address).
-export function tcpProbe(host, port, timeoutMs = 10_000) {
-  return new Promise((resolve) => {
-    const s = connect({ host, port });
-    const done = (v) => { s.destroy(); resolve(v); };
-    s.setTimeout(timeoutMs, () => done('timeout'));
-    s.once('connect', () => done('open'));
-    s.once('error', (e) => done(e.code ?? 'error'));
-  });
-}
-
-async function measure(env) {
-  const m = { linode: remote('linode-check', LINODE_PROBE), optiplex: optiplex(), healthz: await healthz() };
-  if (env.HYPERCARE_MEDIAMTX_HOST) m.media = { rtsp: await tcpProbe(env.HYPERCARE_MEDIAMTX_HOST, 8554) };
-  return m;
+async function measure() {
+  return { linode: remote('linode-check', LINODE_PROBE), optiplex: optiplex(), healthz: await healthz() };
 }
 
 // gh: find the open issue with this exact title, or file it. Returns its number, or null if GitHub failed.
@@ -290,7 +268,7 @@ async function main(argv) {
   try { const s = JSON.parse(readFileSync(stateFile, 'utf8')); state = { open: s.open ?? {}, clean: s.clean ?? 0, cleanSince: s.cleanSince ?? null }; }
   catch { state = { open: {}, clean: 0, cleanSince: null }; }
   const now = Date.now();
-  const m = await measure(process.env);
+  const m = await measure();
   const findings = evaluate(m, limits());
   console.log(logLine(m, findings));
   const { fresh, repeat, recovered } = plan(findings, state, now);

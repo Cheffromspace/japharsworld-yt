@@ -27,5 +27,5 @@ test('staging (#160): its own units, no addresses in the repo, and the guards in
   assert.match(boot, /checkout -q -B "\$BRANCH" "origin\/\$BRANCH"/);
   assert.doesNotMatch(boot, /reset -q --hard origin\/main/);
   assert.match(script('alloy/staging.alloy'), /external_labels = \{ host = "staging", env = "staging" \}/);
-  assert.match(script('update.sh'), /deploy\/\(staging-setup\|dns-flip\|harden\|mediamtx-setup\)\\.sh\$/, 'pushing them restarts nothing in production');
+  assert.match(script('update.sh'), /deploy\/\(staging-setup\|dns-flip\|harden\)\\.sh\$/, 'pushing them restarts nothing in production');
 });

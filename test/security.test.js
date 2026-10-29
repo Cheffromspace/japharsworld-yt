@@ -48,7 +48,7 @@ test('security counters: the textfile carries no address, key or log text', () =
 test('security counters: Alloy keeps the series, and the units are wired in', () => {
   const alloy = readFileSync(new URL('../deploy/alloy/linode.alloy', import.meta.url), 'utf8');
   assert.match(alloy, /eiok_\(deploy\|ssh\|sshd\|fail2ban\|security\|ufw\)_\.\*/);
-  assert.match(alloy, /unit_include = "\(japharsworld-yt\.\*\|bgutil-pot\|caddy\|ssh\|fail2ban\|mediamtx\|alloy\)/);
+  assert.match(alloy, /unit_include = "\(japharsworld-yt\.\*\|bgutil-pot\|caddy\|ssh\|fail2ban\|alloy\)/);
   const setup = readFileSync(new URL('../deploy/metrics-setup.sh', import.meta.url), 'utf8');
   assert.match(setup, /japharsworld-yt-security\.timer/);
 });

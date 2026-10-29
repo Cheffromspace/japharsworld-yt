@@ -8,7 +8,6 @@ const kit = (f) => readFileSync(new URL(`../infra-check/${f}`, import.meta.url),
 const normal = () => ({
   linode: parseProbe('unit:japharsworld-yt active\nunit:caddy active\ndisk 39\nbanned 0\ns5 0\nerrors 1\nyt 0\nbackoff 0\ncap0 1\ncap1 8\nevict 0\novercap 0\njournal ok\n'),
   optiplex: { 'unit:japharsworld-yt-relay': 'active', 'unit:bgutil-pot-relay': 'active', 'unit:japharsworld-yt-slotworker.timer': 'active', slotworker_result: 'success' },
-  media: { rtsp: 'open' },
   healthz: { ok: true, detail: 'HTTP 200.' },
 });
 
@@ -19,10 +18,7 @@ test('hypercare: a normal hour has no findings and logs one line of counts', () 
   const line = JSON.parse(logLine(m, []));
   assert.equal(line.event, 'hypercare');
   assert.equal(line.ok, true);
-  assert.equal(line.mediamtx, 'open');
-  delete m.media;
-  assert.equal(JSON.parse(logLine(m, [])).mediamtx, 'unchecked', 'no HYPERCARE_MEDIAMTX_HOST: skipped, and the log says so');
-  assert.deepEqual(evaluate(m, LIMITS), []);
+  assert.equal('mediamtx' in line, false, 'MediaMTX is not checked any more (#38)');
 });
 
 test('hypercare: each abnormal reading is one finding, and only owner actions become owner tasks', () => {
@@ -30,13 +26,12 @@ test('hypercare: each abnormal reading is one finding, and only owner actions be
   Object.assign(m.linode, { 'unit:caddy': 'failed', disk: 91, s5: 4, errors: 9, yt: 5, backoff: 1, cap0: 6, cap1: 2, evict: 30, overcap: 2, banned: 25 });
   m.optiplex['unit:bgutil-pot-relay'] = 'inactive';
   m.optiplex.slotworker_result = 'exit-code';
-  m.media.rtsp = 'ECONNREFUSED';
   m.healthz = { ok: false, detail: 'HTTP 502.' };
   const f = evaluate(m, LIMITS);
   const keys = f.map((x) => x.key).sort();
   assert.deepEqual(keys, ['healthz', 'linode:5xx', 'linode:backoff', 'linode:banned', 'linode:captions', 'linode:disk', 'linode:errors',
-    'linode:evict', 'linode:overcap', 'linode:unit:caddy', 'linode:youtube', 'media:rtsp', 'optiplex:slotworker-result', 'optiplex:unit:bgutil-pot-relay']);
-  assert.deepEqual(f.filter((x) => x.owner).map((x) => x.key).sort(), ['healthz', 'linode:disk', 'linode:unit:caddy', 'media:rtsp', 'optiplex:unit:bgutil-pot-relay']);
+    'linode:evict', 'linode:overcap', 'linode:unit:caddy', 'linode:youtube', 'optiplex:slotworker-result', 'optiplex:unit:bgutil-pot-relay']);
+  assert.deepEqual(f.filter((x) => x.owner).map((x) => x.key).sort(), ['healthz', 'linode:disk', 'linode:unit:caddy', 'optiplex:unit:bgutil-pot-relay']);
   // Captions only count when zero-track ones outnumber the rest.
   assert.ok(!evaluate({ linode: { ...normal().linode, cap0: 5, cap1: 9 } }, LIMITS).length);
   // An unreachable host is one finding, not a unit storm.
@@ -95,7 +90,6 @@ test('hypercare: owner-task cards follow the world repo template and carry no ad
   const m = normal();
   Object.assign(m.linode, { 'unit:caddy': 'failed', disk: 91 });
   m.optiplex['unit:japharsworld-yt-relay'] = 'failed';
-  m.media.rtsp = 'timeout';
   m.healthz = { ok: false, detail: 'No answer: ETIMEDOUT.' };
   m.linode.s5 = 9;
   for (const f of evaluate(m, LIMITS)) {

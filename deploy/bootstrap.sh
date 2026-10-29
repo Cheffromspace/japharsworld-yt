@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # japharsworld-yt bootstrap. Run once on the server, as root:
 #   curl -fsSL https://raw.githubusercontent.com/Cheffromspace/japharsworld-yt/main/deploy/bootstrap.sh | bash
-# Safe to re-run. Leaves MediaMTX and anything else already running alone.
+# Safe to re-run. Leaves anything else already running alone.
 # Installs: Node 22 (if needed), the service (/opt/japharsworld-yt, runs as user "jyt"),
 # yt-dlp + bgutil PO-token provider (captions), HTTPS for $DOMAIN, and a 5-minute auto-update timer
 # that deploys whatever is on main (rolls back if the new version fails its health check).

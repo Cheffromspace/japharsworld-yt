@@ -274,7 +274,7 @@ Setup is automatic on deploy (`deploy/metrics-setup.sh`). Tests: `npm test` (`te
 
 ## Server
 
-One-time setup on a Debian/Ubuntu box, as root (safe to re-run; leaves MediaMTX and other services alone):
+One-time setup on a Debian/Ubuntu box, as root (safe to re-run; leaves other services alone):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Cheffromspace/japharsworld-yt/main/deploy/bootstrap.sh | bash

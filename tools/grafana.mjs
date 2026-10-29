@@ -481,6 +481,9 @@ export function alertRules(dsUid, { critical = false } = {}) {
     rule('eiok-ssh-failed-spike', 'SSH failed attempts spike', 'sum(eiok_ssh_failed_10m{host="linode"}) > 20', { forM: 0, summary: 'Over 20 failed SSH attempts on the Linode in 10 minutes, though port 22 takes only the owner’s address. Check the Linode firewall and fail2ban.' }),
     rule('eiok-linode-unit-down', 'Linode ssh/fail2ban/alloy not active', '1 - max by (name) (node_systemd_unit_state{host="linode",name=~"(ssh|fail2ban|alloy).service",state="active"})', { forM: 5, summary: '{{ $labels.name }} is not active on the Linode.' }),
     rule('eiok-security-stale', 'Linode security counters stale', 'time() - max(eiok_security_updated_seconds{host="linode"}) - 600', { forM: 5, noData: 'Alerting', summary: 'metrics/security.js has not written its counters for 10 minutes (japharsworld-yt-security.timer on the Linode), so the security alerts are blind.' }),
+    // The Tester tab's problem reports (world #353, 2026-10-29), one alert per kind, so the coordinator's watcher hears of
+    // them while its session is open. Resync and autoresync (every visitor's) only count: as alerts they would be noise.
+    rule('eiok-tester-report', 'Tester video report', 'sum by (kind) (increase(eiok_video_report_total{kind=~"frozen|stutter|sync|sound|load|quality"}[15m]))', { forM: 0, summary: 'A tester reported "{{ $labels.kind }}" from the world in the last 15 minutes. The play behind it: `node tools/ops.mjs events --event video_report`.' }),
     rule('eiok-disk-low', 'Disk almost full', 'max by (host) (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) > 0.9', { forM: 15, summary: 'Under 10 % free on / of {{ $labels.host }}.' }),
   ]);
 }

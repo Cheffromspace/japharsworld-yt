@@ -17,6 +17,7 @@ function fixtures() {
   for (const [d, m, k, v] of [
     ['2026-10-18', 'search', '', 40], ['2026-10-19', 'search', '', 10], ['2026-10-19', 'play_route', 'tunelio-hls', 3],
     ['2026-10-19', 'search_ms', '1000', 4], ['2026-10-19', 'search_ms', '3000', 1], ['2026-10-19', 'search_ms', 'inf', 1],
+    ['2026-10-19', 'video_report', 'tester:frozen', 2], ['2026-10-20', 'video_report', 'tester:frozen', 1], ['2026-10-20', 'video_report', 'visitor:resync', 4],
   ]) put.run(d, m, k, v);
   db.prepare('INSERT INTO gauges (day, metric, key, value, at) VALUES (?, ?, ?, ?, ?)').run('2026-10-19', 'credits_remaining', '', 4000, NOW);
   for (const [d, k, v] of [['2026-10-19', 'mb', 9000], ['2026-10-20', 'mb', 2500], ['2026-10-20', 'workers', 1]]) {
@@ -90,6 +91,10 @@ test('exporter: usage counters, histograms, polls, slots, flash checks, jobs, he
     has('eiok_slot_flash_pass{slot="jack-retro",kind="live",category="games"} 0');
     has('eiok_slot_height{slot="lofi-study",kind="live",category="music"} 1080');
     has('eiok_flash_checks_total{verdict="fail"} 1');
+    // Video reports (world #353): every who and kind from 0, so increase() sees the first report.
+    has('eiok_video_report_total{who="tester",kind="frozen"} 3');
+    has('eiok_video_report_total{who="visitor",kind="resync"} 4');
+    has('eiok_video_report_total{who="tester",kind="autoresync"} 0');
     // The flash worker's YouTube refusals, by class only (a detail that isn't a class is dropped).
     has('eiok_events_total{metric="yt_refusal",key="flash:bot"} 2');
     has('eiok_events_total{metric="yt_refusal",key="flash:rate"} 0');

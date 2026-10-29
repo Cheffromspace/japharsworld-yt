@@ -15,7 +15,8 @@ const FIELDS = new Set(['at', 'event', 'via', 'reason', 'client', 'held', 'quali
   'status', 'code', 'message', 'format', 'createMs', 'startMs', 'playlistMs', 'ok', 'warm', 'step', 'error', 'skipped',
   'route', 'ms', 'results', 'failed', 'worker', 'from', 'to', 'kind', 'lang', 'text', 'units', 'pair',
   'cached', 'rungs', 'mode', 'why', 'predicted', 'lowerMb', 'lowerPredicted', 'allowance', 'spent', 'file', 'ended', 'eta',
-  'qLen', 'attempt', 'pad', 'arrow', 'before', 'prompt', 'after', 'len', 'chars', 'control', 'device', 'ses', 'seg', 'found', 'range', 'pinned']); // play_plan: the plan and why (2026-10-23); search_shape: no search text (#143, 2026-10-24); pinned: a play answered from its ticket's pin (#293, 2026-10-28)
+  'qLen', 'attempt', 'pad', 'arrow', 'before', 'prompt', 'after', 'len', 'chars', 'control', 'device', 'ses', 'seg', 'found', 'range', 'pinned',
+  'who', 'rung', 'top', 'ago', 'counted']); // play_plan: the plan and why (2026-10-23); search_shape: no search text (#143, 2026-10-24); pinned: a play answered from its ticket's pin (#293, 2026-10-28); video_report: who, rung, top, ago, counted (world #353, 2026-10-29)
 
 // An 11-character YouTube-ID-shaped token with a digit, "-", "_" or an inner capital (so ordinary words such as
 // "unavailable" or "Information" stay), and URL query strings (v=, sig=, tokens).

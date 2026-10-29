@@ -10,6 +10,8 @@
 //                                                      `lines` (cue timing) and `chunks` (readable lines with word timing,
 //                                                      src/blocks.js), from the first source in src/captionchain.js that answers
 //   GET /v1/<shard>/q[/<720|1080>]                    the room's playback quality for search videos (read, or pick on the tablet)
+//   GET /v1/<shard>/r/<who>/<kind>                    a video report (world #353): 200 {"ok":true} at once; logged with this
+//                                                      shard's play and counted (who: visitor|tester; kinds in src/metrics.js)
 //   GET /v1/ch/<key>                                  a Channels slot (key from channels.json): 302 to its current
 //                                                      youtube.com/watch link, for Quest (src/channels.js)
 //   GET /hls/<token>.m3u8, /hls/<token>/<q>.m3u8          adaptive playlists a played ticket leads to (src/adaptive.js)
@@ -47,7 +49,7 @@ import { Relay, RelayError } from './relay.js';
 import { DataApi } from './dataapi.js';
 import { makeSearch } from './search.js';
 import { RefusalWatch } from './refusal.js';
-import { Metrics, noMetrics, lengthBucket, secondsBucket, sizeBucket, recordPoll, getMeta, setMeta, dayOf } from './metrics.js';
+import { Metrics, noMetrics, lengthBucket, secondsBucket, sizeBucket, recordPoll, getMeta, setMeta, dayOf, REPORT_WHO, REPORT_KINDS } from './metrics.js';
 import { Adaptive, Pacer } from './adaptive.js';
 import { TunelioProbe } from './probe.js';
 import { EventRing, opsRoute, gitHead } from './ops.js';
@@ -248,13 +250,16 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const pastedVideo = (page, id) => page.videos.find((v) => v.id === id)
     ?? { id, title: id, channel: '', length: '', seconds: 0, views: '', age: '', live: false, cc: false };
 
+  // The User-Agent's class only, never the UA itself (search_shape, video_report).
+  const uaDevice = (ua) => /Android|Quest|Oculus/i.test(ua) ? 'android' : /UnityPlayer/i.test(ua) ? 'unity' : ua ? 'other' : 'none';
+
   // `lang`: from l= on /v1/<shard>/s, or from the compact address's language letter (/s/<shard><letter>, src/query.js).
   // `hlsTicket`: the address ends in .m3u8 (/v1/<shard>/s.m3u8, /s/<shard><letter>.m3u8), for a pasted link's play (#136).
   async function search(req, res, shard, url, lang = normalizeLang(url.searchParams.get('l')), hlsTicket = false) {
     if (rateLimited(clientIp(req))) { metrics.inc('search_fail', '429'); return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.'); }
     const query = parseQuery(url.searchParams.get('q') ?? '');
     const ua = String(req.headers['user-agent'] ?? '');
-    logJson({ event: 'search_shape', lang, device: /Android|Quest|Oculus/i.test(ua) ? 'android' : /UnityPlayer/i.test(ua) ? 'unity' : ua ? 'other' : 'none',
+    logJson({ event: 'search_shape', lang, device: uaDevice(ua),
       ...queryShape(url.searchParams.get('q') ?? '') });
     // The world loads the bare search address once after join (visitors who allow untrusted URLs).
     if (!query) { metrics.inc('join'); metrics.inc('join_lang', lang); return fail(res, 400, 'empty_query', 'Type something after the arrow.'); }
@@ -625,6 +630,36 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return fail(res, 403, 'restricted', "This video is age-restricted on YouTube and can't be played here.");
   }
 
+  // A video report from the world (world #353): the Tester tab's problem buttons, every visitor's Resync presses and the
+  // stall watchdog's reloads. It answers at once and does no work; the log line carries what the service knows about
+  // the shard's play (its last played ticket and that ticket's pin: route, plan, quality, rung), for the /ops timeline.
+  // Counting is limited to one per shard, who and kind per 10 s (a button pressed over and over is one report); every
+  // press is still logged.
+  const reportGapMs = config.reportGapMs ?? 10_000;
+  const reportCounted = new Map(); // "shard:who:kind" → when it was last counted (ms)
+  function report(req, res, shard, who, kind) {
+    const now = Date.now();
+    const key = `${shard}:${who}:${kind}`;
+    const seen = reportCounted.get(key);
+    const counted = seen == null || now - seen >= reportGapMs;
+    if (counted) {
+      reportCounted.set(key, now);
+      if (reportCounted.size > 1000) for (const [k, at] of reportCounted) if (now - at >= reportGapMs) reportCounted.delete(k);
+      metrics.inc('video_report', `${who}:${kind}`);
+    }
+    const last = store.lastPlayed(shard);
+    const t = last ? store.get(shard, last.n) : null;
+    // The ticket's pin, as a PC player (plain) or a Quest one (.m3u8) was given it; raw, without pinned()'s checks.
+    const pin = last ? [...pins].find(([k]) => k.startsWith(`${shard}:${last.n}:`))?.[1] : null;
+    const progress = pin && pin.hls && t?.kind === 'video' ? adaptive.progress(playback.peek?.(t.data, pin.quality, { hls: true })) : null;
+    logJson({ event: 'video_report', shard, kind, who, device: uaDevice(String(req.headers['user-agent'] ?? '')), counted,
+      n: last?.n ?? null, ago: last ? Math.round((now - last.at) / 1000) : null,
+      via: pin?.via ?? null, mode: pin?.mode ?? null, quality: pin?.quality ?? null, hls: pin?.hls ?? null,
+      rung: progress?.rung ?? null, top: progress?.top ?? null });
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    return res.end(req.method === 'HEAD' ? undefined : '{"ok":true}');
+  }
+
   async function ticket(req, res, shard, n, hlsTicket = false) {
     const t = store.get(shard, n);
     if (!t) return fail(res, 404, 'unknown_ticket', 'Nothing here yet. Search again.');
@@ -992,7 +1027,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         route = 'search';
         return await search(req, res, shard, url, lang, Boolean(c[3]));
       }
-      const m = url.pathname.match(/^\/v1\/(\d+)\/(s(?:\.m3u8)?|q(?:\/(?:\d{3,4}|auto))?|cc(?:\/(?:[A-Za-z-]+|\d{1,3}))?|\d+(?:\.m3u8)?)\/?$/);
+      const m = url.pathname.match(/^\/v1\/(\d+)\/(s(?:\.m3u8)?|q(?:\/(?:\d{3,4}|auto))?|cc(?:\/(?:[A-Za-z-]+|\d{1,3}))?|r\/[a-z]{1,16}\/[a-z]{1,16}|\d+(?:\.m3u8)?)\/?$/);
       if (!m) return fail(res, 404, 'not_found', 'Unknown path.');
       const shard = Number(m[1]);
       if (!store.validShard(shard)) return fail(res, 404, 'bad_shard', 'Unknown shard.');
@@ -1000,6 +1035,12 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (m[2] === 's' || m[2] === 's.m3u8') { route = 'search'; return await search(req, res, shard, url, undefined, m[2] === 's.m3u8'); }
       if (m[2] === 'cc' || m[2].startsWith('cc/')) { route = 'captions'; return await caption(req, res, shard, m[2].slice(3), url); }
       if (m[2] === 'q' || m[2].startsWith('q/')) { route = 'quality'; return quality(res, shard, m[2].slice(2)); }
+      if (m[2].startsWith('r/')) {
+        const [, who, kind] = m[2].split('/');
+        if (!REPORT_WHO.includes(who) || !REPORT_KINDS.includes(kind)) return fail(res, 404, 'not_found', 'Unknown path.');
+        route = 'report';
+        return report(req, res, shard, who, kind);
+      }
       const hlsTicket = m[2].endsWith('.m3u8');
       const n = Number(hlsTicket ? m[2].slice(0, -5) : m[2]);
       if (!store.validTicket(n)) return fail(res, 404, 'unknown_ticket', 'Unknown ticket.');

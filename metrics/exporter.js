@@ -8,7 +8,7 @@ import http from 'node:http';
 import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
-import { METRICS, MS_BUCKETS, S_BUCKETS, dayOf } from '../src/metrics.js';
+import { METRICS, MS_BUCKETS, S_BUCKETS, REPORT_WHO, REPORT_KINDS, dayOf } from '../src/metrics.js';
 import { REFUSAL_CLASSES as FLASH_REFUSALS } from '../src/refusal.js';
 
 // Daily bucket counters exported as Prometheus histograms (le in seconds), so histogram_quantile works.
@@ -67,6 +67,11 @@ export function metricsDbSeries(db, o, now = Date.now()) {
       o.add(`${name}_bucket`, 'histogram', `${metric} from the daily buckets.`, { le: le === Infinity ? '+Inf' : String(le / perSecond) }, seen);
     }
     o.add(`${name}_count`, 'histogram', `${metric} from the daily buckets.`, {}, seen);
+  }
+  // The world's video reports (world #353), by who and kind, every pair from 0 so increase() sees the first report.
+  const reports = Object.fromEntries(totals.filter((r) => r.metric === 'video_report').map((r) => [r.key, r.v]));
+  for (const who of REPORT_WHO) for (const kind of REPORT_KINDS) {
+    o.add('eiok_video_report_total', 'counter', 'Video reports from the world (Tester tab problems, Resync presses), all days summed.', { who, kind }, reports[`${who}:${kind}`] ?? 0);
   }
   const credits = db.prepare("SELECT value, at FROM gauges WHERE metric = 'credits_remaining' ORDER BY day DESC, at DESC LIMIT 1").get();
   if (credits) o.add('eiok_credits_remaining', 'gauge', 'Tunelio credits left (search service, last seen).', {}, credits.value);

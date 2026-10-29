@@ -648,60 +648,6 @@
   ]
  },
  {
-  "uid": "eiok-channels-mass-down",
-  "title": "Many Channels slots down or hidden",
-  "folderUID": "everything-is-ok",
-  "ruleGroup": "everything-is-ok",
-  "condition": "C",
-  "for": "10m",
-  "noDataState": "OK",
-  "execErrState": "Error",
-  "annotations": {
-   "summary": "8 or more of the world's shown Channels slots are down or hidden at once (YouTube, the monitor or its worker)."
-  },
-  "labels": {
-   "project": "everything-is-ok",
-   "severity": "warning"
-  },
-  "notification_settings": {
-   "receiver": "Everything is OK Discord"
-  },
-  "data": [
-   {
-    "refId": "A",
-    "relativeTimeRange": {
-     "from": 900,
-     "to": 0
-    },
-    "datasourceUid": "${ds}",
-    "model": {
-     "refId": "A",
-     "expr": "sum(eiok_slot_hidden{env!=\"staging\"} * on(slot) (1 - eiok_slot_spare{env!=\"staging\"})) - 7",
-     "instant": true
-    }
-   },
-   {
-    "refId": "C",
-    "datasourceUid": "__expr__",
-    "model": {
-     "refId": "C",
-     "type": "threshold",
-     "expression": "A",
-     "conditions": [
-      {
-       "evaluator": {
-        "type": "gt",
-        "params": [
-         0
-        ]
-       }
-      }
-     ]
-    }
-   }
-  ]
- },
- {
   "uid": "eiok-flash-refusals",
   "title": "Flash checks refused by YouTube",
   "folderUID": "everything-is-ok",

@@ -2,7 +2,7 @@
 import json, os, tempfile, time, unittest
 from unittest import mock
 
-from slotmon import config, core, db, publish
+from slotmon import config, core, db, discord, publish
 from slotmon.youtube import parse_date_text
 
 SLOTS = [
@@ -56,13 +56,14 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.con = db.connect(os.path.join(self.tmp, "t.db"))
         self.api = FakeApi(self.con)
-        self.alerts, self.mentions = [], []
+        self.alerts, self.mentions, self.notes = [], [], []
 
         def send(con, title, body="", level="info", **k):
             self.alerts.append((level, title))
             if k.get("mention"):
                 self.mentions.append(title)
         self.p = [mock.patch("slotmon.discord.send", send),
+                  mock.patch("slotmon.discord.note", lambda con, title, body="", level="info": self.notes.append((level, title))),
                   mock.patch.object(core, "Api", lambda con: self.api),
                   mock.patch.object(core, "channel_live_ids", lambda cid: self.live_ids.get(cid, [])),
                   mock.patch.object(core.time, "sleep", lambda s: None)]
@@ -107,11 +108,57 @@ class Tests(Base):
             core.outage_watch(self.con, OVERRIDES)
             self.assertEqual(self.alerts[-1], ("urgent", "2 channels down or hidden at once"))
             self.assertEqual(self.mentions, [], "no ping (#246)")
-            db.set_meta(self.con, "alert:mass-down", time.time())  # as discord.send records it
+            n = len(self.alerts)
             self.con.execute("UPDATE slots SET auto_hidden=0, auto_reason=NULL WHERE key='radio'")
             core.outage_watch(self.con, OVERRIDES)
-            self.assertEqual(self.alerts[-1], ("good", "Channels back"))
-            self.assertEqual(self.mentions, [], "nor the all-clear")
+            self.assertEqual(len(self.alerts), n, "no all-clear (owner, 2026-10-29: the warning and the daily summary only)")
+
+    def test_a_mass_outage_warns_at_most_once_in_24_hours(self):
+        # Owner, 2026-10-29: the real dedupe, not the mock: a second outage within 24 h sends nothing, one after it does.
+        sent = []
+        with mock.patch.object(config, "MASS_DOWN", 2), mock.patch.object(discord, "send", self.p[0].temp_original), \
+                mock.patch.object(config, "DISCORD_WEBHOOK", "https://example/hook"), \
+                mock.patch.object(discord, "http", lambda url, data=None, **k: sent.append(json.loads(data)["embeds"][0]["title"])):
+            self.con.execute("UPDATE slots SET auto_hidden=1, auto_reason='down' WHERE key IN ('radio','cam')")
+            core.outage_watch(self.con, OVERRIDES)
+            core.outage_watch(self.con, OVERRIDES)
+            self.con.execute("UPDATE slots SET auto_hidden=0, auto_reason=NULL")
+            core.outage_watch(self.con, OVERRIDES)
+            self.con.execute("UPDATE slots SET auto_hidden=1, auto_reason='down' WHERE key IN ('radio','cam')")
+            core.outage_watch(self.con, OVERRIDES)
+            self.assertEqual(sent, ["2 channels down or hidden at once"], "once, and not again after a recovery the same day")
+            db.set_meta(self.con, "alert:mass-down", time.time() - 25 * H)
+            core.outage_watch(self.con, OVERRIDES)
+            self.assertEqual(len(sent), 2, "again after 24 h")
+
+    def test_replacements_send_no_message_and_go_in_the_daily_summary(self):
+        # Owner, 2026-10-29: no Discord message per channel event; the daily summary has the count, the channels and
+        # the failures.
+        bodies = []
+        self.p[0].stop()
+        self.p[0] = mock.patch("slotmon.discord.send", lambda con, title, body="", level="info", **k: (self.alerts.append((level, title)), bodies.append(body)))
+        self.p[0].start()
+        self.api.world["OLDOLDOLD01"] = st("OLDOLDOLD01", "ended")
+        self.api.world["NEWNEWNEW01"] = st("NEWNEWNEW01", "live", title="sleep lofi radio 24/7 relaxing", started=time.time() - 600)
+        self.live_ids["UClofi"] = ["NEWNEWNEW01"]
+        self.api.world["CAMCAMCAM01"] = st("CAMCAMCAM01", "ended", cid="UCcam", title="Tokyo live camera 24/7")
+        self.api.world["CAM2CAM2CA1"] = st("CAM2CAM2CA1", "live", cid="UCcam", title="Tokyo live camera 24/7")
+        self.live_ids["UCcam"] = ["CAM2CAM2CA1"]
+        self.check()
+        for j in [j for j in self.jobs() if j["reason"] == "candidate"]:
+            self.result(j)
+        self.assertEqual(self.slot("radio")["current_video"], "NEWNEWNEW01")
+        self.assertEqual(self.alerts, [], "down, candidate, replaced and a failed swap: no Discord message")
+        titles = [t for _, t in self.notes]
+        for want in ("Stream down", "Replacement found", "Replaced", "Replacement ready but slot has no playlist"):
+            self.assertTrue(any(t.startswith(want) for t in titles), want)
+        config.DAILY_HOUR_UTC = 0
+        self.con.execute("UPDATE jobs SET done=1")
+        core.maybe_daily(self.con, self.api, OVERRIDES)
+        self.assertEqual([t for _, t in self.alerts], ["Daily summary"])
+        lines = bodies[-1].split("\n")
+        self.assertIn("Replacements (24 h): 1: Sleep radio", lines)
+        self.assertIn("Replacement failures: Cam (no slot playlist (the world bakes the old link))", lines)
 
     def test_flash_worker_refusals_are_counted_by_class_only(self):
         # Owner, 2026-10-26: the same classes as src/refusal.js; the monitor keeps an event per refusal, class only.
@@ -215,7 +262,7 @@ class Tests(Base):
         self.assertFalse(s["auto_hidden"])
         self.assertEqual(self.api.playlists["PLradio"], [("nNEWNEWNEW01", "NEWNEWNEW01")])
         self.assertIn(("insert", "PLradio", "NEWNEWNEW01"), self.api.calls)
-        self.assertTrue(any(t.startswith("Replaced") for _, t in self.alerts))
+        self.assertTrue(any(t.startswith("Replaced") for _, t in self.notes))
 
     def test_new_unrelated_stream_is_too_new(self):
         self.api.world["OLDOLDOLD01"] = st("OLDOLDOLD01", "ended")
@@ -223,7 +270,7 @@ class Tests(Base):
         self.live_ids["UClofi"] = ["OTHEROTHER1"]
         self.check()
         self.assertFalse([j for j in self.jobs() if j["reason"] == "candidate"])
-        self.assertTrue(any(t.startswith("No replacement") for _, t in self.alerts))
+        self.assertTrue(any(t.startswith("No replacement") for _, t in self.notes))
 
     def test_asmr_candidate_rejected(self):
         self.api.world["OLDOLDOLD01"] = st("OLDOLDOLD01", "ended")
@@ -283,7 +330,7 @@ class Tests(Base):
         self.check()
         self.result([j for j in self.jobs() if j["reason"] == "candidate"][0])
         self.assertEqual(self.slot("cam")["current_video"], "CAMCAMCAM01")
-        self.assertTrue(any("no playlist" in t for _, t in self.alerts))
+        self.assertTrue(any("no playlist" in t for _, t in self.notes))
 
     def test_status_doc_overrides_and_spare(self):
         doc = publish.status_doc(SLOTS, core.slot_rows(self.con), {"notice": "hi", "slots": {"spare": {"hidden": False, "category": "space"}, "cam": {"title": "Tokyo cam", "category": "bogus"}}})

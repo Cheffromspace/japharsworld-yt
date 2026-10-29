@@ -237,7 +237,6 @@ test('SV-093 alert thresholds are pinned (a change has to change this table)', (
     'eiok-disk-low': ['> 0.9', '15m'],
     'eiok-home-cap': ['>= 0.9', '5m'],
     'eiok-ssh-failed-spike': ['> 20', '0m'],
-    'eiok-channels-mass-down': ['- 7', '10m'],
     'eiok-cert-expiry': ['14 - ', '60m'],
     'eiok-domain-expiry': ['30 - ', '60m'],
     'eiok-domain-expiry-urgent': ['7 - ', '60m'],

@@ -46,6 +46,12 @@ def send(con, title, body="", level="info", dedupe=None, every_hours=6, mention=
         print("discord send failed: %s" % e, flush=True)
 
 
+def note(con, title, body="", level="info"):
+    """A channel's own news (down, back, candidate, replaced, a swap that failed): the journal only, never Discord
+    (owner, 2026-10-29: no message per replacement; the daily summary counts them and outage_watch warns at MASS_DOWN)."""
+    print("[note:%s] %s %s" % (level, title, body.replace("\n", " | ")), flush=True)
+
+
 def resolve(con, dedupe, title, body="", critical=False):
     """The all-clear for a dedupe'd warning, sent once and only if that warning went out since the last all-clear
     (owner, 2026-10-23: every "failed" alert gets a "restored" one). A new failure after it is sent at once."""

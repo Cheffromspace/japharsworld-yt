@@ -189,7 +189,7 @@ an issue without details. A red item makes the Discord summary start with "SECUR
 **Its sudoers rules** (`infra-check/sudoers-*`, copies of what is installed) allow only read-only security commands
 (`sshd -T`, `ufw status verbose`; `fail2ban-client status sshd` on the Linode, `ss -tlnp` on the Optiplex), plus the
 two maintenance commands on the Optiplex.
-The copies installed on 2026-10-24 also allowed service restarts (on the Linode including the owner's mediamtx). The
+The copies installed on 2026-10-24 also allowed service restarts. The
 rule above forbids those either way; the owner reinstalls the narrowed files.
 
 ## Hourly hypercare (Optiplex timer)
@@ -199,10 +199,8 @@ coordinator's 30-minute loop). Every hour at :17, read only and without Claude, 
 service and Caddy active on the Linode and the public `/healthz` answering 200; the Linode's `/` use; in the search
 service's journal the 5xx answers, error and `*_failed` events, `youtube_error` and `backoff` events, `captions_via`
 with zero tracks against with tracks, `home_evict` and `home_over_cap`; fail2ban's currently banned sshd count; on the
-Optiplex the relay worker, `bgutil-pot-relay` and the flash worker's timer active and its last run successful; and
-MediaMTX on the media-mtx Linode, by a TCP connect to its public RTSP port 8554 (that host has no check account;
-its address is `HYPERCARE_MEDIAMTX_HOST` in `~/yt-infra-check/.env`, never in the repo; unset = skipped, logged as
-`"mediamtx":"unchecked"`). The journal is counted on the Linode with `awk` over `ssh linode-check`, so no log line,
+Optiplex the relay worker, `bgutil-pot-relay` and the flash worker's timer active and its last run successful.
+MediaMTX is its own project (media-mtx) and not checked here (owner, 2026-10-28, #38). The journal is counted on the Linode with `awk` over `ssh linode-check`, so no log line,
 video ID or address reaches the Optiplex. Limits per hour are in `LIMITS` (from the 48 h before 2026-10-26: no 5xx
 or backoff at all), each overridable as `HYPERCARE_<NAME>` in the same `.env`. The disk limit is 88 %, Grafana's
 critical level: hypercare reads `df` once an hour, so a passing minute at 80 % (2026-10-27 22:17, before a home cache
@@ -211,7 +209,7 @@ eviction) is left to Grafana's 15-minute 80 % warning.
 All normal: one JSON log line (`"event":"hypercare"`, counts only) in its user journal, nothing else. Something new:
 one Discord post to the weekly check's webhook, pinging `DISCORD_MENTION_ID`, and one issue per finding in the private
 `Cheffromspace/Everything-is-OK` (an open issue with the same title gets a comment instead). Findings the owner has
-to act on (a unit down, `/healthz` failing, MediaMTX not answering, the disk at 80 %) are `owner-task` cards in that
+to act on (a unit down, `/healthz` failing, the disk at 80 %) are `owner-task` cards in that
 repo's template, titled "Fix: …" with the copyable commands; the rest are "Hypercare: …" issues for an agent. Still
 abnormal 6 hours later: Discord again and a comment. Gone: a quiet Discord line and a "recovered" comment; it never
 closes an issue. Every comment ends with `<!-- coordinator -->`. Its state is `~/yt-infra-check/hypercare-state.json`.

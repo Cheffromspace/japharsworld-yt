@@ -35,27 +35,17 @@ test('relay-update.sh: production defaults, and a staging worker touches only it
   }
 });
 
-test('harden.sh and mediamtx-setup.sh: addresses and credentials stay local; the template fills safely', async () => {
+test('harden.sh: addresses stay local; SSH from home and HTTPS only (MediaMTX\'s 1935/8554 went with it, #38)', async () => {
   const harden = script('harden.sh');
   assert.match(harden, /ufw would lock it out/);
-  assert.match(harden, /HOME_TCP=\$\{HARDEN_HOME_TCP:-22 1935\}/);
-  assert.match(harden, /PUBLIC_TCP=\$\{HARDEN_PUBLIC_TCP:-80 443 8554\}/);
+  assert.match(harden, /HOME_TCP=\$\{HARDEN_HOME_TCP:-22\}/);
+  assert.match(harden, /PUBLIC_TCP=\$\{HARDEN_PUBLIC_TCP:-80 443\}/);
+  assert.doesNotMatch(harden, /1935|8554/);
   assert.doesNotMatch(harden, /ufw (--force )?reset/, 'never drops rules someone else added');
   assert.match(script('bootstrap.sh'), /DPkg::Lock::Timeout "600"/);
   assert.match(script('bootstrap.sh'), /bash "\$APP\/deploy\/harden\.sh"/);
-  for (const f of ['harden.sh', 'mediamtx-setup.sh', 'mediamtx.yml', 'mediamtx.service']) {
+  for (const f of ['harden.sh']) {
     const ips = (script(f).match(/\b\d{1,3}(\.\d{1,3}){3}\b/g) ?? []).filter((ip) => ip !== '127.0.0.1');
     assert.deepEqual(ips, [], f);
   }
-  const setup = script('mediamtx-setup.sh');
-  assert.match(setup, /SHA256=[0-9a-f]{64}/);
-  assert.match(setup, /sha256sum -c/);
-  // The same fill as the script's node step: every placeholder replaced by a JSON (YAML double-quoted) string.
-  let t = script('mediamtx.yml');
-  const env = { PUBLISH_USER: 'obs', PUBLISH_PASS: 'p"a: #s', LIVE_FROM_INGEST: 'ffmpeg -i x' };
-  for (const k of Object.keys(env)) t = t.split(`__${k}__`).join(JSON.stringify(env[k]));
-  assert.doesNotMatch(t, /__[A-Z_]+__/);
-  assert.ok(t.includes('pass: "p\\"a: #s"'), 'a quote, a colon and a # stay inside the quoted value');
-  assert.match(t, /- action: read\n        path: live/);
-  assert.match(script('update.sh'), /deploy\/mediamtx\\./, 'pushing them restarts nothing in production');
 });

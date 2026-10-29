@@ -5,13 +5,13 @@
 #   bash /opt/japharsworld-yt/deploy/harden.sh
 # The addresses are local, never in the repo (it is public): SSH_KNOWN_SOURCES in /etc/japharsworld-yt-security.env,
 # comma separated, the same list metrics/security.js counts logins against.
-#   HARDEN_HOME_TCP    ports for the known addresses only (default "22 1935": SSH, and RTMP publishing from home)
-#   HARDEN_PUBLIC_TCP  ports for everyone (default "80 443 8554": HTTPS, and the world's RTSP stream)
+#   HARDEN_HOME_TCP    ports for the known addresses only (default "22": SSH)
+#   HARDEN_PUBLIC_TCP  ports for everyone (default "80 443": HTTPS; the streaming ports left with MediaMTX, #38)
 set -euo pipefail
 main() {
 ENVF=/etc/japharsworld-yt-security.env
-HOME_TCP=${HARDEN_HOME_TCP:-22 1935}
-PUBLIC_TCP=${HARDEN_PUBLIC_TCP:-80 443 8554}
+HOME_TCP=${HARDEN_HOME_TCP:-22}
+PUBLIC_TCP=${HARDEN_PUBLIC_TCP:-80 443}
 [ "$(id -u)" = 0 ] || { echo "Run as root."; exit 1; }
 [ -f "$ENVF" ] || { echo "Write $ENVF (SSH_KNOWN_SOURCES=<address>[,<address>]) first."; exit 1; }
 # KEY=VALUE lines read as systemd's EnvironmentFile reads them, never run as shell code: an unquoted DISCORD_MENTION=<@id>

@@ -98,8 +98,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now yt-infra-triage.timer
 journalctl --user -u yt-infra-triage -e                 # quiet while nothing critical fires
 
-# 11. Hourly hypercare (world #208; needs steps 1-8, no Claude, no sudo): MediaMTX's host goes in .env, not the repo
-echo 'HYPERCARE_MEDIAMTX_HOST=<the media-mtx Linode address>' >> ~/yt-infra-check/.env
+# 11. Hourly hypercare (world #208; needs steps 1-8, no Claude, no sudo)
 node $KIT/hypercare.mjs --dry-run                       # the real checks; prints what it would post and file
 cp $KIT/yt-hypercare.service $KIT/yt-hypercare.timer ~/.config/systemd/user/
 systemctl --user daemon-reload

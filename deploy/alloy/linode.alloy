@@ -28,7 +28,7 @@ prometheus.exporter.unix "host" {
     directory = "/var/lib/japharsworld-yt-deploy"
   }
   systemd {
-    unit_include = "(japharsworld-yt.*|bgutil-pot|caddy|ssh|fail2ban|mediamtx|alloy)\\.(service|timer)"
+    unit_include = "(japharsworld-yt.*|bgutil-pot|caddy|ssh|fail2ban|alloy)\\.(service|timer)"
   }
 }
 prometheus.scrape "host" {

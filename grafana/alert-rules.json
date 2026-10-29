@@ -1459,7 +1459,7 @@
  },
  {
   "uid": "eiok-linode-unit-down",
-  "title": "Linode ssh/fail2ban/mediamtx/alloy not active",
+  "title": "Linode ssh/fail2ban/alloy not active",
   "folderUID": "everything-is-ok",
   "ruleGroup": "everything-is-ok",
   "condition": "C",
@@ -1486,7 +1486,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "1 - max by (name) (node_systemd_unit_state{env!=\"staging\",host=\"linode\",name=~\"(ssh|fail2ban|mediamtx|alloy).service\",state=\"active\"})",
+     "expr": "1 - max by (name) (node_systemd_unit_state{env!=\"staging\",host=\"linode\",name=~\"(ssh|fail2ban|alloy).service\",state=\"active\"})",
      "instant": true
     }
    },

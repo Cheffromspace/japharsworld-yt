@@ -111,7 +111,7 @@ export function monitorDbSeries(db, o, now = Date.now()) {
   for (const s of slots) {
     const l = { slot: s.key, kind: s.kind, category: s.category ?? '' };
     o.add('eiok_slot_hidden', 'gauge', '1 when the monitor hid the slot (down, flash fail, waiting for a check).', { ...l, reason: s.auto_hidden ? (s.auto_reason ?? 'hidden').split(':')[0].slice(0, 40) : '' }, s.auto_hidden ? 1 : 0);
-    o.add('eiok_slot_spare', 'gauge', '1 for a spare slot the world bakes hidden.', l, s.baked_hidden ? 1 : 0);
+    o.add('eiok_slot_spare', 'gauge', '1 for a slot the world does not show: a baked spare or hidden in overrides.json (shown spares are 0).', l, s.baked_hidden ? 1 : 0);
     o.add('eiok_slot_up', 'gauge', '1 when the slot\'s stream was live (or the video available) at the last check.', l,
       s.last_status == null ? null : (s.last_status === 'live' || (s.kind === 'video' && s.last_status === 'video')) ? 1 : 0);
     o.add('eiok_slot_height', 'gauge', 'Vertical resolution of the slot\'s current stream at its last probe.', l, s.height);

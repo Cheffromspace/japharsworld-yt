@@ -88,7 +88,9 @@ other host, a link with a user or port, or plain text gets the search JSON and n
 resolver and the tablet's string load of the same address share one ticket for 30 min after its last use (and its
 `TICKET_PIN`): the tablet's search answer has `pasted: true` and `results[0].t` is the ticket the player plays, so the
 tablet follows it with `/v1/<shard>/<t>` (title, channel, description, build status) and `/v1/<shard>/cc…` like any
-played ticket.
+played ticket. A linked video the search doesn't list (unlisted) is looked up once in the YouTube Data
+API (`videos.list`, 1 unit; logged as `pasted_lookup`), so its length still counts for the home relay's long-video rule and
+the pin window; with no API key or a failed lookup it plays with an unknown length, as before.
 
 Changing `SHARDS` or `POOL` changes the baked URLs: the world must be re-uploaded with regenerated URLs.
 

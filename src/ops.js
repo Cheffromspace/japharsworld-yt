@@ -1,7 +1,8 @@
 // Operator routes, read only except the slot refill and test plans (owner, 2026-10-21: query the Linode without SSH, which Claude's sessions can't use):
 //   GET /ops/state                                      what the service is doing now (builds, holds, relay, probe, version)
 //   GET /ops/events?event=a,b&minutes=1440&limit=500    recent log events from memory, newest last
-//   GET /ops/plan, POST /ops/plan?id=&mode=&minutes=     test plans: force a video's play plan for a while (src/adaptive.js force)
+//   GET /ops/plan, POST /ops/plan?id=&mode=&minutes=     test plans: force a video's play plan for a while (src/adaptive.js force;
+//                                                       mode restricted: src/playback.js forceRestricted)
 //   GET /ops/slots, POST /ops/slots/refill?id=&force=1  the player test slots (src/slots.js); refills are
 //                                                       capped per day, so the test session can refill them itself
 // Behind STATS_TOKEN like /stats (404 without one). Fixed answers only: no parameters reach a shell, a file path or
@@ -64,7 +65,7 @@ export function gitHead(dir = new URL('../.git/', import.meta.url)) {
   } catch { return null; }
 }
 
-export function opsRoute(req, res, url, { token, ring, state, slots, adaptive }) {
+export function opsRoute(req, res, url, { token, ring, state, slots, adaptive, playback }) {
   const send = (status, body) => {
     const buf = Buffer.from(JSON.stringify(body));
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': buf.length, 'cache-control': 'no-store', 'x-robots-tag': 'noindex' });
@@ -94,11 +95,14 @@ export function opsRoute(req, res, url, { token, ring, state, slots, adaptive })
       const id = url.searchParams.get('id') ?? '';
       const mode = url.searchParams.get('mode') ?? '';
       if (!/^[A-Za-z0-9_-]{11}$/.test(id)) return send(400, { v: 1, error: 'bad_id', message: 'id: an 11-character video id.' });
-      if (!['lower', 'direct', 'adaptive', 'start', 'clear'].includes(mode)) return send(400, { v: 1, error: 'bad_mode', message: 'mode: lower, direct, adaptive, start or clear.' });
+      const modes = ['lower', 'direct', 'adaptive', 'start', ...(playback?.forceRestricted ? ['restricted'] : []), 'clear'];
+      if (!modes.includes(mode)) return send(400, { v: 1, error: 'bad_mode', message: `mode: ${modes.join(', ')}.` });
       const minutes = Math.min(240, Math.max(1, Number.parseInt(url.searchParams.get('minutes') ?? '', 10) || 60));
-      adaptive.force(id, mode === 'clear' ? null : mode, minutes);
+      // restricted (#305) is the playback's verdict, not a plan: it and a plan can't both hold, so one clears the other.
+      playback?.forceRestricted?.(id, mode === 'restricted' ? minutes : 0);
+      adaptive.force(id, mode === 'clear' || mode === 'restricted' ? null : mode, minutes);
     }
-    return send(200, { v: 1, at: new Date().toISOString(), forced: adaptive.forcedPlans() });
+    return send(200, { v: 1, at: new Date().toISOString(), forced: [...adaptive.forcedPlans(), ...(playback?.forcedRestrictions?.() ?? [])] });
   }
   return send(404, { v: 1, error: 'not_found', message: 'Unknown path.' });
 }

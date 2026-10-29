@@ -949,7 +949,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         route = 'stats';
         return statsRoute(req, res, url, { token: config.statsToken, metricsPath: config.metricsPath, monitorDb: config.monitorDb, tz: config.metricsTz, renewDay: config.tunelioRenewsDay, metrics });
       }
-      if (url.pathname.startsWith('/ops/')) { route = 'ops'; return opsRoute(req, res, url, { token: config.statsToken, ring, state: opsState, slots, adaptive }); }
+      if (url.pathname.startsWith('/ops/')) { route = 'ops'; return opsRoute(req, res, url, { token: config.statsToken, ring, state: opsState, slots, adaptive, playback }); }
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
       if (url.pathname.startsWith('/hls-test/')) { route = 'hls-test'; return await hlsTest(req, res, url); }
       if (url.pathname.startsWith('/hls/')) { route = 'hls'; return await hlsRoute(req, res, url); }

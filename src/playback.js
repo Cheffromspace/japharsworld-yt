@@ -58,6 +58,7 @@ export class Playback {
     // which VRChat retried every 2–6 s (prod 2026-10-28 21:56Z, ~25 plays in 70 s). Kept in memory only.
     this.restrictedMs = restrictedHours * 3600_000;
     this.restrictedIds = new Map();
+    this.forcedRestricted = new Map(); // the test plans among them (forceRestricted): videoId → until
     this.alert = alert;
     this.log = log;
     this.now = now;
@@ -151,13 +152,30 @@ export class Playback {
     if (this.speeds.length > 50) this.speeds.splice(0, this.speeds.length - 50);
   }
 
-  // Static answers that need no build: live streams, Tunelio off or paused.
   // True while `id` is known to be age-restricted (see restrictedIds).
   restricted(id) {
     const until = this.restrictedIds.get(id);
     if (until && this.now() >= until) this.restrictedIds.delete(id);
     return Boolean(until && this.now() < until);
   }
+
+  // A test plan (/ops/plan mode restricted): `id` answers as if Tunelio had refused it as age-restricted, for `minutes`,
+  // so the world's restricted message can be tested without an age-gated video (#305). 0 clears it. Memory only.
+  forceRestricted(id, minutes) {
+    this.forcedRestricted.delete(id);
+    this.restrictedIds.delete(id);
+    if (!minutes) return;
+    const until = this.now() + minutes * 60_000;
+    this.forcedRestricted.set(id, until);
+    this.restrictedIds.set(id, until);
+  }
+
+  forcedRestrictions() {
+    for (const [id, until] of this.forcedRestricted) if (until <= this.now()) this.forcedRestricted.delete(id);
+    return [...this.forcedRestricted].map(([id, until]) => ({ id, mode: 'restricted', until: new Date(until).toISOString() }));
+  }
+
+  // Static answers that need no build: live streams, Tunelio off or paused.
 
   #direct(data) {
     const id = data.id;

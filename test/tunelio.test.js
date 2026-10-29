@@ -202,6 +202,36 @@ test('server: an age-restricted video answers restricted to the tablet and fails
   assert.equal(calls.length, 1, 'repeat plays never ask Tunelio again');
 });
 
+test('server: /ops/plan mode restricted makes a video answer restricted for a while, with no Tunelio call (#305 test plan)', async (t) => {
+  const store = new Store({ path: ':memory:', shards: 1, pool: 50, pinHours: 24 });
+  const youtube = { async search() { return { videos: [{ id: 'AAAAAAAAAAA', title: 'a', channel: 'c', length: '1:00', seconds: 60, views: '', age: '', live: false, cc: false }], more: null }; }, thumbnailUrl: (id) => id };
+  const calls = [];
+  const tunelio = { enabled: true, async create(id) { calls.push(id); return { url: `https://cdn.example/${id}.mp4`, quality: '720p', mb: 10 }; } };
+  const playback = new Playback({ tunelio });
+  const app = createApp({ config: { ...base, shards: 1, pool: 50, statsToken: 'tok' }, store, youtube, playback, tunelio: { enabled: true }, log: () => {} });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const at = (p) => `http://127.0.0.1:${server.address().port}${p}`;
+  const get = (p, ua) => fetch(at(p), { redirect: 'manual', headers: { 'user-agent': ua } });
+  const plan = async (qs) => (await fetch(at(`/ops/plan?${qs}`), { method: 'POST', headers: { authorization: 'Bearer tok' } })).json();
+  const unity = 'UnityPlayer/2022.3.22f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)';
+  const mf = 'NSPlayer/12.00.26100.1234 WMFSDK/12.00.26100.1234';
+  const set = await plan('id=AAAAAAAAAAA&mode=restricted&minutes=30');
+  assert.deepEqual(set.forced.map((x) => [x.id, x.mode]), [['AAAAAAAAAAA', 'restricted']], 'listed with the plans');
+  const r = await (await get('/v1/0/s?q=x', unity)).json();
+  const ticket = `/v1/0/${r.results[0].t}`;
+  const st = await (await get(ticket, unity)).json();
+  assert.deepEqual([st.state, st.error], ['failed', 'restricted'], 'the tablet sees it as restricted');
+  const play = await get(ticket, mf);
+  assert.equal(play.status, 403);
+  assert.equal((await play.json()).error, 'restricted');
+  assert.equal(calls.length, 0, 'no paid call for a forced verdict');
+  assert.deepEqual((await plan('id=AAAAAAAAAAA&mode=clear')).forced, [], 'clear lifts it');
+  const after = await get(ticket, mf);
+  assert.equal(after.status, 302, 'plays as usual once cleared');
+});
+
 test('alerts are throttled per kind', () => {
   let t = 0; const sent = [];
   const alert = makeAlert({ webhook: 'https://example/hook', fetcher: async (u, o) => sent.push(JSON.parse(o.body).content), now: () => t });

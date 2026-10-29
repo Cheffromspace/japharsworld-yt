@@ -45,7 +45,7 @@ One stage model, shown the same on the Watch strip, the Screen card and the wall
 | Stage | Trigger | Tablet | Wall screen |
 |---|---|---|---|
 | Pressed | Play now tapped | button → "Starting…" at once; row stays lit with a spinner; Play/Queue disabled | title appears with "Starting…" |
-| Preparing | warm JSON `building` | "Preparing HD · about 15 s" + thin bar advancing on the ETA (never reaches the end early) | same line + bar |
+| Preparing | warm JSON `building` | "Preparing HD" + thin bar advancing on the ETA (never reaches the end early); no ETA text is shown, the ETA only paces the bar (world `EverythingIsOKPlayFeedback.cs`, 2026-10-29) | same line + bar |
 | Connecting | warm `ready`, player still loading | "Starting playback…" | same |
 | Retrying | `_OnVideoError` | "Didn't start — trying again (2 of 3)" | same |
 | Failed | retries exhausted | "Couldn't play this one. Try another, or Sync." | same, fades after 20 s |
@@ -139,7 +139,9 @@ Live on the Linode (env file, read 2026-10-23 14:50 UTC): `ADAPTIVE_HLS=on`, `AD
 switch back on service-wide and test it on PC and Quest clients; `ADAPTIVE_SWITCH=on` since ~15:00 UTC that day.
 
 Owner: start on 360p to cut time to picture. YouTube's own 360p (VRChat's free youtube.com path) can't be a rung of our
-playlist (single mp4, googlevideo link bound to the visitor's IP), so the rung is Tunelio's 360p HLS build (Tunelio docs
+playlist (single mp4, googlevideo link bound to the IP that resolved it), so today the rung is Tunelio's 360p HLS build.
+The home relay could build a 360p rung itself (`relay/media.js` filters formats by height; checked 2026-10-29), but
+nothing asks it to; whether to is an open owner question (Tunelio docs
 list 144p–1080p as `quality`). `ADAPTIVE_START=360p` (off by default): when the 720p HLS build is predicted to take more
 than `ADAPTIVE_START_SECONDS` (10), the plan is `start`: the player waits only for the 360p build, the master lists
 360p, 720p, 1080p, and both upper builds start on the first master load. 30 credits instead of 20.
@@ -202,7 +204,7 @@ Streaming instead of whole files: ffmpeg copies YouTube's streams into 4–5 s T
 uploads each one and the growing playlist. VRPlayer TEST, desktop client, 2026-10-23 03:30 UTC (playlist growing at
 1.5× real time on purpose): VizVid and bare AVPro both opened the EVENT playlist at seg0, picture in ~2 s, re-read the
 playlist every few seconds and played 13 minutes with no missing segment and no error. Not yet seen: whether players
-show a seek bar and duration while the playlist is open; Quest (Android can't take HLS behind a ticket anyway).
+show a seek bar and duration while the playlist is open; Quest (Android takes HLS only through a `.m3u8` ticket URL: world #105, b47ac2d, 9ba3047).
 
 YouTube throttles one long read of a stream URL to about real time: ffmpeg reading the URLs directly got 0.1 MB/s, with
 `-request_size 10000000` (range requests, as yt-dlp makes) 13.6 MB/s. Local end to end with the real worker: first

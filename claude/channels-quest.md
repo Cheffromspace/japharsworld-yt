@@ -33,8 +33,10 @@ feature is live streams.
 
 ## Live: what it needs, and is it feasible now
 
-YouTube's live HLS manifest and its segments only work from the IP address that resolved them. So the Quest can't be
-sent to them, and Tunelio doesn't do live. The one workable route is the **home live relay**:
+YouTube's live HLS manifest and its segments only work from the IP address that resolved them, and Tunelio doesn't do
+live. Since 7dab634 (staging 2026-10-28; 05319a1 on main and prod) a `.m3u8` ticket for a live stream gets a 302 to the
+watch link, so VRChat on the Quest resolves YouTube's live HLS itself, and Quest plays live that way today. The
+**home live relay** below is an alternative, not the only route:
 
 - The Optiplex worker resolves the live manifest (yt-dlp). ffmpeg copies it (`-c copy`: H.264 + AAC, 720p, no
   re-encode) into a sliding-window HLS stream (the last 6 segments) and uploads it to the Linode as home VOD plays do
@@ -49,9 +51,11 @@ sent to them, and Tunelio doesn't do live. The one workable route is the **home 
 **Feasible, but not today.** Today's walk also showed open problems with home on Quest:
 
 - the MPEG-TS warnings (`PesReader: Unexpected start code prefix`);
-- the worker refusing a second stream with "busy".
+- the worker refusing a second stream with "busy" (since then `RELAY_MEDIA_MAX` is 4 streams at once, owner
+  2026-10-25; `relay/worker.js`).
 
-Both need fixing before live channels can lean on home.
+`HOME_ANDROID_GROWING` is on in prod since 2026-10-27 (75cf8e7, decisions.md 2026-10-27). Re-check the PesReader
+warnings before live channels lean on home.
 
 ## What the world bakes
 

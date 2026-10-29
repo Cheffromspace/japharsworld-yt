@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS slots (
   current_video TEXT,           -- what the slot plays now (the playlist's first item)
   kind TEXT,                    -- live | video | unmanaged
   category TEXT, title TEXT, channel TEXT, channel_id TEXT,
-  baked_hidden INTEGER,
+  baked_hidden INTEGER,         -- hidden unless the monitor shows it: overrides.json hidden if set, else channels.json
   auto_hidden INTEGER DEFAULT 0,  -- hidden by the monitor (down, flash fail, waiting for a check)
   auto_reason TEXT,
   down_since REAL, misses INTEGER DEFAULT 0,

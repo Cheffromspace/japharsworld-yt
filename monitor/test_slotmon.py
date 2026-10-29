@@ -56,10 +56,11 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.con = db.connect(os.path.join(self.tmp, "t.db"))
         self.api = FakeApi(self.con)
-        self.alerts, self.mentions, self.notes = [], [], []
+        self.alerts, self.mentions, self.notes, self.bodies = [], [], [], []
 
         def send(con, title, body="", level="info", **k):
             self.alerts.append((level, title))
+            self.bodies.append(body)
             if k.get("mention"):
                 self.mentions.append(title)
         self.p = [mock.patch("slotmon.discord.send", send),
@@ -380,6 +381,24 @@ class Tests(Base):
         core.outage_watch(self.con, ov)
         self.assertFalse(any("at once" in t for _, t in self.alerts))
         self.assertEqual(publish.status_doc(SLOTS, core.slot_rows(self.con), ov)["slots"]["radio"], {"hidden": True})
+
+    def test_shown_spare_is_checked_counted_and_published(self):
+        # Owner, 2026-10-29: the spare lofi-study shown through overrides.json, monitored like any shown live slot.
+        config.DAILY_HOUR_UTC = 0
+        ov = {"notice": "", "slots": dict(OVERRIDES["slots"], spare={"hidden": False})}
+        core.sync_slots(self.con, SLOTS, ov)
+        self.assertEqual(self.slot("spare")["baked_hidden"], 0)  # the exporter's eiok_slot_spare reads this
+        self.assertTrue(core.is_shown(self.slot("spare"), ov))
+        self.assertEqual(publish.status_doc(SLOTS, core.slot_rows(self.con), ov)["slots"]["spare"], {"hidden": False})
+        self.api.world["SPARESPARE1"] = st("SPARESPARE1", "ended")
+        core.check_pass(self.con, self.api, ov)
+        self.assertEqual(self.slot("spare")["auto_reason"], "down")
+        self.assertEqual(publish.status_doc(SLOTS, core.slot_rows(self.con), ov)["slots"].get("spare"), None)  # hidden again, as baked
+        self.con.execute("UPDATE jobs SET done=1")
+        core.maybe_daily(self.con, self.api, ov)
+        self.assertIn("of 4** shown slots", next(b for b in self.bodies if "shown slots up" in b))
+        core.sync_slots(self.con, SLOTS, OVERRIDES)
+        self.assertEqual(self.slot("spare")["baked_hidden"], 1)
 
     def test_unreported_claim_is_handed_out_again_after_an_hour(self):
         self.check()

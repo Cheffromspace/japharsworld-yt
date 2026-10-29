@@ -51,11 +51,13 @@ def sync_slots(con, slots, overrides):
             con.execute("INSERT INTO slots(key, current_video, updated) VALUES(?,?,?)", (key, baked, now()))
             row = con.execute("SELECT * FROM slots WHERE key=?", (key,)).fetchone()
         cur = row["current_video"]
+        # baked_hidden is the owner's choice: overrides.json's hidden when set, else the world's bake (owner, 2026-10-29:
+        # the spare lofi-study shown), so the exporter's eiok_slot_spare and Grafana's "Channels hidden" count a shown spare.
         if row["baked_video"] and baked and baked != row["baked_video"] and cur == row["baked_video"]:
             cur = baked  # channels.json now names a different stream (the owner changed the list)
         con.execute("UPDATE slots SET idx=?, playlist=?, baked_video=?, current_video=?, kind=?, category=?, title=?, channel=?, baked_hidden=? WHERE key=?",
                     (i, s.get("playlist"), baked, cur or baked, kind, s.get("category"), s.get("title"), s.get("channel"),
-                     1 if s.get("hidden") else 0, key))
+                     1 if ov.get(key, {}).get("hidden", s.get("hidden")) else 0, key))
     for r in con.execute("SELECT key FROM slots").fetchall():
         if r["key"] not in seen:
             con.execute("UPDATE slots SET idx=NULL, kind='removed' WHERE key=?", (r["key"],))

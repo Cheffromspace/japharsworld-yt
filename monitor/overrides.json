@@ -6,6 +6,7 @@
     "brown-noise-black": { "kind": "video" },
     "box-fan-black": { "kind": "video" },
     "playlist-test": { "kind": "unmanaged" },
+    "lofi-study": { "hidden": false },
     "fan-noise-black": { "hidden": true, "kind": "unmanaged", "retired": "2026-10-29: stream ended 2026-10-26, nothing live on the channel since (owner, Channels clean-up)" },
     "jack-pokemon": { "hidden": true, "kind": "unmanaged", "retired": "2026-10-29: down since 2026-10-26, no new stream on the channel for this slot (owner, Channels clean-up)" },
     "jack-donkey-kong": { "hidden": true, "kind": "unmanaged", "retired": "2026-10-29: down since 2026-10-26, no new stream on the channel for this slot (owner, Channels clean-up)" },

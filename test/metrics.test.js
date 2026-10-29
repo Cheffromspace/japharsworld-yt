@@ -71,6 +71,10 @@ test('keys outside each metric\'s allowed set are counted as "other"', () => {
   assert.equal(checkedKey('yt_refusal', 'linode:potoken'), 'linode:potoken');
   assert.equal(checkedKey('yt_refusal', 'home:dQw4w9WgXcQ'), 'other'); // a worker can't send a video ID through it
   assert.equal(checkedKey('yt_refusal', 'Sign in to confirm you are not a bot'), 'other');
+  assert.equal(checkedKey('video_report', 'tester:frozen'), 'tester:frozen'); // world #353: who:kind, fixed sets
+  assert.equal(checkedKey('video_report', 'visitor:autoresync'), 'visitor:autoresync');
+  assert.equal(checkedKey('video_report', 'owner:frozen'), 'other');
+  assert.equal(checkedKey('video_report', 'tester:bogus'), 'other');
   assert.throws(() => checkedKey('query_text', 'x'));
 });
 
@@ -214,6 +218,7 @@ test('privacy: no IP, query text, video ID or ticket number reaches the metrics 
   await s.get('/v1/1/cc/2?l=ja');
   await s.get('/v1/1/cc/pl');
   await s.get('/v1/1/cc/1?l=ja');
+  await s.get('/v1/1/r/tester/frozen');                                          // a video report about the play (#353)
   s.metrics.flush();
   // Every string and number in every table.
   const db = openMetricsDb(f.path);

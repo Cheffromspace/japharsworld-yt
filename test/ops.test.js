@@ -19,6 +19,9 @@ test('ops redaction: allowlisted fields only, IDs and query strings masked', () 
   assert.equal(redact({ event: 'dQw4w9WgXcQ' }).event, '…', 'an event field that holds an ID is still masked');
   assert.deepEqual(redact({ event: 'play', id: 'dQw4w9WgXcQ', n: 67, via: 'home', held: 0, pinned: true }),
     { event: 'play', via: 'home', held: 0, pinned: true }, 'a pinned play says so (#293)');
+  assert.deepEqual(redact({ event: 'video_report', shard: 1, n: 67, kind: 'frozen', who: 'tester', device: 'android', ago: 42, via: 'tunelio', mode: 'adaptive', rung: '720p', top: 'pending', quality: '1080p', hls: true, counted: true }),
+    { event: 'video_report', kind: 'frozen', who: 'tester', device: 'android', ago: 42, via: 'tunelio', mode: 'adaptive', rung: '720p', top: 'pending', quality: '1080p', hls: true, counted: true },
+    'a video report keeps what it says about the play, never its shard or ticket (#353)');
   const ring = new EventRing(3);
   for (let i = 0; i < 5; i++) ring.push(JSON.stringify({ at: new Date(1000 + i).toISOString(), event: i % 2 ? 'a' : 'b', i }));
   ring.push('{"route":"ticket","status":302}'); // request lines are not events

@@ -72,6 +72,12 @@ const isSBucket = oneOf(...S_BUCKETS.map(String), 'inf');
 const isTrackLang = (k) => /^[a-z]{2,3}(-(?:[A-Z]{2}|[A-Z][a-z]{3}|\d{3}))?$/.test(k);
 const none = (k) => k === '';
 
+// The world's video reports (world #353, GET /v1/<shard>/r/<who>/<kind>): who sent it (the Tester tab's testers, or
+// any visitor) and what. The six problem kinds come from the Tester tab; resync is a Resync press, autoresync the
+// world's stall watchdog reloading. Fixed sets, baked into the world's URLs.
+export const REPORT_WHO = ['visitor', 'tester'];
+export const REPORT_KINDS = ['frozen', 'stutter', 'sync', 'sound', 'load', 'quality', 'resync', 'autoresync'];
+
 // metric → [table, key check]
 export const METRICS = {
   search: ['daily', none],
@@ -127,6 +133,7 @@ export const METRICS = {
   credits: ['daily', oneOf('playback', 'captions', 'probe', 'test')],
   // YouTube refused a lookup (src/refusal.js): '<where>:<class>', the class only, never the message, query or video.
   yt_refusal: ['daily', oneOf(...REFUSAL_WHERE.flatMap((w) => REFUSAL_CLASSES.map((c) => `${w}:${c}`)))],
+  video_report: ['daily', oneOf(...REPORT_WHO.flatMap((w) => REPORT_KINDS.map((k) => `${w}:${k}`)))], // '<who>:<kind>'
   join: ['daily', none],
   join_lang: ['daily', isLang],
   credits_remaining: ['gauge', none],

@@ -251,3 +251,69 @@ test('/feedback answers 301 to the feedback form (world #224)', async (t) => {
     assert.equal(res.headers.get('location'), 'https://docs.google.com/forms/d/1UXMXbqXXXtClqTAnQAVKA1niKKsIdOLMGjCPCH-yZFA/viewform', method);
   }
 });
+
+// The world's video reports (world #353): the Tester tab's problem buttons and every visitor's Resync presses.
+test('video reports /v1/<shard>/r/<who>/<kind>: 200 at once, logged with the shard\'s play, counted once per 10 s (#353)', async (t) => {
+  const lines = [];
+  const incs = [];
+  const metrics = { inc: (m, k) => incs.push(`${m}:${k}`), gauge() {}, latency() {}, shard() {}, flush() { return 0; }, start() { return this; }, close() {} };
+  const s = await start({ log: (l) => lines.push(l), metrics });
+  t.after(() => s.server.close());
+  const reports = () => lines.map((l) => JSON.parse(l)).filter((e) => e.event === 'video_report');
+  const counted = () => incs.filter((x) => x.startsWith('video_report:'));
+
+  for (const who of ['tester', 'visitor']) {
+    for (const kind of ['frozen', 'stutter', 'sync', 'sound', 'load', 'quality', 'resync', 'autoresync']) {
+      const r = await s.get(`/v1/0/r/${who}/${kind}`);
+      assert.equal(r.status, 200, `${who}/${kind}`);
+      assert.deepEqual(r.body, { ok: true });
+      assert.equal(r.headers.get('cache-control'), 'no-store');
+    }
+  }
+  assert.equal(reports().length, 16);
+  assert.equal(counted().length, 16);
+  assert.ok(counted().includes('video_report:tester:frozen') && counted().includes('video_report:visitor:autoresync'));
+  // Nothing playing yet: the report says so.
+  assert.equal(reports()[0].n, null);
+
+  // Anything off the allowlist is a 404, and neither logged nor counted.
+  for (const p of ['/v1/0/r/tester/bogus', '/v1/0/r/owner/frozen', '/v1/0/r/frozen', '/v1/0/r/tester', '/v1/0/r/tester/frozen/x', '/v1/0/r/TESTER/frozen']) {
+    assert.equal((await s.get(p)).status, 404, p);
+  }
+  assert.equal((await s.get('/v1/9/r/tester/frozen')).body.error, 'bad_shard');
+  assert.equal(reports().length, 16);
+
+  // Play a video in shard 1, then report: the event carries that ticket, the UA class and who.
+  const r = (await s.get('/v1/1/s?q=rain')).body;
+  await fetch(`${s.base}/v1/1/${r.results[0].t}`, { redirect: 'manual', headers: { 'user-agent': 'AVProVideo/2.9 (Linux; Android 12)' } });
+  await fetch(`${s.base}/v1/1/r/tester/stutter`, { headers: { 'user-agent': 'UnityPlayer/2022.3 (UnityWebRequest/1.0; Android)' } });
+  const e = reports().at(-1);
+  assert.equal(e.shard, 1);
+  assert.equal(e.kind, 'stutter');
+  assert.equal(e.who, 'tester');
+  assert.equal(e.device, 'android');
+  assert.equal(e.n, r.results[0].t);
+  assert.equal(typeof e.ago, 'number');
+  assert.ok('via' in e && 'mode' in e && 'rung' in e && 'quality' in e && 'hls' in e);
+
+  // Counting (not logging) is limited to one per shard, who and kind per 10 s.
+  const before = counted().length;
+  await s.get('/v1/1/r/tester/stutter');
+  await s.get('/v1/1/r/tester/stutter');
+  await s.get('/v1/1/r/visitor/stutter');  // another who
+  await s.get('/v1/0/r/tester/stutter');   // another shard, but shard 0 counted it above
+  await s.get('/v1/1/r/tester/frozen');    // another kind
+  assert.equal(counted().length - before, 2);
+  assert.equal(reports().at(-1).counted, true);
+  assert.equal(reports().at(-2).counted, false);
+});
+
+test('video reports count again after the gap (reportGapMs)', async (t) => {
+  const incs = [];
+  const metrics = { inc: (m, k) => incs.push(`${m}:${k}`), gauge() {}, latency() {}, shard() {}, flush() { return 0; }, start() { return this; }, close() {} };
+  const s = await start({ metrics, config: { ...config, reportGapMs: 0 } });
+  t.after(() => s.server.close());
+  await s.get('/v1/0/r/visitor/resync');
+  await s.get('/v1/0/r/visitor/resync');
+  assert.equal(incs.filter((x) => x === 'video_report:visitor:resync').length, 2);
+});

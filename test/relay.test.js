@@ -375,3 +375,33 @@ test('back-off: parsePaused takes known kinds only, at most 2 h', () => {
   assert.deepEqual(parsePaused(['media:10'], 1000), { media: 11_000 });
   assert.deepEqual(parsePaused(undefined, 0), {});
 });
+
+// A pasted link search doesn't list (unlisted, or not found): one videos.list lookup (1 unit) for its length, so the
+// home rule and the pin window see it (staging, 2026-10-29: an unlisted clip played with seconds 0).
+test('DataApi.video: one videos.list call for a video\'s length, live state and title; null when YouTube has none', async () => {
+  const calls = [];
+  const items = {
+    unlisted001: { id: 'unlisted001', snippet: { title: 'A &amp; B', channelTitle: 'Ch', liveBroadcastContent: 'none', publishedAt: '2026-10-01T00:00:00Z' }, contentDetails: { duration: 'PT1H2M3S', caption: 'false' } },
+    liveStream1: { id: 'liveStream1', snippet: { title: 'Live', channelTitle: 'Ch', liveBroadcastContent: 'live' }, contentDetails: { duration: 'P0D' } },
+  };
+  const fetcher = async (url) => {
+    calls.push(url);
+    const id = url.searchParams.get('id');
+    return { ok: true, json: async () => ({ items: items[id] ? [items[id]] : [] }) };
+  };
+  const api = new DataApi({ key: 'k', fetcher, now: () => NOW });
+  const v = await api.video('unlisted001');
+  assert.equal(v.id, 'unlisted001');
+  assert.equal(v.seconds, 3723);
+  assert.equal(v.live, false);
+  assert.equal(v.title, 'A &amp; B'); // videos.list snippets are taken as they come, like search's details
+  assert.equal(v.channel, 'Ch');
+  assert.equal(calls[0].pathname.endsWith('/videos'), true);
+  assert.match(calls[0].searchParams.get('part'), /contentDetails/);
+  assert.equal(api.unitsToday, 1);
+  const live = await api.video('liveStream1');
+  assert.deepEqual([live.live, live.seconds], [true, 0]);
+  assert.equal(await api.video('missing0000'), null);
+  assert.equal(api.unitsToday, 3);
+  await assert.rejects(new DataApi({ key: '' }).video('unlisted001'), /no YOUTUBE_API_KEY/);
+});

@@ -317,3 +317,40 @@ test('video reports count again after the gap (reportGapMs)', async (t) => {
   await s.get('/v1/0/r/visitor/resync');
   assert.equal(incs.filter((x) => x === 'video_report:visitor:resync').length, 2);
 });
+
+// A pasted link that search doesn't list (an unlisted clip, staging 2026-10-29): its ticket got seconds 0, so the
+// ≥30-min home rule never applied. One Data API lookup fills it in; without one (no key, failed) it stays as before.
+test('pasted link search doesn\'t list: its length, live state and title come from one Data API lookup, else as before', async (t) => {
+  const asked = [];
+  const api = { enabled: true, async video(id) { asked.push(id); return id === 'UnlistedAbc' ? { ...video(id), title: 'Unlisted clip', seconds: 2700 } : null; } };
+  const s = await start({ api, config: { ...config, searchesPerMinutePerIp: 50 } });
+  t.after(() => s.server.close());
+  const avpro = (q) => fetch(`${s.base}/v1/0/s?q=${encodeURIComponent(q)}`, { redirect: 'manual', headers: { 'user-agent': 'NSPlayer/12.00.19041.1 WMFSDK/12.00.19041.1' } });
+
+  // The tablet's search: the first result is the looked-up video.
+  const r = (await s.get(`/v1/0/s?q=${encodeURIComponent('→ https://youtu.be/UnlistedAbc')}`)).body;
+  assert.deepEqual([r.results[0].id, r.results[0].title], ['UnlistedAbc', 'Unlisted clip']);
+  assert.equal(s.store.get(0, r.results[0].t).data.seconds, 2700);
+  // The player's load of the same address: the same ticket, no second lookup for a ticket already made.
+  assert.equal((await avpro('→ https://youtu.be/UnlistedAbc')).status, 302);
+  assert.deepEqual(asked, ['UnlistedAbc']);
+
+  // A player first, for another video: looked up too.
+  await avpro('→ https://youtu.be/UnlistedAbd');
+  assert.deepEqual(asked, ['UnlistedAbc', 'UnlistedAbd']);
+
+  // A video search does list: no lookup (the fake search lists ids starting with the query's first 4 characters).
+  const listed = 'Abcd10xxxxx'; // the fake search's first result for that query
+  await s.get(`/v1/0/s?q=${encodeURIComponent('https://youtu.be/' + listed)}`);
+  assert.equal(asked.length, 2);
+
+  // No video, a failed lookup, or no key: seconds 0, title = id, as before.
+  api.video = async () => { throw new Error('quota'); };
+  const f = (await s.get(`/v1/1/s?q=${encodeURIComponent('https://youtu.be/FailedLook1')}`)).body;
+  assert.equal(f.results[0].title, 'FailedLook1');
+  assert.equal(s.store.get(1, f.results[0].t).data.seconds, 0);
+  api.enabled = false;
+  api.video = async () => { throw new Error('not called'); };
+  const n = (await s.get(`/v1/1/s?q=${encodeURIComponent('https://youtu.be/NoKeyLook01')}`)).body;
+  assert.equal(n.results[0].title, 'NoKeyLook01');
+});

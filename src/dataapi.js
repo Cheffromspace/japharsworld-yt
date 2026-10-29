@@ -120,4 +120,13 @@ export class DataApi {
     const next = found.nextPageToken;
     return { videos, more: next ? () => this.search(query, limit, next) : null, via: 'api' };
   }
+
+  // One video by id (1 unit), for a pasted link search doesn't list (unlisted, 2026-10-29). Null when YouTube has none.
+  async video(id) {
+    if (!this.enabled) throw new Error('no YOUTUBE_API_KEY');
+    const got = await this.#get('videos', { part: 'contentDetails,liveStreamingDetails,statistics,snippet', id });
+    const details = (got.items ?? []).find((v) => v.id === id);
+    this.log({ event: 'data_api', units: 1, unitsToday: this.unitsToday, results: details ? 1 : 0 });
+    return details ? mapApiVideo({ id: { videoId: id } }, details, this.now()) : null;
+  }
 }

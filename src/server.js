@@ -247,8 +247,20 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (pastedTickets.size > 2000) pastedTickets.delete(pastedTickets.keys().next().value);
     try { return await fresh.n; } catch (err) { if (pastedTickets.get(key) === fresh) pastedTickets.delete(key); throw err; }
   }
-  const pastedVideo = (page, id) => page.videos.find((v) => v.id === id)
-    ?? { id, title: id, channel: '', length: '', seconds: 0, views: '', age: '', live: false, cc: false };
+  // The pasted video as search listed it; else one Data API lookup (1 unit), so an unlisted clip still has its length
+  // for the home rule and the pin window (staging, 2026-10-29: one played with seconds 0); else the id alone, as before.
+  async function pastedVideo(page, id) {
+    const listed = page.videos.find((v) => v.id === id);
+    if (listed) return listed;
+    if (api.enabled) {
+      try {
+        const v = await api.video(id);
+        logJson({ event: 'pasted_lookup', found: Boolean(v), seconds: v?.seconds ?? null });
+        if (v) return v;
+      } catch (err) { logJson({ event: 'pasted_lookup', found: false, message: String(err?.message ?? err).slice(0, 200) }); }
+    }
+    return { id, title: id, channel: '', length: '', seconds: 0, views: '', age: '', live: false, cc: false };
+  }
 
   // The User-Agent's class only, never the UA itself (search_shape, video_report).
   const uaDevice = (ua) => /Android|Quest|Oculus/i.test(ua) ? 'android' : /UnityPlayer/i.test(ua) ? 'unity' : ua ? 'other' : 'none';
@@ -271,7 +283,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (linkId) {
       let n;
       try {
-        n = await pastedTicket(shard, linkId, async () => store.allocate(shard, [ticketData(pastedVideo(await searcher.search(linkId, config.resultsPerPage), linkId))])[0]);
+        n = await pastedTicket(shard, linkId, async () => store.allocate(shard, [ticketData(await pastedVideo(await searcher.search(linkId, config.resultsPerPage), linkId))])[0]);
       } catch {
         metrics.inc('search_fail', '502');
         return fail(res, 502, 'youtube_failed', 'YouTube search is not answering right now.');
@@ -294,7 +306,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     metrics.latency('search_ms', Date.now() - started);
     if (pasted) {
       const rest = page.videos.filter((v) => v.id !== pasted);
-      page = { videos: [pastedVideo(page, pasted), ...rest], more: page.more };
+      page = { videos: [await pastedVideo(page, pasted), ...rest], more: page.more };
     }
     const body = publish(shard, page, { query, lang, page: 1, pasted: Boolean(pasted) });
     // A YouTube link's first result is the ticket its player plays (#136), whichever of the two loads came first.

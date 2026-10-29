@@ -1,10 +1,15 @@
 {
-  "about": "Owner edits for sleep-list.json, merged with the monitor's automatic hides. notice: one line shown in amber (empty for none). slots.<key>: hidden / title / channel / order / category (one of music, sounds, nature, space, games, trains, cities, sensory, docs) as the world reads them; kind: 'video' for ordinary uploads that only need to stay available (no live check, no flash re-check), 'unmanaged' to skip a slot.",
+  "about": "Owner edits for sleep-list.json, merged with the monitor's automatic hides. notice: one line shown in amber (empty for none). slots.<key>: hidden / title / channel / order / category (one of music, sounds, nature, space, games, trains, cities, sensory, docs) as the world reads them; kind: 'video' for ordinary uploads that only need to stay available (no live check, no flash re-check), 'unmanaged' to skip a slot. A retired slot is hidden + unmanaged with retired: '<date>: <reason>' (out of every check, the summary and Grafana); drop the entry to bring it back.",
   "notice": "",
   "slots": {
     "pink-noise-black": { "kind": "video" },
     "brown-noise-black": { "kind": "video" },
     "box-fan-black": { "kind": "video" },
-    "playlist-test": { "kind": "unmanaged" }
+    "playlist-test": { "kind": "unmanaged" },
+    "fan-noise-black": { "hidden": true, "kind": "unmanaged", "retired": "2026-10-29: stream ended 2026-10-26, nothing live on the channel since (owner, Channels clean-up)" },
+    "jack-pokemon": { "hidden": true, "kind": "unmanaged", "retired": "2026-10-29: down since 2026-10-26, no new stream on the channel for this slot (owner, Channels clean-up)" },
+    "jack-donkey-kong": { "hidden": true, "kind": "unmanaged", "retired": "2026-10-29: down since 2026-10-26, no new stream on the channel for this slot (owner, Channels clean-up)" },
+    "jack-oblivion": { "hidden": true, "kind": "unmanaged", "retired": "2026-10-29: down since 2026-10-26, no new stream on the channel for this slot (owner, Channels clean-up)" },
+    "roelf-cosmic": { "hidden": true, "kind": "unmanaged", "retired": "2026-10-29: 24/7 stream ended 2026-10-27, not restarted (owner, Channels clean-up)" }
   }
 }

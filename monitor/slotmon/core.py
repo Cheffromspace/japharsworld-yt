@@ -134,7 +134,7 @@ def check_pass(con, api, overrides):
                 if row["auto_reason"] == "down":
                     con.execute("UPDATE slots SET auto_hidden=0, auto_reason=NULL WHERE key=?", (row["key"],))
                 if shown:
-                    discord.send(con, "Back up: %s" % (row["title"] or row["key"]), "%s is live again: %s" % (label(row), yt(row["current_video"])), "good")
+                    discord.note(con, "Back up: %s" % (row["title"] or row["key"]), "%s is live again: %s" % (label(row), yt(row["current_video"])), "good")
             s = db.stream(con, row["current_video"])
             if row["kind"] == "live" and s["flash_at"] is None:
                 queue_job(con, row["current_video"], row["key"], "new")
@@ -153,7 +153,7 @@ def handle_down(con, api, row, st, shown):
         con.execute("UPDATE slots SET down_since=?, auto_hidden=1, auto_reason='down' WHERE key=?", (now(), row["key"]))
         db.event(con, row["key"], "down", row["current_video"], "%s %s" % (st.get("status"), st.get("error") or ""))
         if shown:
-            discord.send(con, "Stream down: %s" % (row["title"] or row["key"]),
+            discord.note(con, "Stream down: %s" % (row["title"] or row["key"]),
                          "%s: %s is **%s**%s. Hidden in sleep-list.json; looking for a replacement on the same channel."
                          % (label(row), yt(row["current_video"]), st.get("status"), (" (%s)" % st["error"]) if st.get("error") else ""), "warn")
         row = con.execute("SELECT * FROM slots WHERE key=?", (row["key"],)).fetchone()
@@ -217,7 +217,7 @@ def find_replacement(con, api, row, shown):
             db.event(con, row["key"], "candidate", vid, st.get("title") or "")
             con.execute("UPDATE slots SET auto_reason='down' WHERE key=?", (row["key"],))
             if shown:
-                discord.send(con, "Replacement found, waiting for its flash check: %s" % (row["title"] or row["key"]),
+                discord.note(con, "Replacement found, waiting for its flash check: %s" % (row["title"] or row["key"]),
                              "%s: candidate %s (%s). It goes in only after it passes the flash check and is %dp or better."
                              % (label(row), yt(vid), st.get("title"), config.MIN_HEIGHT), "info")
         return
@@ -226,23 +226,21 @@ def find_replacement(con, api, row, shown):
 
 def note_no_replacement(con, row, shown, why):
     if shown:
-        discord.send(con, "No replacement yet: %s" % (row["title"] or row["key"]),
-                     "%s stays hidden. %s. Retrying every 30 min." % (label(row), why[:1500]), "warn",
-                     dedupe="norepl:" + row["key"], every_hours=12)
+        discord.note(con, "No replacement yet: %s" % (row["title"] or row["key"]),
+                     "%s stays hidden. %s. Retrying every 30 min." % (label(row), why[:1500]), "warn")
 
 
 def swap(con, api, row, vid, shown):
     title = row["title"] or row["key"]
     if not row["playlist"]:
-        discord.send(con, "Replacement ready but slot has no playlist: %s" % title,
-                     "%s: %s passed every check, but the world bakes the old stream link itself. Put it in channels.json "
-                     "and upload, or create the slot playlists (Tools/youtube-slots)." % (label(row), yt(vid)), "warn",
-                     dedupe="noplaylist:%s:%s" % (row["key"], vid), every_hours=24)
+        swap_failed(con, row, vid, "no slot playlist (the world bakes the old link)",
+                    "Replacement ready but slot has no playlist: %s" % title,
+                    "%s: %s passed every check, but the world bakes the old stream link itself. Put it in channels.json "
+                    "and upload, or create the slot playlists (Tools/youtube-slots)." % (label(row), yt(vid)))
         return False
     if not api.can_write:
-        discord.send(con, "Replacement ready but no YouTube OAuth grant: %s" % title,
-                     "%s: %s passed every check. Set YT_CLIENT_ID/SECRET/REFRESH_TOKEN on the server." % (label(row), yt(vid)),
-                     "warn", dedupe="nooauth:" + row["key"], every_hours=24)
+        swap_failed(con, row, vid, "no YouTube OAuth grant", "Replacement ready but no YouTube OAuth grant: %s" % title,
+                    "%s: %s passed every check. Set YT_CLIENT_ID/SECRET/REFRESH_TOKEN on the server." % (label(row), yt(vid)))
         return False
     try:
         api.insert_first(row["playlist"], vid)
@@ -251,10 +249,12 @@ def swap(con, api, row, vid, shown):
                 api.delete_item(item_id)
         first = api.playlist_items(row["playlist"], essential=True)
     except Exception as e:
-        discord.send(con, "Swap failed: %s" % title, "%s -> %s: %s" % (label(row), yt(vid), str(e)[:800]), "urgent")
+        swap_failed(con, row, vid, "playlist write failed: %s" % str(e)[:200], "Swap failed: %s" % title,
+                    "%s -> %s: %s" % (label(row), yt(vid), str(e)[:800]))
         return False
     if not first or first[0][1] != vid:
-        discord.send(con, "Swap did not stick: %s" % title, "%s: playlist starts with %s" % (label(row), first[0][1] if first else "nothing"), "urgent")
+        swap_failed(con, row, vid, "the playlist did not keep it", "Swap did not stick: %s" % title,
+                    "%s: playlist starts with %s" % (label(row), first[0][1] if first else "nothing"))
         return False
     old = row["current_video"]
     con.execute("UPDATE slots SET current_video=?, down_since=NULL, misses=0, auto_hidden=0, auto_reason=NULL WHERE key=?", (vid, row["key"]))
@@ -263,9 +263,16 @@ def swap(con, api, row, vid, shown):
     con.commit()
     if shown:
         s = db.stream(con, vid)
-        discord.send(con, "Replaced: %s" % title, "%s now plays %s (%s, %sp, flash %s/s). Was %s."
+        discord.note(con, "Replaced: %s" % title, "%s now plays %s (%s, %sp, flash %s/s). Was %s."
                      % (label(row), yt(vid), s["title"], s["height"], s["flash_max"], yt(old)), "good")
     return True
+
+
+def swap_failed(con, row, vid, why, title, body):
+    """A replacement that could not go in: an event for the daily summary's failures, and the journal."""
+    db.event(con, row["key"], "swap_failed", vid, why)
+    con.commit()
+    discord.note(con, title, body, "warn")
 
 
 def pull_from_playlist(con, api, row):
@@ -364,15 +371,15 @@ def react(con, api, job, res, rows, overrides):
                             " and removed from the slot playlist, so nothing plays" if emptied else
                             "; the world still has the link baked, so anyone with a stale list could play it"), "urgent")
         if not playing:
-            discord.send(con, "Flash fail on a candidate", "%s (%s) failed at %s/s; it will not be used." % (yt(vid), job["slot_key"], fl.get("max_fps")), "warn")
+            discord.note(con, "Flash fail on a candidate", "%s (%s) failed at %s/s; it will not be used." % (yt(vid), job["slot_key"], fl.get("max_fps")), "warn")
         db.set_meta(con, "publish_now", True)
         con.commit()
         return
     live = res.get("live_status") in ("is_live", None)  # None: VRChat's yt-dlp does not say; the server checked before queuing
     for r in playing:
         if r["kind"] == "live" and live and (res.get("height") or 0) < config.MIN_HEIGHT:
-            discord.send(con, "Low resolution: %s" % (r["title"] or r["key"]), "%s plays at %sp (rule: %dp or better)."
-                         % (label(r), res.get("height"), config.MIN_HEIGHT), "warn", dedupe="lowres:" + vid, every_hours=24)
+            discord.note(con, "Low resolution: %s" % (r["title"] or r["key"]), "%s plays at %sp (rule: %dp or better)."
+                         % (label(r), res.get("height"), config.MIN_HEIGHT), "warn")
     if job["reason"] == "candidate":
         row = con.execute("SELECT * FROM slots WHERE key=?", (job["slot_key"],)).fetchone()
         if row is None or not row["down_since"]:
@@ -427,7 +434,7 @@ def maybe_daily(con, api, overrides):
             if first and first != r["current_video"]:
                 con.execute("UPDATE slots SET current_video=? WHERE key=?", (first, r["key"]))
                 db.event(con, r["key"], "playlist_changed", first, "was %s" % r["current_video"])
-                discord.send(con, "Playlist changed outside the monitor", "%s now starts with %s (was %s). Following it." % (label(r), yt(first), yt(r["current_video"])), "info")
+                discord.note(con, "Playlist changed outside the monitor", "%s now starts with %s (was %s). Following it." % (label(r), yt(first), yt(r["current_video"])), "info")
             elif not first and r["current_video"]:
                 discord.send(con, "Slot playlist is empty", "%s: the world plays nothing for this slot." % label(r), "warn", dedupe="plempty:" + r["key"], every_hours=24)
     db.set_meta(con, "thumbs_dirty", True)
@@ -436,17 +443,16 @@ def maybe_daily(con, api, overrides):
 
 
 def outage_watch(con, overrides):
-    """Many channels out at once (owner, 2026-10-26): MASS_DOWN or more shown slots down or hidden, at most once a day
-    while it lasts, with an all-clear when it is over; one outage or flash fail the monitor handles itself. A plain
-    alert on the usual channel, no mention (owner, #246); Grafana's eiok-channels-mass-down warning counts the same."""
+    """Many channels out at once (owner, 2026-10-26): MASS_DOWN or more shown slots down or hidden, at most once in 24 h
+    (dedupe), and no all-clear (owner, 2026-10-29: a daily summary and this warning are the only channel messages; the
+    Grafana copy, eiok-channels-mass-down, is retired). One outage the monitor handles itself and the summary counts.
+    A plain alert on the usual channel, no mention (owner, #246)."""
     shown = [r for r in slot_rows(con).values() if r["kind"] in ("live", "video") and is_shown(r, overrides)]
     out = [r for r in shown if r["auto_hidden"] or r["down_since"]]
     if len(out) >= config.MASS_DOWN:
         discord.send(con, "%d channels down or hidden at once" % len(out),
                      "%d of %d shown slots: %s" % (len(out), len(shown), ", ".join("%s (%s)" % (r["key"], r["auto_reason"] or "down") for r in out))[:3900],
                      "urgent", dedupe="mass-down", every_hours=24)
-    else:
-        discord.resolve(con, "mass-down", "Channels back", "%d of %d shown slots down or hidden now." % (len(out), len(shown)))
 
 
 def summary(con, api, overrides, queued):
@@ -461,6 +467,14 @@ def summary(con, api, overrides, queued):
     lines = ["**%d of %d** shown slots up." % (len(shown) - len(hidden), len(shown))]
     if hidden:
         lines.append("Hidden by the monitor: " + ", ".join("%s (%s)" % (r["key"], r["auto_reason"]) for r in hidden))
+    # Channel replacements (owner, 2026-10-29): the day's count and channels, and what failed, instead of a message each.
+    repl = con.execute("SELECT e.slot_key k, s.title t FROM events e LEFT JOIN slots s ON s.key=e.slot_key WHERE e.ts>? AND e.kind='replaced' ORDER BY e.ts", (day,)).fetchall()
+    lines.append("Replacements (24 h): %d%s" % (len(repl), (": " + ", ".join(r["t"] or r["k"] for r in repl)) if repl else ""))
+    failed = con.execute("SELECT e.slot_key k, s.title t, e.detail d FROM events e LEFT JOIN slots s ON s.key=e.slot_key WHERE e.id IN "
+                         "(SELECT MAX(id) FROM events WHERE ts>? AND kind='swap_failed' GROUP BY slot_key) ORDER BY e.ts", (day,)).fetchall()
+    waiting = [r for r in hidden if r["auto_reason"] == "down" and r["key"] not in {f["k"] for f in failed}]
+    fails = ["%s (%s)" % (f["t"] or f["k"], f["d"]) for f in failed] + ["%s (no replacement yet)" % (r["title"] or r["key"]) for r in waiting]
+    lines.append("Replacement failures: " + ("; ".join(fails) if fails else "none"))
     lines.append("Last 24 h events: " + (", ".join("%s %d" % (r["kind"], r["n"]) for r in ev) or "none"))
     lines.append("Flash checks (24 h): " + (", ".join("%s %d (max %s/s)" % (r["verdict"], r["n"], r["m"]) for r in fl) or "none"))
     lines.append("Queued %d daily checks; %d jobs pending%s." % (queued, pending["n"], (" (oldest %.0f h)" % ((now() - pending["c"]) / 3600)) if pending["c"] else ""))

@@ -245,7 +245,7 @@ The critical rules (`tools/grafana.mjs`, 2026-10-26): `eiok-search-down`, `eiok-
 (owner: "search service much more critical"), `eiok-ssh-unknown-login`, `eiok-security-change`,
 `eiok-sshd-not-hardened`, `eiok-linode-disk-88` (80 % is a warning; 70 %/80 % until 2026-10-27, when a full home
 cache at `HOME_MAX_GB=12` put `/` at ~76 %), `eiok-domain-expiry-critical` (48 hours; the 7-day one is a warning
-since #246); `eiok-channels-mass-down` is a warning since #246. With `GRAFANA_DISCORD_MENTION` in
+since #246); the mass Channels outage warning is the monitor's own since 2026-10-29 (`eiok-channels-mass-down` retired). With `GRAFANA_DISCORD_MENTION` in
 the repo's local `.env` the contact point pings the owner on these (firing only), and `DISCORD_MENTION_ID` in
 `~/yt-infra-check/.env` makes every "SEVERE:" triage post ping them; both IDs stay out of the repo. A rule raised to critical is triaged
 from its next firing. Test the path with `node /opt/japharsworld-yt-relay/infra-check/triage.mjs --synthetic

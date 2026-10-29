@@ -452,9 +452,6 @@ export function alertRules(dsUid, { critical = false } = {}) {
     // Not cc_words estimated > real: manual tracks never carry word timing, so that held on normal days (10-24: 104
     // estimated, 71 real, every track from the home worker). Tunelio answering instead of the free sources is the sign.
     rule('eiok-captions-paid', 'Captions falling back to Tunelio', 'sum(increase(eiok_events_total{metric="cc_via",key="tunelio"}[6h])) - (sum(increase(eiok_events_total{metric="cc_via",key=~"worker|local"}[6h])) or vector(0)) > 0 and on() sum(increase(eiok_events_total{metric="cc_via",key="tunelio"}[6h])) >= 3', { forM: 30, summary: 'Over the last 6 hours Tunelio (credits, segment timing) answered more caption fetches than the free sources (home relay, yt-dlp): YouTube may be refusing caption requests (see YouTube refusals).' }),
-    // Owner, 2026-10-26: one channel down is the monitor's job; 8 or more shown (not spare) slots down or hidden at once is
-    // severe, as monitor/slotmon outage_watch (MASS_DOWN, default 8) also pings. 5 were hidden when this was added.
-    rule('eiok-channels-mass-down', 'Many Channels slots down or hidden', 'sum(eiok_slot_hidden * on(slot) (1 - eiok_slot_spare)) - 7', { forM: 10, summary: '8 or more of the world\'s shown Channels slots are down or hidden at once (YouTube, the monitor or its worker).' }),
     // Owner, 2026-10-26: the flash worker's YouTube refusals (metrics/exporter.js, yt_refusal flash:<class>), which the
     // search service's own refusal alert (src/refusal.js, the relay worker's) never sees. As there: 3 or more bot, rate,
     // PO-token or 403 refusals, here within 30 minutes (the worker runs every 20).
@@ -555,8 +552,9 @@ async function push() {
     try { await api(`/api/v1/provisioning/alert-rules/${uid}`, { method: 'DELETE' }); console.log(`alert removed: ${uid}`); } catch (err) { if (err.status !== 404) throw err; }
   }
 }
-// Rule uids no longer defined (2026-10-27: the 70 % Linode disk warning became 80 %, the 80 % critical 88 %).
-export const RETIRED_RULES = ['eiok-linode-disk-70'];
+// Rule uids no longer defined (2026-10-27: the 70 % Linode disk warning became 80 %, the 80 % critical 88 %;
+// 2026-10-29: the mass Channels outage warning is the monitor's alone, outage_watch, once a day at most).
+export const RETIRED_RULES = ['eiok-linode-disk-70', 'eiok-channels-mass-down'];
 
 const cmd = process.argv[2];
 if (cmd === 'build') {

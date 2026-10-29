@@ -361,6 +361,26 @@ class Tests(Base):
         self.assertTrue(any(j["reason"] == "daily" for j in self.jobs()))
         self.assertTrue(any(t == "Daily summary" for _, t in self.alerts))
 
+    def test_retired_slot_is_hidden_and_out_of_every_check(self):
+        # Owner, 2026-10-29: long-down channels are retired in overrides.json (hidden + unmanaged), not removed.
+        config.DAILY_HOUR_UTC = 0
+        self.api.world["OLDOLDOLD01"] = st("OLDOLDOLD01", "ended")
+        self.check()
+        self.assertEqual(self.slot("radio")["auto_reason"], "down")
+        ov = {"notice": "", "slots": dict(OVERRIDES["slots"], radio={"hidden": True, "kind": "unmanaged", "retired": "2026-10-29: down"})}
+        core.sync_slots(self.con, SLOTS, ov)
+        radio_checks = lambda: self.con.execute("SELECT COUNT(*) FROM checks WHERE slot_key='radio'").fetchone()[0]
+        n = radio_checks()
+        self.api.calls.clear()
+        core.check_pass(self.con, self.api, ov)
+        core.maybe_daily(self.con, self.api, ov)
+        self.assertEqual(radio_checks(), n)
+        self.assertGreater(self.con.execute("SELECT COUNT(*) FROM checks WHERE slot_key='cam'").fetchone()[0], 1)
+        self.assertNotIn(("list", "PLradio"), self.api.calls)
+        core.outage_watch(self.con, ov)
+        self.assertFalse(any("at once" in t for _, t in self.alerts))
+        self.assertEqual(publish.status_doc(SLOTS, core.slot_rows(self.con), ov)["slots"]["radio"], {"hidden": True})
+
     def test_unreported_claim_is_handed_out_again_after_an_hour(self):
         self.check()
         n = len(self.jobs())

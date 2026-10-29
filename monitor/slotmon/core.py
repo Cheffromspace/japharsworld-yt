@@ -421,7 +421,8 @@ def maybe_daily(con, api, overrides):
             queued += queue_job(con, r["current_video"], r["key"], "daily")
     if api.can_write:
         for r in rows.values():
-            if not r["playlist"] or r["auto_reason"] == "flash fail":
+            # A retired slot (kind unmanaged, owner 2026-10-29) is out of every check, its playlist too.
+            if not r["playlist"] or r["auto_reason"] == "flash fail" or r["kind"] not in ("live", "video"):
                 continue
             try:
                 items = api.playlist_items(r["playlist"])

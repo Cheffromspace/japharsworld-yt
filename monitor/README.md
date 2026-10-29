@@ -101,6 +101,9 @@ journalctl -u japharsworld-yt-monitor -n 50
 - **Changing the list:** edit `Assets/EverythingIsOK/Channels/channels.json` in the world repo, copy it to `monitor/channels.json`
   here, and push. The world preflight (`Tools/channels-monitor/preflight.cmd`) warns when the two differ.
 - **Showing a spare, renaming, recategorising, notices:** `monitor/overrides.json`, then push. Takes effect on the next pass.
+- **Retiring a slot** (a stream down for days with no replacement; slot order is frozen, so never remove it): in `overrides.json`
+  give it `"hidden": true, "kind": "unmanaged", "retired": "<date>: <reason>"`. It leaves the checks, the replacement search,
+  the daily summary, the mass-outage count and Grafana; drop the entry to bring it back. Five retired 2026-10-29 (owner).
 - **A slot the monitor hid** comes back by itself when its stream is live again (outages), or after a swap. A flash-fail hide
   stays until you clear it: `sqlite3 /var/lib/japharsworld-yt-monitor/monitor.db "UPDATE slots SET auto_hidden=0, auto_reason=NULL WHERE key='...'"`
   (only once the stream is replaced or rechecked).

@@ -327,16 +327,19 @@ test('video report after a play with no pin: the route and reason of that play',
   assert.equal(lines.map((l) => JSON.parse(l)).findLast((l) => l.event === 'video_report').via, null);
 });
 
-// TEMPORARY with config.reportEchoUa (world #353 device-class capture): staging echoes the UA to that client only.
-test('video report echoes the User-Agent and device class only with reportEchoUa, and never logs the UA', async (t) => {
+test('video report device class: the PC string load is unity, not android (world #353)', async (t) => {
   const lines = [];
-  const s = await start({ log: (l) => lines.push(l), config: { ...config, reportEchoUa: true } });
+  const s = await start({ log: (l) => lines.push(l) });
   t.after(() => s.server.close());
-  const ua = 'UnityPlayer/2022.3 (UnityWebRequest/1.0, libcurl/8.5.0-DEV) test-echo';
-  const r = await (await fetch(`${s.base}/v1/0/r/tester/frozen`, { headers: { 'user-agent': ua } })).json();
-  assert.deepEqual(r, { ok: true, device: 'android', ua }); // the bug being captured: /Quest/i matches UnityWebRequest
-  assert.ok(!lines.some((l) => l.includes('test-echo')));
-  assert.equal(config.reportEchoUa, false); // the default config here is production's URL: off
+  const device = async (ua) => {
+    const r = await fetch(`${s.base}/v1/0/r/tester/frozen`, { headers: { 'user-agent': ua } });
+    assert.deepEqual(await r.json(), { ok: true });
+    return lines.map((l) => JSON.parse(l)).findLast((l) => l.event === 'video_report').device;
+  };
+  assert.equal(await device('UnityPlayer/6000.0.67f1-DWR (UnityWebRequest/1.0, libcurl/8.5.0-DEV)'), 'unity');
+  assert.equal(await device('UnityPlayer/6000.0.67f1-DWR (UnityWebRequest/1.0; Android 14)'), 'android');
+  assert.equal(await device('Oculus Quest 3'), 'android');
+  assert.ok(!lines.some((l) => l.includes('UnityPlayer')), 'the UA itself is not logged');
 });
 
 test('video reports count again after the gap (reportGapMs)', async (t) => {

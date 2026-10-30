@@ -65,11 +65,6 @@ export const config = {
   adaptiveStartStepSeconds: int('ADAPTIVE_START_STEP_SECONDS', 30),
   // This service's public address, for links it hands out (the adaptive master playlist).
   publicUrl: (process.env.PUBLIC_URL ?? 'https://yt.japharsworld.com').replace(/\/$/, ''),
-  // TEMPORARY (world #353 device-class capture, 2026-10-29): the video report's answer also carries the request's
-  // User-Agent and its device class, back to that client only (never logged or counted), so a tester can read the real
-  // PC and Quest string-load UAs. On only where PUBLIC_URL isn't production (staging), unless REPORT_ECHO_UA says.
-  // Remove with the uaDevice() fix.
-  reportEchoUa: (process.env.REPORT_ECHO_UA ?? ((process.env.PUBLIC_URL ?? 'https://yt.japharsworld.com').replace(/\/$/, '') === 'https://yt.japharsworld.com' ? 'off' : 'on')) === 'on',
   // Build time follows file size (~17 ms per MB, 2026-10-19). A 1080p file above TUNELIO_MAX_MB is made again at
   // TUNELIO_LOWER_QUALITY (10 more credits, about half the wait); a file above TUNELIO_PROGRESSIVE_MAX_MB, or a video
   // longer than TUNELIO_PROGRESSIVE_MAX_MINUTES, is served as HLS instead of a progressive mp4. Until 2026-10-27 that

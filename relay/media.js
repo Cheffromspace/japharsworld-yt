@@ -204,6 +204,8 @@ export function onTime(known) {
 
 // start > 0 (a run at a seek point, mediaJob): every input from `seconds`, the source's timestamps kept (-copyts) and the
 // segments numbered from start, so they fit the whole playlist the server has (without -copyts they restart at ~1.4 s).
+// Run 0's timestamps sit ~1.4 s past the source (the mpegts muxer's delay), so these are put there on purpose: on a real
+// stream (2026-10-30) -copyts alone left them at the source's, 1.3 s behind run 0, and video stepped back at the joint.
 export function ffmpegArgs(urls, dir, { splitByTime = false, start = 0, seconds = 0 } = {}) {
   const ss = start > 0 ? ['-ss', seconds.toFixed(3)] : [];
   const inputs = urls.flatMap((u) => [...ss, '-i', u]);
@@ -214,10 +216,10 @@ export function ffmpegArgs(urls, dir, { splitByTime = false, start = 0, seconds 
   // seg1 0 frames → 118 with the filter): a player that starts or seeks past seg0 had nothing to decode with. With
   // splitByTime a segment can start between keyframes; it still gets the parameter sets at its first keyframe, which is
   // where a decoder starts anyway. freq=all (before every frame) only if a player is seen needing them at the cut.
-  return ['-hide_banner', '-loglevel', 'error', '-nostdin', ...(start > 0 ? ['-copyts'] : []), ...inputs, ...maps, '-c', 'copy', '-bsf:v', 'h264_mp4toannexb,dump_extra=freq=keyframe',
+  return ['-hide_banner', '-loglevel', 'error', '-nostdin', ...(start > 0 ? ['-copyts'] : []), ...inputs, ...maps, ...(start > 0 ? ['-output_ts_offset', '1.4'] : []), '-c', 'copy', '-bsf:v', 'h264_mp4toannexb,dump_extra=freq=keyframe',
     '-f', 'hls', '-hls_time', String(HLS_TIME), '-hls_list_size', '0', '-hls_playlist_type', 'event',
     '-hls_flags', splitByTime ? 'temp_file+split_by_time' : 'temp_file',
-    '-hls_segment_type', 'mpegts', ...(start > 0 ? ['-start_number', String(start)] : []), '-hls_segment_filename', join(dir, 'seg%d.ts'), join(dir, 'index.m3u8')];
+    '-hls_segment_type', 'mpegts', ...(start > 0 ? ['-hls_segment_options', 'mpegts_copyts=1', '-start_number', String(start)] : []), '-hls_segment_filename', join(dir, 'seg%d.ts'), join(dir, 'index.m3u8')];
 }
 
 // → Promise that resolves { ready: true, segments } once the first playlist is up, or rejects before that.

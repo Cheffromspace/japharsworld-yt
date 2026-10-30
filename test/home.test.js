@@ -1278,8 +1278,10 @@ test('ffmpegArgs at a seek point: -copyts, every input from its time, segments n
   assert.ok(args.includes('-copyts'));
   assert.deepEqual(args.slice(args.indexOf('-copyts') + 1, args.indexOf('-copyts') + 7), ['-ss', '320.000', '-i', 'http://a/0', '-ss', '320.000']);
   assert.equal(args[args.indexOf('-start_number') + 1], '80');
+  assert.equal(args[args.indexOf('-output_ts_offset') + 1], '1.4'); // on run 0's timestamps, whatever the muxer would add
+  assert.equal(args[args.indexOf('-hls_segment_options') + 1], 'mpegts_copyts=1');
   const plain = ffmpegArgs(['http://a/0'], '/d');
-  assert.ok(!plain.includes('-copyts') && !plain.includes('-ss') && !plain.includes('-start_number'));
+  assert.ok(!plain.includes('-copyts') && !plain.includes('-ss') && !plain.includes('-start_number') && !plain.includes('-output_ts_offset'));
 });
 
 test('mediaJob jump: a player waiting far ahead of a fresh build gets a run started there; each segment goes up once, the copy is whole', async (t) => {

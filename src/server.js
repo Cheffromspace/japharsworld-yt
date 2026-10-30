@@ -129,7 +129,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   });
   relay ??= new Relay({ token: config.relayToken, log: logJson });
   home ??= new Home({ relay, dir: join(dirname(config.dbPath), 'home'), base: `${config.publicUrl}/home`, enabled: config.homeRelay && relay.enabled,
-    dailyBuilds: config.homeDailyBuilds, dailyMb: config.homeDailyMb, keepHours: config.homeKeepHours, maxGb: config.homeMaxGb, readyMs: config.homeReadyMs,
+    dailyBuilds: config.homeDailyBuilds, dailyMb: config.homeDailyMb, keepHours: config.homeKeepHours, maxGb: config.homeMaxGb, freeFloorGb: config.homeFreeFloorGb, readyMs: config.homeReadyMs,
     segmentHoldMs: config.homeSegmentHoldMs,
     startPrecise: config.homeAndroidGrowing, tz: config.metricsTz, log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
   if (home.enabled) setInterval(() => home.sweep(), 10 * 60_000).unref();

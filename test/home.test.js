@@ -1163,3 +1163,50 @@ test('home want end to end: a far seek on a cached copy is answered in about one
   while (!lines.some((l) => l.includes('"event":"home_done"')) && Date.now() - t1 < 15_000) await new Promise((r) => setTimeout(r, 50));
   assert.ok(lines.some((l) => l.includes('"event":"home_done"') && l.includes(`"segments":${SEGS}`)));
 });
+
+// The disk floor (HOME_FREE_FLOOR_GB): prod 2026-10-30 00:58Z, an 8.4 GB played session and a 10.7 GB build over a
+// 12 GB cap filled the Linode's disk.
+test('home disk floor: a build that would leave less than the floor free does not start; finished sessions go first', (t) => {
+  const logs = [], events = [];
+  let ms = 1_000_000;
+  const DISK = 20_000; // MB; free = DISK − what the sessions hold
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, maxGb: 100, freeFloorGb: 3, now: () => ms, log: (o) => logs.push(o), onEvent: (k) => events.push(k),
+    freeMb: () => DISK - [...home.byToken.values()].reduce((n, s) => n + s.mb, 0) });
+  // A finished 8 GB session nobody plays, then a 2 h build (2 h × 0.57 MB/s ≈ 4.1 GB to grow).
+  const old = home.start({ id: 'aaaaaaaaaaa', seconds: 600 }, '1080p');
+  home.put(old.token, 'seg0.ts', Buffer.alloc(10));
+  home.put(old.token, 'index.m3u8', Buffer.from(`#EXTM3U\n#EXTINF:4.0,\nseg0.ts\n#EXT-X-ENDLIST\n`));
+  old.mb = 8000;
+  ms += 600_000;
+  assert.ok(home.start({ id: 'bbbbbbbbbbb', seconds: 7200 }, '1080p'), '12 GB free − 4.1 GB growth ≥ 3 GB: starts');
+  // A 5.2 h build (≈ 10.7 GB) on top: the finished 8 GB session is evicted for it, and then it fits.
+  assert.ok(home.start({ id: 'ccccccccccc', seconds: 18736 }, '1080p'));
+  assert.ok(logs.some((l) => l.event === 'home_evict' && l.why === 'disk'));
+  assert.equal(home.peek({ id: 'aaaaaaaaaaa' }, '1080p'), null);
+  // Another long one: nothing left to evict, 20 − 4.1 − 10.7 − 10.7 < 3 → not started, counted and logged.
+  assert.equal(home.start({ id: 'ddddddddddd', seconds: 18736 }, '1080p'), null);
+  assert.equal(events.at(-1), 'no_room');
+  const no = logs.find((l) => l.event === 'home_no_room');
+  assert.equal(no.floorGb, 3);
+  assert.ok(no.freeMb > 0 && no.growthMb > 20_000);
+  assert.equal(home.peek({ id: 'ddddddddddd' }, '1080p'), null, 'no session left behind');
+  // Off (0): never refused.
+  const off = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, freeFloorGb: 0, freeMb: () => 0 });
+  assert.ok(off.start({ id: 'eeeeeeeeeee', seconds: 18736 }, '1080p'));
+});
+
+test('home disk floor: a build is stopped (410, failed no_room) when free space drops under half the floor', (t) => {
+  let free = 10_000, ms = 1_000_000;
+  const events = [];
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, freeFloorGb: 3, freeMb: () => free, now: () => ms, onEvent: (k) => events.push(k) });
+  const s = home.start({ id: 'aaaaaaaaaaa', seconds: 600 }, '1080p');
+  assert.equal(home.put(s.token, 'seg0.ts', Buffer.from('ts0')), 204);
+  free = 1200; // under 1.5 GB, but checked at most every 5 s
+  assert.equal(home.put(s.token, 'seg1.ts', Buffer.from('ts1')), 204);
+  ms += 5_000;
+  assert.equal(home.put(s.token, 'seg2.ts', Buffer.from('ts2')), 410);
+  assert.equal(s.state, 'failed');
+  assert.equal(s.reason, 'no_room');
+  assert.ok(events.includes('no_room'));
+  assert.equal(home.put(s.token, 'seg3.ts', Buffer.from('ts3')), 410, 'the worker stops');
+});

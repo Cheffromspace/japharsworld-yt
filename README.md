@@ -222,7 +222,15 @@ it); the day's use is saved too. Files are kept `HOME_KEEP_HOURS`, oldest finish
 (8 GB), never one that is building or was fetched by a player in the last 5 minutes (`home_evict` logs each one,
 `home_loaded` the stored size and cap at start). A build counts its expected final size against the cap from its start
 (its whole playlist's segments at the rate of those here, or its length × ~0.57 MB/s before the first), so room is made
-before it grows; `/ops/state` home `expectedMb` is that total.
+before it grows; `/ops/state` home `expectedMb` is that total. Since sessions being built or played stay, the cap can
+be passed, so the disk itself has a floor, `HOME_FREE_FLOOR_GB` (3; 0 = off). A build starts only if the disk's free
+space, less what the unfinished builds and it will still grow, stays above it (finished sessions are evicted for it
+first, `home_evict` why `disk`; otherwise `home_no_room` and the play goes elsewhere), and a build is stopped when free
+space falls under half of it (2026-10-30: two long 1080p plays filled the Linode's disk).
+
+**Seeking ahead** (Everything-is-OK#367): a segment a player waits for that isn't next in line (a seek past the upload)
+is the session's want (`home_want`), named in every answer to the worker's uploads (`x-media-want`) until it is here. A
+copy from the worker's cache jumps there and sends the skipped segments at the end (`media_jump`).
 
 **The worker's cache** (`relay/cache.js`, owner 2026-10-23: "be aggressive, the Optiplex has lots of disk"): every
 stream that finishes whole stays on the Optiplex too, one folder per video and quality, least recently used out above

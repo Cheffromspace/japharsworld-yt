@@ -27,7 +27,13 @@
 // each request was held 20 s and the world reloaded every ~30 s, so it froze for good. Now a segment a player waits for
 // that isn't next in line becomes the session's want, and every answer to the worker's uploads names it (x-media-want,
 // server.js) until it is here; the worker sends it next (relay/media.js).
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, rmSync, renameSync } from 'node:fs';
+//
+// The disk itself (freeFloorGb, HOME_FREE_FLOOR_GB): maxGb is a target, not a limit, since a session being played or
+// built stays. Prod, 2026-10-30 00:58Z: an 8.4 GB played session and a 10.7 GB build over a 12 GB cap filled the
+// Linode's 24.6 GB disk (Alloy's WAL broke, the build failed on ENOSPC). So a build starts only if the disk's free space,
+// less what the unfinished builds and it will still grow, stays above the floor (finished sessions are evicted for it
+// first, #room), and a build is stopped when free space falls under half the floor.
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, statfsSync, rmSync, renameSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { dayOf } from './metrics.js';
@@ -50,11 +56,16 @@ const PLAYING_MS = 5 * 60_000;
 // A 1080p home session's MB per second of video, the high end measured (0.46–0.57, 2026-10-26: a 4.1 h mix, 8404 MB):
 // what a build counts against maxGb before its first segments say better (#expectedMb).
 const MB_PER_SECOND = 0.57;
+const FREE_CHECK_MS = 5_000; // a build's uploads look at the disk's free space at most this often
 
 export class Home {
   constructor({ relay, dir, base = 'https://yt.japharsworld.com/home', enabled = false, dailyBuilds = 40, dailyMb = 10_000,
-    keepHours = 12, maxGb = 8, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, tz = 'America/Chicago', now = () => Date.now(), log = () => {}, onEvent = () => {} }) {
-    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, keepHours, maxGb, readyMs, segmentHoldMs, startPrecise, tz, now, log, onEvent });
+    keepHours = 12, maxGb = 8, freeFloorGb = 0, freeMb = null, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, tz = 'America/Chicago',
+    now = () => Date.now(), log = () => {}, onEvent = () => {} }) {
+    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, keepHours, maxGb, freeFloorGb, readyMs, segmentHoldMs, startPrecise, tz, now, log, onEvent });
+    // The disk's free MB where the sessions are (injectable for tests); Infinity when it can't be read.
+    this.freeMb = freeMb ?? (() => { try { const f = statfsSync(this.dir); return (f.bavail * f.bsize) / 1e6; } catch { return Infinity; } });
+    this.freeCheckedMs = 0;
     this.daySavedMs = 0;
     this.sessions = new Map(); // "videoId@quality" → session
     this.byToken = new Map();  // token → session
@@ -202,6 +213,11 @@ export class Home {
     this.sessions.set(`${s.id}@${quality}`, s);
     this.byToken.set(s.token, s);
     this.sweep(); // with the new build's expected size counted, so room is made before it grows
+    if (!this.#room()) {
+      this.#drop(s);
+      this.onEvent('no_room');
+      return null;
+    }
     this.#today().builds++;
     this.#saveDay();
     this.onEvent('start');
@@ -331,6 +347,16 @@ export class Home {
     }
     if (!SEGMENT.test(file)) return 400;
     if (body.length > MAX_SEGMENT_BYTES) return 413;
+    if (this.freeFloorGb > 0 && this.now() - this.freeCheckedMs >= FREE_CHECK_MS) {
+      this.freeCheckedMs = this.now();
+      // Under half the floor while building: finished sessions out first; if that isn't enough, this build stops (410)
+      // rather than fill the disk. Players on it get what is here.
+      if (this.freeMb() < this.freeFloorGb * 500 && !this.#evictFor(() => this.freeMb() >= this.freeFloorGb * 500)) {
+        this.onEvent('no_room');
+        this.#fail(s, 'no_room', `${Math.round(this.freeMb())} MB free`);
+        return 410;
+      }
+    }
     this.#write(s, file, body);
     if (!s.stored.has(file)) {
       s.stored.add(file);
@@ -423,6 +449,31 @@ export class Home {
     if (s.ended || s.state === 'failed' || this.#stale(s)) return s.mb;
     const est = s.stored.size && s.listed.length > s.stored.size ? s.mb * s.listed.length / s.stored.size : s.seconds * MB_PER_SECOND;
     return Math.max(s.mb, est);
+  }
+
+  // Whether the disk takes what the unfinished builds (a new one included) will still grow and keeps freeFloorGb free,
+  // evicting finished sessions for it if needed (see the top). Logged when it doesn't.
+  #room() {
+    if (!(this.freeFloorGb > 0)) return true;
+    const growth = () => [...this.byToken.values()].reduce((n, s) => n + Math.max(0, this.#expectedMb(s) - s.mb), 0);
+    const fits = () => this.freeMb() - growth() >= this.freeFloorGb * 1000;
+    if (fits() || this.#evictFor(fits)) return true;
+    this.log({ event: 'home_no_room', freeMb: Math.round(this.freeMb()), growthMb: Math.round(growth()), floorGb: this.freeFloorGb });
+    return false;
+  }
+
+  // Finished sessions nobody is playing out, oldest first, until ok() → true; false if they run out first.
+  #evictFor(ok) {
+    const now = this.now();
+    const done = [...this.byToken.values()].filter((s) => (s.ended || s.state === 'failed') && !(s.lastGetMs > 0 && now - s.lastGetMs < PLAYING_MS))
+      .sort((a, b) => (a.lastPutMs || a.startedMs) - (b.lastPutMs || b.startedMs));
+    while (!ok()) {
+      const s = done.shift();
+      if (!s) return false;
+      this.log({ event: 'home_evict', id: s.id, quality: s.quality, why: 'disk', mb: Math.round(s.mb) });
+      this.#drop(s);
+    }
+    return true;
   }
 
   // Old sessions out, then the oldest finished ones while the sessions take (or will take) more than maxGb; one

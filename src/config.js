@@ -143,6 +143,11 @@ export const config = {
   homeDailyMb: int('HOME_DAILY_MB', 50_000), // owner, 2026-10-23: 10 GB went in a few long videos (a 6 h mix is ~2.5 GB)
   homeKeepHours: int('HOME_KEEP_HOURS', 12),
   homeMaxGb: int('HOME_MAX_GB', 8),
+  // Free disk the home store never builds into (src/home.js #room): a build doesn't start when the disk's free space,
+  // less what the unfinished builds and it will still grow, would fall under this, and a build is stopped when free
+  // space drops under half of it. Prod 2026-10-30 00:58Z: two long 1080p plays (8.4 GB played, a 10.7 GB build) over a
+  // 12 GB cap filled the Linode's 24.6 GB disk; Alloy's WAL broke and the build failed. 0 = off.
+  homeFreeFloorGb: Number.parseFloat(process.env.HOME_FREE_FLOOR_GB ?? '3') || 0,
   // A safety net: a home build expected to be larger than this (its length × 1080p's ~0.57 MB/s) is built at 720p
   // instead. A 4 h 1080p mix came to 8.4 GB, over HOME_MAX_GB alone, so it was evicted minutes after each play and
   // pushed every other finished session out with it (world #240, 2026-10-26). HOME_MAX_GB by default (owner, #242:

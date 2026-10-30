@@ -555,6 +555,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // its source died (home session failed or stale, Tunelio link gone or expiring). youtube.com fallbacks aren't kept, so
   // a ready build replaces them.
   const pins = new Map(); // "shard:n:plain|m3u8:kind" → { id, via, reason, location, playlist, session, quality, hls, jobUrl, mode, until }
+  // What each shard's last play was answered with, for its video report: a youtube.com fallback has no pin, so a report
+  // after one showed nothing (world #374, staging 2026-10-30: a 9.5 h video, home refused, Tunelio 413). In memory, like
+  // the pins, so a restart still empties both.
+  const lastAnswer = new Map(); // shard → { n, via, reason, quality, hls, mode }
   const pinKey = (shard, n, hlsTicket, kind) => `${shard}:${n}:${hlsTicket ? 'm3u8' : 'plain'}:${kind}`;
   const pinWindow = (data) => (data.seconds ?? 0) * 1000 + config.ticketPinMarginMs;
   function pinned(key, data, { touch = true } = {}) {
@@ -663,10 +667,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const t = last ? store.get(shard, last.n) : null;
     // The ticket's pin, as a PC player (plain) or a Quest one (.m3u8) was given it; raw, without pinned()'s checks.
     const pin = last ? [...pins].find(([k]) => k.startsWith(`${shard}:${last.n}:`))?.[1] : null;
+    const answer = lastAnswer.get(shard);
+    // The pin if there is one (a home pin carries its quality in the session), else what the ticket's last play was answered with.
+    const got = pin ? { ...pin, quality: pin.quality ?? pin.session?.quality, hls: pin.hls ?? (pin.session ? true : null) } : answer?.n === last?.n ? answer : null;
     const progress = pin && pin.hls && t?.kind === 'video' ? adaptive.progress(playback.peek?.(t.data, pin.quality, { hls: true })) : null;
     logJson({ event: 'video_report', shard, kind, who, device: uaDevice(String(req.headers['user-agent'] ?? '')), counted,
       n: last?.n ?? null, ago: last ? Math.round((now - last.at) / 1000) : null,
-      via: pin?.via ?? null, mode: pin?.mode ?? null, quality: pin?.quality ?? null, hls: pin?.hls ?? null,
+      via: got?.via ?? null, reason: got?.reason ?? null, mode: got?.mode ?? null, quality: got?.quality ?? null, hls: got?.hls ?? null,
       rung: progress?.rung ?? null, top: progress?.top ?? null });
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     if (req.method === 'HEAD') return res.end();
@@ -857,6 +864,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (where.ready === false) { location = `https://www.youtube.com/watch?v=${t.data.id}`; via = 'youtube'; reason = 'build_timeout'; metrics.inc('ticket_timeout'); }
       logJson({ event: 'play', shard, n, id: t.data.id, via, reason, client: kind, held, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
       countPlay(shard, t.data, { via, reason, location }, android || hlsTicket ? 'android' : kind === 'avpro' ? 'pc' : null);
+      lastAnswer.set(shard, { n, via, reason, quality: where.session?.quality ?? c?.quality, hls: where.session ? true : c?.hls, mode: c?.mode });
       if (warmed.delete(`${shard}:${t.data.id}`)) metrics.inc('warm_played');
       if (config.ticketPin && via !== 'youtube') {
         const session = via === 'home' ? where.session ?? null : null;

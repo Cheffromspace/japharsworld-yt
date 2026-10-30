@@ -19,8 +19,9 @@ const SEGMENT = /^seg\d{1,5}\.ts$/;
 export const SHORT_S = 10;
 export const playlistSeconds = (text) => [...String(text).matchAll(/#EXTINF:([\d.]+)/g)].reduce((a, m) => a + Number(m[1]), 0);
 const short = (playlist, seconds) => seconds > 0 && playlistSeconds(playlist) < seconds - SHORT_S;
-// The stream format (relay/media.js ffmpegArgs). Entries of another are made again: 2 = SPS/PPS in every segment (2026-10-23).
-export const FORMAT = 2;
+// The stream format (relay/media.js ffmpegArgs). Entries of another are made again: 2 = SPS/PPS in every segment (2026-10-23);
+// 3 = seek runs on run 0's cuts (2026-10-30: copies from jumped builds could have holes and lack the video's last seconds).
+export const FORMAT = 3;
 
 export class MediaCache {
   constructor({ dir, maxGb = 40, now = () => Date.now(), log = () => {} }) {

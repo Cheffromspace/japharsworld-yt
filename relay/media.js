@@ -174,9 +174,12 @@ export function closedAt(text, sent) {
 const extinfs = (text) => [...text.matchAll(/#EXTINF:([\d.]+)/g)].map((m) => Number(m[1]));
 const STEADY = 8;
 const HLS_TIME = 4;
-// Runs (mediaJob): at most MAX_RUNS ffmpeg at once per job, MAX_TOTAL_RUNS in all; a want within LEAD segments, or
-// LEAD_S seconds at its run's rate, of what a run has made is left to that run.
+// Runs (mediaJob): at most MAX_RUNS ffmpeg at once per job; a want within LEAD segments, or LEAD_S seconds at its run's
+// rate, of what a run has made is left to that run. At most MAX_JUMPS jumps, so that the fill runs always fit: a jump is
+// one run and leaves up to two holes (behind it, and where another run is stopped), each a fill run, so 1 + 6 × 3 + 1 = 20
+// runs at most. Past that a seek waits for the runs there are.
 const MAX_RUNS = 2;
+const MAX_JUMPS = 6;
 const MAX_TOTAL_RUNS = 20;
 const LEAD = 8;
 const LEAD_S = 5;
@@ -202,23 +205,57 @@ export function onTime(known) {
   return known.slice(0, STEADY).every((d, i) => Math.abs((at += d) - (i + 1) * HLS_TIME) <= CUT);
 }
 
-// start > 0 (a run at a seek point, mediaJob): every input from `seconds`, the source's timestamps kept (-copyts) and the
-// segments numbered from start, so they fit the whole playlist the server has (without -copyts they restart at ~1.4 s).
-export function ffmpegArgs(urls, dir, { splitByTime = false, start = 0, seconds = 0 } = {}) {
-  const ss = start > 0 ? ['-ss', seconds.toFixed(3)] : [];
-  const inputs = urls.flatMap((u) => [...ss, '-i', u]);
-  const maps = urls.length > 1 ? ['-map', '0:v:0', '-map', '1:a:0'] : [];
+const mapsFor = (urls) => (urls.length > 1 ? ['-map', '0:v:0', '-map', '1:a:0'] : []);
+const COPY = ['-c', 'copy', '-bsf:v', 'h264_mp4toannexb,dump_extra=freq=keyframe'];
+
+export function ffmpegArgs(urls, dir, { splitByTime = false } = {}) {
+  const inputs = urls.flatMap((u) => ['-i', u]);
+  const maps = mapsFor(urls);
   // h264_mp4toannexb,dump_extra: the H.264 parameter sets (SPS/PPS) before every keyframe. Copied from YouTube's mp4
   // they were only in seg0 (its keyframes aren't IDR, the only frames mp4toannexb repeats them for), so every later
   // segment failed to decode on its own ("non-existing PPS 0", 2026-10-23; a 12 s open-GOP test file on the Optiplex:
   // seg1 0 frames → 118 with the filter): a player that starts or seeks past seg0 had nothing to decode with. With
   // splitByTime a segment can start between keyframes; it still gets the parameter sets at its first keyframe, which is
   // where a decoder starts anyway. freq=all (before every frame) only if a player is seen needing them at the cut.
-  return ['-hide_banner', '-loglevel', 'error', '-nostdin', ...(start > 0 ? ['-copyts'] : []), ...inputs, ...maps, '-c', 'copy', '-bsf:v', 'h264_mp4toannexb,dump_extra=freq=keyframe',
+  return ['-hide_banner', '-loglevel', 'error', '-nostdin', ...inputs, ...maps, ...COPY,
     '-f', 'hls', '-hls_time', String(HLS_TIME), '-hls_list_size', '0', '-hls_playlist_type', 'event',
     '-hls_flags', splitByTime ? 'temp_file+split_by_time' : 'temp_file',
-    '-hls_segment_type', 'mpegts', ...(start > 0 ? ['-start_number', String(start)] : []), '-hls_segment_filename', join(dir, 'seg%d.ts'), join(dir, 'index.m3u8')];
+    '-hls_segment_type', 'mpegts', '-hls_segment_filename', join(dir, 'seg%d.ts'), join(dir, 'index.m3u8')];
 }
+
+// A run at a seek point (mediaJob, time cuts only). Its segments must be cut at the same frames as run 0's, or frames go
+// missing or twice at each joint. Measured 2026-10-30 on files with 5 s GOPs at 29.97 and 60 fps (ffmpeg N-126374): the hls
+// muxer cuts at <its first frame> + 4 s × n, and -ss starts at the keyframe before the seek point, so a plain seek run is
+// off by up to a GOP (a 4 s hole or overlap at the next joint). Output -ss with -copyinkf fixed the grid but left a joint
+// a frame off, which damages the picture up to the next keyframe. This way every packet in the segments is the same as
+// in an in-order build, at the same time: the segment muxer cuts where it is told (-segment_times, counted from its first
+// packet, so `cuts` come from where the run really starts, keyframeProbeArgs), and what lies before the first cut is a
+// lead-in, numbered start − 1 and not used. `shift` is the delay run 0 has and this run doesn't: -copyts keeps the
+// source's times while run 0's are moved up by its B-frame delay (two frames on these files).
+export function seekRunArgs(urls, dir, { start, seconds, cuts, shift = 0 }) {
+  const inputs = urls.flatMap((u) => ['-ss', seconds.toFixed(3), '-i', u]);
+  return ['-hide_banner', '-loglevel', 'error', '-nostdin', '-copyts', ...inputs, ...mapsFor(urls), ...COPY, '-output_ts_offset', shift.toFixed(6),
+    '-f', 'segment', '-segment_format', 'mpegts', '-break_non_keyframes', '1', '-segment_times', cuts.map((c) => c.toFixed(6)).join(','),
+    '-segment_start_number', String(start - 1), '-segment_list_size', '0', '-segment_list_type', 'm3u8', '-segment_list', join(dir, 'index.m3u8'), join(dir, 'seg%d.ts')];
+}
+
+// The first frame's time of a run from `seconds`, or of a file: ffmpeg itself, so it seeks just as the run will.
+export function keyframeProbeArgs(input, seconds = 0) {
+  return ['-hide_banner', '-loglevel', 'error', '-nostdin', '-copyts', ...(seconds > 0 ? ['-ss', seconds.toFixed(3)] : []), '-i', input, '-map', '0:v:0', '-c', 'copy', '-frames:v', '1', '-f', 'framecrc', '-'];
+}
+// → seconds, or NaN. framecrc: "#tb 0: 1/90000", then "stream, dts, pts, duration, size, crc".
+export function parseProbe(text) {
+  const tb = /^#tb 0: (\d+)\/(\d+)/m.exec(text);
+  const row = String(text).split(/\r?\n/).find((l) => l && !l.startsWith('#'))?.split(',');
+  return tb && row ? (Number(row[2]) * Number(tb[1])) / Number(tb[2]) : NaN;
+}
+// Our mpegts muxing puts every stream 1.4 s up (mux delay); the source's own start and B-frame delay come on top.
+const MPEGTS_DELAY = 1.4;
+// Cuts are this far under the wanted time: a frame exactly on a cut (60 fps: every one) must not fall the other side of it
+// by rounding. Far under a frame.
+const CUT_MARGIN = 0.0001;
+// The list of cuts is one argument; Linux allows 128 KB, ~9 bytes each.
+const MAX_CUTS = 12_000;
 
 // → Promise that resolves { ready: true, segments } once the first playlist is up, or rejects before that.
 // upload(file, body, type) → HTTP status. wanted() → the segment number a player is waiting for (the server's
@@ -255,25 +292,22 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   // Runs (Everything-is-OK#367 phase 2): ffmpeg processes, each making the segments [start, until) in its own folder
   // (dir/r<k>); a segment moves to dir once it is uploaded (kept there for the cache). Run 0 builds from the start. When
   // a player waits for a segment of a whole (predicted) playlist that no run will reach soon, the run heading there
-  // stops at it and a new one starts at it (-copyts -ss, measured 2026-10-29: its segments line up with the in-order
-  // build within 2 frames, no drift; but see below); at most MAX_RUNS at once. When no run is left, the segments still missing are made
-  // by fill runs, the ones after the last want first. Each segment is still downloaded and uploaded about once.
-  // Open (2026-10-30, real 1080p streams): -ss lands on the keyframe before the seek point and cuts every 4 s from there, so
-  // when keyframes aren't on the segment grid a run's segments start up to one GOP early (3.4 s measured). Timestamps stay
-  // true, but video overlaps the run before it at the joint and the build can end one segment past the playlist.
+  // stops at it and a new one starts at it (seekRunArgs); at most MAX_RUNS at once. When no run is left, the segments still
+  // missing are made by fill runs, the ones after the last want first. Each segment is still downloaded and uploaded
+  // about once. Time cuts only: on keyframe cuts a run can't be put on run 0's segments, so a seek waits for the build.
   const runs = [];
   let segLen = 0; // the predicted segment length, once the playlist is predicted
-  function startRun(start, until) {
+  function startRun(start, until, args) {
     const r = { k: runs.length, start, until, dir: join(dir, `r${runs.length}`), exit: null, killed: false, stderr: '', listed: [],
       top: start - 1, startedMs: Date.now() };
     mkdirSync(r.dir, { recursive: true });
-    r.proc = spawnFn(ffmpeg, ffmpegArgs(proxy.urls, r.dir, { splitByTime, start, seconds: start * segLen }), { stdio: ['ignore', 'ignore', 'pipe'] });
+    r.proc = spawnFn(ffmpeg, args(r.dir), { stdio: ['ignore', 'ignore', 'pipe'] });
     r.proc.stderr?.on('data', (d) => { r.stderr = (r.stderr + d).slice(-2000); });
     r.closed = new Promise((res) => r.proc.on('close', (code) => { r.exit = code ?? -1; res(); }));
     runs.push(r);
     return r;
   }
-  const main = startRun(0, Infinity);
+  const main = startRun(0, Infinity, (d) => ffmpegArgs(proxy.urls, d, { splitByTime }));
   const alive = () => runs.filter((r) => r.exit === null);
   const stop = (r) => { if (r.exit === null && !r.killed) { r.killed = true; r.proc.kill('SIGKILL'); } };
   const killer = setTimeout(() => alive().forEach((r) => r.proc.kill('SIGKILL')), maxMs); // a failure, not a stop
@@ -285,17 +319,28 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   const first = new Promise((res, rej) => { ready = res; failed = rej; });
   const sent = new Set();
   const made = new Map(); // segment → the run that made it
+  const lengths = new Map(); // segments past the prediction → their EXTINF
   let mb = 0, gone = false, isReady = false, lastPlaylist = '', realText = '', predicted = null, short = false, jumps = 0, lastWant = null;
+  let seg0At, sourceAt = null; // first frame of run 0's seg0 (undefined until looked at) and of the source
   const name = (i) => `seg${i}.ts`;
   const index = (s) => Number(s.slice(3, -3));
   const jumped = () => runs.length > 1;
+  // Segments in order with none missing. Counting all made would let one past the end hide a hole.
+  const whole = () => { let i = 0; while (made.has(name(i))) i++; return i; };
+  // The whole playlist of a jumped build, with any segments the source has past the prediction, as in-order builds keep.
+  function jumpedList() {
+    const extra = [];
+    for (let i = predicted.count; made.has(name(i)); i++) extra.push(`#EXTINF:${lengths.get(name(i)) ?? HLS_TIME},`, name(i));
+    return extra.length ? predicted.text.replace('#EXT-X-ENDLIST\n', `${extra.join('\n')}\n#EXT-X-ENDLIST\n`) : predicted.text;
+  }
   // What the server is sent when the job fails part way: cut back to the segments it has.
-  const listing = () => (jumped() ? predicted.text : realText);
+  const listing = () => (jumped() ? jumpedList() : realText);
 
   async function readRun(r) {
     let text;
     try { text = await readFile(join(r.dir, 'index.m3u8'), 'utf8'); } catch { return null; }
     r.listed = text.split(/\r?\n/).filter((l) => SEGMENT.test(l));
+    if (predicted) for (const [, d, s] of text.matchAll(/#EXTINF:([\d.]+),?\r?\n(seg\d+\.ts)/g)) if (index(s) >= predicted.count && index(s) >= r.start) lengths.set(s, d);
     for (const s of r.listed) {
       const i = index(s);
       if (i >= r.until) { stop(r); continue; } // past its range: another run has it
@@ -306,25 +351,52 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
     return text;
   }
 
-  // The next segment after i that is made or that an alive run starts at, else the playlist's end.
+  // The next segment after i that is made or that an alive run starts at, else Infinity: that run goes on to the end of
+  // the source, which can be a segment past the prediction, and an in-order build would have made that one too.
   function boundary(i) {
-    let b = predicted ? predicted.count : Infinity;
+    let b = Infinity;
     for (const r of alive()) if (r.start > i) b = Math.min(b, r.start);
-    for (let j = i + 1; j < b; j++) if (made.has(name(j))) return j;
+    for (let j = i + 1; j < Math.min(b, predicted.count); j++) if (made.has(name(j))) return j;
     return b;
   }
   const covered = (i) => alive().some((r) => r.start <= i && i < r.until);
 
+  const probe = async (input, seconds) => {
+    try {
+      const at = parseProbe(await runner(ffmpeg, keyframeProbeArgs(input, seconds), 30_000));
+      return Number.isFinite(at) ? at : null;
+    } catch { return null; }
+  };
+  // The arguments of a run at segment `start`, on run 0's cuts (seekRunArgs), or null if it can't be placed.
+  async function seekRun(start) {
+    const seconds = start * segLen - 1; // so the keyframe is at least 1 s before the first cut, never on it
+    if (start < 1) return null;
+    sourceAt ??= await probe(proxy.urls[0]);
+    const at = await probe(proxy.urls[0], seconds);
+    const cuts = [];
+    if (at != null && sourceAt != null) for (let i = start; i <= predicted.count + 2; i++) cuts.push(sourceAt + i * segLen - at - CUT_MARGIN);
+    if (seg0At == null || !cuts.length || cuts[0] <= 0 || cuts.length > MAX_CUTS) {
+      log({ event: 'media_seek_unplaced', to: start, cuts: cuts.length });
+      return null;
+    }
+    const shift = seg0At - MPEGTS_DELAY - sourceAt;
+    return (d) => seekRunArgs(proxy.urls, d, { start, seconds, cuts, shift });
+  }
+
   // A player waits for segment w (wanted()): unless an alive run will make it within a few seconds, the run heading
   // there stops at w and a new one starts at w. A run that would be one too many is stopped where it got to (filled later).
-  function jumpFor(w) {
-    if (!predicted || !isReady || w == null || w === lastWant || !(w >= 0 && w < predicted.count) || made.has(name(w))) return;
+  async function jumpFor(w) {
+    if (!splitByTime || !predicted || !isReady || failedRun() || w == null || w === lastWant || !(w >= 0 && w < predicted.count) || made.has(name(w))) return;
     lastWant = w;
-    const cover = alive().find((r) => r.start <= w && w < r.until);
-    if (cover) {
-      const perS = (cover.top - cover.start + 1) / Math.max(1, (Date.now() - cover.startedMs) / 1000);
-      if (w <= cover.top + Math.max(LEAD, perS * LEAD_S)) return; // coming anyway
+    if (jumps >= MAX_JUMPS) return;
+    const near = alive().find((r) => r.start <= w && w < r.until);
+    if (near) {
+      const perS = (near.top - near.start + 1) / Math.max(1, (Date.now() - near.startedMs) / 1000);
+      if (w <= near.top + Math.max(LEAD, perS * LEAD_S)) return; // coming anyway
     }
+    const args = await seekRun(w);
+    if (!args) return;
+    const cover = alive().find((r) => r.start <= w && w < r.until); // the probes took a moment
     const until = cover ? cover.until : boundary(w);
     if (cover) cover.until = w;
     const others = alive().filter((r) => r !== cover).sort((a, b) => a.start - b.start);
@@ -332,11 +404,11 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
     while (alive().filter((r) => !r.killed).length >= MAX_RUNS && others.length) { const v = others.shift(); v.until = v.top + 1; stop(v); }
     jumps++;
     log({ event: 'media_jump', cached: false, from: cover ? cover.top + 1 : null, to: w, seconds: Math.round(w * segLen) });
-    startRun(w, until);
+    startRun(w, until, args);
   }
 
   // No run alive: one for the first missing segment (after the last want first). → whether one started.
-  function fill() {
+  async function fill() {
     if (!predicted || gone || failedRun() || runs.length >= MAX_TOTAL_RUNS) return false;
     const missing = (from) => { for (let i = from; i < predicted.count; i++) if (!made.has(name(i)) && !covered(i)) return i; return -1; };
     let m = lastWant != null ? missing(lastWant) : -1;
@@ -344,8 +416,11 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
     if (m < 0) return false;
     const prev = runs.at(-1);
     if (prev.start === m && prev.top < m) return false; // the last run made nothing where it started: it would again
-    log({ event: 'media_run', from: m, until: boundary(m) });
-    startRun(m, boundary(m));
+    const args = await seekRun(m);
+    if (!args) return false;
+    const until = boundary(m);
+    log({ event: 'media_run', from: m, until: Number.isFinite(until) ? until : undefined });
+    startRun(m, until, args);
     return true;
   }
 
@@ -368,7 +443,9 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
     realText = text;
     for (const r of runs) if (r !== main) await readRun(r);
     const segs = main.listed;
-    if (isReady) jumpFor(wanted());
+    // Looked at here, before seg0 goes up and its file moves.
+    if (splitByTime && seg0At === undefined && made.has(name(0))) seg0At = await probe(join(main.dir, name(0)));
+    if (isReady && !final) await jumpFor(wanted());
     // What is made and not yet sent: the wanted one first, then the newest run's (where the player is), then older ones.
     const order = () => [...made.keys()].filter((s) => !sent.has(s))
       .sort((a, b) => (made.get(b).k - made.get(a).k) || (index(a) - index(b)));
@@ -402,10 +479,10 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
     }
     if (predicted) {
       const actual = extinfs(text);
-      const count = jumped() ? made.size : segs.length;
+      const count = jumped() ? whole() : segs.length;
       const differs = final && (count !== predicted.count || (!jumped() && !text.includes('#EXT-X-ENDLIST')) || exitCode());
       if (differs) log({ event: 'media_mismatch', predicted: predicted.count, actual: count, exit: exitCode() });
-      text = differs && jumped() ? closedAt(predicted.text, sent) : differs ? text : predicted.text;
+      text = differs && jumped() ? closedAt(jumpedList(), sent) : differs ? text : predicted.text;
       if (final && !differs && actual.length) log({ event: 'media_predicted', segments: count });
     }
     if (text === lastPlaylist) return;
@@ -423,7 +500,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   background = (async () => {
     try {
       while (!gone) {
-        if (!alive().length && !fill()) break;
+        if (!alive().length && !(await fill())) break;
         await Promise.race([sleep(pollMs), ...alive().map((r) => r.closed)]);
         await pass(false);
       }
@@ -434,7 +511,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       // ffmpeg ending cleanly short of the video is a failure, not done (world #266): fewer segments than predicted, or
       // (growing playlist) SHORT_S less running time than the video. The playlist went up closed where it got to; the
       // server marks a predicted session cut_short, and the copy is not cached, so the next play makes it again.
-      const count = jumped() ? made.size : extinfs(realText).length;
+      const count = jumped() ? whole() : extinfs(realText).length;
       const runS = playlistSeconds(realText);
       short = !gone && exit === 0 && duration > 0 && (predicted ? count < predicted.count : runS < duration - SHORT_S);
       if (short) {

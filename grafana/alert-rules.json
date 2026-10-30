@@ -1188,6 +1188,60 @@
   ]
  },
  {
+  "uid": "eiok-linode-home-92",
+  "title": "Linode home volume 92 % full",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "15m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "The Linode’s home volume (/var/lib/japharsworld-yt/home, 100 GB) is over 92 % full: long plays are being refused at home (home_no_room) or stopped. Check `df -h /var/lib/japharsworld-yt/home` and the home sessions (`node tools/ops.mjs state`); lower HOME_MAX_GB or grow the volume."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "max(1 - node_filesystem_avail_bytes{env!=\"staging\",host=\"linode\",mountpoint=\"/var/lib/japharsworld-yt/home\"} / node_filesystem_size_bytes{env!=\"staging\",host=\"linode\",mountpoint=\"/var/lib/japharsworld-yt/home\"}) > 0.92",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
   "uid": "eiok-ssh-unknown-login",
   "title": "SSH login from an unknown address",
   "folderUID": "everything-is-ok",

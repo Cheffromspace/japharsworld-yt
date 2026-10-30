@@ -308,6 +308,18 @@ test('video reports /v1/<shard>/r/<who>/<kind>: 200 at once, logged with the sha
   assert.equal(reports().at(-2).counted, false);
 });
 
+// TEMPORARY with config.reportEchoUa (world #353 device-class capture): staging echoes the UA to that client only.
+test('video report echoes the User-Agent and device class only with reportEchoUa, and never logs the UA', async (t) => {
+  const lines = [];
+  const s = await start({ log: (l) => lines.push(l), config: { ...config, reportEchoUa: true } });
+  t.after(() => s.server.close());
+  const ua = 'UnityPlayer/2022.3 (UnityWebRequest/1.0, libcurl/8.5.0-DEV) test-echo';
+  const r = await (await fetch(`${s.base}/v1/0/r/tester/frozen`, { headers: { 'user-agent': ua } })).json();
+  assert.deepEqual(r, { ok: true, device: 'android', ua }); // the bug being captured: /Quest/i matches UnityWebRequest
+  assert.ok(!lines.some((l) => l.includes('test-echo')));
+  assert.equal(config.reportEchoUa, false); // the default config here is production's URL: off
+});
+
 test('video reports count again after the gap (reportGapMs)', async (t) => {
   const incs = [];
   const metrics = { inc: (m, k) => incs.push(`${m}:${k}`), gauge() {}, latency() {}, shard() {}, flush() { return 0; }, start() { return this; }, close() {} };

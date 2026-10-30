@@ -669,7 +669,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       via: pin?.via ?? null, mode: pin?.mode ?? null, quality: pin?.quality ?? null, hls: pin?.hls ?? null,
       rung: progress?.rung ?? null, top: progress?.top ?? null });
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-    return res.end(req.method === 'HEAD' ? undefined : '{"ok":true}');
+    if (req.method === 'HEAD') return res.end();
+    // TEMPORARY (config.reportEchoUa, staging only): the UA back to the client that sent it, for the uaDevice() fix.
+    if (config.reportEchoUa) {
+      const ua = String(req.headers['user-agent'] ?? '').slice(0, 300);
+      return res.end(JSON.stringify({ ok: true, device: uaDevice(ua), ua }));
+    }
+    return res.end('{"ok":true}');
   }
 
   async function ticket(req, res, shard, n, hlsTicket = false) {

@@ -1394,6 +1394,93 @@ test('mediaJob jump: nothing starts in the final pass, once the job has ended', 
   assert.equal(logs.find((l) => l.event === 'media_done').exit, 1);
 });
 
+// What Linux does with a too long argument (MAX_ARG_STRLEN), and Node's spawn after it: throws, synchronously.
+const linuxSpawn = (spawnFn) => (cmd, args, o) => {
+  if (args.some((a) => Buffer.byteLength(a) + 1 > 131072)) throw Object.assign(new Error('spawn E2BIG'), { code: 'E2BIG' });
+  return spawnFn(cmd, args, o);
+};
+
+for (const hours of [12, 24, 111]) { // 111 h: the most segments SEGMENT can name
+  test(`mediaJob jump, ${hours} h video: an early seek's cut list fits one argument, and the run starts`, async () => {
+    const ff = runFfmpeg({ total: 100000, everyMs: 2 });
+    const logs = [];
+    let want = null;
+    let long = 0, n = 0;
+    const spawnFn = linuxSpawn((cmd, args, o) => {
+      const at = args.indexOf('-segment_times');
+      if (at >= 0) long = Buffer.byteLength(args[at + 1]);
+      return ff.spawnFn(cmd, args, o);
+    });
+    const job = await mediaJob({ videoId: 'hhhhhhhhhhh', quality: '1080p', token: 'x' }, { ytdlp: 'yt-dlp', runner: runnerDur(hours * 3600), spawnFn, splitByTime: true,
+      pollMs: 5, wanted: () => want, log: (o) => logs.push(o),
+      upload: async (file) => { if (file === 'seg12.ts') want = 400; return ff.spawns.length > 1 || ++n > 300 ? 410 : 204; } });
+    await job.done;
+    assert.equal(ff.spawns[1]?.start, 400, 'the seek got its run');
+    assert.ok(long > 100_000 && long < 131072, `${long} bytes`);
+    assert.ok(!logs.some((l) => l.event === 'media_failed'));
+  });
+}
+
+test('mediaJob jump: a run past the end of its cut list stops there and a fill run carries on; the copy is whole', async (t) => {
+  const { MediaCache } = await import('../relay/cache.js');
+  const cache = new MediaCache({ dir: tmp(t), maxGb: 1 });
+  const ff = runFfmpeg({ total: 100, everyMs: 5 });
+  const order = [];
+  let want = null;
+  const job = await mediaJob({ videoId: 'iiiiiiiiiii', quality: '1080p', token: 'x' }, { ytdlp: 'yt-dlp', runner: runnerDur(400), spawnFn: ff.spawnFn, splitByTime: true,
+    pollMs: 5, cache, maxCutBytes: 100, wanted: () => want, // 100 bytes: 10 or so cuts a run
+    upload: async (file) => { if (file !== 'index.m3u8') order.push(Number(file.slice(3, -3))); if (file === 'seg80.ts') want = null; if (file === 'seg10.ts') want = 80; return 204; } });
+  await job.done;
+  assert.ok(ff.spawns.length > 3, `${ff.spawns.length} runs`);
+  assert.deepEqual([...order].sort((a, b) => a - b), Array.from({ length: 100 }, (_, i) => i), 'every segment once');
+  assert.ok(cache.get('iiiiiiiiiii', '1080p'), 'whole');
+});
+
+test('mediaJob jump: a seek whose run can\'t be started waits for the in-order build; nothing is closed', async (t) => {
+  const { MediaCache } = await import('../relay/cache.js');
+  const cache = new MediaCache({ dir: tmp(t), maxGb: 1 });
+  const ff = runFfmpeg({ total: 100, everyMs: 5 });
+  const logs = [];
+  const playlists = [];
+  let want = null;
+  const spawnFn = (cmd, args, o) => {
+    if (args.includes('-segment_times')) throw Object.assign(new Error('spawn E2BIG'), { code: 'E2BIG' });
+    return ff.spawnFn(cmd, args, o);
+  };
+  const job = await mediaJob({ videoId: 'jjjjjjjjjjj', quality: '1080p', token: 'x' }, { ytdlp: 'yt-dlp', runner: runnerDur(400), spawnFn, splitByTime: true,
+    pollMs: 5, cache, wanted: () => want, log: (o) => logs.push(o),
+    upload: async (file, body) => { if (file === 'index.m3u8') playlists.push(String(body)); if (file === 'seg10.ts') want = 80; if (file === 'seg80.ts') want = null; return 204; } });
+  await job.done;
+  assert.ok(logs.some((l) => l.event === 'media_seek_unplaced' && l.to === 80));
+  assert.ok(!logs.some((l) => ['media_failed', 'media_closed', 'media_mismatch'].includes(l.event)));
+  assert.equal(new Set(playlists).size, 1, 'the whole playlist, never cut back');
+  assert.equal(logs.find((l) => l.event === 'media_done').exit, 0);
+  const hit = cache.get('jjjjjjjjjjj', '1080p');
+  assert.equal(hit?.segments.length, 100, 'the in-order build finished and was cached');
+});
+
+test('mediaJob jump: uploads go on while a seek\'s probes run', async () => {
+  const ff = runFfmpeg({ total: 100, everyMs: 5 });
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const base = runnerDur(400);
+  let probing = false, during = 0;
+  const runner = async (cmd, args, ms) => {
+    if (args.includes('-ss')) { probing = true; await held; probing = false; }
+    return base(cmd, args, ms);
+  };
+  let want = null;
+  const job = await mediaJob({ videoId: 'kkkkkkkkkkk', quality: '1080p', token: 'x' }, { ytdlp: 'yt-dlp', runner, spawnFn: ff.spawnFn, splitByTime: true,
+    pollMs: 5, wanted: () => want,
+    upload: async (file) => {
+      if (file === 'seg10.ts') want = 90;
+      if (probing && file !== 'index.m3u8' && ++during === 5) release();
+      return 204;
+    } });
+  await job.done;
+  assert.ok(during >= 5, `${during} uploads while probing`);
+});
+
 test('cache format: copies made before the seek-run fix are made again', async () => {
   const { FORMAT } = await import('../relay/cache.js');
   assert.equal(FORMAT, 3);
@@ -1421,12 +1508,12 @@ test('mediaJob jump, real ffmpeg: every segment starts where the last ended (no 
       for (let i = 0; i < body.length; i += chunk) { yield body.subarray(i, i + chunk); await new Promise((r) => setTimeout(r, 20)); }
     })() };
   };
-  const build = async (name, seek) => {
+  const build = async (name, seek, opts = {}) => {
     const { MediaCache } = await import('../relay/cache.js');
     const cache = new MediaCache({ dir: join(dir, name), maxGb: 1 });
     let want = null;
     const logs = [];
-    const job = await mediaJob({ videoId: 'ggggggggggg', quality: '720p', token: 'x' }, { ytdlp: 'yt-dlp', runner, fetcher, cache, splitByTime: true, pollMs: 20, wanted: () => want, log: (o) => logs.push(o),
+    const job = await mediaJob({ videoId: 'ggggggggggg', quality: '720p', token: 'x' }, { ytdlp: 'yt-dlp', runner, fetcher, cache, splitByTime: true, pollMs: 20, wanted: () => want, log: (o) => logs.push(o), ...opts,
       upload: async (file) => { if (seek && file === 'seg1.ts') want = seek; if (file === `seg${seek}.ts`) want = null; return 204; } });
     await job.done;
     const hit = cache.get('ggggggggggg', '720p');
@@ -1439,4 +1526,9 @@ test('mediaJob jump, real ffmpeg: every segment starts where the last ended (no 
   assert.ok(jumped.logs.some((l) => l.event === 'media_jump' && l.to === 24), 'it jumped');
   assert.deepEqual(jumped.segments, plain.segments);
   for (const s of plain.segments) assert.deepEqual(jumped.crc(s), plain.crc(s), s);
+  // A run that reaches the end of its cut list and a fill run after it, as on a video past ~10 h.
+  const capped = await build('capped', 16, { maxCutBytes: 60 });
+  assert.ok(capped.logs.some((l) => l.event === 'media_run' && l.from > 16), 'a fill run carried on');
+  assert.deepEqual(capped.segments, plain.segments);
+  for (const s of plain.segments) assert.deepEqual(capped.crc(s), plain.crc(s), s);
 });

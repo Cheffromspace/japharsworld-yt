@@ -263,7 +263,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   }
 
   // The User-Agent's class only, never the UA itself (search_shape, video_report).
-  const uaDevice = (ua) => /Android|Quest|Oculus/i.test(ua) ? 'android' : /UnityPlayer/i.test(ua) ? 'unity' : ua ? 'other' : 'none';
+  // Quest: /Quest/i also matched "UnityWebRequest", so every PC string load counted as android (world #353; the PC's
+  // UA, 2026-10-30: "UnityPlayer/6000.0.67f1-DWR (UnityWebRequest…").
+  const uaDevice = (ua) => /Android|Quest|Oculus/i.test(ua) ? 'android' : /UnityPlayer/i.test(ua) ? 'unity' : ua ? 'other' : 'none';
 
   // `lang`: from l= on /v1/<shard>/s, or from the compact address's language letter (/s/<shard><letter>, src/query.js).
   // `hlsTicket`: the address ends in .m3u8 (/v1/<shard>/s.m3u8, /s/<shard><letter>.m3u8), for a pasted link's play (#136).
@@ -677,11 +679,6 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       rung: progress?.rung ?? null, top: progress?.top ?? null });
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     if (req.method === 'HEAD') return res.end();
-    // TEMPORARY (config.reportEchoUa, staging only): the UA back to the client that sent it, for the uaDevice() fix.
-    if (config.reportEchoUa) {
-      const ua = String(req.headers['user-agent'] ?? '').slice(0, 300);
-      return res.end(JSON.stringify({ ok: true, device: uaDevice(ua), ua }));
-    }
     return res.end('{"ok":true}');
   }
 

@@ -280,11 +280,20 @@ export class Home {
     });
   }
 
-  // The segment players wait for that the worker should send next (see the top), or null.
+  // The segment players wait for that the worker should send next (see the top), or null. The newest want first; once
+  // it is here, any other segment a player is still held for that isn't next in line (two players at different points:
+  // the one whose want was overwritten would wait the full hold otherwise; phase 1 review, 2026-10-30).
   want(token) {
     const s = this.byToken.get(token);
-    return s && s.want != null && !s.stored.has(`seg${s.want}.ts`) ? s.want : null;
+    if (!s) return null;
+    if (s.want != null && !s.stored.has(`seg${s.want}.ts`)) return s.want;
+    let other = null;
+    for (const file of s.segmentWaiters.keys()) if (!s.stored.has(file) && this.#far(s, segIndex(file)) && s.listed.includes(file)) other = segIndex(file);
+    return other;
   }
+
+  // Not among the next segments in line (WANT_AHEAD).
+  #far(s, n) { return n > s.last + WANT_AHEAD || n < s.last; }
 
   url(s) { return `${this.base}/${s.token}/index.m3u8`; }
 
@@ -403,13 +412,19 @@ export class Home {
     s.lastGetMs = this.now();
     if (file !== 'index.m3u8' && !s.stored.has(file) && !s.ended && s.state !== 'failed') {
       const n = segIndex(file);
-      if ((n > s.last + WANT_AHEAD || n < s.last) && s.want !== n) {
+      // Only a segment the playlist lists: one past the end or never listed will not come.
+      if (this.#far(s, n) && s.want !== n && s.listed.includes(file)) {
         s.want = n;
         this.log({ event: 'home_want', ses: s.token.slice(0, 4), quality: s.quality, seg: n, top: s.last });
       }
       await new Promise((resolve) => {
         const ws = s.segmentWaiters.get(file) ?? [];
-        const timer = setTimeout(done, this.segmentHoldMs);
+        // A hold that runs out leaves the list, so want() never names a segment nobody waits for any more.
+        const timer = setTimeout(() => {
+          const left = (s.segmentWaiters.get(file) ?? []).filter((w) => w !== done);
+          if (left.length) s.segmentWaiters.set(file, left); else s.segmentWaiters.delete(file);
+          resolve();
+        }, this.segmentHoldMs);
         function done() { clearTimeout(timer); resolve(); }
         ws.push(done);
         s.segmentWaiters.set(file, ws);

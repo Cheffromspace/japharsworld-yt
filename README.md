@@ -230,7 +230,11 @@ space falls under half of it (2026-10-30: two long 1080p plays filled the Linode
 
 **Seeking ahead** (Everything-is-OK#367): a segment a player waits for that isn't next in line (a seek past the upload)
 is the session's want (`home_want`), named in every answer to the worker's uploads (`x-media-want`) until it is here. A
-copy from the worker's cache jumps there and sends the skipped segments at the end (`media_jump`).
+copy from the worker's cache jumps there and sends the skipped segments at the end (`media_jump`). With players at
+different points, the newest want goes first, then any other segment a player is still held for; only segments the
+playlist lists are wanted. An upload that fails for good after a jump ends the job as before, but the hole is then
+before the end, not after it: those segments 404 after the hold, and the session never ends, so the next play after
+`STALE_MS` starts over.
 
 **The worker's cache** (`relay/cache.js`, owner 2026-10-23: "be aggressive, the Optiplex has lots of disk"): every
 stream that finishes whole stays on the Optiplex too, one folder per video and quality, least recently used out above

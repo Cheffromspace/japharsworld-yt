@@ -1074,12 +1074,18 @@ test('relay polls: the worker\'s bytes-sent counter is counted as home transfer 
 
 // Segments on demand (Everything-is-OK#367): prod 2026-10-30, a seek an hour into a 4.1 h cached copy waited on an
 // in-order upload (~6.9 MB/s) and froze.
+const vodPlaylist = (n) => `#EXTM3U
+#EXT-X-PLAYLIST-TYPE:VOD
+${Array.from({ length: n }, (_, i) => `#EXTINF:4.0,
+seg${i}.ts
+`).join('')}#EXT-X-ENDLIST
+`;
 test('home want: a segment a player waits for past the next in line is wanted until it arrives; the next ones are not', async (t) => {
   const logs = [];
   const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, segmentHoldMs: 200, log: (o) => logs.push(o) });
   const s = home.start({ id: 'aaaaaaaaaaa' }, '720p');
   home.put(s.token, 'seg0.ts', Buffer.from('ts0'));
-  home.put(s.token, 'index.m3u8', Buffer.from(PL2));
+  home.put(s.token, 'index.m3u8', Buffer.from(vodPlaylist(600)));
   assert.equal(home.want(s.token), null);
   await home.file(s.token, 'seg2.ts'); // next in line but one: coming anyway
   assert.equal(home.want(s.token), null);
@@ -1209,4 +1215,30 @@ test('home disk floor: a build is stopped (410, failed no_room) when free space 
   assert.equal(s.reason, 'no_room');
   assert.ok(events.includes('no_room'));
   assert.equal(home.put(s.token, 'seg3.ts', Buffer.from('ts3')), 410, 'the worker stops');
+});
+
+test('home want: two players at different points; once the newer want is here, the older one held is wanted again (review D1)', async (t) => {
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, segmentHoldMs: 500 });
+  const s = home.start({ id: 'aaaaaaaaaaa' }, '720p');
+  home.put(s.token, 'seg0.ts', Buffer.from('ts0'));
+  home.put(s.token, 'index.m3u8', Buffer.from(vodPlaylist(600)));
+  const a = home.file(s.token, 'seg13.ts');  // player A, in a gap
+  const b = home.file(s.token, 'seg502.ts'); // player B, far ahead: the newer want
+  assert.equal(home.want(s.token), 502);
+  home.put(s.token, 'seg502.ts', Buffer.from('ts502'));
+  assert.equal((await b).body.toString(), 'ts502');
+  assert.equal(home.want(s.token), 13, 'A is still held: its segment is wanted');
+  home.put(s.token, 'seg13.ts', Buffer.from('ts13'));
+  assert.equal((await a).body.toString(), 'ts13');
+  assert.equal(home.want(s.token), null);
+});
+
+test('home want: a segment past the end of the playlist or never listed is not wanted (review D2)', async (t) => {
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, segmentHoldMs: 50 });
+  const s = home.start({ id: 'aaaaaaaaaaa' }, '720p');
+  home.put(s.token, 'seg0.ts', Buffer.from('ts0'));
+  home.put(s.token, 'index.m3u8', Buffer.from(vodPlaylist(20)));
+  const past = home.file(s.token, 'seg900.ts');
+  assert.equal(home.want(s.token), null);
+  assert.equal(await past, null);
 });

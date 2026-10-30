@@ -90,6 +90,9 @@ export const config = {
   // Minutes between Tunelio speed probes (src/probe.js; 10 credits each, at least 20, plus a random quarter). 0 = off.
   // Hourly (owner, 2026-10-23): every 20 minutes cost ~720 credits a day, more than playback's 80–450.
   tunelioProbeMinutes: int('TUNELIO_PROBE_MINUTES', 60),
+  // Minutes of paced read-and-resume after each progressive probe run (Everything-is-OK#361; no credits, up to 270 MB
+  // inbound per 10 minutes). 0 = off, and off until the owner's go on prod.
+  tunelioDropMinutes: int('TUNELIO_DROP_MINUTES', 0),
   // Tunelio's /create timeout, and how long after a Tunelio timeout plays go home (when they can) instead of to Tunelio.
   tunelioCreateTimeoutMs: int('TUNELIO_CREATE_TIMEOUT_SECONDS', 6) * 1000,
   tunelioSuspectMs: int('TUNELIO_SUSPECT_SECONDS', 120) * 1000,

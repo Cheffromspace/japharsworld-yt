@@ -75,6 +75,8 @@ test('keys outside each metric\'s allowed set are counted as "other"', () => {
   assert.equal(checkedKey('video_report', 'visitor:autoresync'), 'visitor:autoresync');
   assert.equal(checkedKey('video_report', 'owner:frozen'), 'other');
   assert.equal(checkedKey('video_report', 'tester:bogus'), 'other');
+  assert.equal(checkedKey('tunelio_drop', 'reopen_fail'), 'reopen_fail'); // #361: fixed keys
+  assert.equal(checkedKey('tunelio_drop', 'dQw4w9WgXcQ'), 'other');
   assert.throws(() => checkedKey('query_text', 'x'));
 });
 

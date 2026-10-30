@@ -60,6 +60,15 @@ under 2 s, so Tunelio already had the file: no speed values), `create_s`, `start
 random public one, not anything a visitor searched or played. Due time and run count live in `meta`
 (`tunelio_probe_next`, `tunelio_probe_runs`) so restarts don't probe early.
 
+Connection-drop check (`TUNELIO_DROP_MINUTES`, off by default; Everything-is-OK#361): after a progressive run, while no
+visitor's build or held player is in flight, the link that run paid for is read for that many minutes at playback speed
+(the file's own rate, at most 0.45 MB/s) and resumed at the byte reached after every cut. No extra credits; at 10 minutes
+up to 270 MB inbound per read, about 11 reads a day at the hourly probe. Daily counter `tunelio_drop`, keys `minutes`,
+`cut`, `reopen_ok`, `reopen_fail`, exported as `eiok_tunelio_probe_read_minutes_total`, `_cuts_total` and
+`_reopen_fail_total`. The log lines `tunelio_drop_cut`, `tunelio_drop_reopen` and `tunelio_drop` carry clock times and
+numbers only, no link or video, so a cut can be lined up with a client's freeze. The video is the probe's random public
+one, so no visitor data is involved. It doesn't count as busy.
+
 ### From the poller (`metrics/poll.js`, `japharsworld-yt-metrics.timer`)
 
 About every 15 minutes (`OnUnitActiveSec`, randomized: VRChat asks not to poll on the clock):

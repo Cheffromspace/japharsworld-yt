@@ -131,6 +131,7 @@ export const METRICS = {
   cc_via: ['daily', oneOf('worker', 'local', 'tunelio')],  // which caption source answered a fetch (src/captionchain.js)
   cc_words: ['daily', oneOf('real', 'estimated')],         // word timing in a served track: YouTube's, or spread by character
   credits: ['daily', oneOf('playback', 'captions', 'probe', 'test')],
+  tunelio_drop: ['daily', oneOf('minutes', 'cut', 'reopen_ok', 'reopen_fail')], // the probe's paced read of its own link (src/probe.js, #361): a random public video, no visitor data
   // YouTube refused a lookup (src/refusal.js): '<where>:<class>', the class only, never the message, query or video.
   yt_refusal: ['daily', oneOf(...REFUSAL_WHERE.flatMap((w) => REFUSAL_CLASSES.map((c) => `${w}:${c}`)))],
   video_report: ['daily', oneOf(...REPORT_WHO.flatMap((w) => REPORT_KINDS.map((k) => `${w}:${k}`)))], // '<who>:<kind>'

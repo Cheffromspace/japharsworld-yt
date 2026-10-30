@@ -335,6 +335,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       onCall: ({ path, ok }) => { if (ok && path === '/create') metrics.inc('credits', 'probe', 10); } });
     probe = new TunelioProbe({
       tunelio: probeTunelio, quality: config.tunelioProbeQuality, intervalMinutes: config.tunelioProbeMinutes, log: logJson,
+      dropMinutes: config.tunelioDropMinutes, dropCount: (key, n) => metrics.inc('tunelio_drop', key, n),
       search: (query, limit) => (relay.enabled && relay.online('search').length ? relay.search(query, limit, { timeoutMs: config.relayWaitMs }) : null),
       busy: () => busy() + (Date.now() < (playback.pausedUntil ?? 0) ? 1 : 0),
       record: (source, values) => {
@@ -1087,6 +1088,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
 // lets those 204s reach Caddy. Exported so the tests cover it without a child process (SV-053).
 export function shutdown(app, server, { exit = (code) => process.exit(code), waitMs = 200 } = {}) {
   app.relay?.drain();
+  app.probe?.stop?.();
   server?.close();
   app.metrics.close();
   app.home?.flush?.();

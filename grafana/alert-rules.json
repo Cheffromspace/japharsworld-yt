@@ -1620,6 +1620,60 @@
   ]
  },
  {
+  "uid": "eiok-tunelio-reopen-fail",
+  "title": "Tunelio reopen failed",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "0m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "The speed probe could not resume a cut Tunelio link at the byte reached in the last 6 hours: a reset would then be a visible freeze for players. The details: `node tools/ops.mjs events --event tunelio_drop_cut,tunelio_drop_reopen,tunelio_drop`."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "sum(increase(eiok_tunelio_probe_reopen_fail_total{env!=\"staging\"}[6h]))",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
   "uid": "eiok-disk-low",
   "title": "Disk almost full",
   "folderUID": "everything-is-ok",

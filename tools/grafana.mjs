@@ -170,6 +170,15 @@ export function dashboard() {
     ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="mb"})', '{{source}} file MB'],
   ], { w: 12, min: 0, description: `${probeNote} 2026-10-19 measured ~60 MB/s progressive.`,
     overrides: [{ matcher: { id: 'byRegexp', options: '.*file MB' }, properties: [{ id: 'custom.axisPlacement', value: 'right' }] }] }));
+  const dropNote = 'The speed probe reads the link of each progressive run at playback speed for 10 minutes and resumes at the byte reached after a cut (src/probe.js, Everything-is-OK#361): about 11 reads a day. A sample of 2026-10-29 from a home PC gave ~3 cuts per playback hour. No alert on the rate until there is a baseline.';
+  p.push(series('Tunelio cuts per playback hour (24 h)', [
+    ['sum(increase(eiok_tunelio_probe_cuts_total[24h])) / (sum(increase(eiok_tunelio_probe_read_minutes_total[24h])) / 60)', 'cuts per hour'],
+  ], { w: 12, min: 0, description: dropNote }));
+  p.push(series('Tunelio read and reopens (24 h)', [
+    ['sum(increase(eiok_tunelio_probe_read_minutes_total[24h]))', 'read minutes'],
+    ['sum(increase(eiok_tunelio_probe_cuts_total[24h]))', 'cuts'],
+    ['sum(increase(eiok_tunelio_probe_reopen_fail_total[24h]))', 'failed reopens'],
+  ], { w: 12, min: 0, description: `${dropNote} A failed reopen: another status, the wrong offset, or no first byte in 10 s.` }));
 
   // Playback plans, the home relay, captions and credits (2026-10-23 audit: all of these were counted but not shown).
   const ev = (metric, w = '6h') => `sum by (key) (increase(eiok_events_total{metric="${metric}"}[${w}]))`;
@@ -490,6 +499,7 @@ export function alertRules(dsUid, { critical = false } = {}) {
     // It posts to the warning channel (owner, 2026-10-29: fine there for now). Its own channel later: a third contact
     // point from its own webhook env var, pushed like DISCORD_CRITICAL_WEBHOOK's, and this rule's receiver set to it.
     rule('eiok-tester-report', 'Tester video report', 'sum by (kind) (increase(eiok_video_report_total{kind=~"frozen|stutter|sync|sound|load|quality"}[15m]))', { forM: 0, summary: 'A tester reported "{{ $labels.kind }}" from the world in the last 15 minutes. The play behind it: `node tools/ops.mjs events --event video_report`.' }),
+    rule('eiok-tunelio-reopen-fail', 'Tunelio reopen failed', 'sum(increase(eiok_tunelio_probe_reopen_fail_total[6h]))', { forM: 0, summary: 'The speed probe could not resume a cut Tunelio link at the byte reached in the last 6 hours: a reset would then be a visible freeze for players. The details: `node tools/ops.mjs events --event tunelio_drop_cut,tunelio_drop_reopen,tunelio_drop`.' }),
     rule('eiok-disk-low', 'Disk almost full', 'max by (host) (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) > 0.9', { forM: 15, summary: 'Under 10 % free on / of {{ $labels.host }}.' }),
   ]);
 }

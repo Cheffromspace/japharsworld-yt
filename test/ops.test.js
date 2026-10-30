@@ -23,6 +23,8 @@ test('ops redaction: allowlisted fields only, IDs and query strings masked', () 
   assert.equal(redact({ event: 'dQw4w9WgXcQ' }).event, '…', 'an event field that holds an ID is still masked');
   assert.deepEqual(redact({ event: 'play', id: 'dQw4w9WgXcQ', n: 67, via: 'home', held: 0, pinned: true }),
     { event: 'play', via: 'home', held: 0, pinned: true }, 'a pinned play says so (#293)');
+  assert.deepEqual(redact({ event: 'tunelio_drop_cut', id: 'dQw4w9WgXcQ', url: 'https://tunelio.dev/x?k=1', kind: 'reset', error: 'ECONNRESET', connS: 275, pos: 0.4, readMb: 120, lastByteAt: '2026-10-30T00:00:00.000Z' }),
+    { event: 'tunelio_drop_cut', kind: 'reset', error: 'ECONNRESET', connS: 275, pos: 0.4, readMb: 120, lastByteAt: '2026-10-30T00:00:00.000Z' }, 'the drop check keeps numbers and clock times (#361)');
   assert.deepEqual(redact({ event: 'video_report', shard: 1, n: 67, kind: 'frozen', who: 'tester', device: 'android', ago: 42, via: 'tunelio', mode: 'adaptive', rung: '720p', top: 'pending', quality: '1080p', hls: true, counted: true }),
     { event: 'video_report', kind: 'frozen', who: 'tester', device: 'android', ago: 42, via: 'tunelio', mode: 'adaptive', rung: '720p', top: 'pending', quality: '1080p', hls: true, counted: true },
     'a video report keeps what it says about the play, never its shard or ticket (#353)');

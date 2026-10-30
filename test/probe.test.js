@@ -120,3 +120,165 @@ test('probe: every 3rd run builds the same video at 720p and 1080p at once', asy
   assert.equal(s.rows.at(-1)[1].hls, 1, 'pairs alternate format too');
   assert.equal(new TunelioProbe({ pairEvery: 0 }).pairEvery, 0);
 });
+
+// Drop check (#361): scripted connections, a clock that sleep advances, one chunk = 1 s at 0.45 MB/s.
+const CHUNK = new Uint8Array(450_000);
+const cutErr = () => Object.assign(new TypeError('terminated'), { cause: { code: 'ECONNRESET' } });
+function dropSetup({ conns = [], fileSize = 900e6, seconds = 1200, busy = () => 0, dropMinutes = 10, total = 900_000_000, ...opts } = {}) {
+  let t = 1_000_000;
+  const logs = [], counts = {}, opens = [], created = [];
+  const script = [...conns];
+  const tunelio = { async create(id, q) { created.push(q); return { url: `https://tunelio.dev/tunnel?id=${id}&q=${q}`, expires: 9e9, quality: q, fileSize }; } };
+  const fetcher = async (url, o = {}) => {
+    const range = o.headers?.range;
+    if (range === 'bytes=0-0') { t += 30_000; return new Response('x', { status: 206 }); }
+    if (!range) return new Response('#EXTM3U\n#EXTINF:4,\nseg0.ts\n', { status: 200 });
+    const start = Number(/bytes=(\d+)-/.exec(range)[1]);
+    opens.push({ url, start });
+    const c = script.shift() ?? {};
+    if (c.throws) throw c.throws;
+    if (c.status) return new Response('', { status: c.status, headers: { 'content-range': `bytes ${start}-${total - 1}/${total}` } });
+    const reported = c.wrongOffset ? start + 1 : start;
+    let sent = 0;
+    const body = new ReadableStream({
+      pull(ctl) {
+        if (c.hang && sent >= c.hang) return new Promise((_, no) => { o.signal.addEventListener('abort', () => no(new DOMException('aborted', 'AbortError'))); });
+        if (c.cutAfter != null && sent >= c.cutAfter) { ctl.error(cutErr()); return undefined; }
+        if (c.closeAfter != null && sent >= c.closeAfter) { ctl.close(); return undefined; }
+        if (start + sent >= total) { ctl.close(); return undefined; }
+        sent += CHUNK.length;
+        ctl.enqueue(CHUNK);
+        return undefined;
+      },
+    }, { highWaterMark: 0 });
+    return new Response(body, { status: 206, headers: { 'content-range': `bytes ${reported}-${total - 1}/${total}` } });
+  };
+  const probe = new TunelioProbe({ tunelio, fetcher, now: () => t, random: () => 0, busy, log: (e) => logs.push(e), dropMinutes,
+    sleep: async (ms) => { t += ms; }, dropCount: (k, n) => { counts[k] = (counts[k] ?? 0) + n; },
+    search: async () => ({ videos: [video('AAAAAAAAAAA', seconds), video('BBBBBBBBBBB', seconds), video('EEEEEEEEEEE', seconds)] }), ...opts });
+  return { probe, logs, counts, opens, created, ev: (name) => logs.filter((e) => e.event === name) };
+}
+
+test('drop check: off by default, and HLS runs read nothing', async () => {
+  const off = dropSetup({ dropMinutes: 0 });
+  assert.equal((await off.probe.runOnce()).drop, null);
+  assert.equal(off.opens.length, 0);
+  const hls = dropSetup();
+  hls.probe.meta.set('tunelio_probe_runs', 1);
+  assert.equal((await hls.probe.runOnce()).format, 'hls');
+  assert.equal(hls.opens.length, 0);
+});
+
+test('drop check: reads the paid link at the paced rate for 10 minutes, no more credits', async () => {
+  const s = dropSetup({ conns: [{}] });
+  const r = await s.probe.runOnce();
+  assert.equal(s.created.length, 1, 'one /create: the read reuses its link');
+  assert.deepEqual(s.opens, [{ url: 'https://tunelio.dev/tunnel?id=AAAAAAAAAAA&q=1080p&progressive=1', start: 0 }]);
+  assert.equal(r.drop.ended, 'time');
+  assert.equal(r.drop.minutes, 10);
+  assert.ok(Math.abs(r.drop.readMb - 270) <= 1, `270 MB, got ${r.drop.readMb}`);
+  assert.ok(Math.abs(s.counts.minutes - 10) < 0.05, `minutes counted ${s.counts.minutes}`);
+  assert.equal(s.counts.cut, undefined);
+});
+
+test('drop check: a file with a lower bitrate reads at its own rate; a pair reads its 720p', async () => {
+  const s = dropSetup({ conns: [{}], fileSize: 120e6, seconds: 1200 });
+  const r = await s.probe.runOnce();
+  assert.ok(Math.abs(r.drop.readMb - 60) <= 1, `0.1 MB/s for 10 min, got ${r.drop.readMb}`);
+  assert.equal(s.ev('tunelio_drop')[0].rate, 0.1);
+
+  const pair = dropSetup({ conns: [{}] });
+  pair.probe.meta.set('tunelio_probe_runs', 2);
+  await pair.probe.runOnce();
+  assert.match(pair.opens[0].url, /q=720p/);
+});
+
+test('drop check: a cut resumes at the byte reached, with the numbers to line it up by clock time', async () => {
+  const s = dropSetup({ conns: [{ cutAfter: 450_000 * 100 }, {}] });
+  const r = await s.probe.runOnce();
+  assert.deepEqual(s.opens.map((o) => o.start), [0, 450_000 * 100]);
+  assert.equal(r.drop.cuts, 1);
+  assert.equal(r.drop.reopenOk, 1);
+  assert.equal(r.drop.ended, 'time');
+  assert.equal(r.drop.minutes, 10, 'the reopen gap is not read time');
+  assert.equal(s.counts.cut, 1);
+  assert.equal(s.counts.reopen_ok, 1);
+  const [cut] = s.ev('tunelio_drop_cut');
+  assert.equal(cut.kind, 'reset');
+  assert.equal(cut.error, 'ECONNRESET');
+  assert.equal(cut.readMb, 45);
+  assert.equal(cut.pos, 0.05);
+  assert.ok(Math.abs(cut.connS - 100) <= 1, `connS ${cut.connS}`);
+  assert.ok(Date.parse(cut.lastByteAt) > 0);
+  const [re] = s.ev('tunelio_drop_reopen');
+  assert.deepEqual([re.ok, re.status, re.offsetOk, re.attempt], [true, 206, true, 1]);
+  assert.doesNotMatch(JSON.stringify([...s.ev('tunelio_drop_cut'), ...s.ev('tunelio_drop_reopen'), ...s.ev('tunelio_drop')]), /AAAAAAAAAAA|tunnel/, 'no video or link in its lines');
+});
+
+test('drop check: a wrong status, wrong offset or thrown reopen fails; three in a row end the read', async () => {
+  const s = dropSetup({ conns: [{ cutAfter: 450_000 * 10 }, { status: 503 }, { wrongOffset: true }, { throws: Object.assign(new Error('x'), { name: 'TimeoutError' }) }] });
+  const r = await s.probe.runOnce();
+  assert.equal(r.drop.ended, 'reopen_fail');
+  assert.equal(r.drop.reopenFail, 3);
+  assert.equal(s.counts.reopen_fail, 3);
+  assert.equal(s.counts.reopen_ok, undefined);
+  const re = s.ev('tunelio_drop_reopen');
+  assert.deepEqual(re.map((e) => [e.ok, e.attempt, e.status ?? null, e.offsetOk ?? null]), [[false, 1, 503, true], [false, 2, 206, false], [false, 3, null, null]]);
+  assert.equal(re[2].error, 'TimeoutError');
+});
+
+test('drop check: one failed reopen and then a good one carries on', async () => {
+  const s = dropSetup({ conns: [{ cutAfter: 450_000 * 10 }, { status: 502 }, {}] });
+  const r = await s.probe.runOnce();
+  assert.equal(r.drop.ended, 'time');
+  assert.deepEqual([s.counts.reopen_fail, s.counts.reopen_ok], [1, 1]);
+  assert.deepEqual(s.opens.map((o) => o.start), [0, 4_500_000, 4_500_000]);
+});
+
+test('drop check: a hang and a clean early close count as cuts', async () => {
+  const hang = dropSetup({ conns: [{ hang: 450_000 * 5 }, {}], dropStallMs: 20 });
+  assert.equal((await hang.probe.runOnce()).drop.cuts, 1);
+  assert.equal(hang.ev('tunelio_drop_cut')[0].kind, 'stall');
+
+  const short = dropSetup({ conns: [{ closeAfter: 450_000 * 5 }, {}] });
+  assert.equal((await short.probe.runOnce()).drop.cuts, 1);
+  assert.equal(short.ev('tunelio_drop_cut')[0].kind, 'short');
+});
+
+test('drop check: the end of the file is no cut; a link that keeps cutting stops at the wall', async () => {
+  const eof = dropSetup({ conns: [{}], total: 450_000 * 5 });
+  const r = await eof.probe.runOnce();
+  assert.equal(r.drop.ended, 'eof');
+  assert.equal(r.drop.cuts, 0);
+  assert.equal(eof.opens.length, 1);
+
+  const cutting = dropSetup({ conns: Array.from({ length: 200 }, () => ({ cutAfter: 450_000 })), dropMinutes: 1 });
+  const w = await cutting.probe.runOnce();
+  assert.equal(w.drop.ended, 'wall');
+  assert.ok(cutting.opens.length < 200);
+});
+
+test('drop check: skipped while a visitor build is in flight, and a failed first open counts as no reopen', async () => {
+  let builds = 0;
+  const s = dropSetup({ busy: () => builds });
+  s.probe.tunelio.create = async (id, q) => { builds = 1; return { url: `https://tunelio.dev/tunnel?id=${id}`, quality: q, fileSize: 900e6 }; };
+  assert.equal((await s.probe.runOnce()).drop, null);
+  assert.equal(s.opens.length, 0);
+  assert.equal(s.ev('tunelio_drop')[0].skipped, 'busy');
+
+  const bad = dropSetup({ conns: [{ status: 503 }] });
+  assert.equal((await bad.probe.runOnce()).drop.ended, 'open_failed');
+  assert.deepEqual(bad.counts, {});
+});
+
+test('drop check: stop() ends the read with its counts and no false failure', async () => {
+  const s = dropSetup({ conns: [{}] });
+  let ticks = 0;
+  const inner = s.probe.sleep;
+  s.probe.sleep = async (ms) => { if (++ticks === 120) s.probe.stop(); return inner(ms); };
+  const r = await s.probe.runOnce();
+  assert.equal(r.drop.ended, 'stopped');
+  assert.ok(r.drop.minutes > 1.5 && r.drop.minutes < 2.5, `${r.drop.minutes}`);
+  assert.equal(s.counts.reopen_fail, undefined);
+  assert.ok(s.counts.minutes > 1.5, 'the minutes read so far are counted');
+});

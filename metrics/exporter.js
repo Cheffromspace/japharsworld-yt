@@ -73,6 +73,11 @@ export function metricsDbSeries(db, o, now = Date.now()) {
   for (const who of REPORT_WHO) for (const kind of REPORT_KINDS) {
     o.add('eiok_video_report_total', 'counter', 'Video reports from the world (Tester tab problems, Resync presses), all days summed.', { who, kind }, reports[`${who}:${kind}`] ?? 0);
   }
+  // The speed probe's paced read of its own link (src/probe.js, Everything-is-OK#361), from 0 so increase() sees the first.
+  const drop = Object.fromEntries(totals.filter((r) => r.metric === 'tunelio_drop').map((r) => [r.key, r.v]));
+  o.add('eiok_tunelio_probe_read_minutes_total', 'counter', 'Minutes the probe read a Tunelio link at playback speed, all days summed.', {}, drop.minutes ?? 0);
+  o.add('eiok_tunelio_probe_cuts_total', 'counter', 'Connections cut during that read, all days summed.', {}, drop.cut ?? 0);
+  o.add('eiok_tunelio_probe_reopen_fail_total', 'counter', 'Reopens at the byte reached that failed (status, wrong offset, or no first byte in 10 s), all days summed.', {}, drop.reopen_fail ?? 0);
   const credits = db.prepare("SELECT value, at FROM gauges WHERE metric = 'credits_remaining' ORDER BY day DESC, at DESC LIMIT 1").get();
   if (credits) o.add('eiok_credits_remaining', 'gauge', 'Tunelio credits left (search service, last seen).', {}, credits.value);
   for (const r of db.prepare(`SELECT key, value FROM gauges WHERE metric = 'home_today'

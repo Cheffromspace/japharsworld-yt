@@ -211,8 +211,9 @@ export function ffmpegArgs(urls, dir, { splitByTime = false } = {}) {
 }
 
 // → Promise that resolves { ready: true, segments } once the first playlist is up, or rejects before that.
-// upload(file, body, type) → HTTP status. spawnFn/runner are injectable for tests.
-export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], upload: put, runner = run, spawnFn = spawn,
+// upload(file, body, type) → HTTP status. wanted() → the segment number a player is waiting for (the server's
+// x-media-want, Everything-is-OK#367), or null. spawnFn/runner are injectable for tests.
+export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], upload: put, wanted = () => null, runner = run, spawnFn = spawn,
   fetcher = fetch, tmp = tmpdir(), pollMs = 500, maxMs = 4 * 3600_000, retryMs = 1000, cache = null, splitByTime = false, log = () => {} }) {
   const videoId = String(job.videoId ?? '');
   const quality = String(job.quality ?? '720p');
@@ -220,7 +221,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   if (!/^\d{3,4}p$/.test(quality)) throw new Error('bad quality');
   const started = Date.now();
   const hit = cache?.get(videoId, quality, { seconds: Number(job.seconds) || 0 });
-  if (hit) return fromCache(hit, { upload: put, retryMs, started, log });
+  if (hit) return fromCache(hit, { upload: put, wanted, retryMs, started, log });
   const out = await runner(ytdlp, [...extraArgs, '--no-warnings', '--no-cache-dir', '--no-playlist', '-g', '-f', formatFor(quality),
     '--', `https://www.youtube.com/watch?v=${videoId}`], 30_000);
   const urls = out.split(/\r?\n/).map((l) => l.trim()).filter((l) => /^https?:\/\//.test(l)).slice(0, 2);
@@ -353,8 +354,11 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
 }
 
 // A cached stream, uploaded from disk: the first segment and the whole playlist (the server can send players then), the
-// rest in order in the background. A segment a player asks for early is held by the server until it arrives.
-async function fromCache(hit, { upload: put, retryMs, started, log }) {
+// rest in order in the background. A segment a player asks for early is held by the server until it arrives. A player
+// that seeked ahead (wanted(), Everything-is-OK#367) gets its segment next: the upload jumps there, carries on in order
+// from it and comes back for the ones it skipped at the end, so every segment still goes up once. Prod, 2026-10-30: a
+// 4.1 h 1080p copy went up in order at ~6.9 MB/s, so a seek an hour in waited ~4 min for its segment and froze.
+async function fromCache(hit, { upload: put, wanted = () => null, retryMs, started, log }) {
   const upload = async (file, body, type) => {
     for (let attempt = 0; ; attempt++) {
       let status;
@@ -372,13 +376,28 @@ async function fromCache(hit, { upload: put, retryMs, started, log }) {
   if (status !== 204) throw new Error(`upload playlist answered ${status}`);
   log({ event: 'media_ready', ms: Date.now() - started, cached: true, segments: hit.segments.length });
   const done = (async () => {
-    let n = 1;
+    const sent = new Set([0]);
+    const index = new Map(hit.segments.map((f, i) => [f, i]));
+    const next = (i) => (i + 1 < hit.segments.length ? i + 1 : 0); // past the end: back to the first skipped one
+    let n = 1, jumps = 0;
     try {
-      for (; n < hit.segments.length; n++) await send(hit.segments[n]);
-      log({ event: 'media_done', ms: Date.now() - started, cached: true, mb: Math.round(hit.mb ?? 0), segments: n });
+      while (sent.size < hit.segments.length) {
+        const w = wanted();
+        const at = w == null ? undefined : index.get(`seg${w}.ts`);
+        if (at !== undefined && !sent.has(at) && at !== n) {
+          log({ event: 'media_jump', cached: true, from: n, to: at });
+          n = at;
+          jumps++;
+        }
+        while (sent.has(n)) n = next(n);
+        await send(hit.segments[n]);
+        sent.add(n);
+        n = next(n);
+      }
+      log({ event: 'media_done', ms: Date.now() - started, cached: true, mb: Math.round(hit.mb ?? 0), segments: sent.size, jumps });
     } catch (err) {
       const gone = err.status === 410;
-      log({ event: gone ? 'media_done' : 'media_failed', ms: Date.now() - started, cached: true, segments: n, gone,
+      log({ event: gone ? 'media_done' : 'media_failed', ms: Date.now() - started, cached: true, segments: sent.size, gone, jumps,
         message: gone ? undefined : String(err?.message ?? err).slice(0, 200) });
     }
   })();

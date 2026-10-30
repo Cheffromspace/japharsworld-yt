@@ -42,14 +42,19 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
   let streaming = 0;
   const runMedia = media ?? (async (job) => {
     ytdlpPath ??= await findYtdlp();
+    // The segment a player is waiting for, from the server's answers (x-media-want, Everything-is-OK#367): every
+    // stored upload's answer says it, or nothing once it is there.
+    let want = null;
     const upload = async (file, body, type, { cached = false } = {}) => {
       const res = await fetcher(`${base}/relay/media/${job.token}/${file}`, { method: 'PUT',
         headers: { ...headers, 'content-type': type, ...(cached ? { 'x-media-cached': '1' } : {}) }, body,
         signal: AbortSignal.timeout(60_000) });
       try { await res.body?.cancel(); } catch { /* ignore */ }
+      if (res.status === 204) { const w = res.headers.get('x-media-want'); want = /^\d{1,5}$/.test(w ?? '') ? Number(w) : null; }
       return res.status;
     };
-    const attempt = () => mediaJob(job, { ytdlp: ytdlpPath, ffmpeg, extraArgs: ytdlpExtraArgs, upload, cache, splitByTime, log: (o) => log({ ...o, quality: job.quality }) });
+    const attempt = () => mediaJob(job, { ytdlp: ytdlpPath, ffmpeg, extraArgs: ytdlpExtraArgs, upload, wanted: () => want, cache, splitByTime,
+      log: (o) => log({ ...o, quality: job.quality }) });
     // ffmpeg that can't open the streams: once more from a fresh yt-dlp resolve (2026-10-23, 1 of 8 test videos: its
     // fresh stream URLs answered 403 for a minute or two).
     return attempt().catch((err) => (/ffmpeg exited/.test(err?.message ?? '') ? attempt() : Promise.reject(err)));

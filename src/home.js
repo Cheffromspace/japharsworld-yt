@@ -20,12 +20,23 @@
 // saved too (day.json), so it doesn't reset the cap. Files stay keepHours, oldest finished first out above maxGb
 // (8 GB: 1080p sessions are 0.6–1.6 GB and the Linode's / is 25 GB, 2026-10-25), never one building or being played;
 // a build counts its expected size against maxGb from its start (#expectedMb), so room is made before it grows.
+//
+// Segments on demand (Everything-is-OK#367): the worker uploads in order, so a player that seeks far ahead of the upload
+// (resuming a long video part way) asks for a segment minutes away. Prod, 2026-10-30 00:37Z: a 4.1 h 1080p play from
+// the worker's cache went up in order at ~6.9 MB/s (8404 MB in 1220 s), the player's seg550 would have come ~250 s in,
+// each request was held 20 s and the world reloaded every ~30 s, so it froze for good. Now a segment a player waits for
+// that isn't next in line becomes the session's want, and every answer to the worker's uploads names it (x-media-want,
+// server.js) until it is here; the worker sends it next (relay/media.js).
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, rmSync, renameSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { dayOf } from './metrics.js';
 
 const SEGMENT = /^seg\d{1,5}\.ts$/;
+const segIndex = (file) => Number(file.slice(3, -3));
+// A segment a player waits for more than this past the last one uploaded, or before it (a gap left by a jump), is
+// wanted; the next ones in line are coming anyway.
+const WANT_AHEAD = 2;
 const TOKEN = /^[a-f0-9]{18}$/;
 const MAX_SEGMENT_BYTES = 64 << 20;
 const DAY_SAVE_MS = 30_000; // today's use goes to day.json at most this often while segments arrive (#saveDaySoon)
@@ -72,7 +83,7 @@ export class Home {
         const m = JSON.parse(readFileSync(join(folder, 'meta.json'), 'utf8'));
         if (m.state === 'failed') throw new Error('failed');
         const s = this.#session({ ...m, token });
-        for (const f of readdirSync(folder)) if (SEGMENT.test(f)) { s.stored.add(f); s.mb += statSync(join(folder, f)).size / 1e6; }
+        for (const f of readdirSync(folder)) if (SEGMENT.test(f)) { s.stored.add(f); s.mb += statSync(join(folder, f)).size / 1e6; s.last = Math.max(s.last, segIndex(f)); }
         try { this.#playlist(s, readFileSync(join(folder, 'index.m3u8'), 'utf8')); } catch { /* none yet */ }
         if (s.state !== 'ready') throw new Error('never ready');
         if (this.#stale(s)) throw new Error('stream gone');
@@ -87,7 +98,7 @@ export class Home {
     return { token: f.token, id: f.id, quality: f.quality, seconds: f.seconds ?? 0, worker: f.worker ?? null, state: 'building',
       startedMs: f.startedMs ?? this.now(), readyMs: 0, endedMs: 0, lastPutMs: f.lastPutMs ?? 0, ended: false, mb: 0, segments: 0,
       listed: [], listedSeconds: 0, stored: new Set(), reason: null, waiters: [], endWaiters: [], segmentWaiters: new Map(),
-      firstSegmentMs: 0, firstServed: null, lastGetMs: 0, why: f.why ?? null };
+      firstSegmentMs: 0, firstServed: null, lastGetMs: 0, why: f.why ?? null, want: null, last: -1 };
   }
 
   // Not finished, and no upload for STALE_MS: nothing will arrive any more.
@@ -253,6 +264,12 @@ export class Home {
     });
   }
 
+  // The segment players wait for that the worker should send next (see the top), or null.
+  want(token) {
+    const s = this.byToken.get(token);
+    return s && s.want != null && !s.stored.has(`seg${s.want}.ts`) ? s.want : null;
+  }
+
   url(s) { return `${this.base}/${s.token}/index.m3u8`; }
 
   // A playlist from the worker (or from disk): which segments it lists, ready at the first one, ended when complete.
@@ -323,6 +340,8 @@ export class Home {
       if (s.cached) d.cacheMb = (d.cacheMb ?? 0) + body.length / 1e6; else d.mb += body.length / 1e6;
       this.#saveDaySoon();
     }
+    s.last = segIndex(file);
+    if (s.want === s.last) s.want = null;
     const ws = s.segmentWaiters.get(file);
     if (ws) { s.segmentWaiters.delete(file); for (const w of ws) w(); }
     if (s.state === 'building' && s.segments > 0) { s.state = 'ready'; s.readyMs = this.now(); this.#ready(s); }
@@ -357,6 +376,11 @@ export class Home {
     if (!s || !(file === 'index.m3u8' || SEGMENT.test(file))) return null;
     s.lastGetMs = this.now();
     if (file !== 'index.m3u8' && !s.stored.has(file) && !s.ended && s.state !== 'failed') {
+      const n = segIndex(file);
+      if ((n > s.last + WANT_AHEAD || n < s.last) && s.want !== n) {
+        s.want = n;
+        this.log({ event: 'home_want', ses: s.token.slice(0, 4), quality: s.quality, seg: n, top: s.last });
+      }
       await new Promise((resolve) => {
         const ws = s.segmentWaiters.get(file) ?? [];
         const timer = setTimeout(done, this.segmentHoldMs);

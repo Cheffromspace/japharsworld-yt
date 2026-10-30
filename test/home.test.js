@@ -1071,3 +1071,95 @@ test('relay polls: the worker\'s bytes-sent counter is counted as home transfer 
   const home = counts.filter(([k]) => k === 'home').map(([, n]) => n);
   assert.deepEqual(home, [0, 300]);
 });
+
+// Segments on demand (Everything-is-OK#367): prod 2026-10-30, a seek an hour into a 4.1 h cached copy waited on an
+// in-order upload (~6.9 MB/s) and froze.
+test('home want: a segment a player waits for past the next in line is wanted until it arrives; the next ones are not', async (t) => {
+  const logs = [];
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, segmentHoldMs: 200, log: (o) => logs.push(o) });
+  const s = home.start({ id: 'aaaaaaaaaaa' }, '720p');
+  home.put(s.token, 'seg0.ts', Buffer.from('ts0'));
+  home.put(s.token, 'index.m3u8', Buffer.from(PL2));
+  assert.equal(home.want(s.token), null);
+  await home.file(s.token, 'seg2.ts'); // next in line but one: coming anyway
+  assert.equal(home.want(s.token), null);
+  const far = home.file(s.token, 'seg550.ts');
+  assert.equal(home.want(s.token), 550);
+  assert.deepEqual(logs.filter((l) => l.event === 'home_want'), [{ event: 'home_want', ses: s.token.slice(0, 4), quality: '720p', seg: 550, top: 0 }]);
+  home.file(s.token, 'seg550.ts'); // a second request for it logs nothing new
+  assert.equal(logs.filter((l) => l.event === 'home_want').length, 1);
+  home.put(s.token, 'seg550.ts', Buffer.from('ts550'));
+  assert.equal((await far).body.toString(), 'ts550');
+  assert.equal(home.want(s.token), null, 'here: no longer wanted');
+  // A gap behind the last upload (the worker jumped past it) is wanted too.
+  const gap = home.file(s.token, 'seg300.ts');
+  assert.equal(home.want(s.token), 300);
+  await gap;
+  assert.equal(home.want('f'.repeat(18)), null, 'unknown session');
+});
+
+test('media cache upload: jumps to the wanted segment, carries on from it, then sends the skipped ones; each once', async (t) => {
+  const { MediaCache } = await import('../relay/cache.js');
+  const cache = new MediaCache({ dir: tmp(t), maxGb: 1 });
+  const staging = cache.staging();
+  const lines = ['#EXTM3U', '#EXT-X-PLAYLIST-TYPE:VOD'];
+  for (let i = 0; i < 10; i++) { writeFileSync(join(staging, `seg${i}.ts`), `ts${i}`); lines.push('#EXTINF:4.0,', `seg${i}.ts`); }
+  assert.ok(cache.put('aaaaaaaaaaa', '720p', staging, `${lines.join('\n')}\n#EXT-X-ENDLIST\n`));
+  const order = [];
+  let want = null;
+  const logs = [];
+  const job = await mediaJob({ videoId: 'aaaaaaaaaaa', quality: '720p', token: 'y' }, { ytdlp: 'yt-dlp', cache, wanted: () => want, log: (o) => logs.push(o),
+    upload: async (file) => {
+      if (file !== 'index.m3u8') order.push(Number(file.slice(3, -3)));
+      if (file === 'seg2.ts') want = 7;   // a player seeked to seg7 while seg2 went up
+      if (file === 'seg7.ts') want = null; // the server stops naming it once it is there
+      return 204;
+    } });
+  await job.done;
+  assert.deepEqual(order, [0, 1, 2, 7, 8, 9, 3, 4, 5, 6]);
+  assert.deepEqual(logs.find((l) => l.event === 'media_jump'), { event: 'media_jump', cached: true, from: 3, to: 7 });
+  assert.equal(logs.find((l) => l.event === 'media_done').jumps, 1);
+});
+
+test('home want end to end: a far seek on a cached copy is answered in about one upload, not after the ones before it', async (t) => {
+  const { MediaCache } = await import('../relay/cache.js');
+  const dir = tmp(t);
+  const cache = new MediaCache({ dir: join(dir, 'cache'), maxGb: 1 });
+  const SEGS = 300;
+  for (const q of ['720p', '1080p']) {
+    const staging = cache.staging();
+    const lines = ['#EXTM3U', '#EXT-X-TARGETDURATION:4', '#EXT-X-PLAYLIST-TYPE:VOD'];
+    for (let i = 0; i < SEGS; i++) { writeFileSync(join(staging, `seg${i}.ts`), `ts${i}`); lines.push('#EXTINF:4.000000,', `seg${i}.ts`); }
+    cache.put('aaaaaaaaaaa', q, staging, `${lines.join('\n')}\n#EXT-X-ENDLIST\n`);
+  }
+  const config = { ...base, shards: 2, pool: 50, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub', metricsPath: '' };
+  const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
+  const relay = new Relay({ token: TOKEN, pollMs: 200 });
+  const lines = [];
+  const app = createApp({ config, store, relay, tunelio: { enabled: false }, captions: { async get() { return {}; } }, log: (l) => lines.push(l) });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const url = `http://127.0.0.1:${server.address().port}`;
+  // Each segment upload takes 20 ms, so the in-order upload would reach seg250 after ~5 s.
+  const slow = async (u, o) => { if (o?.method === 'PUT' && /seg\d+\.ts$/.test(u)) await new Promise((r) => setTimeout(r, 20)); return fetch(u, o); };
+  const wlogs = [];
+  const worker = createWorker({ url, token: TOKEN, name: 'home', polls: 1, caps: ['media'], ytdlp: 'yt-dlp', cache, fetcher: slow, txBytes: () => null, log: (o) => wlogs.push(o) });
+  worker.start();
+  t.after(() => worker.stop());
+  while (!relay.capable('media').length) await new Promise((r) => setTimeout(r, 20));
+  const [n] = store.allocate(0, [{ kind: 'video', data: { id: 'aaaaaaaaaaa', title: 'T', seconds: SEGS * 4, live: false } }]);
+  const loc = (await fetch(`${url}/v1/0/${n}`, { redirect: 'manual', headers: { 'user-agent': 'NSPlayer/12.00.26100 WMFSDK/12.00' } })).headers.get('location');
+  const path = loc.replace('http://pub', '');
+  const t0 = Date.now();
+  const seg = await fetch(url + path.replace('index.m3u8', 'seg250.ts'));
+  const ms = Date.now() - t0;
+  assert.equal(await seg.text(), 'ts250');
+  assert.ok(ms < 2000, `seg250 in ${ms} ms`);
+  assert.ok(wlogs.some((l) => l.event === 'media_jump' && l.to === 250));
+  assert.ok(lines.some((l) => l.includes('"event":"home_want"') && l.includes('"seg":250')));
+  // The rest still all arrives: the session ends with every segment.
+  const t1 = Date.now();
+  while (!lines.some((l) => l.includes('"event":"home_done"')) && Date.now() - t1 < 15_000) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(lines.some((l) => l.includes('"event":"home_done"') && l.includes(`"segments":${SEGS}`)));
+});

@@ -308,6 +308,25 @@ test('video reports /v1/<shard>/r/<who>/<kind>: 200 at once, logged with the sha
   assert.equal(reports().at(-2).counted, false);
 });
 
+// World #374: a youtube.com fallback is never pinned, but the report still says what the play got and why.
+test('video report after a play with no pin: the route and reason of that play', async (t) => {
+  const lines = [];
+  const s = await start({ log: (l) => lines.push(l) });
+  t.after(() => s.server.close());
+  const r = (await s.get('/v1/1/s?q=rain')).body;
+  await fetch(`${s.base}/v1/1/${r.results[0].t}`, { redirect: 'manual', headers: { 'user-agent': 'AVProVideo/2.9 (Windows)' } });
+  const play = lines.map((l) => JSON.parse(l)).findLast((l) => l.event === 'play');
+  assert.equal(play.via, 'youtube');
+  assert.ok(play.reason);
+  await s.get('/v1/1/r/tester/load');
+  const e = lines.map((l) => JSON.parse(l)).findLast((l) => l.event === 'video_report');
+  assert.equal(e.via, 'youtube');
+  assert.equal(e.reason, play.reason);
+  // Another shard's report knows nothing of it.
+  await s.get('/v1/0/r/tester/load');
+  assert.equal(lines.map((l) => JSON.parse(l)).findLast((l) => l.event === 'video_report').via, null);
+});
+
 // TEMPORARY with config.reportEchoUa (world #353 device-class capture): staging echoes the UA to that client only.
 test('video report echoes the User-Agent and device class only with reportEchoUa, and never logs the UA', async (t) => {
   const lines = [];

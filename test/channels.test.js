@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -44,6 +44,27 @@ test('channel slots: the current video for live and video slots; spares and remo
   now += 31_000;
   assert.deepEqual(ch.lookup('lofi-sleep-chill'), { id: 'AAAAAAAAAAA' });
   assert.deepEqual(new ChannelSlots({ monitorDb: '/nope/monitor.db' }).lookup('lofi-sleep-chill'), { error: 'monitor_unreadable' });
+});
+
+test('channel slots with no monitor database (staging, world #376): the baked link; hidden, linkless and unknown slots as before', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'jyt-baked-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const baked = join(dir, 'channels.json');
+  writeFileSync(baked, JSON.stringify({ slots: [
+    { key: 'shown', url: 'https://www.youtube.com/watch?v=JD-kMIpDfnY' },
+    { key: 'hidden', url: 'https://www.youtube.com/watch?v=iVTPoB2GelQ', hidden: true },
+    { key: 'list-only', url: 'https://www.youtube.com/playlist?list=PLabc' },
+  ] }));
+  const ch = new ChannelSlots({ monitorDb: '/nope/monitor.db', baked });
+  assert.deepEqual(ch.lookup('shown'), { id: 'JD-kMIpDfnY' });
+  assert.deepEqual(ch.lookup('hidden'), { error: 'channel_unavailable' });
+  assert.deepEqual(ch.lookup('list-only'), { error: 'channel_unavailable' });
+  assert.deepEqual(ch.lookup('nope'), { error: 'unknown_channel' });
+  assert.deepEqual(new ChannelSlots({ monitorDb: '/nope/monitor.db', baked: join(dir, 'gone.json') }).lookup('shown'), { error: 'monitor_unreadable' });
+  // With a database, the monitor decides.
+  const m = monitorDb(t);
+  assert.deepEqual(new ChannelSlots({ monitorDb: m.path, baked }).lookup('nope'), { error: 'unknown_channel' });
+  assert.deepEqual(new ChannelSlots({ monitorDb: m.path, baked }).lookup('shown'), { error: 'unknown_channel' });
 });
 
 test('GET /v1/ch/<key>: 302 to the watch link, no-store; 404 unknown, 503 unavailable', async (t) => {

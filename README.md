@@ -236,6 +236,11 @@ playlist lists are wanted. An upload that fails for good after a jump ends the j
 before the end, not after it: those segments 404 after the hold, and the session never ends, so the next play after
 `STALE_MS` starts over.
 
+A fresh build with a whole (predicted) playlist does the same with a second ffmpeg: for a want no run will reach within
+a few seconds, the run heading there stops at it and a new one starts at it (`-copyts -ss`, `-start_number`; `media_jump`
+with `cached: false`), at most two at once. When none is left, fill runs (`media_run`) make what is still missing, so the
+whole copy still reaches the worker's cache. A growing playlist has no far segments to want and stays one run.
+
 **The worker's cache** (`relay/cache.js`, owner 2026-10-23: "be aggressive, the Optiplex has lots of disk"): every
 stream that finishes whole stays on the Optiplex too, one folder per video and quality, least recently used out above
 `RELAY_CACHE_GB` (40; 0 = off; in the worker's env file). A later home job for it, after the Linode's copy expired, is

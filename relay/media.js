@@ -34,7 +34,8 @@
 // With a cache (relay/cache.js), a finished stream is kept on the worker's disk and a later job for the same video and
 // quality is uploaded from there (`cached`: no yt-dlp, no YouTube download; each upload says so with x-media-cached: 1,
 // so the server doesn't count it against HOME_DAILY_MB).
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm } from 'node:fs/promises';
+import { mkdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
@@ -173,6 +174,12 @@ export function closedAt(text, sent) {
 const extinfs = (text) => [...text.matchAll(/#EXTINF:([\d.]+)/g)].map((m) => Number(m[1]));
 const STEADY = 8;
 const HLS_TIME = 4;
+// Runs (mediaJob): at most MAX_RUNS ffmpeg at once per job, MAX_TOTAL_RUNS in all; a want within LEAD segments, or
+// LEAD_S seconds at its run's rate, of what a run has made is left to that run.
+const MAX_RUNS = 2;
+const MAX_TOTAL_RUNS = 20;
+const LEAD = 8;
+const LEAD_S = 5;
 // One frame: segments of the same number of frames at 29.97 fps print as 4.004 or 3.971 s (2026-10-27).
 const FRAME = 0.05;
 
@@ -195,8 +202,11 @@ export function onTime(known) {
   return known.slice(0, STEADY).every((d, i) => Math.abs((at += d) - (i + 1) * HLS_TIME) <= CUT);
 }
 
-export function ffmpegArgs(urls, dir, { splitByTime = false } = {}) {
-  const inputs = urls.flatMap((u) => ['-i', u]);
+// start > 0 (a run at a seek point, mediaJob): every input from `seconds`, the source's timestamps kept (-copyts) and the
+// segments numbered from start, so they fit the whole playlist the server has (without -copyts they restart at ~1.4 s).
+export function ffmpegArgs(urls, dir, { splitByTime = false, start = 0, seconds = 0 } = {}) {
+  const ss = start > 0 ? ['-ss', seconds.toFixed(3)] : [];
+  const inputs = urls.flatMap((u) => [...ss, '-i', u]);
   const maps = urls.length > 1 ? ['-map', '0:v:0', '-map', '1:a:0'] : [];
   // h264_mp4toannexb,dump_extra: the H.264 parameter sets (SPS/PPS) before every keyframe. Copied from YouTube's mp4
   // they were only in seg0 (its keyframes aren't IDR, the only frames mp4toannexb repeats them for), so every later
@@ -204,10 +214,10 @@ export function ffmpegArgs(urls, dir, { splitByTime = false } = {}) {
   // seg1 0 frames → 118 with the filter): a player that starts or seeks past seg0 had nothing to decode with. With
   // splitByTime a segment can start between keyframes; it still gets the parameter sets at its first keyframe, which is
   // where a decoder starts anyway. freq=all (before every frame) only if a player is seen needing them at the cut.
-  return ['-hide_banner', '-loglevel', 'error', '-nostdin', ...inputs, ...maps, '-c', 'copy', '-bsf:v', 'h264_mp4toannexb,dump_extra=freq=keyframe',
+  return ['-hide_banner', '-loglevel', 'error', '-nostdin', ...(start > 0 ? ['-copyts'] : []), ...inputs, ...maps, '-c', 'copy', '-bsf:v', 'h264_mp4toannexb,dump_extra=freq=keyframe',
     '-f', 'hls', '-hls_time', String(HLS_TIME), '-hls_list_size', '0', '-hls_playlist_type', 'event',
     '-hls_flags', splitByTime ? 'temp_file+split_by_time' : 'temp_file',
-    '-hls_segment_type', 'mpegts', '-hls_segment_filename', join(dir, 'seg%d.ts'), join(dir, 'index.m3u8')];
+    '-hls_segment_type', 'mpegts', ...(start > 0 ? ['-start_number', String(start)] : []), '-hls_segment_filename', join(dir, 'seg%d.ts'), join(dir, 'index.m3u8')];
 }
 
 // → Promise that resolves { ready: true, segments } once the first playlist is up, or rejects before that.
@@ -242,36 +252,134 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   }
   const dir = cache ? cache.staging() : await mkdtemp(join(tmp, 'jyt-media-'));
   const proxy = await rangeProxy(urls, { fetcher, log });
-  const ff = spawnFn(ffmpeg, ffmpegArgs(proxy.urls, dir, { splitByTime }), { stdio: ['ignore', 'ignore', 'pipe'] });
-  let stderr = '';
-  ff.stderr?.on('data', (d) => { stderr = (stderr + d).slice(-2000); });
-  let exit = null;
-  const exited = new Promise((r) => ff.on('close', (code) => { exit = code ?? -1; r(); }));
-  const killer = setTimeout(() => ff.kill('SIGKILL'), maxMs);
+  // Runs (Everything-is-OK#367 phase 2): ffmpeg processes, each making the segments [start, until) in its own folder
+  // (dir/r<k>); a segment moves to dir once it is uploaded (kept there for the cache). Run 0 builds from the start. When
+  // a player waits for a segment of a whole (predicted) playlist that no run will reach soon, the run heading there
+  // stops at it and a new one starts at it (-copyts -ss, measured 2026-10-29: its segments line up with the in-order
+  // build within 2 frames, no drift); at most MAX_RUNS at once. When no run is left, the segments still missing are made
+  // by fill runs, the ones after the last want first. Each segment is still downloaded and uploaded about once.
+  const runs = [];
+  let segLen = 0; // the predicted segment length, once the playlist is predicted
+  function startRun(start, until) {
+    const r = { k: runs.length, start, until, dir: join(dir, `r${runs.length}`), exit: null, killed: false, stderr: '', listed: [],
+      top: start - 1, startedMs: Date.now() };
+    mkdirSync(r.dir, { recursive: true });
+    r.proc = spawnFn(ffmpeg, ffmpegArgs(proxy.urls, r.dir, { splitByTime, start, seconds: start * segLen }), { stdio: ['ignore', 'ignore', 'pipe'] });
+    r.proc.stderr?.on('data', (d) => { r.stderr = (r.stderr + d).slice(-2000); });
+    r.closed = new Promise((res) => r.proc.on('close', (code) => { r.exit = code ?? -1; res(); }));
+    runs.push(r);
+    return r;
+  }
+  const main = startRun(0, Infinity);
+  const alive = () => runs.filter((r) => r.exit === null);
+  const stop = (r) => { if (r.exit === null && !r.killed) { r.killed = true; r.proc.kill('SIGKILL'); } };
+  const killer = setTimeout(() => alive().forEach((r) => r.proc.kill('SIGKILL')), maxMs); // a failure, not a stop
+  // The first run that failed on its own (not stopped here): the job's ffmpeg exit, as with one run.
+  const failedRun = () => runs.find((r) => r.exit !== null && r.exit !== 0 && !r.killed);
+  const exitCode = () => failedRun()?.exit ?? (alive().length ? null : 0);
 
   let ready, failed, background;
   const first = new Promise((res, rej) => { ready = res; failed = rej; });
   const sent = new Set();
-  let mb = 0, gone = false, isReady = false, lastPlaylist = '', realText = '', predicted = null, short = false;
+  const made = new Map(); // segment → the run that made it
+  let mb = 0, gone = false, isReady = false, lastPlaylist = '', realText = '', predicted = null, short = false, jumps = 0, lastWant = null;
+  const name = (i) => `seg${i}.ts`;
+  const index = (s) => Number(s.slice(3, -3));
+  const jumped = () => runs.length > 1;
+  // What the server is sent when the job fails part way: cut back to the segments it has.
+  const listing = () => (jumped() ? predicted.text : realText);
+
+  async function readRun(r) {
+    let text;
+    try { text = await readFile(join(r.dir, 'index.m3u8'), 'utf8'); } catch { return null; }
+    r.listed = text.split(/\r?\n/).filter((l) => SEGMENT.test(l));
+    for (const s of r.listed) {
+      const i = index(s);
+      if (i >= r.until) { stop(r); continue; } // past its range: another run has it
+      if (i < r.start || made.has(s)) continue;
+      made.set(s, r);
+      r.top = Math.max(r.top, i);
+    }
+    return text;
+  }
+
+  // The next segment after i that is made or that an alive run starts at, else the playlist's end.
+  function boundary(i) {
+    let b = predicted ? predicted.count : Infinity;
+    for (const r of alive()) if (r.start > i) b = Math.min(b, r.start);
+    for (let j = i + 1; j < b; j++) if (made.has(name(j))) return j;
+    return b;
+  }
+  const covered = (i) => alive().some((r) => r.start <= i && i < r.until);
+
+  // A player waits for segment w (wanted()): unless an alive run will make it within a few seconds, the run heading
+  // there stops at w and a new one starts at w. A run that would be one too many is stopped where it got to (filled later).
+  function jumpFor(w) {
+    if (!predicted || !isReady || w == null || w === lastWant || !(w >= 0 && w < predicted.count) || made.has(name(w))) return;
+    lastWant = w;
+    const cover = alive().find((r) => r.start <= w && w < r.until);
+    if (cover) {
+      const perS = (cover.top - cover.start + 1) / Math.max(1, (Date.now() - cover.startedMs) / 1000);
+      if (w <= cover.top + Math.max(LEAD, perS * LEAD_S)) return; // coming anyway
+    }
+    const until = cover ? cover.until : boundary(w);
+    if (cover) cover.until = w;
+    const others = alive().filter((r) => r !== cover).sort((a, b) => a.start - b.start);
+    // Counting the ones not yet told to stop: a stopped run stays alive until its close event.
+    while (alive().filter((r) => !r.killed).length >= MAX_RUNS && others.length) { const v = others.shift(); v.until = v.top + 1; stop(v); }
+    jumps++;
+    log({ event: 'media_jump', cached: false, from: cover ? cover.top + 1 : null, to: w, seconds: Math.round(w * segLen) });
+    startRun(w, until);
+  }
+
+  // No run alive: one for the first missing segment (after the last want first). → whether one started.
+  function fill() {
+    if (!predicted || gone || failedRun() || runs.length >= MAX_TOTAL_RUNS) return false;
+    const missing = (from) => { for (let i = from; i < predicted.count; i++) if (!made.has(name(i)) && !covered(i)) return i; return -1; };
+    let m = lastWant != null ? missing(lastWant) : -1;
+    if (m < 0) m = missing(0);
+    if (m < 0) return false;
+    const prev = runs.at(-1);
+    if (prev.start === m && prev.top < m) return false; // the last run made nothing where it started: it would again
+    log({ event: 'media_run', from: m, until: boundary(m) });
+    startRun(m, boundary(m));
+    return true;
+  }
+
+  async function send(s) {
+    const r = made.get(s);
+    const body = await readFile(join(r.dir, s));
+    const status = await upload(s, body, 'video/mp2t');
+    if (status === 410) { gone = true; return false; }
+    if (status !== 204) throw new Error(`upload ${s} (${(body.length / 1e6).toFixed(1)} MB) answered ${status}`);
+    sent.add(s);
+    mb += body.length / 1e6;
+    // With a cache, kept for it in dir (where cache.put looks); without, gone.
+    if (cache) await rename(join(r.dir, s), join(dir, s)); else rm(join(r.dir, s), { force: true }).catch(() => {});
+    return true;
+  }
 
   async function pass(final) {
-    let text;
-    try { text = await readFile(join(dir, 'index.m3u8'), 'utf8'); } catch { return; }
+    let text = await readRun(main);
+    if (text == null) return;
     realText = text;
-    const segs = text.split(/\r?\n/).filter((l) => SEGMENT.test(l));
-    for (const s of segs) {
-      if (sent.has(s)) continue;
+    for (const r of runs) if (r !== main) await readRun(r);
+    const segs = main.listed;
+    if (isReady) jumpFor(wanted());
+    // What is made and not yet sent: the wanted one first, then the newest run's (where the player is), then older ones.
+    const order = () => [...made.keys()].filter((s) => !sent.has(s))
+      .sort((a, b) => (made.get(b).k - made.get(a).k) || (index(a) - index(b)));
+    for (let queue = order(); queue.length;) {
+      const w = wanted();
+      const s = w != null && queue.includes(name(w)) ? name(w) : queue[0];
       // Before the first playlist, seg0 only: a player needs nothing more to start, and the server holds a listed
       // segment that isn't here yet. Uploading all ffmpeg had made first held ready back by up to ~8 s (10–98
       // segments before the first playlist, Optiplex, 2026-10-24/25).
       if (!isReady && sent.size >= 1) break;
-      const body = await readFile(join(dir, s));
-      const status = await upload(s, body, 'video/mp2t');
-      if (status === 410) { gone = true; return; }
-      if (status !== 204) throw new Error(`upload ${s} (${(body.length / 1e6).toFixed(1)} MB) answered ${status}`);
-      sent.add(s);
-      mb += body.length / 1e6;
-      if (!cache) rm(join(dir, s), { force: true }).catch(() => {}); // with a cache, kept for it
+      if (!(await send(s))) return;
+      queue = queue.filter((q) => q !== s);
+      // A new want for a segment nobody has made: back to the loop, which starts a run for it.
+      if (!final && isReady && w !== wanted() && wanted() != null && !made.has(name(wanted()))) break;
     }
     // Closed where it got to when ffmpeg died part way, so players end instead of waiting for more.
     if (final && !text.includes('#EXT-X-ENDLIST')) text = `${text.trimEnd()}\n#EXT-X-ENDLIST\n`;
@@ -282,6 +390,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       const known = extinfs(text);
       const gop = !(duration > 0) ? null : splitByTime ? (onTime(known) ? HLS_TIME : null) : steadyLength(known);
       predicted = gop ? predictPlaylist([], gop, duration) : false;
+      segLen = gop ?? 0;
       // The decision with its inputs, so a growing playlist can be explained from the journal (staging, 2026-10-27).
       let at = 0;
       log({ event: 'media_steady', steady: !!gop, gop: gop ?? undefined, duration: Math.round(duration), splitByTime,
@@ -290,10 +399,11 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
     }
     if (predicted) {
       const actual = extinfs(text);
-      const differs = final && (segs.length !== predicted.count || !text.includes('#EXT-X-ENDLIST') || exit);
-      if (differs) log({ event: 'media_mismatch', predicted: predicted.count, actual: segs.length, exit });
-      else text = predicted.text;
-      if (final && !differs && actual.length) log({ event: 'media_predicted', segments: segs.length });
+      const count = jumped() ? made.size : segs.length;
+      const differs = final && (count !== predicted.count || (!jumped() && !text.includes('#EXT-X-ENDLIST')) || exitCode());
+      if (differs) log({ event: 'media_mismatch', predicted: predicted.count, actual: count, exit: exitCode() });
+      text = differs && jumped() ? closedAt(predicted.text, sent) : differs ? text : predicted.text;
+      if (final && !differs && actual.length) log({ event: 'media_predicted', segments: count });
     }
     if (text === lastPlaylist) return;
     lastPlaylist = text;
@@ -309,42 +419,47 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
 
   background = (async () => {
     try {
-      while (exit === null && !gone) {
-        await Promise.race([sleep(pollMs), exited]);
+      while (!gone) {
+        if (!alive().length && !fill()) break;
+        await Promise.race([sleep(pollMs), ...alive().map((r) => r.closed)]);
         await pass(false);
       }
       if (!gone) await pass(true);
-      if (gone) ff.kill('SIGKILL');
+      if (gone) runs.forEach(stop);
+      const exit = exitCode();
+      const stderr = (failedRun() ?? main).stderr;
       // ffmpeg ending cleanly short of the video is a failure, not done (world #266): fewer segments than predicted, or
       // (growing playlist) SHORT_S less running time than the video. The playlist went up closed where it got to; the
       // server marks a predicted session cut_short, and the copy is not cached, so the next play makes it again.
-      const made = extinfs(realText);
+      const count = jumped() ? made.size : extinfs(realText).length;
       const runS = playlistSeconds(realText);
-      short = !gone && exit === 0 && duration > 0 && (predicted ? made.length < predicted.count : runS < duration - SHORT_S);
+      short = !gone && exit === 0 && duration > 0 && (predicted ? count < predicted.count : runS < duration - SHORT_S);
       if (short) {
         log({ event: 'media_failed', reason: 'short', ms: Date.now() - started, mb: Math.round(mb), segments: sent.size,
           expected: predicted ? predicted.count : undefined, seconds: Math.round(runS), duration: Math.round(duration), source: proxy.failure ?? undefined });
         if (!isReady) failed(new Error(`ffmpeg ended at ${Math.round(runS)} of ${Math.round(duration)} s`));
         return;
       }
-      log({ event: 'media_done', ms: Date.now() - started, mb: Math.round(mb), segments: sent.size, exit, gone,
-        error: exit ? stderr.trim().split('\n').pop()?.slice(0, 200) : undefined });
+      log({ event: 'media_done', ms: Date.now() - started, mb: Math.round(mb), segments: sent.size, exit, gone, jumps: jumps || undefined,
+        runs: jumped() ? runs.length : undefined, error: exit ? stderr.trim().split('\n').pop()?.slice(0, 200) : undefined });
       if (!isReady) failed(new Error(gone ? 'session gone' : `ffmpeg exited ${exit}: ${stderr.trim().split('\n').pop() ?? ''}`.slice(0, 300)));
     } catch (err) {
-      ff.kill('SIGKILL');
+      runs.forEach(stop);
       log({ event: 'media_failed', ms: Date.now() - started, mb: Math.round(mb), message: String(err?.message ?? err).slice(0, 200) });
       if (!isReady) failed(err);
       else if (!gone && realText) {
-        const status = await upload('index.m3u8', Buffer.from(closedAt(realText, sent)), 'application/vnd.apple.mpegurl').catch(() => 0);
+        const status = await upload('index.m3u8', Buffer.from(closedAt(listing(), sent)), 'application/vnd.apple.mpegurl').catch(() => 0);
         log({ event: 'media_closed', segments: sent.size, status });
       }
     } finally {
       clearTimeout(killer);
-      await exited;
+      await Promise.all(runs.map((r) => r.closed));
       proxy.close();
-      // A stream that finished whole goes into the cache (put checks every listed segment is here); anything else is dropped.
+      // The runs' own folders (ffmpeg's playlists, segments past their range) go first, then a stream that finished
+      // whole goes into the cache (put checks every listed segment is here); anything else is dropped.
+      await Promise.all(runs.map((r) => rm(r.dir, { recursive: true, force: true })));
       let kept = false;
-      if (cache && exit === 0 && !gone && !short) {
+      if (cache && exitCode() === 0 && !gone && !short) {
         try { kept = cache.put(videoId, quality, dir, lastPlaylist, { seconds: duration }); } catch (err) { log({ event: 'media_cache_failed', message: String(err?.message ?? err).slice(0, 200) }); }
       }
       if (!kept) await rm(dir, { recursive: true, force: true });

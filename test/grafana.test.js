@@ -155,3 +155,9 @@ test('tonight: Tokyo Night line icons from Pages instead of system-coloured emoj
     assert.match(readFileSync(new URL(`../docs/icons/${f}.svg`, import.meta.url), 'utf8'), /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 24 24" fill="none" stroke=/, f);
   }
 });
+
+test('release and deploy markers are off by default, with their toggles available', () => {
+  const list = dashboard().annotations.list.filter((a) => !a.builtIn);
+  assert.deepEqual(list.map((a) => a.name), ['World uploads', 'GitHub releases', 'Deploys']);
+  assert.ok(list.every((a) => a.enable === false && !a.hide));
+});

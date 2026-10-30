@@ -45,7 +45,7 @@
      "type": "prometheus",
      "uid": "${ds}"
     },
-    "enable": true,
+    "enable": false,
     "iconColor": "#bb9af7",
     "expr": "max by (source, version) (eiok_release_timestamp_seconds{env!=\"staging\",source=~\"world:.*\"}) * 1000",
     "step": "5m",
@@ -60,7 +60,7 @@
      "type": "prometheus",
      "uid": "${ds}"
     },
-    "enable": true,
+    "enable": false,
     "iconColor": "#7dcfff",
     "expr": "max by (source, version) (eiok_release_timestamp_seconds{env!=\"staging\",source!~\"world:.*\"}) * 1000",
     "step": "5m",
@@ -75,7 +75,7 @@
      "type": "prometheus",
      "uid": "${ds}"
     },
-    "enable": true,
+    "enable": false,
     "iconColor": "#e0af68",
     "expr": "max by (host, commit, outcome) (eiok_deploy_timestamp_seconds{env!=\"staging\"}) * 1000",
     "step": "5m",

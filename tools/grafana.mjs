@@ -83,8 +83,9 @@ function versions(title, expr, labels, description) {
   };
 }
 // Markers on every time series: each release or deploy at its own time (the series' value), not at the scrape.
+// Off by default (owner, 2026-10-30); the dashboard's toggles turn each one on.
 const marker = (name, expr, iconColor, titleFormat, tagKeys) => ({
-  name, datasource: DS, enable: true, iconColor, expr, step: '5m', useValueForTime: true, titleFormat, textFormat: '', tagKeys,
+  name, datasource: DS, enable: false, iconColor, expr, step: '5m', useValueForTime: true, titleFormat, textFormat: '', tagKeys,
 });
 
 // Tokyo Night status colours.

@@ -12,6 +12,8 @@
 //   GET /v1/<shard>/q[/<720|1080>]                    the room's playback quality for search videos (read, or pick on the tablet)
 //   GET /v1/<shard>/r/<who>/<kind>                    a video report (world #353): 200 {"ok":true} at once; logged with this
 //                                                      shard's play and counted (who: visitor|tester; kinds in src/metrics.js)
+//   GET /v1/o/<who>/<platform>/<plan>/<outcome>       one play's outcome (world #274): 200 {"ok":true} at once, counted,
+//                                                      with no shard, ticket or video (sets in src/metrics.js)
 //   GET /v1/ch/<key>                                  a Channels slot (key from channels.json): 302 to its current
 //                                                      youtube.com/watch link, for Quest (src/channels.js)
 //   GET /hls/<token>.m3u8, /hls/<token>/<q>.m3u8          adaptive playlists a played ticket leads to (src/adaptive.js)
@@ -49,7 +51,7 @@ import { Relay, RelayError } from './relay.js';
 import { DataApi } from './dataapi.js';
 import { makeSearch } from './search.js';
 import { RefusalWatch } from './refusal.js';
-import { Metrics, noMetrics, lengthBucket, secondsBucket, sizeBucket, recordPoll, getMeta, setMeta, dayOf, REPORT_WHO, REPORT_KINDS } from './metrics.js';
+import { Metrics, noMetrics, lengthBucket, secondsBucket, sizeBucket, recordPoll, getMeta, setMeta, dayOf, REPORT_WHO, REPORT_KINDS, OUTCOME_WHO, OUTCOME_PLATFORMS, OUTCOME_PLANS, OUTCOMES } from './metrics.js';
 import { Adaptive, Pacer } from './adaptive.js';
 import { TunelioProbe } from './probe.js';
 import { EventRing, opsRoute, gitHead } from './ops.js';
@@ -725,6 +727,23 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return res.end('{"ok":true}');
   }
 
+  // One play's outcome from the world (world #274): a count, with nothing about the room or the video. The world can only
+  // load baked addresses, so the address is the whole message. A fixed ceiling per minute keeps a script from swamping the
+  // rate on the dashboard; over it the answer is the same and nothing is counted. Only a tester's outcome gets a log line,
+  // for lining up a test run: a visitor's leaves the plain request line alone.
+  const outcomeCap = config.outcomeCapPerMinute ?? 600;
+  let outcomeMinute = 0, outcomeSeen = 0;
+  function playOutcome(req, res, who, platform, plan, outcome) {
+    const minute = Math.floor(Date.now() / 60_000);
+    if (minute !== outcomeMinute) { outcomeMinute = minute; outcomeSeen = 0; }
+    const counted = ++outcomeSeen <= outcomeCap;
+    if (counted) metrics.inc('play_outcome', `${who}:${platform}:${plan}:${outcome}`);
+    if (who === 'tester') logJson({ event: 'play_outcome', who, platform, plan, outcome, counted });
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    if (req.method === 'HEAD') return res.end();
+    return res.end('{"ok":true}');
+  }
+
   async function ticket(req, res, shard, n, hlsTicket = false) {
     const t = store.get(shard, n);
     if (!t) return fail(res, 404, 'unknown_ticket', 'Nothing here yet. Search again.');
@@ -1106,6 +1125,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         metrics.shard(shard);
         route = 'search';
         return await search(req, res, shard, url, lang, Boolean(c[3]));
+      }
+      const o = url.pathname.match(/^\/v1\/o\/([a-z]{1,16})\/([a-z]{1,16})\/([a-z]{1,16})\/([a-z0-9]{1,16})\/?$/);
+      if (o) {
+        const [, who, platform, plan, outcome] = o;
+        if (!OUTCOME_WHO.includes(who) || !OUTCOME_PLATFORMS.includes(platform) || !OUTCOME_PLANS.includes(plan) || !OUTCOMES.includes(outcome)) return fail(res, 404, 'not_found', 'Unknown path.');
+        route = 'outcome';
+        return playOutcome(req, res, who, platform, plan, outcome);
       }
       const m = url.pathname.match(/^\/v1\/(\d+)\/(s(?:\.m3u8)?|q(?:\/(?:\d{3,4}|auto))?|cc(?:\/(?:[A-Za-z-]+|\d{1,3}))?|r\/[a-z]{1,16}\/[a-z]{1,16}|\d+(?:\.m3u8)?)\/?$/);
       if (!m) return fail(res, 404, 'not_found', 'Unknown path.');

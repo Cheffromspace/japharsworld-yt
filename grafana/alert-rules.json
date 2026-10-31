@@ -1674,6 +1674,60 @@
   ]
  },
  {
+  "uid": "eiok-play-failures",
+  "title": "Many plays failing for visitors",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "0m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "Over 30 % of visitors' plays failed in the last 3 hours. By class and plan: the \"What visitors saw\" row, or eiok_play_outcome_total."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "(sum(increase(eiok_play_outcome_total{env!=\"staging\",who=\"visitor\",outcome=~\"e.*|timeout|after\"}[3h])) / sum(increase(eiok_play_outcome_total{env!=\"staging\",who=\"visitor\"}[3h])) - 0.3) and sum(increase(eiok_play_outcome_total{env!=\"staging\",who=\"visitor\"}[3h])) >= 5",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
   "uid": "eiok-disk-low",
   "title": "Disk almost full",
   "folderUID": "everything-is-ok",

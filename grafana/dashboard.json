@@ -1760,7 +1760,7 @@
   {
    "type": "row",
    "id": 28,
-   "title": "Playback plans, home relay, captions",
+   "title": "What visitors saw (world #274)",
    "collapsed": false,
    "gridPos": {
     "x": 0,
@@ -1773,6 +1773,128 @@
   {
    "type": "timeseries",
    "id": 29,
+   "title": "Time to first frame, visitors",
+   "description": "From the load starting to the first frame, on each visitor's own client; testers apart. Buckets are coarse (5, 10, 20, 30, 45, 60, 90 s). Compare releases by time.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 57,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "histogram_quantile(0.5, sum by (le, platform) (increase(eiok_play_first_frame_seconds_bucket{env!=\"staging\",who=\"visitor\"}[6h])))",
+     "legendFormat": "p50 {{platform}}"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "histogram_quantile(0.95, sum by (le, platform) (increase(eiok_play_first_frame_seconds_bucket{env!=\"staging\",who=\"visitor\"}[6h])))",
+     "legendFormat": "p95 {{platform}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "timeseries",
+   "id": 30,
+   "title": "Plays that never showed a picture, visitors",
+   "description": "e*: VizVid gave up, by its error class. timeout: nothing after the world's cap. after: gave up after a first frame. left: the room moved on first, not a fault.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 57,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (outcome) (increase(eiok_play_outcome_total{env!=\"staging\",who=\"visitor\",outcome=~\"e.*|timeout|after|left\"}[6h]))",
+     "legendFormat": "{{outcome}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 30,
+      "stacking": {
+       "mode": "normal"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "row",
+   "id": 31,
+   "title": "Playback plans, home relay, captions",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 65,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "type": "timeseries",
+   "id": 32,
    "title": "Playback plans (per 6 h)",
    "description": "Which plan each video got (src/adaptive.js): plan_direct = 1080p at once, plan_adaptive = 720p then 1080p, plan_start = the 360p first rung, plan_lower = 720p only; paced_off = kept at 720p by the credit pacer.",
    "datasource": {
@@ -1781,7 +1903,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 57,
+    "y": 66,
     "w": 8,
     "h": 8
    },
@@ -1822,7 +1944,7 @@
   },
   {
    "type": "timeseries",
-   "id": 30,
+   "id": 33,
    "title": "Adaptive steps and Quest tickets (per 6 h)",
    "description": "master = adaptive playlists served, upgrade / upgrade_served / upgrade_failed = 1080p step-ups started, played, failed; hls_ticket = .m3u8 tickets (the world’s Android build); android_progressive = Quest players sent progressive; defer = resolver told to wait. reload_after_upgrade / reload_before_upgrade = the same player loading the master again after / before it got 1080p: the freeze proxy (a freeze shows no error, so Play pressed again is the closest signal; compare the two).",
    "datasource": {
@@ -1831,7 +1953,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 57,
+    "y": 66,
     "w": 8,
     "h": 8
    },
@@ -1872,7 +1994,7 @@
   },
   {
    "type": "timeseries",
-   "id": 31,
+   "id": 34,
    "title": "Ticket requests by client (per 6 h)",
    "description": "string = the tablet’s status checks, ytdlp = VRChat’s resolver, avpro = the player. Per request, not per play.",
    "datasource": {
@@ -1881,7 +2003,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 57,
+    "y": 66,
     "w": 8,
     "h": 8
    },
@@ -1922,7 +2044,7 @@
   },
   {
    "type": "stat",
-   "id": 32,
+   "id": 35,
    "title": "Home relay today",
    "description": "What the Optiplex downloaded for home relay plays today (Chicago day) against HOME_DAILY_MB, what the worker uploaded from its own cache instead (not counted against the cap, relay/cache.js), and the media workers connected now. Set every minute by the search service.",
    "datasource": {
@@ -1931,7 +2053,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 65,
+    "y": 74,
     "w": 8,
     "h": 4
    },
@@ -2017,7 +2139,7 @@
   },
   {
    "type": "timeseries",
-   "id": 33,
+   "id": 36,
    "title": "Home relay (per 6 h)",
    "description": "Sessions started / ready / failed / capped (refused by the daily cap) / timeout, and why a play went home (long video, Tunelio off or failed, the pacer).",
    "datasource": {
@@ -2026,7 +2148,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 65,
+    "y": 74,
     "w": 8,
     "h": 8
    },
@@ -2076,7 +2198,7 @@
   },
   {
    "type": "timeseries",
-   "id": 34,
+   "id": 37,
    "title": "Home relay start time",
    "description": "Play → first playlist with a segment from the Optiplex, 6 h windows.",
    "datasource": {
@@ -2085,7 +2207,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 65,
+    "y": 74,
     "w": 8,
     "h": 8
    },
@@ -2135,7 +2257,7 @@
   },
   {
    "type": "timeseries",
-   "id": 35,
+   "id": 38,
    "title": "Credits spent per day, by use",
    "description": "playback = /create for visitors, captions = transcripts, probe = the speed probe, test = test slot refills. Rolling 24 h.",
    "datasource": {
@@ -2144,7 +2266,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 73,
+    "y": 82,
     "w": 8,
     "h": 8
    },
@@ -2185,7 +2307,7 @@
   },
   {
    "type": "timeseries",
-   "id": 36,
+   "id": 39,
    "title": "Search sources (per 6 h)",
    "description": "worker = the Optiplex relay, local = InnerTube from the Linode, api = the YouTube Data API (quota).",
    "datasource": {
@@ -2194,7 +2316,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 73,
+    "y": 82,
     "w": 8,
     "h": 8
    },
@@ -2244,7 +2366,7 @@
   },
   {
    "type": "timeseries",
-   "id": 37,
+   "id": 40,
    "title": "Captions (per 6 h)",
    "description": "Track lists and tracks served, which source answered (worker, local yt-dlp, Tunelio), word timing real or estimated, and why none was available.",
    "datasource": {
@@ -2253,7 +2375,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 73,
+    "y": 82,
     "w": 8,
     "h": 8
    },
@@ -2321,7 +2443,7 @@
   },
   {
    "type": "timeseries",
-   "id": 38,
+   "id": 41,
    "title": "YouTube refusals (per hour)",
    "description": "Failed YouTube lookups by where (home = the Optiplex relay, linode, flash = the Optiplex flash-check worker) and class: bot = \"Sign in to confirm\", rate = 429 / try again later / a caption track that failed after its list, forbidden = 403, potoken = PO token, other. Counted from 2026-10-25 (src/refusal.js).",
    "datasource": {
@@ -2330,7 +2452,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 81,
+    "y": 90,
     "w": 8,
     "h": 8
    },
@@ -2371,7 +2493,7 @@
   },
   {
    "type": "timeseries",
-   "id": 39,
+   "id": 42,
    "title": "Rooms active (shards with a request, per hour)",
    "description": "Distinct shards that saw a request in the past hour (from the hourly shard table).",
    "datasource": {
@@ -2380,7 +2502,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 81,
+    "y": 90,
     "w": 8,
     "h": 8
    },
@@ -2422,7 +2544,7 @@
   },
   {
    "type": "timeseries",
-   "id": 40,
+   "id": 43,
    "title": "Plays by platform (per 6 h)",
    "description": "Once per room and platform (a room with PC and Quest players counts one of each), from the player’s User-Agent or a .m3u8 ticket. Counted from 2026-10-23.",
    "datasource": {
@@ -2431,7 +2553,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 81,
+    "y": 90,
     "w": 8,
     "h": 8
    },
@@ -2472,7 +2594,7 @@
   },
   {
    "type": "timeseries",
-   "id": 41,
+   "id": 44,
    "title": "Room quality picks and tablet warm-ups (per 6 h)",
    "datasource": {
     "type": "prometheus",
@@ -2480,7 +2602,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 89,
+    "y": 98,
     "w": 8,
     "h": 8
    },
@@ -2539,12 +2661,12 @@
   },
   {
    "type": "row",
-   "id": 42,
+   "id": 45,
    "title": "Channels and flash checks",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 97,
+    "y": 106,
     "w": 24,
     "h": 1
    },
@@ -2552,7 +2674,7 @@
   },
   {
    "type": "table",
-   "id": 43,
+   "id": 46,
    "title": "Slots",
    "datasource": {
     "type": "prometheus",
@@ -2560,7 +2682,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 98,
+    "y": 107,
     "w": 14,
     "h": 12
    },
@@ -2768,7 +2890,7 @@
   },
   {
    "type": "timeseries",
-   "id": 44,
+   "id": 47,
    "title": "Flash checks (per 6 h)",
    "datasource": {
     "type": "prometheus",
@@ -2776,7 +2898,7 @@
    },
    "gridPos": {
     "x": 14,
-    "y": 98,
+    "y": 107,
     "w": 10,
     "h": 6
    },
@@ -2816,7 +2938,7 @@
   },
   {
    "type": "timeseries",
-   "id": 45,
+   "id": 48,
    "title": "Check queue",
    "datasource": {
     "type": "prometheus",
@@ -2824,7 +2946,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 110,
+    "y": 119,
     "w": 10,
     "h": 6
    },
@@ -2874,12 +2996,12 @@
   },
   {
    "type": "row",
-   "id": 46,
+   "id": 49,
    "title": "Hosts",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 116,
+    "y": 125,
     "w": 24,
     "h": 1
    },
@@ -2887,7 +3009,7 @@
   },
   {
    "type": "timeseries",
-   "id": 47,
+   "id": 50,
    "title": "CPU busy",
    "datasource": {
     "type": "prometheus",
@@ -2895,7 +3017,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 117,
+    "y": 126,
     "w": 8,
     "h": 8
    },
@@ -2936,7 +3058,7 @@
   },
   {
    "type": "timeseries",
-   "id": 48,
+   "id": 51,
    "title": "Memory available",
    "datasource": {
     "type": "prometheus",
@@ -2944,7 +3066,7 @@
    },
    "gridPos": {
     "x": 8,
-    "y": 117,
+    "y": 126,
     "w": 8,
     "h": 8
    },
@@ -2985,7 +3107,7 @@
   },
   {
    "type": "timeseries",
-   "id": 49,
+   "id": 52,
    "title": "Disk free (/)",
    "datasource": {
     "type": "prometheus",
@@ -2993,7 +3115,7 @@
    },
    "gridPos": {
     "x": 16,
-    "y": 117,
+    "y": 126,
     "w": 8,
     "h": 8
    },
@@ -3034,7 +3156,7 @@
   },
   {
    "type": "timeseries",
-   "id": 50,
+   "id": 53,
    "title": "Public endpoints",
    "datasource": {
     "type": "prometheus",
@@ -3042,7 +3164,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 125,
+    "y": 134,
     "w": 12,
     "h": 8
    },
@@ -3091,7 +3213,7 @@
   },
   {
    "type": "timeseries",
-   "id": 51,
+   "id": 54,
    "title": "Failed units",
    "description": "japharsworld-yt units, bgutil-pot and caddy in the failed state.",
    "datasource": {
@@ -3100,7 +3222,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 125,
+    "y": 134,
     "w": 12,
     "h": 8
    },
@@ -3140,12 +3262,12 @@
   },
   {
    "type": "row",
-   "id": 52,
+   "id": 55,
    "title": "Versions and deploys",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 133,
+    "y": 142,
     "w": 24,
     "h": 1
    },
@@ -3153,7 +3275,7 @@
   },
   {
    "type": "state-timeline",
-   "id": 53,
+   "id": 56,
    "title": "World version over time",
    "datasource": {
     "type": "prometheus",
@@ -3161,7 +3283,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 134,
+    "y": 143,
     "w": 24,
     "h": 4
    },
@@ -3213,7 +3335,7 @@
   },
   {
    "type": "table",
-   "id": 54,
+   "id": 57,
    "title": "World uploads and releases",
    "description": "VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.",
    "datasource": {
@@ -3222,7 +3344,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 138,
+    "y": 147,
     "w": 12,
     "h": 6
    },
@@ -3286,7 +3408,7 @@
   },
   {
    "type": "table",
-   "id": 55,
+   "id": 58,
    "title": "Deploys of main",
    "description": "Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.",
    "datasource": {
@@ -3295,7 +3417,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 138,
+    "y": 147,
     "w": 12,
     "h": 6
    },

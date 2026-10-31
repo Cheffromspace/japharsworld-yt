@@ -77,6 +77,16 @@ const none = (k) => k === '';
 // world's stall watchdog reloading. Fixed sets, baked into the world's URLs.
 export const REPORT_WHO = ['visitor', 'tester'];
 export const REPORT_KINDS = ['frozen', 'stutter', 'sync', 'sound', 'load', 'quality', 'resync', 'autoresync'];
+// A play's outcome from the world (world #274): /v1/o/<who>/<platform>/<plan>/<outcome>. Baked URLs, same order as the world's
+// EverythingIsOKYouTubeBake.Outcome*. f<n>: first frame within n seconds of the load starting (fmax: later). e*: VizVid gave up,
+// by its error class. timeout: nothing after the world's cap. left: the room moved on first. after: gave up after a first frame.
+export const OUTCOME_WHO = REPORT_WHO;
+export const OUTCOME_PLATFORMS = ['pc', 'android'];
+export const OUTCOME_PLANS = ['home', 'adaptive', 'lower', 'direct', 'channel', 'link', 'unknown'];
+export const OUTCOME_FRAME_SECONDS = [5, 10, 20, 30, 45, 60, 90];
+export const OUTCOME_FRAMES = [...OUTCOME_FRAME_SECONDS.map((s) => `f${s}`), 'fmax'];
+export const OUTCOME_FAILS = ['einvalid', 'edenied', 'erate', 'eplayer', 'eunknown', 'timeout', 'after'];
+export const OUTCOMES = [...OUTCOME_FRAMES, ...OUTCOME_FAILS, 'left'];
 
 // metric → [table, key check]
 export const METRICS = {
@@ -135,6 +145,8 @@ export const METRICS = {
   // YouTube refused a lookup (src/refusal.js): '<where>:<class>', the class only, never the message, query or video.
   yt_refusal: ['daily', oneOf(...REFUSAL_WHERE.flatMap((w) => REFUSAL_CLASSES.map((c) => `${w}:${c}`)))],
   video_report: ['daily', oneOf(...REPORT_WHO.flatMap((w) => REPORT_KINDS.map((k) => `${w}:${k}`)))], // '<who>:<kind>'
+  // '<who>:<platform>:<plan>:<outcome>', fixed sets, no shard, ticket or video (world #274).
+  play_outcome: ['daily', oneOf(...OUTCOME_WHO.flatMap((w) => OUTCOME_PLATFORMS.flatMap((p) => OUTCOME_PLANS.flatMap((l) => OUTCOMES.map((o) => `${w}:${p}:${l}:${o}`)))))],
   join: ['daily', none],
   join_lang: ['daily', isLang],
   credits_remaining: ['gauge', none],

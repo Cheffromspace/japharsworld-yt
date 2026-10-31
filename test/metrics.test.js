@@ -297,3 +297,9 @@ test('poll rows: one per poll, daily min/max/last, old rows pruned after 90 days
   assert.equal(db.prepare('SELECT COUNT(*) n FROM poll_daily').get().n, 3); // kept forever
   assert.match(exportCsv(db), /poll_daily,2026-07-01,world:prod,occupants,,,1,5,1/);
 });
+
+test('play_outcome keys: fixed sets only, nothing free-form reaches the database (world #274)', () => {
+  assert.equal(checkedKey('play_outcome', 'visitor:android:home:f20'), 'visitor:android:home:f20');
+  assert.equal(checkedKey('play_outcome', 'tester:pc:unknown:left'), 'tester:pc:unknown:left');
+  for (const k of ['visitor:android:home', 'visitor:android:home:f7', 'owner:pc:home:f5', 'visitor:pc:abcdefghijk:f5', '3:visitor:pc:home:f5']) assert.equal(checkedKey('play_outcome', k), 'other', k);
+});

@@ -8,7 +8,7 @@ import http from 'node:http';
 import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
-import { METRICS, MS_BUCKETS, S_BUCKETS, REPORT_WHO, REPORT_KINDS, dayOf } from '../src/metrics.js';
+import { METRICS, MS_BUCKETS, S_BUCKETS, REPORT_WHO, REPORT_KINDS, OUTCOME_WHO, OUTCOME_PLATFORMS, OUTCOME_FRAME_SECONDS, dayOf } from '../src/metrics.js';
 import { REFUSAL_CLASSES as FLASH_REFUSALS } from '../src/refusal.js';
 
 // Daily bucket counters exported as Prometheus histograms (le in seconds), so histogram_quantile works.
@@ -56,7 +56,7 @@ export function metricsDbSeries(db, o, now = Date.now()) {
   const hist = {};
   for (const r of totals) {
     if (HISTOGRAMS[r.metric]) { (hist[r.metric] ??= {})[r.key] = r.v; continue; }
-    if (METRICS[r.metric]?.[0] !== 'daily') continue;
+    if (METRICS[r.metric]?.[0] !== 'daily' || r.metric === 'play_outcome') continue; // play_outcome has its own labelled series below
     o.add('eiok_events_total', 'counter', 'Usage counts from the search service, all days summed (claude/metrics.md).', { metric: r.metric, key: r.key }, r.v);
   }
   for (const [metric, [name, bounds, perSecond]] of Object.entries(HISTOGRAMS)) {
@@ -79,6 +79,24 @@ export function metricsDbSeries(db, o, now = Date.now()) {
   o.add('eiok_tunelio_probe_cuts_total', 'counter', 'Connections cut during that read, all days summed.', {}, drop.cut ?? 0);
   o.add('eiok_tunelio_probe_reopen_fail_total', 'counter', 'Reopens at the byte reached that failed (status, wrong offset, or no first byte in 10 s), all days summed.', {}, drop.reopen_fail ?? 0);
   o.add('eiok_tunelio_probe_open_fail_total', 'counter', 'Reads that never started: all three first opens failed the same way, all days summed.', {}, drop.open_fail ?? 0);
+  // Play outcomes (world #274): labelled counts, only those seen (448 possible; a count's very first play doesn't show in
+  // increase()), and a first-frame histogram per who and platform, from 0.
+  const outcomes = totals.filter((r) => r.metric === 'play_outcome' && r.key !== 'other').map((r) => [...r.key.split(':'), r.v]);
+  for (const [who, platform, plan, outcome, v] of outcomes) {
+    o.add('eiok_play_outcome_total', 'counter', 'Play outcomes from the world, all days summed: first frame within f<n> seconds, or how it failed.', { who, platform, plan, outcome }, v);
+  }
+  for (const who of OUTCOME_WHO) for (const platform of OUTCOME_PLATFORMS) {
+    const frames = (name) => outcomes.filter((x) => x[0] === who && x[1] === platform && x[3] === name).reduce((sum, x) => sum + x[4], 0);
+    const help = 'Seconds from a video starting to load to its first frame, from the world (world #274).';
+    let seen = 0;
+    for (const s of OUTCOME_FRAME_SECONDS) {
+      seen += frames(`f${s}`);
+      o.add('eiok_play_first_frame_seconds_bucket', 'histogram', help, { who, platform, le: String(s) }, seen);
+    }
+    seen += frames('fmax');
+    o.add('eiok_play_first_frame_seconds_bucket', 'histogram', help, { who, platform, le: '+Inf' }, seen);
+    o.add('eiok_play_first_frame_seconds_count', 'histogram', help, { who, platform }, seen);
+  }
   const credits = db.prepare("SELECT value, at FROM gauges WHERE metric = 'credits_remaining' ORDER BY day DESC, at DESC LIMIT 1").get();
   if (credits) o.add('eiok_credits_remaining', 'gauge', 'Tunelio credits left (search service, last seen).', {}, credits.value);
   for (const r of db.prepare(`SELECT key, value FROM gauges WHERE metric = 'home_today'

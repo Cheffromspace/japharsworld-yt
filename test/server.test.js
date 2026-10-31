@@ -392,3 +392,30 @@ test('pasted link search doesn\'t list: its length, live state and title come fr
   const n = (await s.get(`/v1/1/s?q=${encodeURIComponent('https://youtu.be/NoKeyLook01')}`)).body;
   assert.equal(n.results[0].title, 'NoKeyLook01');
 });
+
+// World #274: a play's outcome. Nothing about the room or the video exists on this route.
+test('play outcomes /v1/o/<who>/<platform>/<plan>/<outcome>: 200 at once, counted, no shard, tester only in the log', async (t) => {
+  const lines = [];
+  const incs = [];
+  const shards = [];
+  const metrics = { inc: (m, k) => incs.push(`${m}:${k}`), gauge() {}, latency() {}, shard: (n) => shards.push(n), flush() { return 0; }, start() { return this; }, close() {} };
+  const s = await start({ log: (l) => lines.push(l), metrics, config: { ...config, outcomeCapPerMinute: 4 } });
+  t.after(() => s.server.close());
+  const outcomes = () => lines.map((l) => JSON.parse(l)).filter((e) => e.event === 'play_outcome');
+  const r = await s.get('/v1/o/visitor/android/home/f20');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.ok, true);
+  assert.deepEqual(incs.filter((x) => x.startsWith('play_outcome:')), ['play_outcome:visitor:android:home:f20']);
+  assert.deepEqual(shards, [], 'no room is counted as active');
+  assert.equal(outcomes().length, 0, 'a visitor gets only the plain request line');
+  const plain = lines.map((l) => JSON.parse(l)).find((l) => l.route === 'outcome');
+  assert.deepEqual(Object.keys(plain).sort(), ['at', 'ms', 'route', 'status'], 'the request line says nothing else');
+  await s.get('/v1/o/tester/pc/link/eplayer');
+  assert.deepEqual(outcomes().map(({ who, platform, plan, outcome, counted }) => ({ who, platform, plan, outcome, counted })), [{ who: 'tester', platform: 'pc', plan: 'link', outcome: 'eplayer', counted: true }]);
+  for (const p of ['/v1/o/owner/pc/link/f5', '/v1/o/tester/mac/link/f5', '/v1/o/tester/pc/x/f5', '/v1/o/tester/pc/link/f7', '/v1/o/tester/pc/link', '/v1/o/tester/pc/link/f5/x']) {
+    assert.equal((await s.get(p)).status, 404, p);
+  }
+  // The ceiling: the answer stays the same, nothing more is counted.
+  for (let i = 0; i < 6; i++) assert.equal((await s.get('/v1/o/visitor/pc/link/left')).status, 200);
+  assert.ok(incs.filter((x) => x === 'play_outcome:visitor:pc:link:left').length <= 4);
+});

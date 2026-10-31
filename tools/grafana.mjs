@@ -184,6 +184,14 @@ export function dashboard() {
 
   // Playback plans, the home relay, captions and credits (2026-10-23 audit: all of these were counted but not shown).
   const ev = (metric, w = '6h') => `sum by (key) (increase(eiok_events_total{metric="${metric}"}[${w}]))`;
+  p.push(row('What visitors saw (world #274)'));
+  p.push(series('Time to first frame, visitors', [
+    ['histogram_quantile(0.5, sum by (le, platform) (increase(eiok_play_first_frame_seconds_bucket{who="visitor"}[6h])))', 'p50 {{platform}}'],
+    ['histogram_quantile(0.95, sum by (le, platform) (increase(eiok_play_first_frame_seconds_bucket{who="visitor"}[6h])))', 'p95 {{platform}}'],
+  ], { unit: 's', min: 0, description: 'From the load starting to the first frame, on each visitor\'s own client; testers apart. Buckets are coarse (5, 10, 20, 30, 45, 60, 90 s). Compare releases by time.' }));
+  p.push(series('Plays that never showed a picture, visitors', [
+    ['sum by (outcome) (increase(eiok_play_outcome_total{who="visitor",outcome=~"e.*|timeout|after|left"}[6h]))', '{{outcome}}'],
+  ], { stack: true, min: 0, description: 'e*: VizVid gave up, by its error class. timeout: nothing after the world\'s cap. after: gave up after a first frame. left: the room moved on first, not a fault.' }));
   p.push(row('Playback plans, home relay, captions'));
   p.push(series('Playback plans (per 6 h)', [[ev('adaptive').replace('}[', ',key=~"plan_.*|paced_off"}['), '{{key}}']], { w: 8, stack: true, min: 0,
     description: 'Which plan each video got (src/adaptive.js): plan_direct = 1080p at once, plan_adaptive = 720p then 1080p, plan_start = the 360p first rung, plan_lower = 720p only; paced_off = kept at 720p by the credit pacer.' }));
@@ -502,6 +510,8 @@ export function alertRules(dsUid, { critical = false } = {}) {
     // point from its own webhook env var, pushed like DISCORD_CRITICAL_WEBHOOK's, and this rule's receiver set to it.
     rule('eiok-tester-report', 'Tester video report', 'sum by (kind) (increase(eiok_video_report_total{kind=~"frozen|stutter|sync|sound|load|quality"}[15m]))', { forM: 0, summary: 'A tester reported "{{ $labels.kind }}" from the world in the last 15 minutes. The play behind it: `node tools/ops.mjs events --event video_report`.' }),
     rule('eiok-tunelio-reopen-fail', 'Tunelio open or reopen failed', 'sum(increase(eiok_tunelio_probe_reopen_fail_total[6h])) + sum(increase(eiok_tunelio_probe_open_fail_total[6h]))', { forM: 0, summary: 'In the last 6 hours the speed probe could not resume a cut Tunelio link at the byte reached, or could not open one at all (three tries): a reset would then be a visible freeze for players, and a failed open can mean Tunelio stopped honouring Range. The cause can be the Linode\'s own network, because any fetch error counts, not only an answer from Tunelio. The details: `node tools/ops.mjs events --event tunelio_drop_open,tunelio_drop_cut,tunelio_drop_reopen,tunelio_drop`.' }),
+    // World #274: over 30 % of 5 or more visitor plays in 3 h failed. "left" counts as a play, not as a failure.
+    rule('eiok-play-failures', 'Many plays failing for visitors', '(sum(increase(eiok_play_outcome_total{who="visitor",outcome=~"e.*|timeout|after"}[3h])) / sum(increase(eiok_play_outcome_total{who="visitor"}[3h])) - 0.3) and sum(increase(eiok_play_outcome_total{who="visitor"}[3h])) >= 5', { forM: 0, summary: 'Over 30 % of visitors\' plays failed in the last 3 hours. By class and plan: the "What visitors saw" row, or eiok_play_outcome_total.' }),
     rule('eiok-disk-low', 'Disk almost full', 'max by (host) (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) > 0.9', { forM: 15, summary: 'Under 10 % free on / of {{ $labels.host }}.' }),
   ]);
 }

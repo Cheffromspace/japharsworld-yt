@@ -15,6 +15,8 @@ function fixtures() {
   const db = openMetricsDb(metricsDb);
   const put = db.prepare('INSERT INTO daily (day, metric, key, value) VALUES (?, ?, ?, ?)');
   for (const [d, m, k, v] of [
+    ['2026-10-19', 'play_outcome', 'visitor:android:home:f20', 2], ['2026-10-20', 'play_outcome', 'visitor:android:home:f20', 1], ['2026-10-20', 'play_outcome', 'visitor:android:adaptive:f5', 4],
+    ['2026-10-20', 'play_outcome', 'visitor:android:adaptive:fmax', 1], ['2026-10-20', 'play_outcome', 'visitor:android:home:eplayer', 5], ['2026-10-20', 'play_outcome', 'other', 9],
     ['2026-10-18', 'search', '', 40], ['2026-10-19', 'search', '', 10], ['2026-10-19', 'play_route', 'tunelio-hls', 3],
     ['2026-10-19', 'search_ms', '1000', 4], ['2026-10-19', 'search_ms', '3000', 1], ['2026-10-19', 'search_ms', 'inf', 1],
     ['2026-10-19', 'video_report', 'tester:frozen', 2], ['2026-10-20', 'video_report', 'tester:frozen', 1], ['2026-10-20', 'video_report', 'visitor:resync', 4],
@@ -77,6 +79,15 @@ test('exporter: usage counters, histograms, polls, slots, flash checks, jobs, he
     has('eiok_transfer_bytes{host="home",period="today"} 40000000');
     has('eiok_transfer_bytes{host="home",period="month"} 40000000');
     has('eiok_search_seconds_count 6');
+    // Play outcomes (world #274): seen sets only; the histogram from 0; not also in eiok_events_total.
+    has('eiok_play_outcome_total{who="visitor",platform="android",plan="home",outcome="f20"} 3');
+    has('eiok_play_outcome_total{who="visitor",platform="android",plan="home",outcome="eplayer"} 5');
+    assert.ok(!text.includes('outcome="f90"') && !text.includes('metric="play_outcome"') && !text.includes('outcome="other"'));
+    has('eiok_play_first_frame_seconds_bucket{who="visitor",platform="android",le="5"} 4');
+    has('eiok_play_first_frame_seconds_bucket{who="visitor",platform="android",le="20"} 7');
+    has('eiok_play_first_frame_seconds_bucket{who="visitor",platform="android",le="+Inf"} 8');
+    has('eiok_play_first_frame_seconds_count{who="visitor",platform="android"} 8');
+    has('eiok_play_first_frame_seconds_bucket{who="tester",platform="pc",le="+Inf"} 0');
     has('eiok_credits_remaining 4000');
     has('eiok_home_today{key="mb"} 2500');
     has('eiok_home_today{key="workers"} 1');

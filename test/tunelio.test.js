@@ -437,3 +437,122 @@ test('Tunelio /create gives up after createTimeoutMs and remembers when', async 
   assert.ok(Date.now() - t0 < 1000, 'the short /create timeout');
   assert.equal(t.timedOutAt, 1234);
 });
+
+// World #420: Tunelio refuses a video as too long and home takes no build.
+async function tooLongApp(t, { home = undefined, config = {} } = {}) {
+  const store = new Store({ path: ':memory:', shards: 1, pool: 50, pinHours: 24 });
+  const youtube = { async search() { return { videos: [{ id: 'AAAAAAAAAAA', title: 'a', channel: 'c', length: '24:00:00', seconds: 86400, views: '', age: '', live: false, cc: false }], more: null }; }, thumbnailUrl: (id) => id };
+  const calls = [];
+  const tunelio = { enabled: true, async create(id) { calls.push(id); const e = new Error('Video is too long.'); e.status = 413; e.code = 'Video is too long.'; throw e; } };
+  const playback = new Playback({ tunelio });
+  const counts = {};
+  const metrics = new Proxy({ counts, inc(m, k = '') { counts[m + ':' + k] = (counts[m + ':' + k] ?? 0) + 1; } }, { get: (o, k) => (k in o ? o[k] : () => {}) });
+  const app = createApp({ config: { ...base, shards: 1, pool: 50, ticketPlayerHoldMs: 5000, homeAndroid: true, ...config }, store, youtube, playback, tunelio: { enabled: true }, metrics, log: () => {}, ...(home ? { home } : {}) });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const get = (p, ua) => fetch('http://127.0.0.1:' + server.address().port + p, { redirect: 'manual', headers: { 'user-agent': ua } });
+  const r = await (await get('/v1/0/s?q=x', UNITY)).json();
+  return { get, calls, metrics, ticket: '/v1/0/' + r.results[0].t, t: r.results[0].t };
+}
+const UNITY = 'UnityPlayer/2022.3.22f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)';
+const WMF = 'NSPlayer/12.00.26100.1234 WMFSDK/12.00.26100.1234';
+const AVPRO_QUEST = 'AVProMobileVideo/2026.3.3p2 (Linux;Android 14) ExoPlayer';
+// A home that always refuses for room while a worker is free; counts its checks like home_no_room's log lines.
+const refusingHome = () => ({ enabled: true, starts: 0, worker: () => ({ id: 'w' }), peek: () => null, start() { this.starts++; return null; }, other: () => null, isUneven: () => false, state: () => ({}), sweep() {} });
+
+test('too long: a Quest gets state failed, reason and error too_long, and a fast 403; one /create (world #420)', async (t) => {
+  const a = await tooLongApp(t);
+  const first = await a.get(a.ticket + '.m3u8', AVPRO_QUEST);
+  assert.equal(first.status, 403, 'not a youtube.com link it would retry');
+  assert.equal(first.headers.get('location'), null);
+  assert.deepEqual(await first.json().then((b) => b.error), 'too_long');
+  for (let i = 0; i < 3; i++) assert.equal((await a.get(a.ticket + '.m3u8', AVPRO_QUEST)).status, 403);
+  assert.equal((await a.get(a.ticket, AVPRO_QUEST)).status, 403, 'an Android player on a plain ticket too');
+  const st = await (await a.get(a.ticket + '.m3u8', UNITY)).json();
+  assert.deepEqual([st.t, st.state, st.reason, st.error, st.title], [a.t, 'failed', 'too_long', 'too_long', 'a']);
+  assert.equal(a.calls.length, 1, 'never asks Tunelio again');
+  assert.equal(a.metrics.counts['ticket_too_long:'], 6);
+});
+
+test('too long: a PC keeps the youtube.com link and its tablet says so, not failed (world #420)', async (t) => {
+  const a = await tooLongApp(t);
+  for (let i = 0; i < 2; i++) {
+    const play = await a.get(a.ticket, WMF);
+    assert.equal(play.status, 302);
+    assert.equal(play.headers.get('location'), 'https://www.youtube.com/watch?v=AAAAAAAAAAA');
+  }
+  const st = await (await a.get(a.ticket, UNITY)).json();
+  assert.deepEqual([st.state, st.reason, st.error], ['youtube', 'too_long', undefined]);
+  assert.equal(a.calls.length, 1);
+  assert.equal(a.metrics.counts['ticket_too_long:'], undefined);
+  assert.equal(a.metrics.counts['play_fallback:too_long'], 1);
+});
+
+test('home refused for room: one check per video in 5 min, however many retries and polls (world #420)', async (t) => {
+  const home = refusingHome();
+  const a = await tooLongApp(t, { home });
+  for (let i = 0; i < 5; i++) {
+    assert.equal((await a.get(a.ticket + '.m3u8', AVPRO_QUEST)).status, 403);
+    assert.equal((await (await a.get(a.ticket + '.m3u8', UNITY)).json()).error, 'too_long');
+  }
+  assert.equal((await a.get(a.ticket, WMF)).status, 302, 'the PC is answered too');
+  assert.equal(home.starts, 1);
+  assert.equal(a.calls.length, 1);
+});
+
+test('too long, home takes it: the Quest plays home, no too_long (world #420)', async (t) => {
+  const s = { id: 'AAAAAAAAAAA', quality: '720p', state: 'ready', why: null, ended: true, endlist: true };
+  const home = { ...refusingHome(), start() { this.starts++; return s; }, wait: async () => s, settle: async () => {}, url: () => 'http://h/home/x/index.m3u8', peek: () => null, save() {}, eta: () => 0 };
+  const a = await tooLongApp(t, { home });
+  const play = await a.get(a.ticket + '.m3u8', AVPRO_QUEST);
+  assert.equal(play.status, 302);
+  assert.equal(play.headers.get('location'), 'http://h/home/x/index.m3u8');
+  assert.equal(a.metrics.counts['ticket_too_long:'], undefined);
+});
+
+test('Playback: a refused too-long video is remembered for a day, another failure is not', async () => {
+  let now = 1000;
+  const calls = [];
+  const tunelio = { enabled: true, async create(id) { calls.push(id); const e = new Error(id === 'long' ? 'Video is too long.' : 'boom'); e.status = id === 'long' ? 413 : 500; throw e; } };
+  const p = new Playback({ tunelio, now: () => now, restrictedHours: 24 });
+  const r = await p.location({ id: 'long', seconds: 90000 });
+  assert.deepEqual([r.via, r.reason], ['youtube', 'too_long']);
+  assert.deepEqual(p.status({ id: 'long' }), { state: 'youtube', reason: 'too_long' });
+  assert.equal(p.start({ id: 'long' }), null);
+  await assert.rejects(p.size({ id: 'long' }, '1080p'), /too long/);
+  assert.equal(calls.length, 1);
+  now += 24 * 3600_000;
+  assert.equal(p.tooLong('long'), false, 'asked again after a day');
+  const other = await p.location({ id: 'other', seconds: 60 });
+  assert.equal(other.reason, 'tunelio_failed');
+  assert.equal(p.tooLong('other'), false);
+});
+
+test('too long with playback plans on: planning stops asking Tunelio once it has refused (world #420)', async (t) => {
+  const a = await tooLongApp(t, { config: { adaptiveHls: true } });
+  assert.equal((await a.get(a.ticket, WMF)).status, 302);
+  const after = a.calls.length;
+  for (let i = 0; i < 3; i++) await a.get(a.ticket, WMF);
+  for (let i = 0; i < 3; i++) await a.get(a.ticket + '.m3u8', AVPRO_QUEST);
+  await a.get(a.ticket, UNITY);
+  assert.equal(a.calls.length, after);
+});
+
+test('too long, a video home would not take at first: home is still tried before the answer (world #420)', async (t) => {
+  const s = { id: 'AAAAAAAAAAA', quality: '720p', state: 'ready', why: null, ended: true, endlist: true };
+  const home = { ...refusingHome(), isUneven: () => true, start() { this.starts++; return s; }, wait: async () => s, settle: async () => {}, url: () => 'http://h/home/x/index.m3u8', save() {}, eta: () => 0 };
+  const a = await tooLongApp(t, { home });
+  const play = await a.get(a.ticket + '.m3u8', AVPRO_QUEST);
+  assert.equal(play.status, 302);
+  assert.equal(play.headers.get('location'), 'http://h/home/x/index.m3u8');
+  assert.equal(home.starts, 1);
+});
+
+test('Playback: only a 413 is remembered as too long, not a 504 that says "too long"', async () => {
+  const tunelio = { enabled: true, async create() { const e = new Error('Upstream took too long to respond.'); e.status = 504; throw e; } };
+  const p = new Playback({ tunelio });
+  const r = await p.location({ id: 'slow', seconds: 600 });
+  assert.equal(r.reason, 'tunelio_failed');
+  assert.equal(p.tooLong('slow'), false);
+});

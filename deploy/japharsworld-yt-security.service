@@ -7,7 +7,8 @@ Type=oneshot
 # SSH_KNOWN_SOURCES (the expected login addresses) is local only: the repo is public.
 EnvironmentFile=-/etc/japharsworld-yt-security.env
 # ufw takes /run/ufw.lock even for `status` and crashes when it can't (read-only under ProtectSystem=strict, 2026-10-26):
-# the file is made outside the sandbox (+) and only it is writable inside. /run is emptied at boot.
+# the file is made outside the sandbox (+) and only it is writable inside. /run is emptied at boot, and the sandbox needs
+# the file before this line can run, so japharsworld-yt-security.tmpfiles makes it at boot (world #428).
 ExecStartPre=+/usr/bin/touch /run/ufw.lock
 ExecStart=/usr/bin/node /opt/japharsworld-yt/metrics/security.js
 TimeoutStartSec=50s

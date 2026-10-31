@@ -36,6 +36,9 @@ for unit in japharsworld-yt-metrics.service japharsworld-yt-metrics.timer japhar
   install -m 644 "$APP/deploy/$unit" /etc/systemd/system/
 done
 systemctl daemon-reload
+# /run/ufw.lock at every boot, before the security timer can fire (world #428; the file says why).
+install -m 644 "$APP/deploy/japharsworld-yt-security.tmpfiles" /etc/tmpfiles.d/japharsworld-yt-security.conf
+systemd-tmpfiles --create /etc/tmpfiles.d/japharsworld-yt-security.conf
 systemctl enable -q --now japharsworld-yt-metrics.timer japharsworld-yt-occupants.timer
 # Security counters (metrics/security.js) into Alloy's textfile folder; the folder deploy-record.sh uses.
 install -d -m 755 /var/lib/japharsworld-yt-deploy

@@ -25,7 +25,7 @@ POLLER=${DEPLOY_POLLER:-on}       # the metrics poller (VRChat, Tunelio, GitHub 
 ALLOY=${DEPLOY_ALLOY:-linode}     # deploy/alloy/<name>.alloy
 export DEPLOY_POLLER="$POLLER"
 monitor_setup() { [ "$MONITOR" = on ] || return 0; bash deploy/monitor-setup.sh; }
-metrics_missing() { [ ! -f /etc/systemd/system/japharsworld-yt-exporter.service ] || [ ! -f /etc/systemd/system/japharsworld-yt-security.timer ] || { [ "$POLLER" = on ] && [ ! -f /etc/systemd/system/japharsworld-yt-occupants.timer ]; }; }
+metrics_missing() { [ ! -f /etc/systemd/system/japharsworld-yt-exporter.service ] || [ ! -f /etc/systemd/system/japharsworld-yt-security.timer ] || [ ! -f /etc/tmpfiles.d/japharsworld-yt-security.conf ] || { [ "$POLLER" = on ] && [ ! -f /etc/systemd/system/japharsworld-yt-occupants.timer ]; }; }
 
 healthy() { for i in $(seq 1 20); do curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && return 0; sleep 1; done; return 1; }
 busy() { curl -fsS --max-time 3 "http://127.0.0.1:$PORT/healthz" 2>/dev/null | grep -o '"busy":[0-9]*' | cut -d: -f2 || true; }

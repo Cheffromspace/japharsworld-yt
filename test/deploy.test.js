@@ -49,3 +49,19 @@ test('harden.sh: addresses stay local; SSH from home and HTTPS only (MediaMTX\'s
     assert.deepEqual(ips, [], f);
   }
 });
+
+// World #428: ReadWritePaths needs /run/ufw.lock, and /run is emptied at boot, so the first run after each reboot failed
+// with 226/NAMESPACE until something made the file.
+test('security unit: /run/ufw.lock is made at boot by a tmpfiles entry the setup path installs', () => {
+  assert.match(script('japharsworld-yt-security.service'), /^ReadWritePaths=.*\/run\/ufw\.lock/m);
+  const entry = script('japharsworld-yt-security.tmpfiles').split('\n').filter((l) => l && !l.startsWith('#'));
+  assert.deepEqual(entry, ['f /run/ufw.lock 0644 root root -'], 'plain f: never truncates, no boot-only flag');
+  const setup = script('metrics-setup.sh');
+  assert.match(setup, /install -m 644 "\$APP\/deploy\/japharsworld-yt-security\.tmpfiles" \/etc\/tmpfiles\.d\/japharsworld-yt-security\.conf/);
+  assert.match(setup, /systemd-tmpfiles --create \/etc\/tmpfiles\.d\/japharsworld-yt-security\.conf/);
+  const u = script('update.sh');
+  const file = 'deploy/japharsworld-yt-security.tmpfiles';
+  assert.ok(new RegExp(/service_changed=\$\(echo "\$changed" \| grep -v -E '(.*)' \|\| true\)/.exec(u)[1]).test(file), 'does not restart the search service');
+  assert.ok(new RegExp(/metrics_setup_changed=\$\(echo "\$changed" \| grep -E '(.*)' \|\| true\)/.exec(u)[1]).test(file), 'a change runs the setup');
+  assert.match(/metrics_missing\(\) \{.*/.exec(u)[0], /\/etc\/tmpfiles\.d\/japharsworld-yt-security\.conf/, 'a host without it gets it on the next pass');
+});

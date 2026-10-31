@@ -529,8 +529,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   function homeWhy(data, quality, hlsTicket = false) {
     if (!home.enabled || data.live) return null;
     const s = home.peek(data, quality);
-    // A session the race started for a Quest (raceHome) isn't a reason for a PC player: a growing playlist opens as live
-    // there (#111), and its own build is what it would have had without the race. Once finished it is a plain VOD.
+    // A session the race started for a Quest (raceHome) isn't a reason for a PC player to reuse it: a growing playlist
+    // opens as live there (#111), and its own build is what it would have had without the race. Once finished it is a
+    // plain VOD. Only this reuse, so only the normal Tunelio path: a PC play with its own reason (long, pacer, Tunelio off
+    // or slow) still starts home, which is that same session, growing.
     if (s && s.state !== 'failed' && (hlsTicket || s.why !== 'slow_build' || s.ended)) return 'reuse';
     // No worker for this quality: the video's session at another quality, if it has one (homeKeep), else Tunelio.
     if (!home.worker()) return home.other?.(data, quality) ? 'reuse' : null;
@@ -645,7 +647,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // waits, 17 with a hold over 20 s, 7 over 40 s, up to 97 s; home ready p50 6.6 s, max 15.2 s. Age, not this hold's own
   // time, so that a build warmed from the tablet counts, players of a room change over together and a player's retry
   // doesn't start the clock again. The build carries on: its credits are spent, and the next play can use the link.
-  async function raceHome(req, shard, data, c, hq) {
+  async function raceHome(req, shard, data, c, hq, key) {
     const hold = playback.location(data, { holdMs: config.ticketPlayerHoldMs, quality: c.quality, hls: c.hls });
     const job = playback.peek?.(data, c.quality, { hls: c.hls });
     if (job?.state !== 'building') return hold;
@@ -660,8 +662,12 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const tunelio = await Promise.race([hold, home.wait(s, config.homeReadyMs).then(() => null)]);
     if (tunelio) return tunelio;
     if (s.state !== 'ready') return hold; // home failed or missed its time: Tunelio's hold goes on
-    metrics.inc('home', 'race_won');
-    logJson({ event: 'home_race_won', id: data.id, quality: s.quality, ms: Date.now() - job.startedMs });
+    // Another player of this ticket was answered meanwhile: the ticket's last check gives this one that answer, so this
+    // is no win (#293).
+    if (!pinned(key, data, { touch: false })) {
+      metrics.inc('home', 'race_won');
+      logJson({ event: 'home_race_won', id: data.id, quality: s.quality, ms: Date.now() - job.startedMs });
+    }
     return homeWhere(s);
   }
 
@@ -762,22 +768,23 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const android = isAndroidPlayer(req.headers['user-agent']);
       const started = Date.now();
       const key = pinKey(shard, n, hlsTicket, kind);
-      const pin = pinned(key, t.data);
-      if (pin) {
+      const answerPin = (pin, held = 0) => {
         if (resolver && pin.playlist) {
           // A playlist behind the ticket: sent on at once, as when it was first answered, so AVPro asks itself.
-          logJson({ event: 'play_defer', shard, n, id: t.data.id, held: 0, pinned: true });
+          logJson({ event: 'play_defer', shard, n, id: t.data.id, held, pinned: true });
           const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
           return res.end(body);
         }
         store.markPlayed(shard, n, t.data.id);
         captions.warm?.(t.data.id);
-        logJson({ event: 'play', shard, n, id: t.data.id, via: pin.via, reason: pin.reason, client: kind, held: 0, pinned: true, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
+        logJson({ event: 'play', shard, n, id: t.data.id, via: pin.via, reason: pin.reason, client: kind, held, pinned: true, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
         countPlay(shard, t.data, { via: pin.via, reason: pin.reason, location: pin.location }, android || hlsTicket ? 'android' : kind === 'avpro' ? 'pc' : null);
         res.writeHead(302, { location: pin.location, 'cache-control': 'no-store' });
         return res.end();
-      }
+      };
+      const pin = pinned(key, t.data);
+      if (pin) return answerPin(pin);
       let where = null;
       // Home relay first when it applies. HLS only, so never for an Android player on a plain ticket (f331bcc); on a
       // .m3u8 ticket (the world's Android build, which opens HLS) only with HOME_ANDROID=on (2026-10-23, to be verified
@@ -797,6 +804,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         }
         holding++;
         try { await home.wait(hs, config.homeReadyMs); } finally { holding--; }
+        // Another player of this ticket was answered during the wait, say by Tunelio from raceHome: one source per ticket (#293).
+        const answered = pinned(key, t.data);
+        if (answered) return answerPin(answered, Date.now() - started);
         if (hs.state === 'failed') hs = homeKeep(t.data, hq, hs); // the worker said "busy" only now
         if (hs.state === 'ready') where = await homeWhere(hs);
         else metrics.inc('home', 'timeout');
@@ -848,7 +858,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         }
         holding++;
         try {
-          if (config.homeRaceMs > 0 && hlsTicket && homeOk && c.hls) where = await raceHome(req, shard, t.data, c, hq);
+          if (config.homeRaceMs > 0 && hlsTicket && homeOk && c.hls) where = await raceHome(req, shard, t.data, c, hq, key);
           else where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs,
             quality: c.quality, hls: c.hls });
         } finally { holding--; }
@@ -884,6 +894,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const held = Date.now() - started;
       metrics.latency('ticket_hold_ms', held);
       if (where.via === 'restricted') return restrictedAnswer(res, kind, shard, n, t);
+      // The last check: from here to pins.set nothing awaits, so of the players of a ticket that held at once the first to
+      // get here sets its source and the others follow it. The checks above can't do this alone: the codec read and
+      // homeWhere await after them (#293, Everything-is-OK#398).
+      const answered = pinned(key, t.data);
+      if (answered) return answerPin(answered, held);
       if (where.ready === false && resolver) {
         metrics.inc('ticket_fastfail');
         logJson({ event: 'play_defer', shard, n, id: t.data.id, held, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });

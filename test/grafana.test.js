@@ -189,3 +189,12 @@ test('eiok-captions-empty and eiok-poller-stale: the thresholds, the input check
   assert.equal(rules['eiok-poller-stale'].for, '5m');
   assert.ok(expr('eiok-alert-inputs-missing').includes('metric="cc_outcome",key="none"'));
 });
+
+// The sources all throwing never reaches cc_outcome (test/captionchain.test.js pins the reason this reads).
+test('eiok-captions-failing: 3 in 6 h of the two keys that mean a failure, not list_unavailable or no_captions', () => {
+  const r = alertRules('ds').find((x) => x.uid === 'eiok-captions-failing');
+  const e = r.data[0].model.expr;
+  assert.match(e, /key=~"temporarily_unavailable\|failed"\}\[6h\]\)\) >= 3$/);
+  assert.doesNotMatch(e, /list_unavailable|no_captions/);
+  assert.equal(r.labels.severity, 'warning');
+});

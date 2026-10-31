@@ -102,6 +102,8 @@ test('exporter: usage counters, histograms, polls, slots, flash checks, jobs, he
     // eiok-captions-empty: both counts from 0, so increase() sees the first.
     has('eiok_events_total{metric="cc_outcome",key="none"} 0');
     has('eiok_events_total{metric="cc_outcome",key="tracks"} 0');
+    has('eiok_events_total{metric="cc_unavailable",key="temporarily_unavailable"} 0');
+    has('eiok_events_total{metric="cc_unavailable",key="failed"} 0');
     has('eiok_jobs_pending 1');
     has('eiok_jobs_oldest_pending_seconds{reason="daily"} 0');
     has('eiok_jobs_oldest_pending_seconds{reason="other"} 600');

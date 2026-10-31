@@ -702,6 +702,60 @@
   ]
  },
  {
+  "uid": "eiok-captions-failing",
+  "title": "Caption lookups failing",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "0m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "3 or more caption requests got no captions (one video or room can account for all of them). See `node tools/ops.mjs events --event captions_source_failed` and the Captions panel."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"cc_unavailable\",key=~\"temporarily_unavailable|failed\"}[6h])) >= 3",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
   "uid": "eiok-flash-refusals",
   "title": "Flash checks refused by YouTube",
   "folderUID": "everything-is-ok",
@@ -1089,7 +1143,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "The metrics poller has not finished a pass for over an hour (it runs every 15 minutes): world numbers, Tunelio credits, domain expiry, release markers and the daily report are stale. See `journalctl -u japharsworld-yt-metrics` on the Linode."
+   "summary": "No metrics poller pass has reached its Tunelio plan step for over an hour (it runs every 15 minutes): the poller is stopped, stuck or failing early, so world numbers, Tunelio credits and what follows in the pass are stale. A failure later in the pass does not fire this. See `journalctl -u japharsworld-yt-metrics` on the Linode."
   },
   "labels": {
    "project": "everything-is-ok",

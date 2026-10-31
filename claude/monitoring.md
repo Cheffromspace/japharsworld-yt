@@ -75,7 +75,8 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
 | Searches not served by the home relay | the home worker is online (`eiok_relay_workers_online > 0`), but over half of the last 30 min's searches (at least 3) came from the Linode or the Data API, 5 min: a worker that answers but is refused, which `no_worker` misses (owner, 2026-10-25) |
 | Captions falling back to Tunelio | over 6 h, Tunelio answered more caption fetches (at least 3) than the home relay and local yt-dlp together, 30 min. Not "estimated timing above real": manual tracks never carry word timing, and that held on normal days (10-24: 104 estimated, 71 real) |
 | No video has caption tracks | over 6 h, 5 or more distinct videos had no tracks and none had any (`cc_outcome`, world #428), at once: a silent total failure. Stays after hypercare's own check of this ends. A partial failure, with some tracks still coming through, doesn't fire |
-| Metrics poller stale | no full pass finished for over an hour (`tunelio_plan`'s timestamp), 5 min; the timer is 15 min, the widest gap seen 18 min |
+| Caption lookups failing | 3 or more caption requests in 6 h answered `temporarily_unavailable` or `failed`, at once: every source threw, which `cc_outcome` never sees. Moves only when someone asks for captions, about 12 times a day |
+| Metrics poller stale | no pass reached the `tunelio_plan` write for over an hour, 5 min; the timer is 15 min, the widest gap seen 18 min. That write is mid-pass, so a pass failing after it (daily sources, domains, reports) doesn't show |
 | Disk almost full | under 10 % free on `/`, 15 min |
 
 **eiok.cc** (owner, 2026-10-25) is the short domain for the Quest search box (README, "Compact search address"). Caddy
@@ -217,7 +218,7 @@ eviction) is left to Grafana's 15-minute 80 % warning. Captions fire only at 5 o
 video with tracks over 6 hours (world #401): many videos have no captions, and replays ask again.
 
 Grafana's `eiok-captions-empty` (world #428) has the same rule, so a silent failure, where every lookup answers
-`no_captions` with no error, stays watched after hypercare ends. It is a slow one: replayed over 121 runs of real
+`no_captions` with no error, stays watched after hypercare ends, and `eiok-captions-failing` covers every source throwing. It is a slow one: replayed over 121 runs of real
 traffic (2026-10-26 to 10-31) such a failure takes a median of 6 h and at most 20 h to fire, and a run of quiet hours
 longer. A partial failure, with some tracks still coming through, never fires. `captions_source_failed` is seen only
 through hypercare's errors check, among all error events at 5 an hour; the exporter doesn't count it. If the worker

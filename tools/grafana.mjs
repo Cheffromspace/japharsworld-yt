@@ -463,6 +463,12 @@ export function alertRules(dsUid, { critical = false } = {}) {
     // itself after 7 clean days, so this one stays. Its numbers and reasons: infra-check/hypercare.mjs CAP0. Replayed over
     // prod's lookups of 2026-10-26 to 10-31 it never fires (at most 4 videos). At 0.5, as increase() extrapolates.
     rule('eiok-captions-empty', 'No video has caption tracks', 'sum(increase(eiok_events_total{metric="cc_outcome",key="none"}[6h])) >= 5 unless on() sum(increase(eiok_events_total{metric="cc_outcome",key="tracks"}[6h])) >= 0.5', { forM: 0, summary: 'Over the last 6 hours, 5 or more videos looked up had no caption tracks and none had any: caption lookups may be failing silently. See `node tools/ops.mjs events --event captions_via,captions_source_failed` and the Captions panel.' }),
+    // Every source throwing, which eiok-captions-empty can't see: resolve returns null, so nothing reaches cc_outcome, and
+    // the answer is temporarily_unavailable. failed is a throw that reached the route. Not list_unavailable: no free source
+    // online (15 on 10-28), which the worker alerts cover. Neither key had ever counted by 2026-10-31 (7 days of rows, 82
+    // list requests; 1 captions_source_failed in 5.8 days of journal), so any threshold replays as 0 firings and 3 is a
+    // judgement. It moves only when someone asks for captions, about 12 times a day, so a quiet day can hide a failure.
+    rule('eiok-captions-failing', 'Caption lookups failing', 'sum(increase(eiok_events_total{metric="cc_unavailable",key=~"temporarily_unavailable|failed"}[6h])) >= 3', { forM: 0, summary: '3 or more caption requests got no captions (one video or room can account for all of them). See `node tools/ops.mjs events --event captions_source_failed` and the Captions panel.' }),
     // Owner, 2026-10-26: the flash worker's YouTube refusals (metrics/exporter.js, yt_refusal flash:<class>), which the
     // search service's own refusal alert (src/refusal.js, the relay worker's) never sees. As there: 3 or more bot, rate,
     // PO-token or 403 refusals, here within 30 minutes (the worker runs every 20).
@@ -481,10 +487,10 @@ export function alertRules(dsUid, { critical = false } = {}) {
     rule('eiok-credits-pace', 'Credits run out before renewal', '(sum(increase(eiok_events_total{metric="credits"}[3d])) / 3) * max(eiok_poll{source="tunelio_plan",metric="days_to_renewal"}) - max(eiok_credits_remaining) > 0', { forM: 60, summary: 'At the last 3 days’ spend, the Tunelio credits run out before the plan renews (TUNELIO_RENEWS_DAY). The pacer moves plays home while home has room; at 0 they go to youtube.com at 360p.' }),
     // Inputs the rules above and below need. Without them those rules see no data and stay quiet, which looks like health.
     rule('eiok-alert-inputs-missing', 'Alert inputs missing', 'absent(eiok_home_today{key="cap_builds"}) or absent(eiok_service_memory_limit_bytes) or absent(eiok_poll{source="tunelio_plan",metric="days_to_renewal"}) or absent(eiok_events_total{metric="cc_outcome",key="none"})', { forM: 30, summary: 'A value that the build cap, service memory, credit pace or captions alert needs has been missing for 30 minutes, so that alert is blind. Expected while the search service is down. Otherwise check japharsworld-yt-exporter (STATS_TOKEN, cgroup) and the metrics poller on the Linode.' }),
-    // tunelio_plan is written by every full pass with no outside call needed (metrics/poll.js renewalPass). The timer is
-    // 15 min; the widest gap in 523 passes to 2026-10-31 was 18 min. A pass stuck or failing leaves the old value exported,
-    // so this sees it; a value missing altogether is eiok-alert-inputs-missing's.
-    rule('eiok-poller-stale', 'Metrics poller stale', 'time() - max(eiok_poll_timestamp_seconds{source="tunelio_plan"}) - 3600', { forM: 5, summary: 'The metrics poller has not finished a pass for over an hour (it runs every 15 minutes): world numbers, Tunelio credits, domain expiry, release markers and the daily report are stale. See `journalctl -u japharsworld-yt-metrics` on the Linode.' }),
+    // tunelio_plan is written mid-pass with no outside call needed (metrics/poll.js renewalPass). The timer is 15 min; the
+    // widest gap in 523 passes to 2026-10-31 was 18 min. A pass stuck or failing before it leaves the old value exported, so
+    // this sees it, but not a failure after it. A value missing altogether is eiok-alert-inputs-missing's.
+    rule('eiok-poller-stale', 'Metrics poller stale', 'time() - max(eiok_poll_timestamp_seconds{source="tunelio_plan"}) - 3600', { forM: 5, summary: 'No metrics poller pass has reached its Tunelio plan step for over an hour (it runs every 15 minutes): the poller is stopped, stuck or failing early, so world numbers, Tunelio credits and what follows in the pass are stale. A failure later in the pass does not fire this. See `journalctl -u japharsworld-yt-metrics` on the Linode.' }),
     // Sustained capacity, not spikes (7 days to 2026-10-31: p50 2 %, p95 11 %, p99 32 %, single spikes to 99 %).
     rule('eiok-linode-cpu', 'Linode CPU over 80 %', '1 - avg(rate(node_cpu_seconds_total{host="linode",mode="idle"}[5m])) > 0.8', { forM: 15, summary: 'The Linode’s CPU has been over 80 % busy for 15 minutes; plays and searches slow down first. No event-loop metric exists. Check `top` there and the Hosts row.' }),
     // Anon + swap against the live MemoryMax (metrics/exporter.js). 61 % on 2026-10-31; since the last start swap peaked at

@@ -315,3 +315,14 @@ test('cc_outcome: a real list lookup through the chain counts its result', async
   await chain.resolve('vidB', null);
   assert.deepEqual(incs, ['none', 'tracks']);
 });
+
+// World #428: what eiok-captions-failing reads. Every source throwing counts nothing in cc_outcome.
+test('every source throwing: temporarily_unavailable from get and tracks, no cc_outcome', async () => {
+  const incs = [];
+  const store = { captionGet: () => null, captionPut: () => {} };
+  const chain = new CaptionChain({ store, local: { blocked: false }, metrics: { inc: (m, k) => incs.push([m, k]) } });
+  chain.sources = () => [['worker', async () => { throw new Error('a'); }], ['local', async () => { throw new Error('b'); }]];
+  assert.equal((await chain.get('vidA', 'en')).reason, 'temporarily_unavailable');
+  assert.equal((await chain.tracks('vidA', 'en')).reason, 'temporarily_unavailable');
+  assert.deepEqual(incs, []);
+});

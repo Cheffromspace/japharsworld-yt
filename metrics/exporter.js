@@ -80,6 +80,12 @@ export function metricsDbSeries(db, o, now = Date.now()) {
       o.add('eiok_events_total', 'counter', 'Usage counts from the search service, all days summed (claude/metrics.md).', { metric: 'cc_outcome', key }, 0);
     }
   }
+  // And for eiok-captions-failing: neither of these had ever counted by 2026-10-31.
+  for (const key of ['temporarily_unavailable', 'failed']) {
+    if (!totals.some((r) => r.metric === 'cc_unavailable' && r.key === key)) {
+      o.add('eiok_events_total', 'counter', 'Usage counts from the search service, all days summed (claude/metrics.md).', { metric: 'cc_unavailable', key }, 0);
+    }
+  }
   // The world's video reports (world #353), by who and kind, every pair from 0 so increase() sees the first report.
   const reports = Object.fromEntries(totals.filter((r) => r.metric === 'video_report').map((r) => [r.key, r.v]));
   for (const who of REPORT_WHO) for (const kind of REPORT_KINDS) {

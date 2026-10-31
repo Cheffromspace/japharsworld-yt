@@ -1079,6 +1079,36 @@ test('ticket status → home: a predicted (whole) playlist is not growing while 
   assert.deepEqual([st.plan, st.state, st.growing], ['home', 'ready', false]);
 });
 
+test('ticket status → home: a playlist listed before its first segment is growing while the session still builds (Everything-is-OK#393)', async (t) => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  t.after(() => release());
+  let listed;
+  const up = new Promise((r) => { listed = r; });
+  const app = await homeApp(t, { config: { homeLongMinutes: 5 }, media: async (job) => {
+    await fetch(`${app.url}/relay/media/${job.token}/index.m3u8`, { method: 'PUT', headers: { authorization: `Bearer ${TOKEN}` }, body: PL1 });
+    listed();
+    await held;
+  } });
+  await homeTablet(app);
+  await up;
+  const st = await homeTablet(app);
+  assert.deepEqual([st.plan, st.state, st.growing], ['home', 'building', true]);
+});
+
+test('ticket status → pinned: a played ticket keeps its title, channel, description and seconds, home or Tunelio (Everything-is-OK#393)', async (t) => {
+  const app = await pinApp(t);
+  assert.match((await app.play(QUEST)).headers.get('location'), /\/home\//);
+  const tablet = async (ext) => (await fetch(`${app.url}/v1/0/${app.n}${ext}`, { headers: { 'user-agent': 'UnityPlayer/2022.3 (UnityWebRequest/1.0)' } })).json();
+  const onHome = await tablet('.m3u8');
+  assert.deepEqual([onHome.plan, onHome.growing, onHome.title, onHome.channel, onHome.desc, onHome.seconds], ['home', true, 'T', '', '', 600], 'pinned to the session');
+  assert.equal(await app.pc(), 'tunelio');
+  const onTunelio = await tablet('');
+  assert.notEqual(onTunelio.plan, 'home');
+  assert.deepEqual([onTunelio.title, onTunelio.channel, onTunelio.desc, onTunelio.seconds], ['T', '', '', 600], 'pinned to the build');
+  assert.equal(onTunelio.growing, undefined, 'only a home answer has it');
+});
+
 test('home: PRECISE=YES only while the playlist grows, and only with startPrecise', async (t) => {
   const home = new Home({ relay: fakeRelay(), dir: tmp(t), base: 'https://yt/home', enabled: true, startPrecise: true });
   const s = home.start({ id: 'aaaaaaaaaaa', seconds: 600 }, '720p');

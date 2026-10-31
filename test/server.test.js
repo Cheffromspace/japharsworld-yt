@@ -120,6 +120,10 @@ test('ticket status carries the title, channel and description (Everything-is-OK
   const st = await tablet(`/v1/0/${r.body.results[0].t}`);
   assert.equal(st.t, r.body.results[0].t, 'the world matches answers by t');
   assert.deepEqual([st.title, st.channel, st.desc], [r.body.results[0].title, 'Ch', '']);
+  assert.ok(r.body.results[0].seconds > 0);
+  assert.equal(st.seconds, r.body.results[0].seconds, 'the length, as the search row has it (Everything-is-OK#393)');
+  const [older] = s.store.allocate(0, [{ kind: 'video', data: { id: 'ccccccccccc' } }]);
+  assert.equal((await tablet(`/v1/0/${older}`)).seconds, 0, 'an older ticket has no length: 0, as a search row');
 
   // A non-YouTube link is searched as text, as before (owner, 2026-10-23: no redirects to other sites).
   const l = await s.get(`/v1/0/s?q=${encodeURIComponent('Search → https://cdn.example.org/clip.mp4')}`);

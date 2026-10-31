@@ -194,7 +194,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // A video ticket keeps its title, channel and the start of its description, so the tablet's status answer can show
   // them to everyone in the room, not only to whoever pressed Play (Everything-is-OK#114).
   const ticketData = (v) => ({ kind: 'video', data: { id: v.id, live: Boolean(v.live), seconds: v.seconds ?? 0, title: v.title ?? '', channel: v.channel ?? '', desc: (v.desc ?? '').slice(0, 240) } });
-  const meta = (data) => ({ title: data.title ?? '', channel: data.channel ?? '', desc: data.desc ?? '' });
+  // seconds as in a search row: the video's length, 0 when not known (live, an older ticket, a pasted link not looked up).
+  const meta = (data) => ({ title: data.title ?? '', channel: data.channel ?? '', desc: data.desc ?? '', seconds: data.seconds ?? 0 });
 
   function publish(shard, page, extra = {}) {
     const items = page.videos.map(ticketData);
@@ -621,11 +622,15 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return alt;
   }
   // The tablet's view of a home session (the fields of playback.status). A home stream starts in ~5 s (2026-10-23).
+  // growing (world #393): a player opening the session now gets a playlist with no end marker, which a Quest treats as
+  // live (infinite duration). Not a build still uploading a predicted (whole) playlist, which has its ENDLIST from the
+  // start; not before any playlist is here, when it can still turn out either way.
   function homeStatus(s) {
-    if (s.state === 'ready') return { state: 'ready', format: 'hls', quality: s.quality, plan: 'home', elapsed: Math.round((s.readyMs - s.startedMs) / 1000) };
+    const growing = s.segments > 0 && !s.endlist;
+    if (s.state === 'ready') return { state: 'ready', format: 'hls', quality: s.quality, plan: 'home', growing, elapsed: Math.round((s.readyMs - s.startedMs) / 1000) };
     const elapsed = (Date.now() - s.startedMs) / 1000;
     const eta = Math.max(2, Math.round(6 - elapsed));
-    return { state: 'building', format: 'hls', quality: s.quality, plan: 'home', elapsed: Math.round(elapsed), eta,
+    return { state: 'building', format: 'hls', quality: s.quality, plan: 'home', growing, elapsed: Math.round(elapsed), eta,
       progress: Math.round(Math.min(0.95, elapsed / (elapsed + eta)) * 100) / 100 };
   }
 

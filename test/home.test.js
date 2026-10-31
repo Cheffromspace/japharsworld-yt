@@ -1050,6 +1050,35 @@ test('home: the daily caps count the reporting time zone\'s day (Chicago), not t
   assert.equal(utc.state().today.builds, 0, 'tz is configurable (METRICS_TZ)');
 });
 
+const homeTablet = async (app) => (await fetch(`${app.url}/v1/0/${app.n}`, { headers: { 'user-agent': 'UnityPlayer/2022.3 (UnityWebRequest/1.0)' } })).json();
+
+test('ticket status → home: growing is true only while the playlist has no end marker; seconds is there throughout (Everything-is-OK#393)', async (t) => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const app = await homeApp(t, { media: () => held, config: { homeLongMinutes: 5 } });
+  const first = await homeTablet(app);
+  assert.deepEqual([first.plan, first.state, first.growing, first.seconds], ['home', 'building', false, 600], 'no playlist yet: not known to grow');
+  release();
+  let st = first;
+  for (let i = 0; i < 100 && st.state !== 'ready'; i++) { await new Promise((r) => setTimeout(r, 20)); st = await homeTablet(app); }
+  assert.deepEqual([st.state, st.growing, st.seconds], ['ready', true, 600], 'no end marker');
+  const put = (file, body) => fetch(`${app.url}/relay/media/${app.jobs[0].token}/${file}`, { method: 'PUT', headers: { authorization: `Bearer ${TOKEN}` }, body });
+  await put('index.m3u8', PL2);
+  const closed = await homeTablet(app);
+  assert.deepEqual([closed.state, closed.growing], ['ready', false], 'ENDLIST listed, seg1 still to come: a player already gets the end');
+  await put('seg1.ts', 'ts1');
+  const done = await homeTablet(app);
+  assert.deepEqual([done.plan, done.state, done.growing, done.seconds], ['home', 'ready', false, 600], 'finished');
+});
+
+test('ticket status → home: a predicted (whole) playlist is not growing while its segments upload (Everything-is-OK#393)', async (t) => {
+  const app = await homeApp(t, { playlist: PL2, config: { homeLongMinutes: 5 } });
+  await homeTablet(app);
+  let st;
+  for (let i = 0; i < 100 && st?.state !== 'ready'; i++) { await new Promise((r) => setTimeout(r, 20)); st = await homeTablet(app); }
+  assert.deepEqual([st.plan, st.state, st.growing], ['home', 'ready', false]);
+});
+
 test('home: PRECISE=YES only while the playlist grows, and only with startPrecise', async (t) => {
   const home = new Home({ relay: fakeRelay(), dir: tmp(t), base: 'https://yt/home', enabled: true, startPrecise: true });
   const s = home.start({ id: 'aaaaaaaaaaa', seconds: 600 }, '720p');

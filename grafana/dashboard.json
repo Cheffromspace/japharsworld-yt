@@ -1797,7 +1797,7 @@
    "type": "stat",
    "id": 30,
    "title": "Home relay today",
-   "description": "What the Optiplex downloaded for home relay plays today (Chicago day) against HOME_DAILY_MB, what the worker uploaded from its own cache instead (not counted against the cap, relay/cache.js), and the media workers connected now. Set every minute by the search service.",
+   "description": "What the Optiplex downloaded for home relay plays today (Chicago day) against HOME_DAILY_MB, the videos against HOME_DAILY_BUILDS, what the worker uploaded from its own cache instead (not counted against the cap, relay/cache.js), and the media workers connected now. Set every minute by the search service.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1845,12 +1845,22 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
+     "expr": "max(eiok_home_today{env!=\"staging\",key=\"cap_builds\"})",
+     "legendFormat": "cap videos",
+     "instant": true
+    },
+    {
+     "refId": "E",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
      "expr": "max(eiok_home_today{env!=\"staging\",key=\"workers\"})",
      "legendFormat": "workers",
      "instant": true
     },
     {
-     "refId": "E",
+     "refId": "F",
      "datasource": {
       "type": "prometheus",
       "uid": "${ds}"
@@ -3012,13 +3022,72 @@
    }
   },
   {
-   "type": "row",
+   "type": "timeseries",
    "id": 50,
+   "title": "Search service memory",
+   "description": "Its cgroup, without the page cache, which the kernel reclaims at the limit (metrics/exporter.js). Alert at 90 %.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 125,
+    "w": 24,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum(eiok_service_memory_bytes{env!=\"staging\",kind=~\"anon|swap\"})",
+     "legendFormat": "anon + swap"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_service_memory_limit_bytes{env!=\"staging\"})",
+     "legendFormat": "MemoryMax"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "row",
+   "id": 51,
    "title": "Versions and deploys",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 125,
+    "y": 131,
     "w": 24,
     "h": 1
    },
@@ -3026,7 +3095,7 @@
   },
   {
    "type": "state-timeline",
-   "id": 51,
+   "id": 52,
    "title": "World version over time",
    "datasource": {
     "type": "prometheus",
@@ -3034,7 +3103,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 126,
+    "y": 132,
     "w": 24,
     "h": 4
    },
@@ -3086,7 +3155,7 @@
   },
   {
    "type": "table",
-   "id": 52,
+   "id": 53,
    "title": "World uploads and releases",
    "description": "VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.",
    "datasource": {
@@ -3095,7 +3164,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 130,
+    "y": 136,
     "w": 12,
     "h": 6
    },
@@ -3159,7 +3228,7 @@
   },
   {
    "type": "table",
-   "id": 53,
+   "id": 54,
    "title": "Deploys of main",
    "description": "Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.",
    "datasource": {
@@ -3168,7 +3237,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 130,
+    "y": 136,
     "w": 12,
     "h": 6
    },

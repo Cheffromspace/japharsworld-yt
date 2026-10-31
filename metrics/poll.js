@@ -168,6 +168,16 @@ export function renewalReminders(db, cfg, { today }) {
   return out;
 }
 
+// Days to the renewal, for Grafana's eiok-credits-pace: PromQL knows neither TUNELIO_RENEWS_DAY nor short months. Read
+// from the env on every pass, so changing the day needs no change to the rule. Same date logic as the reminders above.
+export function renewalPass(db, cfg, { now = Date.now() } = {}) {
+  if (!cfg.tunelioKey) return null;
+  const today = dayOf(now, cfg.tz);
+  const days = daysBetween(today, billingPeriod(today, cfg.tunelioRenewsDay).renews);
+  recordPoll(db, { ts: now, source: 'tunelio_plan', values: { days_to_renewal: days }, tz: cfg.tz });
+  return days;
+}
+
 // World versions (at = VRChat's updated_at, the upload time) and GitHub release tags, recorded the first time they are seen.
 export function recordReleases(db, list, now = Date.now()) {
   const put = db.prepare('INSERT OR IGNORE INTO releases (source, version, at, detected) VALUES (?, ?, ?, ?)');
@@ -222,6 +232,7 @@ export async function run(cfg = settings(), { now = Date.now() } = {}) {
       .map((r) => ({ source: r.source, version: r.values.version, at: (r.values.updatedAt ?? 0) * 1000 })), now);
     const notes = [];
     const tc = await tunelioPass(db, cfg, { now, alert: (kind, text) => notes.push([kind, text]) });
+    renewalPass(db, cfg, { now });
     for (const [kind, text] of notes) await send(cfg, kind, text).catch((err) => log({ event: 'alert_failed', kind, message: String(err.message) }));
     log({ event: 'metrics_poll', vrchat: vr.skipped ?? vr.rows.length, releases: fresh, credits: tc?.credits ?? null });
     const today = dayOf(now, cfg.tz);

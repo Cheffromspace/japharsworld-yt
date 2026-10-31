@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -110,6 +110,60 @@ test('exporter: usage counters, histograms, polls, slots, flash checks, jobs, he
     // Privacy: no video IDs in the output.
     assert.doesNotMatch(text, /vid[A-D]/);
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test('exporter: search 502s from 0, and the count once there are some', async () => {
+  const f = fixtures();
+  try {
+    assert.match(await render({ metricsDb: f.metricsDb }), /^eiok_events_total\{metric="search_fail",key="502"\} 0$/m);
+    const db = openMetricsDb(f.metricsDb);
+    db.prepare('INSERT INTO daily (day, metric, key, value) VALUES (?, ?, ?, ?)').run('2026-10-20', 'search_fail', '502', 3);
+    db.close();
+    const text = await render({ metricsDb: f.metricsDb });
+    assert.equal(text.match(/metric="search_fail",key="502"/g).length, 1, 'one series');
+    assert.match(text, /^eiok_events_total\{metric="search_fail",key="502"\} 3$/m);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test('exporter: the build cap comes from the running service, with the token, and only that number leaves', async () => {
+  const seen = [];
+  const answer = (cap) => async (url, opts) => {
+    seen.push([url, opts?.headers?.authorization]);
+    return { ok: true, json: async () => (String(url).endsWith('/healthz') ? { ok: true, workers: 1 } : { home: { cap: { builds: cap, mb: 1 }, recent: 'secret-video' } }) };
+  };
+  const opts = { metricsDb: '', monitorDb: '', healthUrl: 'http://x/healthz', opsUrl: 'http://x/ops/state', statsToken: 'tok-value' };
+  const text = await render({ ...opts, fetchImpl: answer(60) });
+  assert.match(text, /^eiok_home_today\{key="cap_builds"\} 60$/m);
+  assert.match(await render({ ...opts, fetchImpl: answer(80) }), /^eiok_home_today\{key="cap_builds"\} 80$/m, 'follows the service');
+  assert.deepEqual(seen[1], ['http://x/ops/state', 'Bearer tok-value']);
+  assert.doesNotMatch(text, /secret-video|tok-value/);
+  // No token, a service that is down or an /ops failure: left out, and the rest still answers.
+  assert.doesNotMatch(await render({ ...opts, statsToken: '', fetchImpl: answer(60) }), /cap_builds/);
+  assert.doesNotMatch(await render({ ...opts, fetchImpl: async () => { throw new Error('refused'); } }), /cap_builds/);
+  const opsFails = async (url) => { if (String(url).endsWith('/healthz')) return { ok: true, json: async () => ({ ok: true }) }; throw new Error('timeout'); };
+  const partial = await render({ ...opts, fetchImpl: opsFails });
+  assert.match(partial, /^eiok_search_up 1$/m);
+  assert.doesNotMatch(partial, /cap_builds/);
+});
+
+test('exporter: service memory from its cgroup, anon + swap without the page cache, and the live limit', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cgroup-'));
+  try {
+    const cg = join(dir, 'unit');
+    mkdirSync(cg);
+    // The real files' shape, from the Linode 2026-10-31.
+    writeFileSync(join(cg, 'memory.stat'), 'anon 106799104\nfile 175042560\nkernel 1\nanon_thp 0\n');
+    writeFileSync(join(cg, 'memory.swap.current'), '150007808\n');
+    writeFileSync(join(cg, 'memory.max'), '419430400\n');
+    const text = await render({ metricsDb: '', monitorDb: '', cgroupDir: cg });
+    assert.match(text, /^eiok_service_memory_bytes\{kind="anon"\} 106799104$/m);
+    assert.match(text, /^eiok_service_memory_bytes\{kind="swap"\} 150007808$/m);
+    assert.match(text, /^eiok_service_memory_limit_bytes 419430400$/m);
+    assert.doesNotMatch(text, /175042560/, 'no page cache');
+    writeFileSync(join(cg, 'memory.max'), 'max\n');
+    assert.doesNotMatch(await render({ metricsDb: '', monitorDb: '', cgroupDir: cg }), /eiok_service_memory_limit_bytes \d/, 'no limit: left out');
+    assert.doesNotMatch(await render({ metricsDb: '', monitorDb: '', cgroupDir: join(dir, 'gone') }), /eiok_service_memory_bytes\{/, 'restarting: left out');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('exporter: missing databases and a down search service still answer', async () => {

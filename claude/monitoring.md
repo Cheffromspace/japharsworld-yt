@@ -31,6 +31,8 @@ Linode                                                  Optiplex
 | Metric | From |
 |---|---|
 | `eiok_events_total`, `eiok_*_seconds_bucket`, `eiok_credits_remaining`, `eiok_home_today{key}` | metrics.db `daily` / `gauges` |
+| `eiok_home_today{key="cap_builds"}` | the running service's `/ops/state` (`home.cap.builds`), with `STATS_TOKEN` from the exporter's env; only that number |
+| `eiok_service_memory_bytes{kind=anon\|swap}`, `eiok_service_memory_limit_bytes` | the search service's cgroup (`memory.stat`, `memory.swap.current`, `memory.max`), read at scrape time |
 | `eiok_shard_active_hours_total{shard}` (8 series) | metrics.db `hourly` (one row per hour a shard saw a request) |
 | `eiok_poll{source,metric}`, `eiok_poll_timestamp_seconds`, `eiok_release_timestamp_seconds{source,version}` (latest 50, value = when) | metrics.db `polls`, `releases` |
 | `eiok_deploy_timestamp_seconds{host,commit,outcome}` (value = when) | `deploy/deploy-record.sh`, run by `update.sh` / `relay-update.sh`, via Alloy's textfile collector (`/var/lib/japharsworld-yt-deploy`) on each host |
@@ -51,11 +53,16 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
 
 | Alert | Fires when |
 |---|---|
-| Home relay near its daily cap | today's home relay MB ≥ 90 % of `HOME_DAILY_MB`, 5 min |
+| Home relay MB near its daily cap | today's home relay MB ≥ 75 % of `HOME_DAILY_MB` as the service reports it, 5 min |
+| Home relay builds near their daily cap | today's home builds ≥ 90 % of `HOME_DAILY_BUILDS` as the service reports it, 5 min |
+| Linode CPU over 80 % | under 20 % idle across its vCPUs, 15 min |
+| Search service memory near its limit | anon + swap > 90 % of the live `memory.max`, page cache not counted, 15 min |
+| Searches failing (502) | 2 or more `search_fail` 502 in 15 min |
+| Alert inputs missing | `cap_builds`, the memory limit or `days_to_renewal` absent for 30 min, so those alerts would be silently blind |
 | Home relay has no worker | no media worker connected for 15 min (only while `HOME_RELAY=on`; the gauge isn't set otherwise) |
 | Home sent over 100 GB today / 2,000 GB this month (no ISP cap, owner 2026-10-27: unusual volume, not a limit) | `eiok_transfer_bytes{host="home"}`: the Optiplex's bytes sent (every interface but `lo`), reported on each relay poll and counted in metrics.db (`transfer`), Chicago days and months, 5 min |
 | Linode sent over 700 GB this month | `eiok_transfer_bytes{host="linode",period="month"}`: the Linode's bytes sent, of its 1 TB monthly transfer, 5 min |
-| Credits run out before renewal | the last 3 days' credit spend per day × days to the 1st > credits left, for 1 h |
+| Credits run out before renewal | the last 3 days' credit spend per day × `eiok_poll{source="tunelio_plan",metric="days_to_renewal"}` (from `TUNELIO_RENEWS_DAY`) > credits left, for 1 h. Prod's counted spend only |
 | Linode sends nothing | no `eiok_search_up` from the Linode for 10 min (server, Alloy or exporter down) |
 | Optiplex sends nothing | no host metrics from the Optiplex for 15 min |
 | Search service down | `/healthz` unanswered on the Linode for 5 min |

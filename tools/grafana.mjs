@@ -185,9 +185,10 @@ export function dashboard() {
     ['max(eiok_home_today{key="mb"}) / 1000', 'GB'],
     ['max(eiok_home_today{key="cap_mb"}) / 1000', 'cap GB'],
     ['max(eiok_home_today{key="builds"})', 'videos'],
+    ['max(eiok_home_today{key="cap_builds"})', 'cap videos'],
     ['max(eiok_home_today{key="workers"})', 'workers'],
     ['max(eiok_home_today{key="cache_mb"}) / 1000', 'from cache GB'],
-  ], { w: 8, decimals: 1, thresholds: [{ color: INK, value: null }], description: 'What the Optiplex downloaded for home relay plays today (Chicago day) against HOME_DAILY_MB, what the worker uploaded from its own cache instead (not counted against the cap, relay/cache.js), and the media workers connected now. Set every minute by the search service.' }));
+  ], { w: 8, decimals: 1, thresholds: [{ color: INK, value: null }], description: 'What the Optiplex downloaded for home relay plays today (Chicago day) against HOME_DAILY_MB, the videos against HOME_DAILY_BUILDS, what the worker uploaded from its own cache instead (not counted against the cap, relay/cache.js), and the media workers connected now. Set every minute by the search service.' }));
   p.push(series('Home relay (per 6 h)', [[ev('home'), '{{key}}'], [ev('home_why'), 'why: {{key}}']], { w: 8, min: 0,
     description: 'Sessions started / ready / failed / capped (refused by the daily cap) / timeout, and why a play went home (long video, Tunelio off or failed, the pacer).' }));
   p.push(series('Home relay start time', [
@@ -249,6 +250,11 @@ export function dashboard() {
   p.push(series('Disk free (/)', [['max by (host) (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})', '{{host}}']], { w: 8, unit: 'percentunit', min: 0 }));
   p.push(series('Public endpoints', [['max by (job) (probe_success)', '{{job}}'], ['max by (job) (probe_duration_seconds)', '{{job}} seconds']], { w: 12 }));
   p.push(series('Failed units', [['sum by (host, name) (node_systemd_unit_state{state="failed"}) > 0', '{{host}} {{name}}']], { w: 12, description: 'japharsworld-yt units, bgutil-pot and caddy in the failed state.' }));
+
+  p.push(series('Search service memory', [
+    ['sum(eiok_service_memory_bytes{kind=~"anon|swap"})', 'anon + swap'],
+    ['max(eiok_service_memory_limit_bytes)', 'MemoryMax'],
+  ], { w: 24, h: 6, unit: 'bytes', min: 0, description: 'Its cgroup, without the page cache, which the kernel reclaims at the limit (metrics/exporter.js). Alert at 90 %.' }));
 
   p.push(row('Versions and deploys'));
   // A band per world version over time (the polled version number), so uploads read as a timeline.
@@ -459,10 +465,27 @@ export function alertRules(dsUid, { critical = false } = {}) {
     rule('eiok-flash-refusals', 'Flash checks refused by YouTube', 'sum(increase(eiok_events_total{metric="yt_refusal",key=~"flash:(bot|rate|potoken|forbidden)"}[30m])) - 2', { forM: 0, summary: 'The Optiplex flash-check worker met 3 or more YouTube refusals (bot wall, rate limit, PO token or 403) in 30 minutes: the home IP may be flagged, which hits the relay worker too. Check `journalctl -u japharsworld-yt-slotworker` on the Optiplex.' }),
     rule('eiok-checks-waiting', 'Flash checks waiting', 'max(eiok_jobs_oldest_pending_seconds{reason="other"}) > 7200 or max(eiok_jobs_oldest_pending_seconds{reason="daily"}) > 18000', { summary: 'A new/candidate/manual resolution or flash job has waited over 2 hours, or the daily batch over 5 hours; the Optiplex worker runs every 20 minutes, 6 jobs a run.' }),
     // Owner, 2026-10-23 (the dashboard audit): the home relay's cap and worker, and the credits lasting to renewal.
-    rule('eiok-home-cap', 'Home relay near its daily cap', 'max(eiok_home_today{key="mb"}) / max(eiok_home_today{key="cap_mb"}) >= 0.9', { forM: 5, summary: 'The home relay has used 90 % of HOME_DAILY_MB today; at the cap, long videos go to Tunelio (credits) or youtube.com instead.' }),
+    // Ratios of the caps the service reports, so an env change moves the alert with it. MB warned at 90 % until
+    // 2026-10-31: 68 % was used by 14:00 Chicago with the evening to come, so 90 % left too little time to act.
+    rule('eiok-home-cap', 'Home relay MB near its daily cap', 'max(eiok_home_today{key="mb"}) / max(eiok_home_today{key="cap_mb"}) >= 0.75', { forM: 5, summary: 'The home relay has used 75 % of HOME_DAILY_MB today. At the cap (reset at midnight Chicago), long videos go to Tunelio (credits; long HLS builds can fail on Quest) or youtube.com. `node tools/ops.mjs state` shows both caps.' }),
+    rule('eiok-home-builds', 'Home relay builds near their daily cap', 'max(eiok_home_today{key="builds"}) / max(eiok_home_today{key="cap_builds"}) >= 0.9', { forM: 5, summary: 'The home relay has used 90 % of HOME_DAILY_BUILDS today. At the cap (reset at midnight Chicago), long videos go to Tunelio (credits; long HLS builds can fail on Quest) or youtube.com. `node tools/ops.mjs state` shows both caps.' }),
     rule('eiok-home-worker', 'Home relay has no worker', '1 - max(eiok_home_today{key="workers"})', { forM: 15, summary: 'No media worker (the Optiplex relay) connected for 15 minutes: home relay plays fall back to Tunelio or youtube.com.' }),
-    // Renewal on the 1st (TUNELIO_RENEWS_DAY's default): the last 3 days' spend per day times the days left, minus the credits left.
-    rule('eiok-credits-pace', 'Credits run out before renewal', '(sum(increase(eiok_events_total{metric="credits"}[3d])) / 3) * (days_in_month() - day_of_month() + 1) - max(eiok_credits_remaining) > 0', { forM: 60, summary: 'At the last 3 days’ spend, the Tunelio credits run out before the plan renews on the 1st (the pacer then keeps plays at 720p; at 0 they go to youtube.com).' }),
+    // The last 3 days' spend per day times the days left, minus the credits left. Days from the poller, which reads
+    // TUNELIO_RENEWS_DAY (metrics/poll.js renewalPass): until 2026-10-31 this counted days to the 1st while prod renews on
+    // the 17th, so on the 31st it needed a whole balance of spend in a day. Counts prod's spend only, and the balance fell
+    // about 27 % faster than that (10-25 to 10-31, cause unverified), so it can fire late.
+    rule('eiok-credits-pace', 'Credits run out before renewal', '(sum(increase(eiok_events_total{metric="credits"}[3d])) / 3) * max(eiok_poll{source="tunelio_plan",metric="days_to_renewal"}) - max(eiok_credits_remaining) > 0', { forM: 60, summary: 'At the last 3 days’ spend, the Tunelio credits run out before the plan renews (TUNELIO_RENEWS_DAY). The pacer moves plays home while home has room; at 0 they go to youtube.com at 360p.' }),
+    // Inputs the rules above and below need. Without them those rules see no data and stay quiet, which looks like health.
+    rule('eiok-alert-inputs-missing', 'Alert inputs missing', 'absent(eiok_home_today{key="cap_builds"}) or absent(eiok_service_memory_limit_bytes) or absent(eiok_poll{source="tunelio_plan",metric="days_to_renewal"})', { forM: 30, summary: 'A value that the build cap, service memory or credit pace alert needs has been missing for 30 minutes, so that alert is blind. Expected while the search service is down. Otherwise check japharsworld-yt-exporter (STATS_TOKEN, cgroup) and the metrics poller on the Linode.' }),
+    // Sustained capacity, not spikes (7 days to 2026-10-31: p50 2 %, p95 11 %, p99 32 %, single spikes to 99 %).
+    rule('eiok-linode-cpu', 'Linode CPU over 80 %', '1 - avg(rate(node_cpu_seconds_total{host="linode",mode="idle"}[5m])) > 0.8', { forM: 15, summary: 'The Linode’s CPU has been over 80 % busy for 15 minutes; plays and searches slow down first. No event-loop metric exists. Check `top` there and the Hosts row.' }),
+    // Anon + swap against the live MemoryMax (metrics/exporter.js). 61 % on 2026-10-31; since the last start swap peaked at
+    // 231 MiB, so about 83 % at most if anon (~102 MiB) stood as now then. There is no history to set this from: a judgement.
+    // Not an OOM line: swap is unlimited in the unit, so this is an early warning of growth.
+    rule('eiok-service-memory', 'Search service memory near its limit', 'sum(eiok_service_memory_bytes{kind=~"anon|swap"}) / max(eiok_service_memory_limit_bytes) > 0.9', { forM: 15, summary: 'The search service’s anon + swap has been over 90 % of MemoryMax for 15 minutes (page cache not counted). An OOM restart drops pins and held plays. See the Search service memory panel; `systemctl set-property japharsworld-yt MemoryMax=…` needs no restart.' }),
+    // Every source in the chain failed (src/search.js) and the visitor saw an error. Two, so that one blip stays quiet; a
+    // count, as a ratio means little at about 85 searches a day. None had ever happened by 2026-10-31.
+    rule('eiok-search-502', 'Searches failing (502)', 'sum(increase(eiok_events_total{metric="search_fail",key="502"}[15m])) >= 2', { forM: 0, summary: 'Two or more searches in 15 minutes got 502 youtube_failed: the home relay, the Linode and the Data API all failed. See `node tools/ops.mjs state` and the YouTube refusals panel.' }),
     // Transfer (owner, 2026-10-24): metrics.db counts from src/net.js; months are Chicago calendar months.
     // The home connection has no ISP data cap (owner, 2026-10-27), so these are only alerts on unusual volume: 100 GB a day
     // (2026-10-27 alone was ~19 GB of home builds) and 2,000 GB a month.

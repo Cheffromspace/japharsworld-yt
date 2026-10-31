@@ -4,7 +4,7 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { totp, instanceType, worldValues, groupValues, VRChat } from '../metrics/vrchat.js';
-import { pollVRChat, updateEnvFile, settings, tunelioPass, renewalReminders, recordReleases, runOccupants, OCCUPANCY, domainPass } from '../metrics/poll.js';
+import { pollVRChat, updateEnvFile, settings, tunelioPass, renewalPass, renewalReminders, recordReleases, runOccupants, OCCUPANCY, domainPass } from '../metrics/poll.js';
 import { openMetricsDb, getMeta } from '../src/metrics.js';
 import { githubRepo, domainExpiry, DOMAINS } from '../metrics/sources.js';
 
@@ -212,6 +212,20 @@ test('Tunelio: balance each pass; a lapsed plan and a refresh alert', async () =
   assert.match(alerts[2][1], /refreshed: 100,000 \(plan pro\)/);
   assert.equal(getMeta(db, 'tunelio_refreshed'), '2026-10-19');
   assert.equal(db.prepare("SELECT COUNT(*) n FROM polls WHERE source = 'tunelio'").get().n, 4);
+});
+
+test('Days to renewal: follows TUNELIO_RENEWS_DAY, in the metrics day, and is the latest poll', () => {
+  const db = openMetricsDb(':memory:');
+  const c = { ...cfg(), tunelioKey: 'k', tunelioRenewsDay: 17, tz: 'America/Chicago' };
+  const at = (s) => Date.parse(s);
+  assert.equal(renewalPass(db, c, { now: at('2026-10-31T20:00:00Z') }), 17);
+  assert.equal(renewalPass(db, c, { now: at('2026-11-01T04:00:00Z') }), 17, 'still 10-31 in Chicago');
+  assert.equal(renewalPass(db, c, { now: at('2026-11-16T20:00:00Z') }), 1);
+  assert.equal(renewalPass(db, c, { now: at('2026-11-17T20:00:00Z') }), 30, 'on the day: the next one');
+  assert.equal(renewalPass(db, { ...c, tunelioRenewsDay: 1 }, { now: at('2026-10-31T20:00:00Z') }), 1, 'the day is config');
+  assert.equal(renewalPass(db, { ...c, tunelioRenewsDay: 31 }, { now: at('2027-02-10T20:00:00Z') }), 18, 'a short month: its last day');
+  assert.equal(db.prepare("SELECT value FROM polls WHERE source = 'tunelio_plan' AND metric = 'days_to_renewal' ORDER BY ts DESC LIMIT 1").get().value, 18);
+  assert.equal(renewalPass(db, { ...c, tunelioKey: '' }, { now: at('2027-02-11T20:00:00Z') }), null, 'no Tunelio: nothing to count');
 });
 
 test('Tunelio renewal reminders: 3 days and 1 day before, once each; a missed refresh the day after', () => {

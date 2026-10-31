@@ -75,6 +75,7 @@ About every minute (`japharsworld-yt-occupants.timer`, `poll.js occupants`; owne
 production world only, keeping `occupants`, `publicOccupants`, `privateOccupants` and `visits` (and a new `version` as a
 release). About 5,800 poll rows a day, kept 90 days like the rest.
 
+- **Tunelio plan** (`tunelio_plan` / `days_to_renewal`): days to `TUNELIO_RENEWS_DAY`, computed every pass, for the credit pace alert. No call to Tunelio.
 - **Tunelio** `GET /credits` (free): balance and plan, every pass. Tunelio has no API for the wallet funds that
   auto-renew pays from, so the poller watches what it can (see Reports).
 - **Releases** (`releases` table): each world's `version` the first time it is seen, at VRChat's `updated_at` (the

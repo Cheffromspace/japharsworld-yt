@@ -757,7 +757,7 @@
  },
  {
   "uid": "eiok-home-cap",
-  "title": "Home relay near its daily cap",
+  "title": "Home relay MB near its daily cap",
   "folderUID": "everything-is-ok",
   "ruleGroup": "everything-is-ok",
   "condition": "C",
@@ -765,7 +765,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "The home relay has used 90 % of HOME_DAILY_MB today; at the cap, long videos go to Tunelio (credits) or youtube.com instead."
+   "summary": "The home relay has used 75 % of HOME_DAILY_MB today. At the cap (reset at midnight Chicago), long videos go to Tunelio (credits; long HLS builds can fail on Quest) or youtube.com. `node tools/ops.mjs state` shows both caps."
   },
   "labels": {
    "project": "everything-is-ok",
@@ -784,7 +784,61 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "max(eiok_home_today{env!=\"staging\",key=\"mb\"}) / max(eiok_home_today{env!=\"staging\",key=\"cap_mb\"}) >= 0.9",
+     "expr": "max(eiok_home_today{env!=\"staging\",key=\"mb\"}) / max(eiok_home_today{env!=\"staging\",key=\"cap_mb\"}) >= 0.75",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-home-builds",
+  "title": "Home relay builds near their daily cap",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "5m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "The home relay has used 90 % of HOME_DAILY_BUILDS today. At the cap (reset at midnight Chicago), long videos go to Tunelio (credits; long HLS builds can fail on Quest) or youtube.com. `node tools/ops.mjs state` shows both caps."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "max(eiok_home_today{env!=\"staging\",key=\"builds\"}) / max(eiok_home_today{env!=\"staging\",key=\"cap_builds\"}) >= 0.9",
      "instant": true
     }
    },
@@ -873,7 +927,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "At the last 3 days’ spend, the Tunelio credits run out before the plan renews on the 1st (the pacer then keeps plays at 720p; at 0 they go to youtube.com)."
+   "summary": "At the last 3 days’ spend, the Tunelio credits run out before the plan renews (TUNELIO_RENEWS_DAY). The pacer moves plays home while home has room; at 0 they go to youtube.com at 360p."
   },
   "labels": {
    "project": "everything-is-ok",
@@ -892,7 +946,223 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "(sum(increase(eiok_events_total{env!=\"staging\",metric=\"credits\"}[3d])) / 3) * (days_in_month() - day_of_month() + 1) - max(eiok_credits_remaining{env!=\"staging\"}) > 0",
+     "expr": "(sum(increase(eiok_events_total{env!=\"staging\",metric=\"credits\"}[3d])) / 3) * max(eiok_poll{env!=\"staging\",source=\"tunelio_plan\",metric=\"days_to_renewal\"}) - max(eiok_credits_remaining{env!=\"staging\"}) > 0",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-alert-inputs-missing",
+  "title": "Alert inputs missing",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "30m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "A value that the build cap, service memory or credit pace alert needs has been missing for 30 minutes, so that alert is blind. Expected while the search service is down. Otherwise check japharsworld-yt-exporter (STATS_TOKEN, cgroup) and the metrics poller on the Linode."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "absent(eiok_home_today{env!=\"staging\",key=\"cap_builds\"}) or absent(eiok_service_memory_limit_bytes{env!=\"staging\"}) or absent(eiok_poll{env!=\"staging\",source=\"tunelio_plan\",metric=\"days_to_renewal\"})",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-linode-cpu",
+  "title": "Linode CPU over 80 %",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "15m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "The Linode’s CPU has been over 80 % busy for 15 minutes; plays and searches slow down first. No event-loop metric exists. Check `top` there and the Hosts row."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "1 - avg(rate(node_cpu_seconds_total{env!=\"staging\",host=\"linode\",mode=\"idle\"}[5m])) > 0.8",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-service-memory",
+  "title": "Search service memory near its limit",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "15m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "The search service’s anon + swap has been over 90 % of MemoryMax for 15 minutes (page cache not counted). An OOM restart drops pins and held plays. See the Search service memory panel; `systemctl set-property japharsworld-yt MemoryMax=…` needs no restart."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "sum(eiok_service_memory_bytes{env!=\"staging\",kind=~\"anon|swap\"}) / max(eiok_service_memory_limit_bytes{env!=\"staging\"}) > 0.9",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-search-502",
+  "title": "Searches failing (502)",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "0m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "Two or more searches in 15 minutes got 502 youtube_failed: the home relay, the Linode and the Data API all failed. See `node tools/ops.mjs state` and the YouTube refusals panel."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"search_fail\",key=\"502\"}[15m])) >= 2",
      "instant": true
     }
    },

@@ -525,10 +525,12 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // Whether a play goes to the home relay (src/home.js), and why; null = the Tunelio path. Tunelio comes first while
   // today's credits are within the pacer's allowance (owner, 2026-10-23); live streams stay on youtube.com. A session
   // already there (late joiners, replays) is reused whatever the reason.
-  function homeWhy(data, quality) {
+  function homeWhy(data, quality, hlsTicket = false) {
     if (!home.enabled || data.live) return null;
     const s = home.peek(data, quality);
-    if (s && s.state !== 'failed') return 'reuse';
+    // A session the race started for a Quest (raceHome) isn't a reason for a PC player: a growing playlist opens as live
+    // there (#111), and its own build is what it would have had without the race. Once finished it is a plain VOD.
+    if (s && s.state !== 'failed' && (hlsTicket || s.why !== 'slow_build' || s.ended)) return 'reuse';
     // No worker for this quality: the video's session at another quality, if it has one (homeKeep), else Tunelio.
     if (!home.worker()) return home.other?.(data, quality) ? 'reuse' : null;
     if (!tunelio.enabled || Date.now() < (playback.pausedUntil ?? 0)) return 'tunelio_off';
@@ -636,6 +638,32 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       progress: Math.round(Math.min(0.95, elapsed / (elapsed + eta)) * 100) / 100 };
   }
 
+  // The hold of a Quest player (.m3u8 ticket) when its Tunelio build runs long: home starts too, and the player gets
+  // whichever is ready first (Everything-is-OK#398). Size predictions can't pick these videos (2026-10-31: 44 s predicted,
+  // 96.6 s actual; 94 s predicted, 12.9 s actual), so it goes by the build's age. Prod journal, 10-26 to 10-31: 182 Quest
+  // waits, 17 with a hold over 20 s, 7 over 40 s, up to 97 s; home ready p50 6.6 s, max 15.2 s. Age, not this hold's own
+  // time, so that a build warmed from the tablet counts, players of a room change over together and a player's retry
+  // doesn't start the clock again. The build carries on: its credits are spent, and the next play can use the link.
+  async function raceHome(req, shard, data, c, hq) {
+    const hold = playback.location(data, { holdMs: config.ticketPlayerHoldMs, quality: c.quality, hls: c.hls });
+    const job = playback.peek?.(data, c.quality, { hls: c.hls });
+    if (job?.state !== 'building') return hold;
+    let timer;
+    const late = new Promise((resolve) => { timer = setTimeout(() => resolve(null), Math.max(0, config.homeRaceMs - (Date.now() - job.startedMs))); });
+    const first = await Promise.race([hold, late]);
+    clearTimeout(timer);
+    if (first) return first;
+    if (req.socket.destroyed) return hold; // the player left: no download from home for nobody
+    const s = homeKeep(data, hq, startHome(shard, data, hq, 'slow_build'));
+    if (!s || s.state === 'failed') return hold;
+    const tunelio = await Promise.race([hold, home.wait(s, config.homeReadyMs).then(() => null)]);
+    if (tunelio) return tunelio;
+    if (s.state !== 'ready') return hold; // home failed or missed its time: Tunelio's hold goes on
+    metrics.inc('home', 'race_won');
+    logJson({ event: 'home_race_won', id: data.id, quality: s.quality, ms: Date.now() - job.startedMs });
+    return homeWhere(s);
+  }
+
   // A ticket ending in .m3u8 (`hlsTicket`) is the world's Android build: Quest's player (ExoPlayer) picks the format from
   // the URL's extension, so it opens an extensionless ticket as a file and fails on HLS behind it, and opens a .m3u8 one
   // as HLS and fails on an mp4 behind it. So a .m3u8 ticket is always answered with HLS: a plain HLS build of the plan's
@@ -711,7 +739,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...st, ...meta(t.data) });
         }
         const hq = homeQuality(shard, t.data);
-        const hw = hlsTicket && !config.homeAndroid ? null : homeWhy(t.data, hq);
+        const hw = hlsTicket && !config.homeAndroid ? null : homeWhy(t.data, hq, hlsTicket);
         const hs = hw ? homeKeep(t.data, hq, startHome(shard, t.data, hq, hw)) : null;
         if (hs && hs.state !== 'failed' && !leaveHome(hs, hlsTicket)) return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(hs), ...meta(t.data) });
         let c = await choice(shard, t.data);
@@ -756,7 +784,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // the first segments.
       const hq = homeQuality(shard, t.data);
       const homeOk = hlsTicket ? config.homeAndroid : !android;
-      const why = homeOk ? homeWhy(t.data, hq) : null;
+      const why = homeOk ? homeWhy(t.data, hq, hlsTicket) : null;
       let hs = why ? homeKeep(t.data, hq, startHome(shard, t.data, hq, why)) : null;
       if (hs && hs.state !== 'failed') {
         if (resolver) {
@@ -819,7 +847,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         }
         holding++;
         try {
-          where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs,
+          if (config.homeRaceMs > 0 && hlsTicket && homeOk && c.hls) where = await raceHome(req, shard, t.data, c, hq);
+          else where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs,
             quality: c.quality, hls: c.hls });
         } finally { holding--; }
         if (c.hls && !c.single && where.ready && where.via === 'tunelio') {

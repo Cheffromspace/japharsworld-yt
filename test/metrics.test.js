@@ -303,3 +303,8 @@ test('play_outcome keys: fixed sets only, nothing free-form reaches the database
   assert.equal(checkedKey('play_outcome', 'tester:pc:unknown:left'), 'tester:pc:unknown:left');
   for (const k of ['visitor:android:home', 'visitor:android:home:f7', 'owner:pc:home:f5', 'visitor:pc:abcdefghijk:f5', '3:visitor:pc:home:f5']) assert.equal(checkedKey('play_outcome', k), 'other', k);
 });
+
+test('world #420: the too-long keys pass their checks', () => {
+  assert.equal(checkedKey('play_fallback', 'too_long'), 'too_long');
+  assert.equal(checkedKey('ticket_too_long', ''), '');
+});

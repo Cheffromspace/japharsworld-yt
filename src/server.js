@@ -79,6 +79,8 @@ function page(path) {
   return buf;
 }
 
+const HOME_REFUSED_MS = 5 * 60_000;
+
 export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, adaptive, slots, home, channels, log = console.log } = {}) {
   // Recent events for /ops/events, redacted as they are kept.
   const ring = new EventRing();
@@ -592,8 +594,20 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   }
   // A home session for this play, counted once by why it went home (a session that is already there is just used),
   // and once as `stepdown` when it is 720p only for its length.
+  // A video home just refused for room is not asked about again for a while (world #420, staging 2026-10-31: 52
+  // home_no_room / home_over_cap pairs in 5 min from one Quest's retries and tablet polls, for an answer that can't change
+  // that fast). Any video, PC too: a refusal only sends it on to Tunelio. In memory. A session already there is still found.
+  const homeRefused = new Map(); // video id → until
   function startHome(shard, data, quality, why) {
+    const until = homeRefused.get(data.id);
+    if (until > Date.now() && !home.peek(data, quality)) return null;
+    if (until) homeRefused.delete(data.id);
     const s = home.start(data, quality);
+    // null with a worker free: home.start's #room said no. Without a worker it has made no room check.
+    if (!s && home.worker()) {
+      homeRefused.set(data.id, Date.now() + HOME_REFUSED_MS);
+      if (homeRefused.size > 5000) homeRefused.delete(homeRefused.keys().next().value);
+    }
     if (s && !s.why) {
       s.why = why; home.save?.(s); metrics.inc('home_why', why);
       if (quality !== homePick(shard)) { metrics.inc('home', 'stepdown'); logJson({ event: 'home_stepdown', id: data.id, from: homePick(shard), quality, seconds: data.seconds }); }
@@ -686,6 +700,15 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // An age-restricted video (world #305): no source can play it, youtube.com included (VRChat can't sign in), so the
   // tablet gets `error: "restricted"` in its status and a player a fast 403 with that code instead of a youtube.com link
   // it would retry every few seconds.
+  // Too long for Tunelio, home took no build, and a Quest can't open the youtube.com link (world #420): say so once instead
+  // of a link it retries every 6 s. The same shape as restrictedAnswer. Only a .m3u8 ticket or an Android player: a PC
+  // plays youtube.com's 360p (src/playback.js tooLongIds), and its status stays state "youtube", reason "too_long".
+  function tooLongAnswer(res, kind, shard, n, t) {
+    metrics.inc('ticket_too_long');
+    if (kind === 'string') return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), state: 'failed', reason: 'too_long', error: 'too_long', ...meta(t.data) });
+    logJson({ event: 'play_too_long', shard, n, id: t.data.id, client: kind });
+    return fail(res, 403, 'too_long', "This video is too long to play here.");
+  }
   function restrictedAnswer(res, kind, shard, n, t) {
     metrics.inc('ticket_restricted');
     if (kind === 'string') return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), state: 'failed', reason: 'restricted', error: 'restricted', ...meta(t.data) });
@@ -768,6 +791,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         const hw = hlsTicket && !config.homeAndroid ? null : homeWhy(t.data, hq, hlsTicket);
         const hs = hw ? homeKeep(t.data, hq, startHome(shard, t.data, hq, hw)) : null;
         if (hs && hs.state !== 'failed' && !leaveHome(hs, hlsTicket)) return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(hs), ...meta(t.data) });
+        if (hlsTicket && playback.tooLong?.(t.data.id)) return tooLongAnswer(res, kind, shard, n, t);
         let c = await choice(shard, t.data);
         if (hlsTicket && !t.data.live) c = hlsChoice(c); // live: the watch link, as on a plain ticket (world #270)
         const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
@@ -900,7 +924,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           }
         }
         // Tunelio's build failed: home before youtube.com's 360p, for a player that can take home's HLS, when a worker is free.
-        if (!homeFor && !resolver && homeOk && where.ready && where.via === 'youtube' && /^(tunelio_failed|build_failed)$/.test(where.reason ?? '') && home.worker()) homeFor = 'tunelio_failed';
+        if (!homeFor && !resolver && homeOk && where.ready && where.via === 'youtube' && /^(tunelio_failed|build_failed|too_long)$/.test(where.reason ?? '') && home.worker()) homeFor = 'tunelio_failed';
         if (homeFor) {
           const fallback = startHome(shard, t.data, hq, homeFor);
           if (fallback && fallback.state !== 'failed') {
@@ -913,6 +937,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const held = Date.now() - started;
       metrics.latency('ticket_hold_ms', held);
       if (where.via === 'restricted') return restrictedAnswer(res, kind, shard, n, t);
+      if (where.via === 'youtube' && where.reason === 'too_long' && (hlsTicket || android)) return tooLongAnswer(res, kind, shard, n, t);
       // The last check: from here to pins.set nothing awaits, so of the players of a ticket that held at once the first to
       // get here sets its source and the others follow it. The checks above can't do this alone: the codec read and
       // homeWhere await after them (#293, Everything-is-OK#398).

@@ -24,8 +24,9 @@ Counted in memory and written to SQLite every minute and at shutdown (SIGTERM). 
 | `transfer` | `linode` `home` | MB sent by each host (src/net.js): the Linode counts its own `/proc/net/dev` every minute, the home worker's relay polls carry its counter. Exported as `eiok_transfer_bytes{host, period=today|month}` for the transfer alerts (owner, 2026-10-24); byte totals only |
 | `home_why` | `tunelio_off` `long` `pacer` `tunelio_failed` `av1` `tunelio_slow` `slow_build` | why a session went home, once per session (`av1`: an AV1 Tunelio build on a `.m3u8` ticket, `HOME_ANDROID=on`; `tunelio_slow`: a Tunelio call timed out in the last `TUNELIO_SUSPECT_SECONDS`; `slow_build`: a `.m3u8` ticket's build outlasted `HOME_RACE_SECONDS`) |
 | `home_start_s` | seconds bucket | session start to its first playlist |
-| `play_fallback` | `disabled` `paused` `tunelio_failed` | why a video went to YouTube at 360p |
+| `play_fallback` | `disabled` `paused` `tunelio_failed` `too_long` | why a video went to YouTube at 360p |
 | `ticket_restricted` | – | a ticket answered `restricted` (an age-restricted video, world #305: the player's fast 403 or the tablet's status), per request, no video |
+| `ticket_too_long` | – | a Quest's ticket answered `too_long` (world #420): Tunelio refused the video as too long and home took no build, per request, no video |
 | `play_platform` | `pc` `android` | once per room and platform (a mixed room counts one of each): the player's User-Agent (`isAndroidPlayer`) or a `.m3u8` ticket; resolver requests don't count |
 | `play_length` | `lt10m` `lt1h` `lt3h` `longer` `live` `unknown` | length bucket of the played video |
 | `tunelio_create_ms` | latency bucket | Tunelio `/create` |

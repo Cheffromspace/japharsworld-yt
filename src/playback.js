@@ -58,6 +58,11 @@ export class Playback {
     // which VRChat retried every 2–6 s (prod 2026-10-28 21:56Z, ~25 plays in 70 s). Kept in memory only.
     this.restrictedMs = restrictedHours * 3600_000;
     this.restrictedIds = new Map();
+    // Videos Tunelio refused as too long (world #420): videoId → until, no /create for them meanwhile. youtube.com still
+    // plays them on PC: VRChat's own yt-dlp resolved all three refused on staging (13 h, 24.6 h, 32 h) to a 360p mp4 whose
+    // first KB downloads (2026-10-31; not watched in a client). A Quest can't open that link, so the ticket route answers it
+    // too_long unless home takes the video.
+    this.tooLongIds = new Map();
     this.forcedRestricted = new Map(); // the test plans among them (forceRestricted): videoId → until
     this.alert = alert;
     this.log = log;
@@ -159,6 +164,13 @@ export class Playback {
     return Boolean(until && this.now() < until);
   }
 
+  // True while `id` is known to be too long for Tunelio (see tooLongIds).
+  tooLong(id) {
+    const until = this.tooLongIds.get(id);
+    if (until && this.now() >= until) this.tooLongIds.delete(id);
+    return Boolean(until && this.now() < until);
+  }
+
   // A test plan (/ops/plan mode restricted): `id` answers as if Tunelio had refused it as age-restricted, for `minutes`,
   // so the world's restricted message can be tested without an age-gated video (#305). 0 clears it. Memory only.
   forceRestricted(id, minutes) {
@@ -181,6 +193,7 @@ export class Playback {
     const id = data.id;
     if (this.restricted(id)) return { location: null, via: 'restricted', reason: 'restricted' };
     if (data.live) return { location: watch(id), via: 'youtube', reason: 'live' };
+    if (this.tooLong(id)) return { location: watch(id), via: 'youtube', reason: 'too_long' };
     if (!this.tunelio?.enabled) return { location: watch(id), via: 'youtube', reason: 'disabled' };
     if (this.now() < this.pausedUntil) return { location: watch(id), via: 'youtube', reason: 'paused' };
     return null;
@@ -199,7 +212,7 @@ export class Playback {
   start(data, quality = this.quality, { hls = false, maxMb = 0 } = {}) {
     if (data.live) return null; // Tunelio refuses live streams (400 "Live streams are not supported"); they play from youtube.com
     const id = data.id;
-    if (this.restricted(id)) return null; // refused as age-restricted: no more /create calls for it (world #305)
+    if (this.restricted(id) || this.tooLong(id)) return null; // refused: no more /create calls for it (world #305, #420)
     const key = this.#key(data, quality, hls);
     const now = this.now();
     let job = this.jobs.get(key);
@@ -228,6 +241,8 @@ export class Playback {
   }
 
   made(id, quality) {
+    // Planning asks for the size again when its plan runs out (src/adaptive.js): no /create for a refused video.
+    if (this.tooLong(id)) return Promise.reject(Object.assign(new Error('Video is too long.'), { status: 413 }));
     const key = `${id}@${quality}`;
     const hit = this.creates.get(key);
     if (hit && (!hit.made || hit.made.expires * 1000 - this.marginMs > this.now())) return hit.promise;
@@ -314,6 +329,12 @@ export class Playback {
         this.restrictedIds.set(id, this.now() + this.restrictedMs);
         while (this.restrictedIds.size > 5000) this.restrictedIds.delete(this.restrictedIds.keys().next().value);
         return this.#finish(job, { ok: false, reason: 'restricted' });
+      }
+      // 413 as well as the words: a 504 "Upstream took too long to respond." is a passing failure, not this.
+      if (err.status === 413 && /too long/i.test(`${err.code ?? ''} ${err.message ?? ''}`)) {
+        this.tooLongIds.set(id, this.now() + this.restrictedMs);
+        while (this.tooLongIds.size > 5000) this.tooLongIds.delete(this.tooLongIds.keys().next().value);
+        return this.#finish(job, { ok: false, reason: 'too_long' });
       }
       return this.#finish(job, { ok: false, reason: 'tunelio_failed' });
     }

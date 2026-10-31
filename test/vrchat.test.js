@@ -4,9 +4,9 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { totp, instanceType, worldValues, groupValues, VRChat } from '../metrics/vrchat.js';
-import { pollVRChat, updateEnvFile, settings, tunelioPass, renewalPass, renewalReminders, recordReleases, runOccupants, OCCUPANCY, domainPass } from '../metrics/poll.js';
+import { pollVRChat, updateEnvFile, settings, tunelioPass, renewalPass, renewalReminders, recordReleases, releasePass, runOccupants, OCCUPANCY, domainPass } from '../metrics/poll.js';
 import { openMetricsDb, getMeta } from '../src/metrics.js';
-import { githubRepo, domainExpiry, DOMAINS } from '../metrics/sources.js';
+import { githubRepo, githubReleases, domainExpiry, DOMAINS } from '../metrics/sources.js';
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'));
 const WORLD = fixture('vrchat-world.json');
@@ -315,4 +315,37 @@ test('domain pass: records expires once a day; a failure retries after an hour, 
   assert.equal(calls, 2, 'a good answer holds for a day');
   await domainPass(db, cfg, { now: t + 21 * H, fetcher });
   assert.equal(calls, 3);
+});
+
+// World #413: release tags on every pass, one call, and a failure costs nothing but the marker's wait.
+test('releasePass: one call, tags under the daily read\'s source, once each; failures are logged and swallowed', async () => {
+  const db = openMetricsDb(':memory:');
+  try {
+    const c = settings({ GITHUB_TOKEN: 'tok' });
+    const calls = [];
+    const ok = async (url, o) => { calls.push([url, o.headers.authorization]); return new Response(JSON.stringify([
+      { tag_name: 'v2026.10.31', published_at: '2026-10-31T21:00:00Z' },
+      { tag_name: 'nightly', published_at: '2026-10-31T21:00:00Z' },
+      { tag_name: 'v2026.11.01', draft: true, published_at: '2026-10-31T22:00:00Z' },
+    ])); };
+    assert.equal(await releasePass(db, c, { now: 1000, fetcher: ok }), 1);
+    assert.deepEqual(calls, [['https://api.github.com/repos/Cheffromspace/Everything-is-OK/releases?per_page=10', 'Bearer tok']]);
+    assert.deepEqual(db.prepare('SELECT source, version, at, detected FROM releases').all().map((r) => ({ ...r })),
+      [{ source: 'github:Everything-is-OK', version: 'v2026.10.31', at: Date.parse('2026-10-31T21:00:00Z'), detected: 1000 }]);
+    assert.equal(await releasePass(db, c, { now: 2000, fetcher: ok }), 0, 'seen already');
+    for (const bad of [
+      async () => new Response('{}', { status: 500 }),
+      async () => new Response('{}', { status: 403 }),
+      async () => new Response('{}', { status: 404 }),
+      async () => new Response('not json'),
+      async () => new Response('{"message":"x"}'),
+      async () => { throw new Error('network'); },
+    ]) assert.equal(await releasePass(db, c, { now: 3000, fetcher: bad }), 0);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM releases').get().n, 1);
+  } finally { db.close(); }
+});
+
+test('githubReleases: 404 is null (private with no token); a bad repo name never reaches the network', async () => {
+  assert.equal(await githubReleases({ repo: 'a/b', userAgent: UA, fetcher: async () => new Response('{}', { status: 404 }) }), null);
+  await assert.rejects(githubReleases({ repo: 'a/b/../c', userAgent: UA, fetcher: async () => assert.fail('no call') }), /bad repo name/);
 });

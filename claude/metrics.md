@@ -79,7 +79,7 @@ release). About 5,800 poll rows a day, kept 90 days like the rest.
 - **Tunelio** `GET /credits` (free): balance and plan, every pass. Tunelio has no API for the wallet funds that
   auto-renew pays from, so the poller watches what it can (see Reports).
 - **Releases** (`releases` table): each world's `version` the first time it is seen, at VRChat's `updated_at` (the
-  upload time), and once a day the world repo's GitHub release tags (`vYYYY.MM.DD[.N]`) at their publish time.
+  upload time), and the world repo's GitHub release tags (`vYYYY.MM.DD[.N]`, `GITHUB_RELEASE_REPO`) at their publish time, one API call per poll (world #413).
 
 Once a day:
 

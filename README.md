@@ -185,7 +185,10 @@ one, f331bcc) and never for live streams:
 6. on a `.m3u8` ticket with `HOME_ANDROID=on`: Tunelio's HLS build is AV1 (read from its init segment), which the
    Quest 2 can't decode; home is always H.264 + AAC. Counted as `adaptive`/`android_av1` whether or not the flag is on.
    A higher rung of an adaptive master that turns out AV1 is answered, for a Quest player, with the best H.264 rung
-   below it (`android_av1_rung`), so the play tops out lower instead of failing at the step up.
+   below it (`android_av1_rung`), so the play tops out lower instead of failing at the step up,
+7. on a `.m3u8` ticket with `HOME_ANDROID=on` and `HOME_RACE_SECONDS` above 0 (default 0, off): Tunelio's build is still
+   running after that many seconds (`slow_build`). Home starts beside it and the player gets whichever is ready first
+   (`home`/`race_won` when home wins). The build carries on for the next play.
 
 Only while a worker that announced `caps=media` is online and today's `HOME_DAILY_BUILDS` / `HOME_DAILY_MB` aren't used
 up (YouTube may flag an IP that downloads a lot; "today" is the `METRICS_TZ` day, America/Chicago, and the count is

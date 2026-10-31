@@ -1069,6 +1069,42 @@ test('#398: the build ending while home is still starting: Tunelio answers at on
   assert.ok(!app.counts.includes('home:race_won'));
 });
 
+test('#398: one source per ticket: Quest B waiting on the race session follows Quest A, who got Tunelio first', async (t) => {
+  let release;
+  const app = await raceApp(t, { media: () => new Promise((r) => { release = r; }) });
+  t.after(() => release?.());
+  const heldA = app.play(QUEST);
+  while (!app.jobs.length) await sleep(10);
+  const heldB = app.play(QUEST); // the normal path: homeWhy reuses the session and waits for it
+  await sleep(30);
+  app.done();
+  const a = (await heldA).headers.get('location');
+  assert.match(a, TUNELIO_URL);
+  release();
+  assert.equal((await heldB).headers.get('location'), a, 'B follows the answer A was given');
+  assert.equal((await app.play(QUEST)).headers.get('location'), a, 'and the pin is still that answer');
+  assert.ok(!app.counts.includes('home:race_won'));
+});
+
+test('#398: one source per ticket: home answered while Quest A reads its build codec: A follows it', async (t) => {
+  let release, read;
+  const app = await raceApp(t, { media: () => new Promise((r) => { release = r; }) });
+  t.after(() => { release?.(); read?.(); });
+  let reading = false;
+  app.adaptive.codec = () => new Promise((r) => { reading = true; read = () => r('avc1'); });
+  const heldA = app.play(QUEST);
+  while (!app.jobs.length) await sleep(10);
+  const heldB = app.play(QUEST);
+  await sleep(30);
+  app.done();
+  while (!reading) await sleep(10); // A has left raceHome with Tunelio, and no pin is set yet
+  release();
+  const b = (await heldB).headers.get('location');
+  assert.match(b, HOME_URL);
+  read();
+  assert.equal((await heldA).headers.get('location'), b);
+});
+
 test('#398: a build warmed from the tablet counts: past the limit at play, home starts at once', async (t) => {
   const app = await raceApp(t, { raceMs: 150 });
   await fetch(`${app.url}/v1/0/${app.n}.m3u8`, { headers: TABLET });

@@ -78,6 +78,7 @@ export function metricsDbSeries(db, o, now = Date.now()) {
   o.add('eiok_tunelio_probe_read_minutes_total', 'counter', 'Minutes the probe read a Tunelio link at playback speed, all days summed.', {}, drop.minutes ?? 0);
   o.add('eiok_tunelio_probe_cuts_total', 'counter', 'Connections cut during that read, all days summed.', {}, drop.cut ?? 0);
   o.add('eiok_tunelio_probe_reopen_fail_total', 'counter', 'Reopens at the byte reached that failed (status, wrong offset, or no first byte in 10 s), all days summed.', {}, drop.reopen_fail ?? 0);
+  o.add('eiok_tunelio_probe_open_fail_total', 'counter', 'Reads that never started: all three first opens failed the same way, all days summed.', {}, drop.open_fail ?? 0);
   const credits = db.prepare("SELECT value, at FROM gauges WHERE metric = 'credits_remaining' ORDER BY day DESC, at DESC LIMIT 1").get();
   if (credits) o.add('eiok_credits_remaining', 'gauge', 'Tunelio credits left (search service, last seen).', {}, credits.value);
   for (const r of db.prepare(`SELECT key, value FROM gauges WHERE metric = 'home_today'

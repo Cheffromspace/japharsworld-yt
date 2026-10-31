@@ -98,6 +98,7 @@ test('exporter: usage counters, histograms, polls, slots, flash checks, jobs, he
     has('eiok_tunelio_probe_read_minutes_total 0'); // from 0 so increase() sees the first (#361)
     has('eiok_tunelio_probe_cuts_total 0');
     has('eiok_tunelio_probe_reopen_fail_total 0');
+    has('eiok_tunelio_probe_open_fail_total 0');
     // The flash worker's YouTube refusals, by class only (a detail that isn't a class is dropped).
     has('eiok_events_total{metric="yt_refusal",key="flash:bot"} 2');
     has('eiok_events_total{metric="yt_refusal",key="flash:rate"} 0');

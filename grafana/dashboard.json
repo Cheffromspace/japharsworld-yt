@@ -1634,7 +1634,7 @@
    "type": "timeseries",
    "id": 26,
    "title": "Tunelio cuts per playback hour (24 h)",
-   "description": "The speed probe reads the link of each progressive run at playback speed for 10 minutes and resumes at the byte reached after a cut (src/probe.js, Everything-is-OK#361): about 11 reads a day. A sample of 2026-10-29 from a home PC gave ~3 cuts per playback hour. No alert on the rate until there is a baseline.",
+   "description": "The speed probe reads the link of each progressive run at playback speed for 10 minutes and resumes at the byte reached after a cut (src/probe.js, Everything-is-OK#361): about 11 reads a day. A read is skipped if a visitor's build or held player is in flight when it would start; that is checked only then, so a visitor who arrives during a read doesn't stop it. A sample of 2026-10-29 from a home PC gave ~3 cuts per playback hour. No alert on the rate until there is a baseline.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1684,7 +1684,7 @@
    "type": "timeseries",
    "id": 27,
    "title": "Tunelio read and reopens (24 h)",
-   "description": "The speed probe reads the link of each progressive run at playback speed for 10 minutes and resumes at the byte reached after a cut (src/probe.js, Everything-is-OK#361): about 11 reads a day. A sample of 2026-10-29 from a home PC gave ~3 cuts per playback hour. No alert on the rate until there is a baseline. A failed reopen: another status, the wrong offset, or no first byte in 10 s.",
+   "description": "The speed probe reads the link of each progressive run at playback speed for 10 minutes and resumes at the byte reached after a cut (src/probe.js, Everything-is-OK#361): about 11 reads a day. A read is skipped if a visitor's build or held player is in flight when it would start; that is checked only then, so a visitor who arrives during a read doesn't stop it. A sample of 2026-10-29 from a home PC gave ~3 cuts per playback hour. No alert on the rate until there is a baseline. A failed reopen: another status, the wrong offset, or no first byte in 10 s. A read that could not open: three first opens in a row failed that way.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1722,6 +1722,15 @@
      },
      "expr": "sum(increase(eiok_tunelio_probe_reopen_fail_total{env!=\"staging\"}[24h]))",
      "legendFormat": "failed reopens"
+    },
+    {
+     "refId": "D",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum(increase(eiok_tunelio_probe_open_fail_total{env!=\"staging\"}[24h]))",
+     "legendFormat": "reads that could not open"
     }
    ],
    "options": {

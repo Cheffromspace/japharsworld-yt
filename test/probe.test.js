@@ -126,7 +126,7 @@ const CHUNK = new Uint8Array(450_000);
 const cutErr = () => Object.assign(new TypeError('terminated'), { cause: { code: 'ECONNRESET' } });
 function dropSetup({ conns = [], fileSize = 900e6, seconds = 1200, busy = () => 0, dropMinutes = 10, total = 900_000_000, ...opts } = {}) {
   let t = 1_000_000;
-  const logs = [], counts = {}, opens = [], created = [];
+  const logs = [], counts = {}, opens = [], created = [], openedAt = [];
   const script = [...conns];
   const tunelio = { async create(id, q) { created.push(q); return { url: `https://tunelio.dev/tunnel?id=${id}&q=${q}`, expires: 9e9, quality: q, fileSize }; } };
   const fetcher = async (url, o = {}) => {
@@ -135,6 +135,7 @@ function dropSetup({ conns = [], fileSize = 900e6, seconds = 1200, busy = () => 
     if (!range) return new Response('#EXTM3U\n#EXTINF:4,\nseg0.ts\n', { status: 200 });
     const start = Number(/bytes=(\d+)-/.exec(range)[1]);
     opens.push({ url, start });
+    openedAt.push(t);
     const c = script.shift() ?? {};
     if (c.throws) throw c.throws;
     if (c.status) return new Response('', { status: c.status, headers: { 'content-range': `bytes ${start}-${total - 1}/${total}` } });
@@ -156,7 +157,7 @@ function dropSetup({ conns = [], fileSize = 900e6, seconds = 1200, busy = () => 
   const probe = new TunelioProbe({ tunelio, fetcher, now: () => t, random: () => 0, busy, log: (e) => logs.push(e), dropMinutes,
     sleep: async (ms) => { t += ms; }, dropCount: (k, n) => { counts[k] = (counts[k] ?? 0) + n; },
     search: async () => ({ videos: [video('AAAAAAAAAAA', seconds), video('BBBBBBBBBBB', seconds), video('EEEEEEEEEEE', seconds)] }), ...opts });
-  return { probe, logs, counts, opens, created, ev: (name) => logs.filter((e) => e.event === name) };
+  return { probe, logs, counts, opens, openedAt, created, ev: (name) => logs.filter((e) => e.event === name) };
 }
 
 test('drop check: off by default, and HLS runs read nothing', async () => {
@@ -258,17 +259,69 @@ test('drop check: the end of the file is no cut; a link that keeps cutting stops
   assert.ok(cutting.opens.length < 200);
 });
 
-test('drop check: skipped while a visitor build is in flight, and a failed first open counts as no reopen', async () => {
+test('drop check: skipped while a visitor build is in flight when the read would start', async () => {
   let builds = 0;
   const s = dropSetup({ busy: () => builds });
   s.probe.tunelio.create = async (id, q) => { builds = 1; return { url: `https://tunelio.dev/tunnel?id=${id}`, quality: q, fileSize: 900e6 }; };
   assert.equal((await s.probe.runOnce()).drop, null);
   assert.equal(s.opens.length, 0);
   assert.equal(s.ev('tunelio_drop')[0].skipped, 'busy');
+});
 
-  const bad = dropSetup({ conns: [{ status: 503 }] });
-  assert.equal((await bad.probe.runOnce()).drop.ended, 'open_failed');
-  assert.deepEqual(bad.counts, {});
+test('drop check: a visitor who arrives during the read does not stop it', async () => {
+  let builds = 0;
+  const s = dropSetup({ conns: [{}], busy: () => builds });
+  const inner = s.probe.sleep;
+  s.probe.sleep = async (ms) => { builds = 1; return inner(ms); };
+  assert.equal((await s.probe.runOnce()).drop.ended, 'time');
+});
+
+test('drop check: three failed first opens count once as open_fail, not as a reopen, so the alert sees a dropped Range', async () => {
+  const noRange = dropSetup({ conns: [{ status: 200 }, { status: 200 }, { status: 200 }] });
+  const r = await noRange.probe.runOnce();
+  assert.equal(r.drop.ended, 'open_failed');
+  assert.equal(noRange.opens.length, 3);
+  assert.deepEqual(noRange.counts, { open_fail: 1 });
+  assert.deepEqual(noRange.ev('tunelio_drop_open').map((e) => [e.ok, e.attempt, e.status]), [[false, 1, 200], [false, 2, 200], [false, 3, 200]]);
+  assert.equal(noRange.ev('tunelio_drop_reopen').length, 0);
+  assert.equal(noRange.ev('tunelio_drop')[0].status, 200);
+  assert.doesNotMatch(JSON.stringify(noRange.ev('tunelio_drop_open')), /AAAAAAAAAAA|tunnel/, 'no video or link in its lines');
+});
+
+test('drop check: a blip shorter than the first open\'s tries counts nothing and the read goes on', async () => {
+  const s = dropSetup({ conns: [{ throws: Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } }) }, {}] });
+  const r = await s.probe.runOnce();
+  assert.equal(r.drop.ended, 'time');
+  assert.equal(s.counts.open_fail, undefined);
+  assert.deepEqual(s.ev('tunelio_drop_open').map((e) => [e.ok, e.error ?? null]), [[false, 'ECONNRESET'], [true, null]]);
+});
+
+test('drop check: stop() during a first open is no failure', async () => {
+  const s = dropSetup();
+  const inner = s.probe.fetch;
+  s.probe.fetch = async (url, o = {}) => {
+    if (o.headers?.range === 'bytes=0-') { s.probe.stop(); throw new DOMException('aborted', 'AbortError'); }
+    return inner(url, o);
+  };
+  assert.equal((await s.probe.runOnce()).drop.ended, 'stopped');
+  assert.deepEqual(s.counts, {});
+});
+
+test('drop check: a link that cuts straight after every reopen backs off, about 26 opens instead of thousands', async () => {
+  const s = dropSetup({ conns: Array.from({ length: 8000 }, () => ({ cutAfter: 450_000 })) });
+  const r = await s.probe.runOnce();
+  assert.equal(r.drop.ended, 'wall');
+  assert.ok(s.opens.length <= 30, `${s.opens.length} opens`);
+  assert.ok(s.logs.length <= 70, `${s.logs.length} log lines`);
+});
+
+test('drop check: the backoff doubles on quick cuts, and a connection that lasted clears it', async () => {
+  const quick = { cutAfter: 450_000 }; // about 1 s, then the wait
+  const s = dropSetup({ conns: [quick, quick, { cutAfter: 450_000 * 100 }, quick, {}] });
+  const r = await s.probe.runOnce();
+  assert.equal(r.drop.ended, 'time');
+  const gaps = s.openedAt.slice(1).map((t, i) => Math.round((t - s.openedAt[i]) / 1000));
+  assert.deepEqual(gaps, [2, 3, 100, 2], 'seconds between opens: read + 1 s, read + 2 s, 100 s read and no wait, read + 1 s');
 });
 
 test('drop check: stop() ends the read with its counts and no false failure', async () => {

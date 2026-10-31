@@ -20,6 +20,7 @@
 // the byte reached after every cut. No extra credits. Measured from a home PC on 2026-10-29: 2 cuts in ~40 reader-minutes,
 // reopens fine. It answers two questions for #61: how often does Tunelio's side drop, and does a reopen resume? It is not
 // busy (a deploy doesn't wait for it): a restart ends the read, and the counts up to the last minute stay.
+// The check for a visitor's build or held player runs once, just before the read: a visitor who arrives during a read doesn't stop it.
 // `at` on a cut is when the read reached it. The real cut can be seconds earlier (inferred): a slow reader leaves data in
 // the socket's buffer, so `lastByteAt` and `at` place a cut to within about the buffer / the rate, not exactly.
 
@@ -29,8 +30,15 @@ const WARM_MS = 2000; // a first byte this fast means Tunelio already had the fi
 const DROP_MB_PER_S = 0.45; // 720p's rate, and the most it reads: 270 MB per 10 minutes. A file with a lower bitrate reads at its own, so a 12-minute video can't run out inside the 10 minutes
 const DROP_FIRST_BYTE_MS = 10_000; // a reopen that takes longer than this counts as failed
 const DROP_STALL_MS = 30_000; // no data for this long while waiting for it counts as a cut (a hang, not a reset)
-const DROP_TRIES = 3; // reopens in a row before the read gives up
+const DROP_TRIES = 3; // opens in a row before the read gives up
 const DROP_RETRY_MS = 5000;
+// A link that cuts straight after every reopen ran 39 reopens in 6 s against a local server (2026-10-30), about 7,800
+// requests and 15,600 log lines over the 20-minute wall. A connection cut sooner than DROP_STEADY_MS now waits 1, 2, 4 …
+// up to 60 s before the reopen: about 26 opens before the wall (computed). The usual cut (275 s and 591 s in, 2026-10-29)
+// lasted longer than that, so it reopens at once and clears the wait, as a player's reopen would.
+const DROP_STEADY_MS = 60_000;
+const DROP_BACKOFF_MS = 1000;
+const DROP_BACKOFF_MAX_MS = 60_000;
 const round = (x, places = 1) => Math.round(x * 10 ** places) / 10 ** places;
 const errName = (err) => String(err?.cause?.code ?? (typeof err?.code === 'string' ? err.code : err?.name) ?? err).slice(0, 60); // an AbortError's code is the number 20
 
@@ -130,6 +138,23 @@ export class TunelioProbe {
     } finally { clearTimeout(timer); }
   }
 
+  // Up to DROP_TRIES opens at `offset`, each passed to `note`. Answers an open connection, the last failure, or
+  // { stopped: true } after stop(), which isn't a failure and isn't noted.
+  async #dropConnect(url, offset, stop, note) {
+    let last;
+    for (let attempt = 1; attempt <= DROP_TRIES; attempt++) {
+      last = await this.#dropOpen(url, offset, stop);
+      if (stop.aborted) {
+        if (last.ok) { last.ctrl.abort(); last.reader.cancel().catch(() => {}); }
+        return { ok: false, stopped: true };
+      }
+      note(last, attempt);
+      if (last.ok) return last;
+      if (attempt < DROP_TRIES) await this.sleep(DROP_RETRY_MS);
+    }
+    return last;
+  }
+
   // Reads one connection at `rate` until `budgetMs` is used, the file ends or the connection is cut.
   async #dropRead(conn, offset, rate, budgetMs, stop) {
     const started = this.now();
@@ -178,8 +203,17 @@ export class TunelioProbe {
       return out;
     };
     const wall = this.now() + this.dropMs * 2; // a link that keeps cutting at once ends here, not after hours of reopens
-    let conn = await this.#dropOpen(url, 0, stop);
-    if (!conn.ok) return done(stop.aborted ? 'stopped' : 'open_failed', { status: conn.status, error: conn.error });
+    let conn = await this.#dropConnect(url, 0, stop, (o, attempt) => {
+      this.log({ event: 'tunelio_drop_open', ok: o.ok, attempt, status: o.status, offsetOk: o.offsetOk, ttfbMs: o.ttfbMs, error: o.error });
+    });
+    if (conn.stopped) return done('stopped');
+    if (!conn.ok) {
+      // Tunelio no longer honouring Range shows up here (the probe's first byte accepts a 200), with no cut and so no
+      // reopen to count. Counted once, after all the tries, so a blip of the Linode's own network has to outlast them.
+      this.dropCount('open_fail', 1);
+      return done('open_failed', { status: conn.status, error: conn.error });
+    }
+    let quickCuts = 0;
     for (;;) {
       const total = conn.total;
       const r = await this.#dropRead(conn, run.offset, rate, this.dropMs - run.readMs, stop);
@@ -191,18 +225,17 @@ export class TunelioProbe {
       // No video here: a cut lines up with a client freeze by clock time (#61), and the probe's video isn't the client's.
       this.log({ event: 'tunelio_drop_cut', kind: r.end, error: r.error, connS: round(r.connMs / 1000), pos: total ? round(r.offset / total, 3) : null,
         readMb: round(r.offset / 1e6), lastByteAt: new Date(r.lastByte).toISOString(), quality: build.quality });
+      quickCuts = r.connMs < DROP_STEADY_MS ? quickCuts + 1 : 0;
+      if (quickCuts) await this.sleep(Math.min(DROP_BACKOFF_MAX_MS, DROP_BACKOFF_MS * 2 ** (quickCuts - 1)));
+      if (stop.aborted) return done('stopped');
       if (this.now() > wall) return done('wall');
-      conn = null;
-      for (let attempt = 1; attempt <= DROP_TRIES; attempt++) {
-        const next = await this.#dropOpen(url, r.offset, stop);
-        if (stop.aborted) { if (next.ok) { next.ctrl.abort(); next.reader.cancel().catch(() => {}); } return done('stopped'); }
-        if (next.ok) run.reopenOk++; else run.reopenFail++;
-        this.dropCount(next.ok ? 'reopen_ok' : 'reopen_fail', 1);
-        this.log({ event: 'tunelio_drop_reopen', ok: next.ok, attempt, status: next.status, offsetOk: next.offsetOk, ttfbMs: next.ttfbMs, error: next.error });
-        if (next.ok) { conn = next; break; }
-        if (attempt < DROP_TRIES) await this.sleep(DROP_RETRY_MS);
-      }
-      if (!conn) return done('reopen_fail');
+      conn = await this.#dropConnect(url, r.offset, stop, (o, attempt) => {
+        if (o.ok) run.reopenOk++; else run.reopenFail++;
+        this.dropCount(o.ok ? 'reopen_ok' : 'reopen_fail', 1);
+        this.log({ event: 'tunelio_drop_reopen', ok: o.ok, attempt, status: o.status, offsetOk: o.offsetOk, ttfbMs: o.ttfbMs, error: o.error });
+      });
+      if (conn.stopped) return done('stopped');
+      if (!conn.ok) return done('reopen_fail');
     }
   }
 

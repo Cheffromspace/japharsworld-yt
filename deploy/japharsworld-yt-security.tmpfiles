@@ -1,0 +1,5 @@
+# Installed by deploy/metrics-setup.sh as /etc/tmpfiles.d/japharsworld-yt-security.conf.
+# japharsworld-yt-security.service lists this file in ReadWritePaths, and its sandbox can't be set up when the file is
+# missing. /run is emptied at boot, so each first run after a reboot failed with 226/NAMESPACE (world #428). Plain f: an
+# existing file is never truncated, and tmpfiles runs before timers start.
+f /run/ufw.lock 0644 root root -

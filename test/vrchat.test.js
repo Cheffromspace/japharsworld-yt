@@ -4,7 +4,7 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { totp, instanceType, worldValues, groupValues, VRChat } from '../metrics/vrchat.js';
-import { pollVRChat, updateEnvFile, settings, tunelioPass, renewalPass, renewalReminders, recordReleases, releasePass, runOccupants, OCCUPANCY, domainPass } from '../metrics/poll.js';
+import { pollVRChat, updateEnvFile, settings, tunelioPass, renewalPass, renewalReminders, recordReleases, releasePass, run, runOccupants, OCCUPANCY, domainPass } from '../metrics/poll.js';
 import { openMetricsDb, getMeta } from '../src/metrics.js';
 import { githubRepo, githubReleases, domainExpiry, DOMAINS } from '../metrics/sources.js';
 
@@ -348,4 +348,50 @@ test('releasePass: one call, tags under the daily read\'s source, once each; fai
 test('githubReleases: 404 is null (private with no token); a bad repo name never reaches the network', async () => {
   assert.equal(await githubReleases({ repo: 'a/b', userAgent: UA, fetcher: async () => new Response('{}', { status: 404 }) }), null);
   await assert.rejects(githubReleases({ repo: 'a/b/../c', userAgent: UA, fetcher: async () => assert.fail('no call') }), /bad repo name/);
+});
+
+test('githubReleases: another status or a body that is not a list throws, for the pass to log', async () => {
+  await assert.rejects(githubReleases({ repo: 'a/b', userAgent: UA, fetcher: async () => new Response('[]', { status: 500 }) }), /github \/releases 500/);
+  await assert.rejects(githubReleases({ repo: 'a/b', userAgent: UA, fetcher: async () => new Response('{"message":"x"}') }), /not a list/);
+});
+
+test('releasePass: a 404 is logged as skipped, a failure as an error with no token in it', async (t) => {
+  const lines = [];
+  t.mock.method(console, 'log', (l) => lines.push(JSON.parse(l)));
+  const db = openMetricsDb(':memory:');
+  try {
+    const c = settings({ GITHUB_TOKEN: 'secret-tok' });
+    await releasePass(db, c, { fetcher: async () => new Response('{}', { status: 404 }) });
+    await releasePass(db, c, { fetcher: async () => new Response('{}', { status: 503 }) });
+  } finally { db.close(); }
+  assert.deepEqual(lines.map((l) => l.event), ['github_releases_skipped', 'github_releases_error']);
+  assert.equal(lines[1].message, 'github /releases 503');
+  assert.ok(!JSON.stringify(lines).includes('secret-tok'));
+});
+
+test('a full pass reads the releases once, a second pass the same day once more, and a failure does not stop it', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'eiok-rel-'));
+  t.mock.method(console, 'log', () => {});
+  let releaseCalls = 0, fail = false;
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    if (String(url).endsWith('/releases?per_page=10')) {
+      releaseCalls++;
+      return fail ? new Response('{}', { status: 500 }) : new Response(JSON.stringify([{ tag_name: 'v2026.10.31', published_at: '2026-10-31T21:00:00Z' }]));
+    }
+    return new Response('{}', { status: 404 });
+  });
+  try {
+    const c = settings({ METRICS_DB: join(dir, 'metrics.db'), METRICS_STATE: join(dir, 'state.json'), METRICS_SECRETS: join(dir, 'secrets'), MONITOR_DB: join(dir, 'none.db'), METRICS_RUN_AS: '', ALERT_WEBHOOK: '' });
+    const now = Date.parse('2026-10-31T22:00:00Z');
+    await run(c, { now });
+    assert.equal(releaseCalls, 1);
+    fail = true;
+    await run(c, { now: now + 900_000 });
+    assert.equal(releaseCalls, 2);
+    const db = openMetricsDb(c.db);
+    try {
+      assert.deepEqual(db.prepare('SELECT source, version FROM releases').all().map((r) => ({ ...r })), [{ source: 'github:Everything-is-OK', version: 'v2026.10.31' }]);
+      assert.equal(getMeta(db, 'report_daily'), '2026-10-31', 'the rest of the pass still ran');
+    } finally { db.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

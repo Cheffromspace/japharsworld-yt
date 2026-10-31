@@ -103,7 +103,7 @@ export const METRICS = {
   // failed, plays the pacer kept at 720p, resolvers sent on to the player. plan_start: adaptive from a 360p first rung.
   adaptive: ['daily', oneOf('plan_lower', 'plan_direct', 'plan_adaptive', 'plan_start', 'master', 'upgrade', 'upgrade_served', 'upgrade_failed', 'paced_off', 'defer', 'android_progressive', 'hls_ticket',
     'reload_before_upgrade', 'reload_after_upgrade', 'android_av1', 'android_av1_rung', 'start_one_step', 'start_mid')], // reloads: the freeze proxy (src/adaptive.js master)
-  play_fallback: ['daily', oneOf('disabled', 'paused', 'tunelio_failed', 'build_failed', 'build_timeout')],
+  play_fallback: ['daily', oneOf('disabled', 'paused', 'tunelio_failed', 'too_long', 'build_failed', 'build_timeout')],
   play_length: ['daily', oneOf('live', 'unknown', 'lt10m', 'lt1h', 'lt3h', 'longer')],
   tunelio_create_ms: ['daily', isBucket],
   // Playback latency (claude/play-latency.md): who asks for tickets, how long they were held, Tunelio build times.
@@ -112,6 +112,7 @@ export const METRICS = {
   ticket_fastfail: ['daily', none],   // resolver told "not a video" while the build ran on
   ticket_timeout: ['daily', none],    // a player waited the whole hold and got youtube.com instead
   ticket_restricted: ['daily', none], // an age-restricted video answered `restricted` (world #305)
+  ticket_too_long: ['daily', none],   // a Quest's ticket answered `too_long`: Tunelio and home refused it (world #420)
   build: ['daily', oneOf('ok', 'failed')],
   build_s_progressive: ['daily', isSBucket],
   build_s_hls: ['daily', isSBucket],

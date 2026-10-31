@@ -73,7 +73,9 @@ This service works within that rule:
 Errors are JSON `{ "error": code, "message": … }` with codes `empty_query`, `rate_limited`, `youtube_failed`,
 `unknown_ticket`, `expired`, `bad_shard`, `bad_quality`, `nothing_playing`, `captions_failed`, `restricted` (an
 age-restricted video: no source can play it, so a player gets `403` at once and the tablet's ticket status
-`state: "failed"`, `error: "restricted"`; world #305); the world shows its own
+`state: "failed"`, `error: "restricted"`; world #305), `too_long` (Tunelio refused the video as too long and home took no
+build: a `.m3u8` ticket or Android player gets `403` at once and the `.m3u8` ticket's status `state: "failed"`, `reason:
+"too_long"`, `error: "too_long"`. A PC keeps the youtube.com link, status `state: "youtube"`, `reason: "too_long"`; world #420); the world shows its own
 localized text per code.
 
 ### A YouTube link played straight from the search address (world #136)

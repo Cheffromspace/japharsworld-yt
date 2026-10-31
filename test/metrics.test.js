@@ -300,3 +300,8 @@ test('privacy: cc_outcome takes its two keys only, never a video ID', () => {
   assert.equal(checkedKey('cc_outcome', 'none'), 'none');
   assert.equal(checkedKey('cc_outcome', 'dQw4w9WgXcQ'), 'other');
 });
+
+test('world #420: the too-long keys pass their checks', () => {
+  assert.equal(checkedKey('play_fallback', 'too_long'), 'too_long');
+  assert.equal(checkedKey('ticket_too_long', ''), '');
+});

@@ -205,13 +205,22 @@ rule above forbids those either way; the owner reinstalls the narrowed files.
 coordinator's 30-minute loop). Every hour at :17, read only and without Claude, it checks the last hour: the search
 service and Caddy active on the Linode and the public `/healthz` answering 200; the Linode's `/` use; in the search
 service's journal the 5xx answers, error and `*_failed` events, `youtube_error` and `backoff` events, `captions_via`
-with zero tracks against with tracks, `home_evict` and `home_over_cap`; fail2ban's currently banned sshd count; on the
+(lookups in the hour, and distinct videos with and without tracks over 6 hours), `home_evict` and `home_over_cap`; fail2ban's currently banned sshd count; on the
 Optiplex the relay worker, `bgutil-pot-relay` and the flash worker's timer active and its last run successful.
 MediaMTX is its own project (media-mtx) and not checked here (owner, 2026-10-28, #38). The journal is counted on the Linode with `awk` over `ssh linode-check`, so no log line,
 video ID or address reaches the Optiplex. Limits per hour are in `LIMITS` (from the 48 h before 2026-10-26: no 5xx
 or backoff at all), each overridable as `HYPERCARE_<NAME>` in the same `.env`. The disk limit is 88 %, Grafana's
 critical level: hypercare reads `df` once an hour, so a passing minute at 80 % (2026-10-27 22:17, before a home cache
-eviction) is left to Grafana's 15-minute 80 % warning.
+eviction) is left to Grafana's 15-minute 80 % warning. Captions fire only at 5 or more distinct videos with no tracks and no
+video with tracks over 6 hours (world #401): many videos have no captions, and replays ask again.
+
+This rule is the only detector of a silent failure, where every lookup answers `no_captions` with no error; nothing
+in Grafana alerts on that, and the `cc_*` counters only draw it. It is a slow one: replayed over 121 runs of real
+traffic (2026-10-26 to 10-31) such a failure takes a median of 6 h and at most 20 h to fire, and a run of quiet hours
+longer. A partial failure, with some tracks still coming through, never fires. `captions_source_failed` is seen only
+through hypercare's errors check, among all error events at 5 an hour; the exporter doesn't count it. If the worker
+fails and Tunelio answers instead, Grafana's `eiok-captions-paid` can fire. Hypercare ends itself after 7 clean days
+(below), and all of hypercare's detection, this rule included, ends with it.
 
 All normal: one JSON log line (`"event":"hypercare"`, counts only) in its user journal, nothing else. Something new:
 one Discord post to the weekly check's webhook, pinging `DISCORD_MENTION_ID`, and one issue per finding in the private

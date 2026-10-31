@@ -1079,6 +1079,7 @@ test('ticket status → home: a predicted (whole) playlist is not growing while 
   assert.deepEqual([st.plan, st.state, st.growing], ['home', 'ready', false]);
 });
 
+// Defensive: the PUT API accepts this order, but relay/media.js sends the first segment first today.
 test('ticket status → home: a playlist listed before its first segment is growing while the session still builds (Everything-is-OK#393)', async (t) => {
   let release;
   const held = new Promise((r) => { release = r; });

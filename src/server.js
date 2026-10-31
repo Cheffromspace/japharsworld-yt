@@ -626,7 +626,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // duration). Not a build still uploading a predicted (whole) playlist, which has its ENDLIST from the start; not
   // before any playlist is here, when it can still turn out either way. A hint, not exact: it describes the next player
   // to open the session, and that one may still get the end marker, as the settle hold can keep it until the rest is
-  // here (HOME_SETTLE_SECONDS). A Quest already on the session stays on an infinite duration after this turns false.
+  // here (HOME_SETTLE_SECONDS). A Quest already on the session probably stays on an infinite duration after this turns
+  // false (inferred, not yet seen in a client).
   function homeStatus(s) {
     const growing = s.segments > 0 && !s.endlist;
     if (s.state === 'ready') return { state: 'ready', format: 'hls', quality: s.quality, plan: 'home', growing, elapsed: Math.round((s.readyMs - s.startedMs) / 1000) };

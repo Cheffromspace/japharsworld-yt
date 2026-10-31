@@ -176,3 +176,16 @@ test('release and deploy markers are off by default, with their toggles availabl
   assert.deepEqual(list.map((a) => a.name), ['World uploads', 'GitHub releases', 'Deploys']);
   assert.ok(list.every((a) => a.enable === false && !a.hide));
 });
+
+// World #428: both rules are positive when they fire (the condition is A > 0), and neither sees staging.
+test('eiok-captions-empty and eiok-poller-stale: the thresholds, the input check, prod only', () => {
+  const rules = Object.fromEntries(alertRules('ds').map((r) => [r.uid, r]));
+  const expr = (uid) => rules[uid].data[0].model.expr;
+  const cap = expr('eiok-captions-empty');
+  assert.match(cap, /key="none"\}\[6h\]\)\) >= 5 unless on\(\) /);
+  assert.match(cap, /key="tracks"\}\[6h\]\)\) >= 0\.5$/);
+  assert.equal(rules['eiok-captions-empty'].labels.severity, 'warning');
+  assert.match(expr('eiok-poller-stale'), /^time\(\) - max\(eiok_poll_timestamp_seconds\{env!="staging",source="tunelio_plan"\}\) - 3600$/);
+  assert.equal(rules['eiok-poller-stale'].for, '5m');
+  assert.ok(expr('eiok-alert-inputs-missing').includes('metric="cc_outcome",key="none"'));
+});

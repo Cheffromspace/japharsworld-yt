@@ -129,6 +129,8 @@ export const METRICS = {
   cc_unavailable: ['daily', oneOf('no_captions', 'no_track_in_language', 'temporarily_unavailable', 'translation_unavailable',
     'nothing_playing', 'no_tracks', 'list_unavailable', 'failed', 'none')],
   cc_via: ['daily', oneOf('worker', 'local', 'tunelio')],  // which caption source answered a fetch (src/captionchain.js)
+  // A list lookup's result, once per video and result per 6 h, for eiok-captions-empty: distinct videos with no ID stored.
+  cc_outcome: ['daily', oneOf('tracks', 'none')],
   cc_words: ['daily', oneOf('real', 'estimated')],         // word timing in a served track: YouTube's, or spread by character
   credits: ['daily', oneOf('playback', 'captions', 'probe', 'test')],
   // YouTube refused a lookup (src/refusal.js): '<where>:<class>', the class only, never the message, query or video.

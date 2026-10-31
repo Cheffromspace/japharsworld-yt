@@ -2129,7 +2129,7 @@
    "type": "timeseries",
    "id": 35,
    "title": "Captions (per 6 h)",
-   "description": "Track lists and tracks served, which source answered (worker, local yt-dlp, Tunelio), word timing real or estimated, and why none was available.",
+   "description": "Track lists and tracks served, which source answered (worker, local yt-dlp, Tunelio), word timing real or estimated, distinct videos whose list had tracks or none, and why none was available.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2165,11 +2165,20 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"cc_outcome\"}[6h]))",
+     "legendFormat": "videos: {{key}}"
+    },
+    {
+     "refId": "D",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
      "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"cc_words\"}[6h]))",
      "legendFormat": "words {{key}}"
     },
     {
-     "refId": "D",
+     "refId": "E",
      "datasource": {
       "type": "prometheus",
       "uid": "${ds}"

@@ -648,6 +648,60 @@
   ]
  },
  {
+  "uid": "eiok-captions-empty",
+  "title": "No video has caption tracks",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "0m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "Over the last 6 hours, 5 or more videos looked up had no caption tracks and none had any: caption lookups may be failing silently. See `node tools/ops.mjs events --event captions_via,captions_source_failed` and the Captions panel."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"cc_outcome\",key=\"none\"}[6h])) >= 5 unless on() sum(increase(eiok_events_total{env!=\"staging\",metric=\"cc_outcome\",key=\"tracks\"}[6h])) >= 0.5",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
   "uid": "eiok-flash-refusals",
   "title": "Flash checks refused by YouTube",
   "folderUID": "everything-is-ok",
@@ -981,7 +1035,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "A value that the build cap, service memory or credit pace alert needs has been missing for 30 minutes, so that alert is blind. Expected while the search service is down. Otherwise check japharsworld-yt-exporter (STATS_TOKEN, cgroup) and the metrics poller on the Linode."
+   "summary": "A value that the build cap, service memory, credit pace or captions alert needs has been missing for 30 minutes, so that alert is blind. Expected while the search service is down. Otherwise check japharsworld-yt-exporter (STATS_TOKEN, cgroup) and the metrics poller on the Linode."
   },
   "labels": {
    "project": "everything-is-ok",
@@ -1000,7 +1054,61 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "absent(eiok_home_today{env!=\"staging\",key=\"cap_builds\"}) or absent(eiok_service_memory_limit_bytes{env!=\"staging\"}) or absent(eiok_poll{env!=\"staging\",source=\"tunelio_plan\",metric=\"days_to_renewal\"})",
+     "expr": "absent(eiok_home_today{env!=\"staging\",key=\"cap_builds\"}) or absent(eiok_service_memory_limit_bytes{env!=\"staging\"}) or absent(eiok_poll{env!=\"staging\",source=\"tunelio_plan\",metric=\"days_to_renewal\"}) or absent(eiok_events_total{env!=\"staging\",metric=\"cc_outcome\",key=\"none\"})",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-poller-stale",
+  "title": "Metrics poller stale",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "5m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "The metrics poller has not finished a pass for over an hour (it runs every 15 minutes): world numbers, Tunelio credits, domain expiry, release markers and the daily report are stale. See `journalctl -u japharsworld-yt-metrics` on the Linode."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "time() - max(eiok_poll_timestamp_seconds{env!=\"staging\",source=\"tunelio_plan\"}) - 3600",
      "instant": true
     }
    },

@@ -58,7 +58,7 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
 | Linode CPU over 80 % | under 20 % idle across its vCPUs, 15 min |
 | Search service memory near its limit | anon + swap > 90 % of the live `memory.max`, page cache not counted, 15 min |
 | Searches failing (502) | 2 or more `search_fail` 502 in 15 min |
-| Alert inputs missing | `cap_builds`, the memory limit or `days_to_renewal` absent for 30 min, so those alerts would be silently blind |
+| Alert inputs missing | `cap_builds`, the memory limit, `days_to_renewal` or `cc_outcome` absent for 30 min, so those alerts would be silently blind |
 | Home relay has no worker | no media worker connected for 15 min (only while `HOME_RELAY=on`; the gauge isn't set otherwise) |
 | Home sent over 100 GB today / 2,000 GB this month (no ISP cap, owner 2026-10-27: unusual volume, not a limit) | `eiok_transfer_bytes{host="home"}`: the Optiplex's bytes sent (every interface but `lo`), reported on each relay poll and counted in metrics.db (`transfer`), Chicago days and months, 5 min |
 | Linode sent over 700 GB this month | `eiok_transfer_bytes{host="linode",period="month"}`: the Linode's bytes sent, of its 1 TB monthly transfer, 5 min |
@@ -74,6 +74,8 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
 | Flash checks waiting | a new, candidate or manual resolution/flash job has waited over 2 h, or the 14:00 UTC daily batch over 5 h (owner, 2026-10-25: at 6 jobs a run its ~60 jobs take ~3.5 h); the in-app "stalled" alert is at 36 h |
 | Searches not served by the home relay | the home worker is online (`eiok_relay_workers_online > 0`), but over half of the last 30 min's searches (at least 3) came from the Linode or the Data API, 5 min: a worker that answers but is refused, which `no_worker` misses (owner, 2026-10-25) |
 | Captions falling back to Tunelio | over 6 h, Tunelio answered more caption fetches (at least 3) than the home relay and local yt-dlp together, 30 min. Not "estimated timing above real": manual tracks never carry word timing, and that held on normal days (10-24: 104 estimated, 71 real) |
+| No video has caption tracks | over 6 h, 5 or more distinct videos had no tracks and none had any (`cc_outcome`, world #428), at once: a silent total failure. Stays after hypercare's own check of this ends. A partial failure, with some tracks still coming through, doesn't fire |
+| Metrics poller stale | no full pass finished for over an hour (`tunelio_plan`'s timestamp), 5 min; the timer is 15 min, the widest gap seen 18 min |
 | Disk almost full | under 10 % free on `/`, 15 min |
 
 **eiok.cc** (owner, 2026-10-25) is the short domain for the Quest search box (README, "Compact search address"). Caddy
@@ -214,13 +216,13 @@ critical level: hypercare reads `df` once an hour, so a passing minute at 80 % (
 eviction) is left to Grafana's 15-minute 80 % warning. Captions fire only at 5 or more distinct videos with no tracks and no
 video with tracks over 6 hours (world #401): many videos have no captions, and replays ask again.
 
-This rule is the only detector of a silent failure, where every lookup answers `no_captions` with no error; nothing
-in Grafana alerts on that, and the `cc_*` counters only draw it. It is a slow one: replayed over 121 runs of real
+Grafana's `eiok-captions-empty` (world #428) has the same rule, so a silent failure, where every lookup answers
+`no_captions` with no error, stays watched after hypercare ends. It is a slow one: replayed over 121 runs of real
 traffic (2026-10-26 to 10-31) such a failure takes a median of 6 h and at most 20 h to fire, and a run of quiet hours
 longer. A partial failure, with some tracks still coming through, never fires. `captions_source_failed` is seen only
 through hypercare's errors check, among all error events at 5 an hour; the exporter doesn't count it. If the worker
 fails and Tunelio answers instead, Grafana's `eiok-captions-paid` can fire. Hypercare ends itself after 7 clean days
-(below), and all of hypercare's detection, this rule included, ends with it.
+(below), and the rest of its detection ends with it.
 
 All normal: one JSON log line (`"event":"hypercare"`, counts only) in its user journal, nothing else. Something new:
 one Discord post to the weekly check's webhook, pinging `DISCORD_MENTION_ID`, and one issue per finding in the private

@@ -294,3 +294,9 @@ test('poll rows: one per poll, daily min/max/last, old rows pruned after 90 days
   assert.equal(db.prepare('SELECT COUNT(*) n FROM poll_daily').get().n, 3); // kept forever
   assert.match(exportCsv(db), /poll_daily,2026-07-01,world:prod,occupants,,,1,5,1/);
 });
+
+test('privacy: cc_outcome takes its two keys only, never a video ID', () => {
+  assert.equal(checkedKey('cc_outcome', 'tracks'), 'tracks');
+  assert.equal(checkedKey('cc_outcome', 'none'), 'none');
+  assert.equal(checkedKey('cc_outcome', 'dQw4w9WgXcQ'), 'other');
+});

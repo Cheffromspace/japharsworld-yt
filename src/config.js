@@ -127,6 +127,10 @@ export const config = {
   // (EXT-X-START PRECISE=YES), since ExoPlayer starts a playlist without ENDLIST at the live edge. Off: being tested on
   // staging (world #250, 2026-10-27): the Quest's Tunelio HLS fallback for those videos failed at ~125 s on prod.
   homeAndroidGrowing: (process.env.HOME_ANDROID_GROWING ?? 'off') === 'on',
+  // A .m3u8 ticket's Tunelio build still running after this many seconds also starts the home stream, and the player
+  // gets whichever is ready first (Everything-is-OK#398). 0 = off: this puts more Quest plays on a growing playlist, so
+  // it stays off until the fix for #393 is out.
+  homeRaceMs: int('HOME_RACE_SECONDS', 0) * 1000,
   homeLongMinutes: int('HOME_LONG_MINUTES', 30),
   // One source per ticket once playing (#293): a ticket's answer is kept per ticket and client kind while it is played
   // (until the video's length plus TICKET_PIN_MARGIN_MINUTES after its last play) instead of decided again on every

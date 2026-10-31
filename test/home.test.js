@@ -1592,3 +1592,172 @@ test('mediaJob jump, real ffmpeg: every segment starts where the last ended (no 
   assert.deepEqual(capped.segments, plain.segments);
   for (const s of plain.segments) assert.deepEqual(capped.crc(s), plain.crc(s), s);
 });
+// #398: the real Playback, its build held open by the test. The limit is set in ms here, to keep the tests quick.
+async function raceApp(t, { raceMs = 40, config = {}, media = null } = {}) {
+  const { Playback } = await import('../src/playback.js');
+  const { Adaptive } = await import('../src/adaptive.js');
+  let finish;
+  const built = new Promise((resolve) => { finish = resolve; });
+  const tunelio = { enabled: true, create: async (id, quality) => ({ url: `https://tunelio.dev/t?id=x&q=${quality}`, expires: Math.round(Date.now() / 1000) + 7200, fileSize: 2e8, quality }) };
+  const playback = new Playback({ tunelio, probe: async () => { await built; return { ok: finish.ok !== false, status: finish.ok === false ? 524 : 206 }; } });
+  const adaptive = new Adaptive({ playback, base: 'http://pub/hls' });
+  adaptive.codec = async () => 'avc1';
+  const lines = [];
+  const counts = [];
+  const app = await homeApp(t, { playback, adaptive, tunelio, media,
+    log: (l) => lines.push(typeof l === 'string' ? JSON.parse(l) : l),
+    metrics: { inc: (m, k) => counts.push(`${m}:${k}`), gauge() {}, latency() {}, shard() {}, flush() { return 0; }, start() { return this; }, close() {} },
+    config: { homeAndroid: true, homeAndroidGrowing: true, homeRaceMs: raceMs, ticketPin: true, ticketPlayerHoldMs: 3000, ...config } });
+  const done = (ok = true) => { finish.ok = ok; finish(); };
+  t.after(() => done());
+  return { ...app, playback, adaptive, done, lines, counts };
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const HOME_URL = /\/home\/[a-f0-9]{18}\/index\.m3u8$/;
+const TUNELIO_URL = /\/hls\/[a-f0-9]{18}\/\d+p\.m3u8$/;
+const TABLET = { 'user-agent': 'UnityPlayer/2022.3 (UnityWebRequest/1.0)' };
+
+test('#398: off by default: a Quest stays on a slow build and home never starts', async (t) => {
+  const app = await raceApp(t, { raceMs: 0 });
+  const held = app.play(QUEST);
+  await sleep(150);
+  assert.equal(app.jobs.length, 0);
+  app.done();
+  assert.match((await held).headers.get('location'), TUNELIO_URL);
+  assert.equal(app.jobs.length, 0);
+});
+
+test('#398: a build past the limit: the Quest gets home when it is ready first, and keeps it after the build ends', async (t) => {
+  const app = await raceApp(t);
+  const started = Date.now();
+  const r = await app.play(QUEST);
+  assert.match(r.headers.get('location'), HOME_URL);
+  assert.ok(Date.now() - started >= 35, 'not before the limit');
+  assert.equal(app.jobs.length, 1);
+  assert.ok(app.counts.includes('home_why:slow_build'));
+  assert.ok(app.counts.includes('home:race_won'));
+  const play = app.lines.find((l) => l.event === 'play');
+  assert.deepEqual([play.via, play.reason], ['home', 'slow_build']);
+  app.done();
+  await sleep(20);
+  assert.equal((await app.play(QUEST)).headers.get('location'), r.headers.get('location'), 'one source per ticket');
+  assert.equal(app.jobs.length, 1);
+});
+
+test('#398: two Quests held on one build both go home, on one home session', async (t) => {
+  const app = await raceApp(t);
+  const [a, b] = await Promise.all([app.play(QUEST), app.play(QUEST)]);
+  assert.match(a.headers.get('location'), HOME_URL);
+  assert.equal(b.headers.get('location'), a.headers.get('location'));
+  assert.equal(app.jobs.length, 1);
+});
+
+test('#398: a build done before the limit starts nothing', async (t) => {
+  const app = await raceApp(t, { raceMs: 200 });
+  const held = app.play(QUEST);
+  await sleep(30);
+  app.done();
+  assert.match((await held).headers.get('location'), TUNELIO_URL);
+  await sleep(250);
+  assert.equal(app.jobs.length, 0);
+});
+
+test('#398: the build ending while home is still starting: Tunelio answers at once', async (t) => {
+  let release;
+  const app = await raceApp(t, { media: () => new Promise((r) => { release = r; }) });
+  t.after(() => release?.());
+  const held = app.play(QUEST);
+  while (!app.jobs.length) await sleep(10);
+  const ended = Date.now();
+  app.done();
+  assert.match((await held).headers.get('location'), TUNELIO_URL);
+  assert.ok(Date.now() - ended < 1000, 'not after home has had its 5 s');
+  assert.ok(!app.counts.includes('home:race_won'));
+});
+
+test('#398: a build warmed from the tablet counts: past the limit at play, home starts at once', async (t) => {
+  const app = await raceApp(t, { raceMs: 150 });
+  await fetch(`${app.url}/v1/0/${app.n}.m3u8`, { headers: TABLET });
+  await sleep(200);
+  assert.equal(app.jobs.length, 0, 'a warm-up alone sends nothing home');
+  const started = Date.now();
+  assert.match((await app.play(QUEST)).headers.get('location'), HOME_URL);
+  assert.ok(Date.now() - started < 140, 'no fresh wait of the whole limit');
+});
+
+test('#398: the tablet reports the home session once the race has started it', async (t) => {
+  const app = await raceApp(t);
+  await app.play(QUEST);
+  const st = await (await fetch(`${app.url}/v1/0/${app.n}.m3u8`, { headers: TABLET })).json();
+  assert.deepEqual([st.plan, st.state], ['home', 'ready']);
+});
+
+test('#398: Tunelio failing during the race ends on the same home session, no second build', async (t) => {
+  let release;
+  const app = await raceApp(t, { media: () => new Promise((r) => { release = r; }) });
+  const held = app.play(QUEST);
+  while (!app.jobs.length) await sleep(10);
+  app.done(false);
+  await sleep(30);
+  release();
+  assert.match((await held).headers.get('location'), HOME_URL);
+  assert.equal(app.jobs.length, 1);
+});
+
+test('#398: home failing during the race leaves the player on Tunelio', async (t) => {
+  const app = await raceApp(t, { media: async () => { throw Object.assign(new Error('nope'), { code: 'media_failed' }); } });
+  const held = app.play(QUEST);
+  while (!app.jobs.length) await sleep(10);
+  await sleep(40);
+  app.done();
+  assert.match((await held).headers.get('location'), TUNELIO_URL);
+});
+
+test('#398: the daily cap reached: no home start, the hold goes on', async (t) => {
+  const app = await raceApp(t, { config: { homeDailyBuilds: 0 } });
+  const held = app.play(QUEST);
+  await sleep(100);
+  app.done();
+  assert.match((await held).headers.get('location'), TUNELIO_URL);
+  assert.equal(app.jobs.length, 0);
+});
+
+test('#398: only a Quest player on a .m3u8 ticket races: not a PC, not the resolver, and not a player who left', async (t) => {
+  const app = await raceApp(t);
+  const pc = app.play('NSPlayer/12.00.26100 WMFSDK/12.00', '');
+  const resolver = await app.play('Mozilla/5.0 (Windows NT 10.0) Chrome/120.0 Safari/537.36');
+  assert.equal(resolver.status, 200, 'the resolver is sent on at once');
+  const gone = new AbortController();
+  const left = fetch(`${app.url}/v1/0/${app.n}.m3u8`, { redirect: 'manual', headers: { 'user-agent': QUEST }, signal: gone.signal }).catch(() => null);
+  await sleep(10);
+  gone.abort();
+  await left;
+  await sleep(120);
+  assert.equal(app.jobs.length, 0);
+  app.done();
+  await pc;
+});
+
+test('#398: a PC player of the video stays off the growing session of a Quest race, on its own build', async (t) => {
+  const app = await raceApp(t);
+  const session = await app.play(QUEST);
+  assert.match(session.headers.get('location'), HOME_URL);
+  const pc = app.play('NSPlayer/12.00.26100 WMFSDK/12.00', '');
+  const tablet = await (await fetch(`${app.url}/v1/0/${app.n}`, { headers: TABLET })).json();
+  assert.notEqual(tablet.plan, 'home', "the PC tablet reports the PC's build");
+  await sleep(30);
+  app.done();
+  assert.doesNotMatch((await pc).headers.get('location'), HOME_URL);
+  assert.equal(app.jobs.length, 1);
+});
+
+test('#398: a PC player on an adaptive plan (HLS, but a plain ticket) does not race', async (t) => {
+  const app = await raceApp(t, { config: { adaptiveHls: true } });
+  app.adaptive.force('aaaaaaaaaaa', 'adaptive', 5);
+  const pc = app.play('NSPlayer/12.00.26100 WMFSDK/12.00', '');
+  await sleep(120);
+  assert.equal(app.jobs.length, 0);
+  app.done();
+  assert.equal((await pc).status, 302);
+  assert.equal(app.jobs.length, 0);
+});

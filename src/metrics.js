@@ -122,7 +122,7 @@ export const METRICS = {
   ticket_fastfail: ['daily', none],   // resolver told "not a video" while the build ran on
   ticket_timeout: ['daily', none],    // a player waited the whole hold and got youtube.com instead
   ticket_restricted: ['daily', none], // an age-restricted video answered `restricted` (world #305)
-  ticket_too_long: ['daily', none],   // a Quest's ticket answered `too_long`: Tunelio and home refused it (world #420)
+  ticket_too_long: ['daily', none],   // a ticket answered `too_long`: over VIDEO_MAX_HOURS, or a Quest's with Tunelio and home refusing it (world #420)
   build: ['daily', oneOf('ok', 'failed')],
   build_s_progressive: ['daily', isSBucket],
   build_s_hls: ['daily', isSBucket],

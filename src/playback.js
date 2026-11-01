@@ -33,6 +33,9 @@ const FIXED_PRIOR = { progressive: 2, hls: 3 };
 // fresh builds seen took 3.4 s (30 MB at 360p); the fastest real speed seen was ~82 MB/s.
 export const cachedBuild = (mb, buildMs) => buildMs < 3000 || mb / (buildMs / 1000) > 120;
 
+// Smallest file whose first-byte 413 counts as refused for size. The smallest refused in the 2026-10-31 bracket was 5.2 GB.
+const SIZE_REFUSAL_MIN_MB = 5000;
+
 export class Playback {
   constructor({ tunelio, quality = '1080p', lowerQuality = '720p', maxMbForQuality = 1500, progressiveMaxMb = 6000,
     progressiveMaxSeconds = 12 * 3600, progressiveRetries = 2, marginSeconds = 20 * 60,
@@ -58,10 +61,10 @@ export class Playback {
     // which VRChat retried every 2–6 s (prod 2026-10-28 21:56Z, ~25 plays in 70 s). Kept in memory only.
     this.restrictedMs = restrictedHours * 3600_000;
     this.restrictedIds = new Map();
-    // Videos Tunelio refused as too long (world #420): videoId → until, no /create for them meanwhile. youtube.com still
-    // plays them on PC: VRChat's own yt-dlp resolved all three refused on staging (13 h, 24.6 h, 32 h) to a 360p mp4 whose
-    // first KB downloads (2026-10-31; not watched in a client). A Quest can't open that link, so the ticket route answers it
-    // too_long unless home takes the video.
+    // Videos Tunelio refused as too long (world #420): videoId → until, no /create for them meanwhile. A Quest can't open
+    // the youtube.com link, so the ticket route answers it too_long unless home takes the video. A PC keeps the link: under
+    // VIDEO_MAX_HOURS those opened in Media Foundation, 8 h to 13.2 h (2026-10-31; not watched in a client). Only far longer
+    // ones were seen failing (a 48 h video's and some 100 h ones' itag 18 links answered 500), and the cap stops those first.
     this.tooLongIds = new Map();
     this.forcedRestricted = new Map(); // the test plans among them (forceRestricted): videoId → until
     this.alert = alert;
@@ -218,7 +221,7 @@ export class Playback {
     let job = this.jobs.get(key);
     if (job) {
       const stale = job.state === 'ready' ? job.expiresMs - this.marginMs <= now
-        : job.state === 'failed' ? now - job.endedMs > 30_000 : false;
+        : job.state === 'failed' ? now - job.endedMs > (job.reason === 'too_long' ? this.restrictedMs : 30_000) : false;
       if (!stale) return job;
       this.jobs.delete(key);
     }
@@ -360,6 +363,12 @@ export class Playback {
         job.format = 'hls';
         r = await tryProbe(link('hls'));
       }
+      // Refused for size at the lowest quality we build: no build can play it (world #420, 2026-10-31: 720p files from
+      // ~5.2 GB HLS and ~5.5 GB progressive answered 413 at every length tried, 6 h to 14 h). Kept on this job only, not
+      // the video: an HLS refusal can come with a progressive file that builds (a 5.2 GB 6 h video did), and a higher
+      // quality's refusal says nothing about the lower one. Only a file that large: a stray 413 on a small one is retried
+      // in 30 s like any failed build, not remembered for a day.
+      if (!r.ok && r.refused && job.quality === this.lowerQuality && job.mb >= SIZE_REFUSAL_MIN_MB) return this.#finish(job, { ok: false, reason: 'too_long', status: r.status });
       if (!r.ok) return this.#finish(job, { ok: false, reason: 'build_failed', url: link(job.format), expiresMs, status: r.status, error: r.error });
     }
     return this.#finish(job, { ok: true, url: link(job.format), expiresMs });
@@ -396,6 +405,7 @@ export class Playback {
     const job = warm ? this.start(data, quality, { hls }) : this.peek(data, quality, { hls });
     if (!job) return { state: 'idle' };
     if (job.state === 'ready') return { state: 'ready', format: job.format, quality: job.quality, mb: job.mb, elapsed: Math.round((job.endedMs - job.startedMs) / 1000) };
+    if (job.state === 'failed' && job.reason === 'too_long') return { state: 'youtube', reason: 'too_long' }; // as #direct says it; the ticket route answers a Quest
     if (job.state === 'failed') return { state: 'failed', format: job.format, reason: job.reason, ...(job.reason === 'restricted' ? { error: 'restricted' } : {}) };
     const elapsed = (this.now() - job.startedMs) / 1000;
     const eta = this.etaSeconds(job);

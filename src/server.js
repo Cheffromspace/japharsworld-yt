@@ -700,15 +700,18 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // An age-restricted video (world #305): no source can play it, youtube.com included (VRChat can't sign in), so the
   // tablet gets `error: "restricted"` in its status and a player a fast 403 with that code instead of a youtube.com link
   // it would retry every few seconds.
-  // Too long for Tunelio, home took no build, and a Quest can't open the youtube.com link (world #420): say so once instead
-  // of a link it retries every 6 s. The same shape as restrictedAnswer. Only a .m3u8 ticket or an Android player: a PC
-  // plays youtube.com's 360p (src/playback.js tooLongIds), and its status stays state "youtube", reason "too_long".
+  // Over VIDEO_MAX_HOURS, on every platform: a real 48 h video's youtube.com link answered 500 on PC and both clients looped
+  // six failed loads (2026-10-31). Under it, too long or too big for Tunelio with no home build, for a .m3u8 ticket or an
+  // Android player only (world #420): a Quest can't open that link and retried it every 6 s. A PC keeps the link, status
+  // state "youtube", reason "too_long" (src/playback.js tooLongIds). The same shape as restrictedAnswer.
   function tooLongAnswer(res, kind, shard, n, t) {
     metrics.inc('ticket_too_long');
     if (kind === 'string') return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), state: 'failed', reason: 'too_long', error: 'too_long', ...meta(t.data) });
     logJson({ event: 'play_too_long', shard, n, id: t.data.id, client: kind });
     return fail(res, 403, 'too_long', "This video is too long to play here.");
   }
+  // Tunelio builds nothing over 12 h: see VIDEO_MAX_HOURS in src/config.js. Live streams have no length to go by.
+  const overCap = (data) => !data.live && config.videoMaxSeconds > 0 && (data.seconds ?? 0) > config.videoMaxSeconds;
   function restrictedAnswer(res, kind, shard, n, t) {
     metrics.inc('ticket_restricted');
     if (kind === 'string') return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), state: 'failed', reason: 'restricted', error: 'restricted', ...meta(t.data) });
@@ -774,6 +777,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const kind = clientKind(req.headers['user-agent']);
       metrics.inc('ticket_client', kind);
       if (playback.restricted?.(t.data.id)) return restrictedAnswer(res, kind, shard, n, t);
+      // Before anything that could spend: no /create, no home build, whoever asks.
+      if (overCap(t.data)) return tooLongAnswer(res, kind, shard, n, t);
       // The tablet asking (a row selected, or watching a build): start the build, report it, never redirect.
       if (kind === 'string') {
         // A ticket being played reports the source its players were given (TICKET_PIN), not a new decision.
@@ -796,6 +801,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         if (hlsTicket && !t.data.live) c = hlsChoice(c); // live: the watch link, as on a plain ticket (world #270)
         const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
         const st = playback.status(t.data, { quality: c.quality, hls: c.hls });
+        if (hlsTicket && st.reason === 'too_long') return tooLongAnswer(res, kind, shard, n, t);
         if (c.mode) st.plan = c.mode;
         // Adaptive and start plays: the rung their players have reached (src/adaptive.js progress). Both fields are
         // always there for those plans: rung null and top 'pending' before the session's master is first loaded.

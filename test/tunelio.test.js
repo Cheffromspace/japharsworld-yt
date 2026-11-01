@@ -7,7 +7,7 @@ import { TunelioCaptions, orderTracks, pickTrack, displayName } from '../src/tra
 import { makeAlert } from '../src/alert.js';
 import { Store } from '../src/store.js';
 import { createApp } from '../src/server.js';
-import { config as base } from '../src/config.js';
+import { videoMaxSeconds, config as base } from '../src/config.js';
 
 const respond = (status, body, credits) => new Response(JSON.stringify(body), {
   status, headers: { 'content-type': 'application/json', ...(credits != null ? { 'x-credits-remaining': String(credits) } : {}) } });
@@ -469,15 +469,15 @@ test('Tunelio /create gives up after createTimeoutMs and remembers when', async 
 });
 
 // World #420: Tunelio refuses a video as too long and home takes no build.
-async function tooLongApp(t, { home = undefined, config = {} } = {}) {
+async function tooLongApp(t, { home = undefined, config = {}, video = {}, playback: given = null } = {}) {
   const store = new Store({ path: ':memory:', shards: 1, pool: 50, pinHours: 24 });
-  const youtube = { async search() { return { videos: [{ id: 'AAAAAAAAAAA', title: 'a', channel: 'c', length: '24:00:00', seconds: 86400, views: '', age: '', live: false, cc: false }], more: null }; }, thumbnailUrl: (id) => id };
+  const youtube = { async search() { return { videos: [{ id: 'AAAAAAAAAAA', title: 'a', channel: 'c', length: '24:00:00', seconds: 86400, views: '', age: '', live: false, cc: false, ...video }], more: null }; }, thumbnailUrl: (id) => id };
   const calls = [];
   const tunelio = { enabled: true, async create(id) { calls.push(id); const e = new Error('Video is too long.'); e.status = 413; e.code = 'Video is too long.'; throw e; } };
-  const playback = new Playback({ tunelio });
+  const playback = given ?? new Playback({ tunelio });
   const counts = {};
   const metrics = new Proxy({ counts, inc(m, k = '') { counts[m + ':' + k] = (counts[m + ':' + k] ?? 0) + 1; } }, { get: (o, k) => (k in o ? o[k] : () => {}) });
-  const app = createApp({ config: { ...base, shards: 1, pool: 50, ticketPlayerHoldMs: 5000, homeAndroid: true, ...config }, store, youtube, playback, tunelio: { enabled: true }, metrics, log: () => {}, ...(home ? { home } : {}) });
+  const app = createApp({ config: { ...base, shards: 1, pool: 50, ticketPlayerHoldMs: 5000, homeAndroid: true, videoMaxSeconds: 0, ...config }, store, youtube, playback, tunelio: { enabled: true }, metrics, log: () => {}, ...(home ? { home } : {}) });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
@@ -486,6 +486,7 @@ async function tooLongApp(t, { home = undefined, config = {} } = {}) {
   return { get, calls, metrics, ticket: '/v1/0/' + r.results[0].t, t: r.results[0].t };
 }
 const UNITY = 'UnityPlayer/2022.3.22f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)';
+const CHROME = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const WMF = 'NSPlayer/12.00.26100.1234 WMFSDK/12.00.26100.1234';
 const AVPRO_QUEST = 'AVProMobileVideo/2026.3.3p2 (Linux;Android 14) ExoPlayer';
 // A home that always refuses for room while a worker is free; counts its checks like home_no_room's log lines.
@@ -505,7 +506,7 @@ test('too long: a Quest gets state failed, reason and error too_long, and a fast
   assert.equal(a.metrics.counts['ticket_too_long:'], 6);
 });
 
-test('too long: a PC keeps the youtube.com link and its tablet says so, not failed (world #420)', async (t) => {
+test('too long, under the cap: a PC keeps the youtube.com link and its tablet says so, not failed (world #420)', async (t) => {
   const a = await tooLongApp(t);
   for (let i = 0; i < 2; i++) {
     const play = await a.get(a.ticket, WMF);
@@ -517,6 +518,91 @@ test('too long: a PC keeps the youtube.com link and its tablet says so, not fail
   assert.equal(a.calls.length, 1);
   assert.equal(a.metrics.counts['ticket_too_long:'], undefined);
   assert.equal(a.metrics.counts['play_fallback:too_long'], 1);
+});
+
+test('a 720p file Tunelio refuses for size, under the cap: too_long on a Quest, the link on a PC (world #420)', async (t) => {
+  const creates = [];
+  const tunelio = { enabled: true, async create(id, quality) { creates.push(quality); return { url: 'https://t/x?a=1', quality, fileSize: 6e9, expires: 0 }; } };
+  const playback = new Playback({ tunelio, quality: '720p', lowerQuality: '720p', probe: async () => ({ ok: false, refused: true, status: 413 }) });
+  const a = await tooLongApp(t, { playback, config: { videoMaxSeconds: 43200, tunelioQuality: '720p' }, video: { seconds: 31000 } });
+  const quest = await a.get(a.ticket + '.m3u8', AVPRO_QUEST);
+  assert.equal(quest.status, 403);
+  assert.equal((await quest.json()).error, 'too_long');
+  const questTablet = await (await a.get(a.ticket + '.m3u8', UNITY)).json();
+  assert.deepEqual([questTablet.state, questTablet.reason, questTablet.error], ['failed', 'too_long', 'too_long']);
+  assert.equal(a.metrics.counts['ticket_too_long:'], 2, 'the tablet counts too');
+  const pc = await a.get(a.ticket, WMF);
+  assert.equal(pc.status, 302);
+  assert.equal(pc.headers.get('location'), 'https://www.youtube.com/watch?v=AAAAAAAAAAA');
+  const pcTablet = await (await a.get(a.ticket, UNITY)).json();
+  assert.deepEqual([pcTablet.state, pcTablet.reason, pcTablet.error], ['youtube', 'too_long', undefined]);
+  assert.equal(a.metrics.counts['ticket_too_long:'], 2);
+  assert.ok(creates.length <= 2, 'one per job, shared or not: ' + creates.length);
+});
+
+test('Playback: a stray first-byte 413 on a small file is a failed build, retried in 30 s (world #420)', async () => {
+  let now = 1000;
+  const creates = [];
+  const tunelio = { enabled: true, async create(id, quality) { creates.push(quality); return { url: 'https://t/x?a=1', quality, fileSize: 800e6, expires: 0 }; } };
+  const p = new Playback({ tunelio, now: () => now, lowerQuality: '720p', probe: async () => ({ ok: false, refused: true, status: 413 }) });
+  const data = { id: 'small', seconds: 600 };
+  assert.equal((await p.location(data, { quality: '720p', hls: true })).reason, 'build_failed');
+  assert.equal(p.status(data, { quality: '720p', hls: true }).state, 'failed');
+  now += 31_000;
+  assert.equal(p.start(data, '720p', { hls: true }).state, 'building', 'asked again');
+});
+
+test('VIDEO_MAX_HOURS: the default is 12 h; only an explicit 0 is off; empty or garbage keeps the default (world #420)', () => {
+  for (const raw of [undefined, '', ' ', 'abc', '12h', '-5', '0x10', 'NaN', '1e3']) assert.equal(videoMaxSeconds(raw), 43200, String(raw));
+  assert.equal(videoMaxSeconds('0'), 0);
+  assert.equal(videoMaxSeconds('14'), 50400);
+  assert.equal(videoMaxSeconds('1.5'), 5400);
+  assert.equal(videoMaxSeconds(' 14 '), 50400);
+});
+
+test('over the cap, a pasted link: too_long on PC and Quest, no /create, no home build (world #420)', async (t) => {
+  const home = refusingHome();
+  const a = await tooLongApp(t, { home, config: { videoMaxSeconds: 43200 }, video: { seconds: 172800 } });
+  const q = encodeURIComponent('https://www.youtube.com/watch?v=AAAAAAAAAAA');
+  for (const [path, ua] of [['/v1/0/s?q=' + q, WMF], ['/v1/0/s.m3u8?q=' + q, AVPRO_QUEST]]) {
+    const play = await a.get(path, ua);
+    assert.equal(play.status, 403, path);
+    assert.equal((await play.json()).error, 'too_long');
+  }
+  assert.equal(a.calls.length, 0);
+  assert.equal(home.starts, 0);
+});
+
+test('over the cap: too_long for every client, no /create and no home build (world #420)', async (t) => {
+  const home = refusingHome();
+  const a = await tooLongApp(t, { home, config: { videoMaxSeconds: 43200 }, video: { seconds: 43201 } });
+  for (const [path, ua] of [[a.ticket, WMF], [a.ticket, CHROME], [a.ticket + '.m3u8', AVPRO_QUEST], [a.ticket + '.m3u8', CHROME]]) {
+    const play = await a.get(path, ua);
+    assert.equal(play.status, 403, path + ' ' + ua);
+    assert.equal((await play.json()).error, 'too_long');
+  }
+  for (const path of [a.ticket, a.ticket + '.m3u8']) {
+    const st = await (await a.get(path, UNITY)).json();
+    assert.deepEqual([st.state, st.reason, st.error], ['failed', 'too_long', 'too_long']);
+  }
+  assert.equal(a.calls.length, 0);
+  assert.equal(home.starts, 0);
+  assert.equal(a.metrics.counts['ticket_too_long:'], 6);
+});
+
+test('the cap: exactly at it, a live stream and an unknown length all go on as usual (world #420)', async (t) => {
+  const config = { videoMaxSeconds: 43200 };
+  for (const video of [{ seconds: 43200 }, { seconds: 0 }]) {
+    const a = await tooLongApp(t, { config, video });
+    assert.equal((await a.get(a.ticket, WMF)).status, 302, 'Tunelio is asked, refuses here, and the PC keeps the link');
+    assert.equal(a.calls.length, 1);
+  }
+  const live = await tooLongApp(t, { config, video: { seconds: 90000, live: true } });
+  const play = await live.get(live.ticket, WMF);
+  assert.equal(play.status, 302);
+  assert.equal(play.headers.get('location'), 'https://www.youtube.com/watch?v=AAAAAAAAAAA');
+  assert.equal(live.calls.length, 0);
+  assert.equal(live.metrics.counts['ticket_too_long:'], undefined);
 });
 
 test('home refused for room: one check per video in 5 min, however many retries and polls (world #420)', async (t) => {
@@ -539,6 +625,23 @@ test('too long, home takes it: the Quest plays home, no too_long (world #420)', 
   assert.equal(play.status, 302);
   assert.equal(play.headers.get('location'), 'http://h/home/x/index.m3u8');
   assert.equal(a.metrics.counts['ticket_too_long:'], undefined);
+});
+
+test('Playback: a first-byte 413 at the lowest quality is too_long for a day on that job; at a higher one, or on HLS with a progressive file, it is not (world #420)', async () => {
+  let now = 1000;
+  const creates = [];
+  const tunelio = { enabled: true, async create(id, quality) { creates.push(quality); return { url: 'https://t/x?a=1', quality, fileSize: 6e9, expires: 0 }; } };
+  const p = new Playback({ tunelio, now: () => now, restrictedHours: 24, lowerQuality: '720p', progressiveMaxMb: 99999, maxMbForQuality: 99999, probe: async (u) => (/hls=1/.test(u) ? { ok: false, refused: true, status: 413 } : { ok: true, status: 206 }) });
+  const data = { id: 'big', seconds: 30000 };
+  const hls = await p.location(data, { quality: '720p', hls: true });
+  assert.deepEqual([hls.via, hls.reason], ['youtube', 'too_long']);
+  assert.deepEqual(p.status(data, { quality: '720p', hls: true }), { state: 'youtube', reason: 'too_long' });
+  now += 3600_000;
+  await p.location(data, { quality: '720p', hls: true });
+  assert.equal(creates.length, 1, 'no second /create within the day');
+  assert.equal(p.tooLong('big'), false, 'the video itself is not marked');
+  assert.equal((await p.location(data, { quality: '720p' })).via, 'tunelio', 'its progressive file still plays');
+  assert.equal((await p.location(data, { quality: '1080p', hls: true })).reason, 'build_failed');
 });
 
 test('Playback: a refused too-long video is remembered for a day, another failure is not', async () => {

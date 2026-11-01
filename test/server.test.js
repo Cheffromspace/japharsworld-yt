@@ -233,6 +233,16 @@ test('rate limits searches per IP', async (t) => {
   assert.equal((await s.get('/v1/0/s?q=again')).body.error, 'rate_limited');
 });
 
+test('the default search limit leaves room for the next video after a restricted play from two clients (world #450)', async (t) => {
+  const s = await start({ config: { ...config, searchesPerMinutePerIp: base.searchesPerMinutePerIp } });
+  t.after(() => s.server.close());
+  // About 20 /s requests a client for one restricted play (TEST, 2026-11-01).
+  for (let i = 0; i < 40; i++) assert.equal((await s.get('/v1/0/s?q=r' + i)).status, 200);
+  assert.equal((await s.get('/v1/0/s?q=next')).status, 200);
+  for (let i = 0; i < 19; i++) assert.equal((await s.get('/v1/0/s?q=m' + i)).status, 200);
+  assert.equal((await s.get('/v1/0/s?q=over')).body.error, 'rate_limited');
+});
+
 test('serves the home page, privacy policy and logo', async (t) => {
   const s = await start();
   t.after(() => s.server.close());

@@ -17,7 +17,11 @@ export const config = {
   // A video ticket that has been played stays bound to its video this long (late joiners).
   pinHours: int('PIN_HOURS', 24),
   resultsPerPage: int('RESULTS_PER_PAGE', 20),
-  searchesPerMinutePerIp: int('SEARCHES_PER_MINUTE', 20),
+  // Every /s request, text searches and a pasted link's player loads alike. One age-restricted play is about 20 from one
+  // client (about 10 an attempt, tried twice); at 20 a minute two clients on one IP got 429 on the next good video
+  // (TEST, 2026-11-01, world #450). This never bounded Tunelio credits, because tickets aren't counted; a pasted link's /s
+  // also plays through ticket(), so it can spend credits and start home yt-dlp jobs too.
+  searchesPerMinutePerIp: int('SEARCHES_PER_MINUTE', 60),
   dbPath: process.env.DB_PATH ?? 'data/tickets.db',
   ytdlp: process.env.YTDLP ?? 'yt-dlp',
   ytdlpExtraArgs: (process.env.YTDLP_ARGS ?? '').split(' ').filter(Boolean),

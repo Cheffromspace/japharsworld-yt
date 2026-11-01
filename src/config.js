@@ -1,4 +1,8 @@
 // All settings come from the environment (see deploy/japharsworld-yt.env.example).
+// VIDEO_MAX_HOURS as seconds: only an explicit 0 turns the cap off; empty or garbage keeps the default, so a typo in the
+// env file can't silently let every length through.
+export const videoMaxSeconds = (raw, fallbackHours = 12) => Math.round((/^\s*\d+(\.\d+)?\s*$/.test(raw ?? '') ? Number.parseFloat(raw) : fallbackHours) * 3600);
+
 const int = (name, fallback) => {
   const v = Number.parseInt(process.env[name] ?? '', 10);
   return Number.isFinite(v) ? v : fallback;
@@ -76,6 +80,11 @@ export const config = {
   // still answers only after the whole build and a build cut off at ~125 s (524) is thrown away: both long-video
   // build failures of 10-26/27 were HLS (1 h, and 3.3 h / 3.8 GB at 720p), so long and large files stay progressive.
   tunelioLowerQuality: process.env.TUNELIO_LOWER_QUALITY ?? '720p',
+  // Longest video played, in hours; over it every platform gets too_long with no /create or home build, live streams
+  // exempt, unknown length as usual. 0 = off, nothing else is. Owner, 2026-11-01: 14 h unless Tunelio can't reach that, then the longest
+  // that works. Staging bracket, 2026-10-31, 8 h to 24 h: 43200 s built; everything longer got /create 413 except two
+  // videos of 14.00 h, which /create accepted and whose files never gave a first byte (413, or 503/524 for 8 min).
+  videoMaxSeconds: videoMaxSeconds(process.env.VIDEO_MAX_HOURS),
   tunelioMaxMb: int('TUNELIO_MAX_MB', 1500),
   progressiveMaxMb: int('TUNELIO_PROGRESSIVE_MAX_MB', 6000),
   progressiveMaxSeconds: int('TUNELIO_PROGRESSIVE_MAX_MINUTES', 720) * 60,

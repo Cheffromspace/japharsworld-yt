@@ -6,32 +6,52 @@
 *{box-sizing:border-box}html{background:var(--bg)}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:680px;margin:0 auto;padding:40px 16px 64px}header{display:flex;align-items:center;gap:16px;margin-bottom:24px}
 header img{width:64px;height:64px;border-radius:14px}h1{font-size:1.6rem;margin:0;line-height:1.2}h2{font-size:1.1rem;margin:32px 0 8px;color:var(--ink)}
-p,li{color:var(--dim)}a{color:var(--accent)}ul{padding-left:20px}.card{background:var(--card);border:1px solid var(--edge);border-radius:12px;padding:16px 20px}
+p,li,td{color:var(--dim)}a{color:var(--accent)}ul{padding-left:20px}.card{background:var(--card);border:1px solid var(--edge);border-radius:12px;padding:16px 20px}
+table{border-collapse:collapse;width:100%}th,td{border-top:1px solid var(--edge);padding:6px 8px 6px 0;text-align:left;vertical-align:top}th{color:var(--ink)}
 footer{margin-top:48px;color:var(--muted);font-size:.9rem}code{color:var(--ink)}
 </style></head>
 <body><main>
-<header><img src="/logo.png" alt=""><div><h1>Privacy policy</h1><p style="margin:0">Everything is OK · yt.japharsworld.com · updated 2026-10-31</p></div></header>
-<p>In short: this site keeps nothing that identifies you. It has no accounts, no cookies, no analytics and no ads.</p>
-<h2>Visitors of the VRChat world</h2>
+<header><img src="/logo.png" alt=""><div><h1>Privacy policy</h1><p style="margin:0">Everything is OK · yt.japharsworld.com and eiok.cc · updated 2026-11-03</p></div></header>
+<p>In short: this site has no accounts, no cookies, no third-party analytics scripts and no ads, and it never asks for your VRChat name. It stores and logs which videos were found and played, under a room number, with no name attached. Your IP address can reach its logs only in the cases under Logs.</p>
+<h2>Who gets what</h2>
+<table>
+<tr><th>Who</th><th>What</th><th>When</th></tr>
+<tr><td>This server (hosted at Linode)</td><td>Your IP address, search text, your video player's software name (not your VRChat name)</td><td>Each request from the world</td></tr>
+<tr><td>YouTube</td><td>Search text, not your IP address</td><td>This server or the owner's home server searches for you</td></tr>
+<tr><td>YouTube</td><td>Your IP address and which video</td><td>Your client plays from it: live streams, Channels (on Quest, this server redirects first) and when Tunelio can't help</td></tr>
+<tr><td><a href="https://tunelio.dev">Tunelio</a></td><td>From this server: the video link, quality or caption language, nothing about you. From your client: your IP address, your player's software name and so which video that address watched</td><td>Videos it prepares</td></tr>
+<tr><td>Owner's home server</td><td>Search text and video IDs, not your IP address. It logs job kinds, timings and caption video IDs</td><td>Searches, captions, and videos this server plays from a copy, so YouTube sees that connection</td></tr>
+<tr><td>Amazon Web Services</td><td>Your IP address and player's software name; its logs last 7 days</td><td>The world's default video link, which redirects to YouTube</td></tr>
+<tr><td>Any site you link</td><td>Your IP address, and that of others in the room, who will likely load it too</td><td>An "other link" plays straight from that site</td></tr>
+<tr><td>People in the room</td><td>What you play, and your time zone's UTC offset, never a location</td><td>The offset while "Share local time" is on, the default</td></tr>
+<tr><td>wttr.in</td><td>Your IP address</td><td>Only if you turn on local weather</td></tr>
+<tr><td>GitHub Pages</td><td>Your IP address</td><td>The Channels list's status file and thumbnails</td></tr>
+<tr><td>VRChat</td><td>Your world settings, saved with your account (PlayerData)</td><td>When you change them</td></tr>
+<tr><td>Grafana Cloud</td><td>Usage totals, server health and room numbers active per hour; no logs, search text, video IDs or IP addresses</td><td>Monitoring</td></tr>
+<tr><td>Owner's private Discord</td><td>Status alerts, service alerts and usage reports</td><td>Monitoring</td></tr>
+</table>
+<p>The feedback link opens a Google Form. Those services' own policies decide how long they keep what they receive. Nothing is sold, and this service sends no other visitor data to third parties. The owner uses AI assistants (Anthropic's Claude) to help run the service, and they can read its logs and redacted event data.</p>
+<h2>What this site keeps</h2>
 <ul>
-<li><strong>Searches.</strong> When you search from the world, your VRChat client sends the search text to this server. The server asks YouTube for results and hands back a list of videos. Only the results' video IDs and their public titles, channels, lengths, whether they are live, and the start of their descriptions are stored, for up to a day, so that others in the same instance can load the same video and see what is playing. The search text is not stored, the list is not linked to you, and it is overwritten as the server reuses its slots.</li>
-<li><strong>Logs.</strong> The server logs which kind of request it answered, the response code and how long it took; for a search, also its length and whether it came from Quest/Android or PC; for a video report, its kind and the same Quest/Android or PC. It does not log search text, IP addresses or anything about your VRChat account.</li>
-<li><strong>Usage counts.</strong> The server counts how often things happen each day: searches, plays, caption requests, which of the 16 VRChat languages they came in, whether a play was on PC or on Quest/Android (from the video player's own name, once per room), how often YouTube refused a lookup, by kind of refusal only, how many videos did or did not have captions, and video reports: when someone presses Resync, when the world reloads a stalled video, and the world testers' problem reports, by kind only. These are totals only. They never include search text, video IDs, IP addresses or anything about you or your VRChat account. The world's public VRChat numbers (visits, favorites, how many people are in it) are recorded the same way, as counts.</li>
-<li><strong>IP addresses.</strong> Your IP address is held in memory for one minute to stop request flooding. It is never written to disk.</li>
-<li><strong>Videos.</strong> Videos play straight from YouTube in your VRChat client, so YouTube receives your request as it would for any video. The <a href="https://policies.google.com/privacy">Google Privacy Policy</a> covers that.</li>
-<li><strong>Channels list.</strong> The world reads a public status file and a thumbnail picture from GitHub Pages. GitHub's privacy statement applies to those requests.</li>
+<li><strong>Search results and plays.</strong> Video ID, public title, channel, length, whether live and the start of the description, under a room number and time, with no name or IP address. A pasted YouTube link's video is stored and logged the same way. No time limit: a result stays until its slot is reused, a room's last played video until its next play.</li>
+<li><strong>Video copies.</strong> With their video ID, quality, length, times and build details, nothing about who watched. Removed here 72 hours after their last upload, sooner when space is short. The home server keeps its copies until it needs the space.</li>
+<li><strong>Captions.</strong> Stored by video ID and reused for 7 days, then fetched again when needed. Old text is not deleted automatically.</li>
+<li><strong>Working files.</strong> Video IDs and Tunelio links of current and recent plays, and videos to send elsewhere for a while. Nothing about visitors.</li>
+<li><strong>Usage totals.</strong> Per day or hour, no end date: joins, searches, plays, captions, how many videos had captions, languages, quality picks, Channels redirects, video reports, how videos were served, and PC or Quest (from the software name or the form of the video's web address, not an IP address). Never search text, video IDs or IP addresses. Public VRChat numbers for the world and its group too.</li>
 </ul>
+<h2>Logs</h2>
+<p>Each request's kind, response code and duration. For a search: language, length, kinds of characters, PC or Quest. For plays, captions and reports: room number (instances can share one), ticket number, video ID, how it was served and the first 80 characters of the player's software name. No search text, IP addresses or VRChat account.</p>
+<p>Exceptions: the firewall logs blocked packets' addresses, which can include visitors'. A rare search library warning can contain search text. Logs have no time limit; the oldest go only at a size cap. Until then, older web server log lines, written before this was changed, can still hold a visitor's IP address and full request address, including search text.</p>
+<h2>IP addresses in memory</h2>
+<p>Your IP address is held in memory when the search address loads (your search, or the world after you join) to stop request flooding. Only the last minute counts, but the entry can stay until that address returns, the list passes 10,000 addresses or the service restarts. Some plays also keep a hash of it and the player's software name in memory, to tell a reload from a new player. The service itself writes neither to disk.</p>
 <h2>YouTube API Services</h2>
-<p>This site uses YouTube API Services, under the <a href="https://www.youtube.com/t/terms">YouTube Terms of Service</a> and the <a href="https://policies.google.com/privacy">Google Privacy Policy</a>.</p>
+<p>This site uses YouTube API Services. By using this site, you agree to be bound by the <a href="https://www.youtube.com/t/terms">YouTube Terms of Service</a>. The <a href="https://policies.google.com/privacy">Google Privacy Policy</a> also applies.</p>
 <ul>
-<li>The only Google account connected is the world owner's own, which authorized access with the YouTube scope. That access is used for one thing: to keep the unlisted playlists behind the Channels list on the owner's channel current, by adding a live stream and removing the old one.</li>
-<li>The monitor also reads public information about those streams: whether they are live, their titles and channels, viewer counts and thumbnails. It keeps that information to measure how reliable each stream is.</li>
-<li>No data about any other YouTube user is requested, stored or shared. Visitors never sign in to Google through this site.</li>
+<li>The only Google account connected is the world owner's own, which authorized access with the YouTube scope. That access is used for one thing: to keep the unlisted playlists behind the Channels list on the owner's channel current, by reading them, adding a live stream, removing the old one, or emptying one whose stream fails a safety check.</li>
+<li>The monitor also reads public information about those streams: whether they are live, their titles and channels, viewer counts and thumbnails. It keeps that information to measure how reliable each stream is. These records and the access token are stored on one server run by the owner.</li>
+<li>No private data about any other YouTube user is requested, stored or shared. Visitors never sign in to Google through this site.</li>
 <li>The owner can revoke this access at any time in <a href="https://myaccount.google.com/permissions">Google account permissions</a>, after which stored access tokens stop working.</li>
 </ul>
-<h2>Sharing and keeping data</h2>
-<p>Nothing is sold. Stream records and the playlist access token are stored on one server run by the world owner. Status alerts about streams go to the owner's private Discord channel.</p>
-<p>Aggregate counts and server health numbers (no search text, video IDs or IP addresses) are sent to Grafana Cloud for monitoring. Logs are not sent. Nothing else is shared with third parties.</p>
 <h2>Contact</h2>
 <p>Questions or requests: <a href="https://github.com/Cheffromspace/japharsworld-yt/issues">open an issue on GitHub</a>.</p>
 <footer><a href="/">Home</a> · <a href="https://github.com/Cheffromspace/japharsworld-yt">Source code</a></footer>

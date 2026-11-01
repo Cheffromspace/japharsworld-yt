@@ -205,6 +205,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // results" with no More, an empty More ends the list (EverythingIsOKYouTubeSearch.cs ReadResults, 2026-11-01), so it
   // carries on to YouTube's next page, up to the 3 fetches the world itself makes of one search. Those fetches aren't
   // counted by the per-IP limit, so this can triple what one request asks of YouTube, only on a page that is all over-cap.
+  // On the Data API fallback that is quota too: 101 units a page (search.list 100, videos.list 1), so 303 for one request.
   async function listable(page) {
     const { via } = page;
     for (let fetches = 1; ; fetches++) {
@@ -319,7 +320,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     try {
       page = await searcher.search(pasted ?? query, config.resultsPerPage);
       if (!pasted) page = await listable(page);
-    } catch {
+    } catch (err) {
+      // searcher.search logs its own failures; a failed continuation in listable would otherwise log nothing behind this count.
+      logJson({ event: 'youtube_error', route: 'search', message: String(err?.message ?? err).slice(0, 300) });
       metrics.inc('search_fail', '502');
       return fail(res, 502, 'youtube_failed', 'YouTube search is not answering right now.');
     }

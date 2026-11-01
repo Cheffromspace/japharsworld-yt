@@ -391,7 +391,7 @@ test('a plain HLS build (a video over 12 hours) reached through the redirect goe
   const f = fakes();
   const long = { id: 'LongRain001', title: 't', channel: 'c', length: '13:00:00', seconds: 46800, views: '', age: '', live: false };
   const store = new Store({ path: ':memory:', shards: 4, pool: 100, pinHours: 24 });
-  const app = createApp({ config: { ...base, shards: 4, pool: 100, metricsPath: '', tunelioKey: '', tunelioQuality: '720p', tunelioQualities: ['720p', '1080p'] },
+  const app = createApp({ config: { ...base, shards: 4, pool: 100, metricsPath: '', tunelioKey: '', tunelioQuality: '720p', tunelioQualities: ['720p', '1080p'], videoMaxSeconds: 0 },
     store, youtube: { async search() { return { videos: [long], more: null }; }, thumbnailUrl: () => '' }, tunelio: f.tunelio, playback: f.playback,
     adaptive: new Adaptive({ playback: f.playback, fetcher: f.fetcher, base: 'http://pub.example/hls' }), captions: { async get() { return { available: false }; } }, log: () => {} });
   const srv = http.createServer(app);

@@ -226,6 +226,96 @@ test('errors are JSON with codes', async (t) => {
   assert.equal((await s.get('/healthz')).body.busy, 0); // deploy/update.sh waits for 0 before restarting
 });
 
+// A search whose pages are the given lists of rows, in order. Counts the fetches.
+function pagedYoutube(pages) {
+  const yt = {
+    fetches: 0,
+    async search() {
+      const at = (i) => { yt.fetches++; return { videos: pages[i], more: i + 1 < pages.length ? async () => at(i + 1) : null }; };
+      return at(0);
+    },
+    thumbnailUrl: (id) => `thumb://${id}`,
+  };
+  return yt;
+}
+const long = (id, seconds = 43201) => ({ ...video(id), seconds });
+
+test('search leaves out videos over the cap; live, unknown and exactly-at-the-cap stay; tickets and sheet cells stay in step (world #455)', async (t) => {
+  const live = { ...video('live0000000'), seconds: 0, live: true }, unknown = { ...video('unknown0000'), seconds: 0 };
+  const s = await start({ youtube: pagedYoutube([
+    [long('over1000000'), video('keep1000000'), live, long('over2000000', 172800), unknown, long('atcap000000', 43200)],
+    [long('over3000000'), video('keep2000000')],
+  ]) });
+  t.after(() => s.server.close());
+  const first = (await s.get('/v1/0/s?q=a')).body;
+  const ids = ['keep1000000', 'live0000000', 'unknown0000', 'atcap000000'];
+  assert.deepEqual(first.results.map((r) => r.id), ids);
+  assert.deepEqual(s.store.get(0, first.sheet).data.ids, ids);
+  for (const r of first.results) assert.equal(s.store.get(0, r.t).data.id, r.id);
+  assert.ok(first.next >= 0, 'a short page keeps its More');
+  const second = (await s.get(`/v1/0/${first.next}`)).body;
+  assert.deepEqual(second.results.map((r) => r.id), ['keep2000000']);
+  assert.deepEqual(s.store.get(0, second.sheet).data.ids, ['keep2000000']);
+  assert.equal(second.page, 2);
+  assert.equal(second.next, -1);
+});
+
+test('a page with every row over the cap carries on to the next page, for the search and for More (world #455)', async (t) => {
+  const yt = pagedYoutube([[long('over1000000')], [long('over2000000')], [video('keep1000000')], [long('over3000000')], [video('keep2000000')]]);
+  const s = await start({ youtube: yt });
+  t.after(() => s.server.close());
+  const first = (await s.get('/v1/0/s?q=a')).body;
+  assert.deepEqual(first.results.map((r) => r.id), ['keep1000000']);
+  assert.equal(first.page, 1);
+  assert.equal(yt.fetches, 3);
+  const second = (await s.get(`/v1/0/${first.next}`)).body;
+  assert.deepEqual(second.results.map((r) => r.id), ['keep2000000']);
+  assert.equal(second.page, 2);
+});
+
+test('all over the cap: three fetches, then an empty answer, as a search with no results (world #455)', async (t) => {
+  const yt = pagedYoutube(Array.from({ length: 5 }, (_, i) => [long(`over${i}000000`)]));
+  const s = await start({ youtube: yt });
+  t.after(() => s.server.close());
+  const r = await s.get('/v1/0/s?q=a');
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.results, []);
+  assert.equal(yt.fetches, 3);
+});
+
+test('a failed fetch after an all-over-cap page is a search failure, not an empty list (world #455)', async (t) => {
+  const s = await start({ youtube: {
+    async search() { return { videos: [long('over1000000')], more: async () => { throw new Error('youtube down'); } }; },
+    thumbnailUrl: (id) => `thumb://${id}`,
+  } });
+  t.after(() => s.server.close());
+  const r = await s.get('/v1/0/s?q=a');
+  assert.equal(r.status, 502);
+  assert.equal(r.body.error, 'youtube_failed');
+});
+
+test('VIDEO_MAX_HOURS=0 lists everything and fetches nothing extra (world #455)', async (t) => {
+  const yt = pagedYoutube([[long('over1000000', 900000)], [video('keep1000000')]]);
+  const s = await start({ config: { ...config, videoMaxSeconds: 0 }, youtube: yt });
+  t.after(() => s.server.close());
+  assert.deepEqual((await s.get('/v1/0/s?q=a')).body.results.map((r) => r.id), ['over1000000']);
+  assert.equal(yt.fetches, 1);
+});
+
+test('a pasted link over the cap keeps its row and gets too_long; other over-cap rows go (world #455, #420)', async (t) => {
+  const id = 'pasted00000';
+  const s = await start({ youtube: pagedYoutube([[long('over1000000'), long(id), video('keep1000000')]]) });
+  t.after(() => s.server.close());
+  const q = encodeURIComponent(`https://www.youtube.com/watch?v=${id}`);
+  const tablet = await (await fetch(`${s.base}/v1/0/s?q=${q}`, { headers: { 'user-agent': 'UnityPlayer/2022.3 (UnityWebRequest/1.0)' } })).json();
+  assert.deepEqual(tablet.results.map((r) => r.id), [id, 'keep1000000']);
+  const player = await fetch(`${s.base}/v1/0/s?q=${q}`, { redirect: 'manual', headers: { 'user-agent': 'NSPlayer/12.00.19041.1 WMFSDK/12.00.19041.1' } });
+  assert.equal(player.status, 403);
+  assert.equal((await player.json()).error, 'too_long');
+  const ticket = await fetch(`${s.base}/v1/0/${tablet.results[0].t}`, { redirect: 'manual', headers: { 'user-agent': 'NSPlayer/12.00.19041.1 WMFSDK/12.00.19041.1' } });
+  assert.equal(ticket.status, 403);
+});
+
 test('rate limits searches per IP', async (t) => {
   const s = await start();
   t.after(() => s.server.close());

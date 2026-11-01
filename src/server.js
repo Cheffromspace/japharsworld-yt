@@ -199,6 +199,21 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // seconds as in a search row: the video's length, 0 when not known (live, an older ticket, a pasted link not looked up).
   const meta = (data) => ({ title: data.title ?? '', channel: data.channel ?? '', desc: data.desc ?? '', seconds: data.seconds ?? 0 });
 
+  // Over-cap videos aren't listed (Everything-is-OK#455): picking one only ends in too_long (and on 2026-11-01 first
+  // interrupted the room's video, #454). Done before publish, so tickets and sheet cells stay in step: the world takes
+  // cell i = result i, and a short page is fine for it. A page with nothing left is not: an empty first page reads "no
+  // results" with no More, an empty More ends the list (EverythingIsOKYouTubeSearch.cs ReadResults, 2026-11-01), so it
+  // carries on to YouTube's next page, up to the 3 fetches the world itself makes of one search. Those fetches aren't
+  // counted by the per-IP limit, so this can triple what one request asks of YouTube, only on a page that is all over-cap.
+  async function listable(page) {
+    const { via } = page;
+    for (let fetches = 1; ; fetches++) {
+      const videos = page.videos.filter((v) => !overCap(v));
+      if (videos.length || !page.videos.length || !page.more || fetches >= 3) return { ...page, videos, via };
+      page = await page.more();
+    }
+  }
+
   function publish(shard, page, extra = {}) {
     const items = page.videos.map(ticketData);
     items.push({ kind: 'sheet', data: { ids: page.videos.map((v) => v.id) } });
@@ -303,6 +318,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const started = Date.now();
     try {
       page = await searcher.search(pasted ?? query, config.resultsPerPage);
+      if (!pasted) page = await listable(page);
     } catch {
       metrics.inc('search_fail', '502');
       return fail(res, 502, 'youtube_failed', 'YouTube search is not answering right now.');
@@ -310,7 +326,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     metrics.inc('search_source', page.via);
     metrics.latency('search_ms', Date.now() - started);
     if (pasted) {
-      const rest = page.videos.filter((v) => v.id !== pasted);
+      // The pasted row stays whatever its length: its ticket answers too_long, which is what the tablet shows for it.
+      const rest = page.videos.filter((v) => v.id !== pasted && !overCap(v));
       page = { videos: [await pastedVideo(page, pasted), ...rest], more: page.more };
     }
     const body = publish(shard, page, { query, lang, page: 1, pasted: Boolean(pasted) });
@@ -968,7 +985,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (!more) { metrics.inc('more_fail', '410'); return fail(res, 410, 'expired', 'These results expired. Search again.'); }
       continuations.delete(`${shard}:${n}`);
       let page;
-      try { page = await more(); } catch (err) {
+      try { page = await listable(await more()); } catch (err) {
         logJson({ event: 'youtube_error', route: 'more', via: more.via, message: String(err?.message ?? err).slice(0, 300) });
         if (err instanceof RelayError && err.code === 'expired') { metrics.inc('more_fail', '410'); return fail(res, 410, 'expired', 'These results expired. Search again.'); }
         metrics.inc('more_fail', '502');

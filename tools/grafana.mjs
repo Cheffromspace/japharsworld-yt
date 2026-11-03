@@ -275,6 +275,11 @@ export function dashboard() {
   p.push(series('Disk free (/)', [['max by (host) (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})', '{{host}}']], { w: 8, unit: 'percentunit', min: 0, description: 'Share of the root disk free on each host.' }));
   p.push(series('Public endpoints', [['max by (job) (probe_success)', '{{job}}'], ['max by (job) (probe_duration_seconds)', '{{job}} seconds']], { w: 12, description: 'Outside health checks of the public addresses: 1 up, 0 down, and how long each check took in seconds.' }));
   p.push(series('Failed units', [['sum by (host, name) (node_systemd_unit_state{state="failed"}) > 0', '{{host}} {{name}}']], { w: 12, description: 'systemd units in the failed state on either host; empty when all is well.' }));
+  // From the capacity-alerts branch (d22fa0e), already live on the dashboard since 2026-11-01; the exporter series is on prod.
+  p.push(series('Search service memory', [
+    ['sum(eiok_service_memory_bytes{kind=~"anon|swap"})', 'anon + swap'],
+    ['max(eiok_service_memory_limit_bytes)', 'MemoryMax'],
+  ], { w: 24, h: 6, unit: 'bytes', min: 0, description: 'The search service’s memory that can’t be dropped (anon in RAM plus swapped out) against its MemoryMax. Page cache is left out, as the kernel reclaims it at the limit.' }));
 
   p.push(row('Versions and deploys'));
   // A band per world version over time (the polled version number), so uploads read as a timeline.

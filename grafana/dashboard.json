@@ -3272,13 +3272,72 @@
    }
   },
   {
-   "type": "row",
+   "type": "timeseries",
    "id": 55,
+   "title": "Search service memory",
+   "description": "The search service’s memory that can’t be dropped (anon in RAM plus swapped out) against its MemoryMax. Page cache is left out, as the kernel reclaims it at the limit.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 142,
+    "w": 24,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum(eiok_service_memory_bytes{env!=\"staging\",kind=~\"anon|swap\"})",
+     "legendFormat": "anon + swap"
+    },
+    {
+     "refId": "B",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "max(eiok_service_memory_limit_bytes{env!=\"staging\"})",
+     "legendFormat": "MemoryMax"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 8,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "row",
+   "id": 56,
    "title": "Versions and deploys",
    "collapsed": false,
    "gridPos": {
     "x": 0,
-    "y": 142,
+    "y": 148,
     "w": 24,
     "h": 1
    },
@@ -3286,7 +3345,7 @@
   },
   {
    "type": "state-timeline",
-   "id": 56,
+   "id": 57,
    "title": "World version over time",
    "datasource": {
     "type": "prometheus",
@@ -3294,7 +3353,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 143,
+    "y": 149,
     "w": 24,
     "h": 4
    },
@@ -3347,7 +3406,7 @@
   },
   {
    "type": "table",
-   "id": 57,
+   "id": 58,
    "title": "World uploads and releases",
    "description": "World versions (production and TEST, at VRChat’s upload time) and GitHub release tags, newest first.",
    "datasource": {
@@ -3356,7 +3415,7 @@
    },
    "gridPos": {
     "x": 0,
-    "y": 147,
+    "y": 153,
     "w": 12,
     "h": 6
    },
@@ -3420,7 +3479,7 @@
   },
   {
    "type": "table",
-   "id": 58,
+   "id": 59,
    "title": "Deploys of main",
    "description": "Deploys of main per host, newest first: the Linode (search service; no_restart when only files it doesn’t run changed) and the Optiplex (relay worker).",
    "datasource": {
@@ -3429,7 +3488,7 @@
    },
    "gridPos": {
     "x": 12,
-    "y": 147,
+    "y": 153,
     "w": 12,
     "h": 6
    },

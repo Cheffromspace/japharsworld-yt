@@ -36,7 +36,7 @@ import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { config as defaults } from './config.js';
 import { Store } from './store.js';
-import { parseQuery, queryShape, youtubeIdFrom, youtubeLinkId, normalizeLang, LANGS, SHORT_LANGS } from './query.js';
+import { parseQuery, rawQuery, queryShape, youtubeIdFrom, youtubeLinkId, normalizeLang, LANGS, SHORT_LANGS } from './query.js';
 import { youtube as defaultYoutube } from './youtube.js';
 import { cachedSheet } from './sheet.js';
 import { Captions, errorLine } from './captions.js';
@@ -307,10 +307,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // `hlsTicket`: the address ends in .m3u8 (/v1/<shard>/s.m3u8, /s/<shard><letter>.m3u8), for a pasted link's play (#136).
   async function search(req, res, shard, url, lang = normalizeLang(url.searchParams.get('l')), hlsTicket = false) {
     if (rateLimited(clientIp(req))) { metrics.inc('search_fail', '429'); return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.'); }
-    const query = parseQuery(url.searchParams.get('q') ?? '');
+    // q is the raw rest of the address after q= (rawQuery): a pasted link's own & and + stay in it.
+    const rawQ = rawQuery(url.search) ?? '';
+    const query = parseQuery(rawQ);
     const ua = String(req.headers['user-agent'] ?? '');
-    logJson({ event: 'search_shape', lang, device: uaDevice(ua),
-      ...queryShape(url.searchParams.get('q') ?? '') });
+    logJson({ event: 'search_shape', lang, device: uaDevice(ua), ...queryShape(rawQ) });
     // The world loads the bare search address once after join (visitors who allow untrusted URLs).
     if (!query) { metrics.inc('join'); metrics.inc('join_lang', lang); return fail(res, 400, 'empty_query', 'Type something after the arrow.'); }
     // A video player or VRChat's resolver loading the address of a YouTube link (#136): play it as its ticket would be

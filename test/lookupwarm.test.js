@@ -154,3 +154,15 @@ test('uaDevice: a User-Agent naming Quest without Android is android; UnityWebRe
   await a.get('/v1/0/s?q=x', UNITY);
   assert.deepEqual(a.events('search_shape').map((o) => o.device), ['android', 'unity']);
 });
+
+test('a pasted mobile or share link with its own & or + plays, not searched as text (verifier, 2026-11-03)', async (t) => {
+  const pre = '/v1/0/s?l=en&q=YouTube%20link%20%E2%86%92%20';
+  for (const l of [`www.youtube.com/watch?feature=share&v=${ID}`, `m.youtube.com/watch?app=desktop&v=${ID}`,
+    `www.youtube.com/watch?list=PLx1&v=${ID}`, `youtu.be/${ID}?x=a+b`]) {
+    const a = await app(t);
+    const body = await (await a.get(pre + l)).json();
+    assert.deepEqual([body.pasted, body.results?.[0]?.id], [true, ID], `${l}: the tablet's lookup finds the link`);
+    const play = await a.get(pre + l, WMF);
+    assert.equal(play.status, 302, `${l}: the player is sent to the video, not given JSON`);
+  }
+});

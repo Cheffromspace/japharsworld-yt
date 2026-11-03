@@ -26,6 +26,23 @@ const PROMPTS = ['Type to search', 'Tapez pour chercher', 'Escribe para buscar',
 const CONTROL = /[\u0000-\u001f\u007f]/;
 const fold = (s) => s.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
 
+// The search address's q as the world sends it: the raw rest of the query string after the first q= (verifier,
+// 2026-11-03). The world bakes q= last (EverythingIsOKYouTubeBake.cs SearchPrefix/LinkPrefix) and the visitor types or
+// pastes after it, so a pasted link's own & and + are part of q; URLSearchParams split
+// www.youtube.com/watch?feature=share&v=ID at the &, and the link was searched as text. Only %xx is decoded
+// (a malformed % stays as typed). A + stays a + when the text is a YouTube link (youtu.be/ID?x=a+b) and is a space
+// otherwise, as URLSearchParams read it: nothing on record says whether VRChat's URL field sends a typed space as %20
+// or +, so text searches keep the old reading.
+export function rawQuery(search) {
+  const s = `&${String(search ?? '').replace(/^\?/, '')}`;
+  const at = s.indexOf('&q=');
+  if (at < 0) return null;
+  const rest = s.slice(at + 3);
+  const decode = (t) => t.replace(/(?:%[0-9A-Fa-f]{2})+/g, (m) => { try { return decodeURIComponent(m); } catch { return m; } });
+  const kept = decode(rest);
+  return youtubeLinkId(parseQuery(kept)) ? kept : decode(rest.replace(/\+/g, ' '));
+}
+
 // What a search's q looked like, without its text (Everything-is-OK#143: Quest searches found nothing, and the logs keep
 // no search text): lengths, which arrow it was cut at, whether a prompt was still in it, and the character classes.
 export function queryShape(raw) {

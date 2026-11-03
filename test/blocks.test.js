@@ -89,6 +89,56 @@ test('Japanese auto track: one segment per sentence, chunked by character into 1
   assert.equal(chunks.map((c) => c[2]).join(''), cues.map((c) => c[2].map((s) => s[1]).join('')).join('').replace(/\s+/g, ''));
 });
 
+// Made-up word-timed cues in json3's shape (seg 0 starts with the cue, later segs carry YouTube's offset).
+const wordTimed = {
+  ja: [[1000, 3000, [[0, '今日は'], [400, 'いい'], [700, '天気'], [1000, 'です'], [1300, 'ね'], [1450, '。']]],
+    [4200, 2500, [[0, '散歩'], [500, 'に'], [650, '行き'], [900, 'ましょう'], [1500, 'か'], [1700, '？']]]],
+  'zh-CN': [[1000, 3000, [[0, '今天'], [400, '天气'], [700, '很'], [1000, '好'], [1450, '。']]],
+    [4200, 2500, [[0, '我们'], [500, '去'], [650, '散步'], [900, '吧'], [1700, '？']]]],
+  'zh-HK': [[1000, 3000, [[0, '今日'], [400, '天氣'], [700, '好'], [1000, '好'], [1450, '。']]],
+    [4200, 2500, [[0, '我哋'], [500, '去'], [650, '散步'], [900, '啦'], [1700, '？']]]],
+};
+const expected = {
+  ja: [[1, 4, '今日はいい天気ですね。', 3, '0:0,40:3,70:5,100:7,130:9'], [4.2, 6.7, '散歩に行きましょうか？', 3, '0:0,50:2,65:3,90:5,150:9']],
+  'zh-CN': [[1, 4, '今天天气很好。', 3, '0:0,40:2,70:4,100:5'], [4.2, 6.7, '我们去散步吧？', 3, '0:0,50:2,65:3,90:5']],
+  'zh-HK': [[1, 4, '今日天氣好好。', 3, '0:0,40:2,70:4,100:5'], [4.2, 6.7, '我哋去散步啦？', 3, '0:0,50:2,65:3,90:5']],
+};
+
+test("Japanese and Chinese word-timed tracks keep YouTube's timing: one real unit per timed seg (#463)", () => {
+  for (const code of ['ja', 'zh-CN', 'zh-HK']) {
+    const cues = wordTimed[code];
+    const words = wordsFromCues(cues, layoutFor(code));
+    assert.ok(words.every((x) => x.real), `${code}: every unit is the source's`);
+    const { chunks, words: quality } = chunksFromCues(cues, code, { realWordsOnly: true });
+    assert.equal(quality, 'real', code);
+    // Offsets sit on the seg boundaries at YouTube's own times; the punctuation segs ride on the word before.
+    assert.deepEqual(chunks, expected[code], code);
+    checkChunks(chunks, 16);
+  }
+});
+
+test('English with the same word timing stays real, offsets per word (#463 regression)', () => {
+  const cues = [[1000, 3000, [[0, 'It'], [400, ' is'], [700, ' a'], [1000, ' nice'], [1300, ' day.']]]];
+  const { chunks, words } = chunksFromCues(cues, 'en', { realWordsOnly: true });
+  assert.equal(words, 'real');
+  assert.deepEqual(chunks, [[1, 4, 'It is a nice day.', 3, '0:0,40:3,70:6,100:8,130:13']]);
+});
+
+test('character scripts: only word-timed segs that fit a line stay whole; the rest is still estimated (#463)', () => {
+  const layout = layoutFor('ja');
+  // A cue of one seg is a line timed at its start: split per character, estimated, offsets withheld.
+  const line = [[0, 3000, [[0, '今日はいい天気ですね。']]]];
+  assert.ok(wordsFromCues(line, layout).every((x) => !x.real));
+  assert.equal(chunksFromCues(line, 'ja', { realWordsOnly: true }).words, 'estimated');
+  // Later segs without an offset: seg 0's 0 is not a word time, so nothing here is real.
+  const untimed = [[0, 3000, [[0, '今日は'], [null, 'いい'], [null, '天気']]]];
+  assert.ok(wordsFromCues(untimed, layout).every((x) => !x.real));
+  // A timed seg wider than a line, or one holding a space, is split per character and estimated.
+  const wide = wordsFromCues([[0, 3000, [[0, 'ね'], [300, '秒ぐらい遅れて録画の映像が来るやつ'], [2000, 'あ い']]]], layout);
+  assert.deepEqual(wide.filter((x) => x.real).map((x) => x.w), ['ね']);
+  assert.equal(wide.map((x) => x.w).join(''), 'ね秒ぐらい遅れて録画の映像が来るやつあい');
+});
+
 const w = (list) => list.map(([t, e, text]) => ({ t, e, w: text, sp: true, real: true }));
 
 test('breaks: sentence > clause > pause > length, and a long silence always ends a line', () => {

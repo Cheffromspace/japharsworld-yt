@@ -29,7 +29,7 @@ export function layoutFor(code) {
 
 // cues → words [{ t, e, w, sp, real }]: t/e in ms, sp = a space precedes the word, real = the source timed it.
 // A seg the source did not time, or one holding several words, spreads its span over its words by character count.
-export function wordsFromCues(cues, { units = 'words' } = {}) {
+export function wordsFromCues(cues, { units = 'words', maxChars = 42 } = {}) {
   const words = [];
   for (let c = 0; c < cues.length; c++) {
     const [start, dur, segs] = cues[c];
@@ -46,10 +46,30 @@ export function wordsFromCues(cues, { units = 'words' } = {}) {
       let acc = weights[0];
       for (let k = i; k < j; k++) { starts[k] = from + (to - from) * (acc / total); acc += weights[k - i + 1]; }
     }
+    // The source timed this cue's words, not just its start (seg 0's offset is always 0, so a later seg must carry one).
+    const wordTimed = segs.some(([o], k) => k > 0 && o != null);
     for (let i = 0; i < segs.length; i++) {
       const [offset, text] = segs[i];
       const segStart = starts[i], segEnd = i + 1 < segs.length ? starts[i + 1] : cueEnd;
       const real = offset != null;
+      // Scripts split by character (Japanese, Chinese, Thai): a seg the source timed inside a word-timed cue is a word
+      // (or short phrase) with its own time, so it stays one real unit instead of characters spread by weight
+      // (Everything-is-OK#463: a word-timed Japanese track came out estimated and, with CAPTION_REAL_WORDS_ONLY, lost
+      // its highlight). A cue of one seg is a line timed only at its start, so it is still split and estimated; so is
+      // a seg wider than a line or holding a space, which is more than one word.
+      if (units === 'chars' && real && wordTimed) {
+        const word = text.trim();
+        if (i > 0 && words.length && PUNCT_ONLY.test(word) && !/^\s/.test(text)) {
+          // A seg of only punctuation stays on the word before it, as split() keeps it within a seg.
+          words[words.length - 1].w += word;
+          words[words.length - 1].e = segEnd;
+          continue;
+        }
+        if (word && !/\s/.test(word) && Array.from(word).length <= maxChars && !ATTACHED.test(word[0])) {
+          words.push({ t: segStart, e: segEnd, w: word, sp: i === 0 || /^\s/.test(text), real: true });
+          continue;
+        }
+      }
       const pieces = split(text, units);
       if (!pieces.length) continue;
       // A cue's first word starts fresh after the cue before it (json3 only puts the space on words within a cue).
@@ -106,6 +126,7 @@ function split(text, units) {
 // (ะ า ำ) and repetition mark ๆ; Thai's leading vowels (เ แ โ ใ ไ) are written before the consonant they follow in speech.
 const ATTACHED = /[̀-֑ͯ-ׇֽֿׁׂׅׄะ-ฺๅ-๎]/;
 const THAI_LEADING = /[เ-ไ]/;
+const PUNCT_ONLY = /^[。！？…、，；：」』）】,.!?;:'"）]+$/;
 
 // How strongly the text wants a break after word i (0..3), from its punctuation and the silence that follows it.
 export function breakAfter(words, i) {

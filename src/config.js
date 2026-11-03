@@ -147,6 +147,8 @@ export const config = {
   // request, which sent one PC ticket home → Tunelio → home within a minute and its players reloaded from 0 (prod
   // 2026-10-28). Off: staging first.
   ticketPin: (process.env.TICKET_PIN ?? 'off') === 'on',
+  // A pasted link's lookup warms the video (Everything-is-OK#449); off only with LOOKUP_WARM=off.
+  lookupWarm: (process.env.LOOKUP_WARM ?? 'on') !== 'off',
   ticketPinMarginMs: int('TICKET_PIN_MARGIN_MINUTES', 15) * 60_000,
   // The quality home builds when the room hasn't picked one (owner, 2026-10-25: 1080p; home streams, so 1080p starts
   // about as fast as 720p: first segments 6.2 s vs 2.9 s on the Optiplex, 2026-10-23). A room's own pick wins.

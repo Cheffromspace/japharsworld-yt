@@ -337,7 +337,12 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     // A YouTube link's first result is the ticket its player plays (#136), whichever of the two loads came first.
     const linked = pasted && youtubeLinkId(query) === pasted ? pasted : null;
     if (linked) body.results[0].t = await pastedTicket(shard, linked, async () => body.results[0].t);
-    return json(res, 200, body);
+    json(res, 200, body);
+    if (linked && kind === 'string' && config.lookupWarm) {
+      const device = uaDevice(ua);
+      lookupWarm(shard, body.results[0].t, hlsTicket || device === 'android', device)
+        .catch((err) => logJson({ event: 'lookup_warm_failed', message: String(err?.message ?? err).slice(0, 200) }));
+    }
   }
 
   // Players held on a ticket and Tunelio builds in flight. A restart drops both (the visitor's video falls back to
@@ -770,6 +775,64 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return res.end('{"ok":true}');
   }
 
+  // A video ticket's status for the tablet: starts its build (a warm) unless one is there, and says how it goes; or
+  // 'too_long' for a .m3u8 ticket Tunelio and home both refused. The restricted and over-cap checks come before it.
+  // `reason` names who asked, for the warm's log line: 'tablet' (a ticket's own status load: a row selected, a queued
+  // row, the Play bar's polls; the world sends no reason, so the service can't tell those apart) or 'lookup' (a pasted
+  // link's search, Everything-is-OK#449). A cached build is no warm and costs nothing.
+  async function tabletStatus(shard, n, t, hlsTicket, reason) {
+    // A ticket being played reports the source its players were given (TICKET_PIN), not a new decision.
+    const pin = pinned(pinKey(shard, n, hlsTicket, 'avpro'), t.data, { touch: false });
+    if (pin?.session) return { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(pin.session), ...meta(t.data) };
+    if (pin) {
+      const st = playback.status(t.data, { warm: false, quality: pin.quality, hls: pin.hls });
+      if (pin.mode) st.plan = pin.mode;
+      if (pin.hls && (pin.mode === 'adaptive' || pin.mode === 'start')) {
+        Object.assign(st, adaptive.progress(playback.peek?.(t.data, pin.quality, { hls: true })) ?? { rung: null, top: 'pending' });
+      }
+      return { v: API, shard, t: n, room: roomQuality(shard), ...st, ...meta(t.data) };
+    }
+    const hq = homeQuality(shard, t.data);
+    const hw = hlsTicket && !config.homeAndroid ? null : homeWhy(t.data, hq, hlsTicket);
+    const hs = hw ? homeKeep(t.data, hq, startHome(shard, t.data, hq, hw)) : null;
+    if (hs && hs.state !== 'failed' && !leaveHome(hs, hlsTicket)) return { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(hs), ...meta(t.data) };
+    if (hlsTicket && playback.tooLong?.(t.data.id)) return 'too_long';
+    let c = await choice(shard, t.data);
+    if (hlsTicket && !t.data.live) c = hlsChoice(c); // live: the watch link, as on a plain ticket (world #270)
+    const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
+    const st = playback.status(t.data, { quality: c.quality, hls: c.hls });
+    if (hlsTicket && st.reason === 'too_long') return 'too_long';
+    if (c.mode) st.plan = c.mode;
+    // Adaptive and start plays: the rung their players have reached (src/adaptive.js progress). Both fields are
+    // always there for those plans: rung null and top 'pending' before the session's master is first loaded.
+    if (c.hls && !c.single && (c.mode === 'adaptive' || c.mode === 'start')) {
+      Object.assign(st, adaptive.progress(playback.peek?.(t.data, c.quality, { hls: true })) ?? { rung: null, top: 'pending' });
+    }
+    if (st.state === 'building' && before !== 'building') {
+      metrics.inc('warm');
+      warmed.add(`${shard}:${t.data.id}`);
+      logJson({ event: 'warm', shard, n, id: t.data.id, reason, quality: c.quality, hls: c.hls, plan: c.mode ?? null });
+    }
+    return { v: API, shard, t: n, room: roomQuality(shard), ...st, ...meta(t.data) };
+  }
+
+  // Everything-is-OK#449: a pasted link's lookup (the tablet's string load of the search address, as the preview card
+  // and a queued link make it) also warms the video, so Play now after the card finds the build started. The format is
+  // the route's: the .m3u8 address (or an Android User-Agent) builds what a .m3u8 ticket's player opens, the plain one
+  // what a PC player of a plain ticket opens. The same rules as a tablet's own warm: restricted and over-cap videos
+  // are never warmed, a cached build costs nothing, and the lookup already counted against the per-IP search limit.
+  // Run after the answer is sent: the card never waits on it. LOOKUP_WARM=off turns it off.
+  async function lookupWarm(shard, n, hls, device) {
+    const t = store.get(shard, n);
+    if (t?.kind !== 'video') return;
+    const skip = playback.restricted?.(t.data.id) ? 'restricted' : overCap(t.data) ? 'too_long' : null;
+    if (skip) return logJson({ event: 'warm_skip', shard, n, id: t.data.id, reason: 'lookup', skipped: skip, hls, device });
+    const st = await tabletStatus(shard, n, t, hls, 'lookup');
+    // `warm`: the build's state after it (building, ready, youtube...), in fields /ops/events already carries.
+    logJson({ event: 'lookup_warm', shard, n, id: t.data.id, reason: 'lookup', hls, device, warm: st === 'too_long' ? 'too_long' : st.state ?? null,
+      via: st === 'too_long' ? null : st.plan === 'home' ? 'home' : 'tunelio' });
+  }
+
   async function ticket(req, res, shard, n, hlsTicket = false) {
     const t = store.get(shard, n);
     if (!t) return fail(res, 404, 'unknown_ticket', 'Nothing here yet. Search again.');
@@ -781,35 +844,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (overCap(t.data)) return tooLongAnswer(res, kind, shard, n, t);
       // The tablet asking (a row selected, or watching a build): start the build, report it, never redirect.
       if (kind === 'string') {
-        // A ticket being played reports the source its players were given (TICKET_PIN), not a new decision.
-        const pin = pinned(pinKey(shard, n, hlsTicket, 'avpro'), t.data, { touch: false });
-        if (pin?.session) return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(pin.session), ...meta(t.data) });
-        if (pin) {
-          const st = playback.status(t.data, { warm: false, quality: pin.quality, hls: pin.hls });
-          if (pin.mode) st.plan = pin.mode;
-          if (pin.hls && (pin.mode === 'adaptive' || pin.mode === 'start')) {
-            Object.assign(st, adaptive.progress(playback.peek?.(t.data, pin.quality, { hls: true })) ?? { rung: null, top: 'pending' });
-          }
-          return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...st, ...meta(t.data) });
-        }
-        const hq = homeQuality(shard, t.data);
-        const hw = hlsTicket && !config.homeAndroid ? null : homeWhy(t.data, hq, hlsTicket);
-        const hs = hw ? homeKeep(t.data, hq, startHome(shard, t.data, hq, hw)) : null;
-        if (hs && hs.state !== 'failed' && !leaveHome(hs, hlsTicket)) return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(hs), ...meta(t.data) });
-        if (hlsTicket && playback.tooLong?.(t.data.id)) return tooLongAnswer(res, kind, shard, n, t);
-        let c = await choice(shard, t.data);
-        if (hlsTicket && !t.data.live) c = hlsChoice(c); // live: the watch link, as on a plain ticket (world #270)
-        const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
-        const st = playback.status(t.data, { quality: c.quality, hls: c.hls });
-        if (hlsTicket && st.reason === 'too_long') return tooLongAnswer(res, kind, shard, n, t);
-        if (c.mode) st.plan = c.mode;
-        // Adaptive and start plays: the rung their players have reached (src/adaptive.js progress). Both fields are
-        // always there for those plans: rung null and top 'pending' before the session's master is first loaded.
-        if (c.hls && !c.single && (c.mode === 'adaptive' || c.mode === 'start')) {
-          Object.assign(st, adaptive.progress(playback.peek?.(t.data, c.quality, { hls: true })) ?? { rung: null, top: 'pending' });
-        }
-        if (st.state === 'building' && before !== 'building') { metrics.inc('warm'); warmed.add(`${shard}:${t.data.id}`); }
-        return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), ...st, ...meta(t.data) });
+        const body = await tabletStatus(shard, n, t, hlsTicket, 'tablet');
+        return body === 'too_long' ? tooLongAnswer(res, kind, shard, n, t) : json(res, 200, body);
       }
       // A player (VRChat's resolver, then AVPro). The resolver gives up after 20 s, so it is held only briefly and
       // then told "this is not a video" (a plain page), which makes VRChat hand the URL straight to AVPro.

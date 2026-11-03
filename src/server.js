@@ -59,6 +59,7 @@ import { txBytes, TxDelta } from './net.js';
 import { ChannelSlots } from './channels.js';
 import { statsRoute, latestCredits, billingPeriod, daysBetween } from './stats.js';
 import { SpendGate, spendScope, touch } from './spend.js';
+import { trustedIps, limitFor } from './trusted.js';
 
 const API = 1;
 const PAGES = {
@@ -98,11 +99,16 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (path === '/create') { metrics.inc('credits', 'playback', 10); metrics.latency('tunelio_create_ms', ms); }
     if (path === '/transcript') metrics.inc('credits', 'captions', 6);
   } });
+  // Trusted client IPs (TRUSTED_IPS, src/trusted.js): every per-IP limit times TRUSTED_IP_FACTOR. Logged as counts only.
+  const trusted = trustedIps(config.trustedIps);
+  const trustedFactor = config.trustedIpFactor ?? 10;
+  const perIp = (limit, ip) => limitFor(limit, trusted.has(ip), trustedFactor);
+  if (trusted.size || trusted.bad) logJson({ event: 'trusted_ips', count: trusted.size, bad: trusted.bad, factor: trustedFactor });
   // Spend limits (src/spend.js), shared by this server's Playback and Tunelio captions. Injected (tests), or the injected
   // Playback's own, or made here when the server makes its Playback.
   spend ??= playback ? playback.spend ?? null : new SpendGate({ hourCredits: config.spendHourCredits, dayCredits: config.spendDayCredits,
     perIpPerMinute: config.spendBuildsPerMinutePerIp, perShardPerMinute: config.spendBuildsPerMinutePerShard,
-    transcriptsPerIpPerMinute: config.spendTranscriptsPerMinutePerIp, maxKeys: config.rateKeysMax, alert, log: logJson,
+    transcriptsPerIpPerMinute: config.spendTranscriptsPerMinutePerIp, maxKeys: config.rateKeysMax, alert, log: logJson, trusted, trustedFactor,
     stateFile: config.metricsPath ? join(dirname(config.metricsPath), 'spend-budget.json') : null });
   if (spend && !playback) setInterval(() => spend.check(), 60_000).unref(); // the all-clear comes without waiting for a play
   playback ??= new Playback({ tunelio, quality: config.tunelioQuality, spend, lowerQuality: config.tunelioLowerQuality, maxMbForQuality: config.tunelioMaxMb,
@@ -197,7 +203,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     list.push(now);
     hits.set(ip, list);
     if (hits.size > 10_000) hits.clear();
-    return list.length > config.searchesPerMinutePerIp;
+    return list.length > perIp(config.searchesPerMinutePerIp, ip);
   }
 
   // Uncached lookup warms in the last minute, per IP and in all (Everything-is-OK#449): each is a paid Tunelio build
@@ -212,7 +218,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const now = Date.now();
     const mine = (lookupWarms.get(ip) ?? []).filter((t) => now - t < 60_000);
     lookupWarmsAll = lookupWarmsAll.filter((t) => now - t < 60_000);
-    if (mine.length >= config.lookupWarmsPerMinutePerIp || lookupWarmsAll.length >= config.lookupWarmsPerMinute) return false;
+    if (mine.length >= perIp(config.lookupWarmsPerMinutePerIp, ip) || lookupWarmsAll.length >= config.lookupWarmsPerMinute) return false;
     if (!touch(lookupWarms, ip, [...mine, now], config.rateKeysMax ?? 10_000, now)) return false;
     lookupWarmsAll.push(now);
     return true;
@@ -865,7 +871,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const skip = playback.restricted?.(t.data.id) ? 'restricted' : overCap(t.data) ? 'too_long' : null;
     if (skip) return logJson({ event: 'warm_skip', shard, n, id: t.data.id, reason: 'lookup', skipped: skip, hls, device });
     const st = await tabletStatus(shard, n, t, hls, 'lookup', () => lookupWarmAllowed(ip));
-    if (st === 'cap') return logJson({ event: 'warm_skip', shard, n, id: t.data.id, reason: 'lookup', skipped: 'cap', hls, device });
+    if (st === 'cap') return logJson({ event: 'warm_skip', shard, n, id: t.data.id, reason: 'lookup', skipped: 'cap', hls, device, ...(trusted.has(ip) ? { trusted: true } : {}) });
     // `warm`: the build's state after it (building, ready, youtube...), in fields /ops/events already carries.
     logJson({ event: 'lookup_warm', shard, n, id: t.data.id, reason: 'lookup', hls, device, warm: st === 'too_long' ? 'too_long' : st.state ?? null,
       via: st === 'too_long' ? null : st.plan === 'home' ? 'home' : 'tunelio' });

@@ -39,7 +39,7 @@ const SIZE_REFUSAL_MIN_MB = 5000;
 export class Playback {
   constructor({ tunelio, quality = '1080p', lowerQuality = '720p', maxMbForQuality = 1500, progressiveMaxMb = 6000,
     progressiveMaxSeconds = 12 * 3600, progressiveRetries = 2, marginSeconds = 20 * 60,
-    pauseMinutes = 10, restrictedHours = 24, alert = () => {}, log = () => {}, now = () => Date.now(), probe = null, onBuild = () => {}, stateFile = null, liveFile = null }) {
+    pauseMinutes = 10, restrictedHours = 24, alert = () => {}, log = () => {}, now = () => Date.now(), probe = null, onBuild = () => {}, stateFile = null, liveFile = null, spend = null }) {
     this.tunelio = tunelio;
     this.quality = quality;
     // A file above maxMbForQuality MB at `quality` is made again at lowerQuality (10 more credits, roughly half the
@@ -69,6 +69,8 @@ export class Playback {
     this.forcedRestricted = new Map(); // the test plans among them (forceRestricted): videoId → until
     this.alert = alert;
     this.log = log;
+    // Spend limits (src/spend.js, Everything-is-OK#478): asked before every new paid /create. null: none.
+    this.spend = spend;
     this.now = now;
     // (url) → Promise<{ ok, refused }>: asks Tunelio for the first byte, which makes it build the file. `refused`
     // is Tunelio's 413 for a progressive file it won't assemble. Default: none (the link is trusted unbuilt).
@@ -225,6 +227,14 @@ export class Playback {
     return !job || this.#stale(job, this.now());
   }
 
+  // Why a new build of this video may not start now (src/spend.js): 'budget', 'cap' or null. Null too when start()
+  // would not build (a job is there, or the video is refused anyway), so cached plays never meet the limits.
+  spendRefusal(data, quality = this.quality, { hls = false, peek = false } = {}) {
+    if (!this.spend || !this.tunelio?.enabled || !this.wouldBuild(data, quality, { hls })) return null;
+    if (this.creates.get(`${data.id}@${quality}`)?.made) return null; // the /create is paid for already
+    return this.spend.refuse(data.id, { peek });
+  }
+
   start(data, quality = this.quality, { hls = false, maxMb = 0 } = {}) {
     if (data.live) return null; // Tunelio refuses live streams (400 "Live streams are not supported"); they play from youtube.com
     const id = data.id;
@@ -236,6 +246,8 @@ export class Playback {
       if (!this.#stale(job, now)) return job;
       this.jobs.delete(key);
     }
+    const refused = this.spendRefusal(data, quality, { hls });
+    if (refused) { this.log({ event: 'spend_refused', id, reason: refused, quality, hls }); return null; }
     if (this.jobs.size > 2000) for (const [k, j] of this.jobs) if (j.state !== 'building') this.jobs.delete(k);
     const seconds = Math.max(0, data.seconds ?? 0);
     const format = hls || seconds > this.progressiveMaxSeconds ? 'hls' : 'progressive';
@@ -260,8 +272,16 @@ export class Playback {
     const key = `${id}@${quality}`;
     const hit = this.creates.get(key);
     if (hit && (!hit.made || hit.made.expires * 1000 - this.marginMs > this.now())) return hit.promise;
+    // Every paid /create comes through here, adaptive planning's size reads included: the spend limits apply to all.
+    let refund = null;
+    if (this.spend) {
+      const refused = this.spend.refuse(id);
+      if (refused) return Promise.reject(Object.assign(new Error(`spend ${refused}`), { status: 429, code: refused, spend: true }));
+      refund = this.spend.charge();
+    }
     const entry = { made: null };
-    entry.promise = this.tunelio.create(id, quality).then((m) => { entry.made = m; this.#saveLive(); return m; }, (err) => { this.creates.delete(key); throw err; });
+    entry.promise = this.tunelio.create(id, quality).then((m) => { entry.made = m; this.#saveLive(); return m; },
+      (err) => { this.creates.delete(key); refund?.(); throw err; }); // failed calls cost nothing
     this.creates.set(key, entry);
     if (this.creates.size > 4000) for (const [k, e] of this.creates) if (e.made && e.made.expires * 1000 < this.now()) this.creates.delete(k);
     return entry.promise;
@@ -329,6 +349,7 @@ export class Playback {
       }
       if (!job.fixed && job.format === 'progressive' && job.mb > this.progressiveMaxMb) job.format = 'hls';
     } catch (err) {
+      if (err.spend) return this.#finish(job, { ok: false, reason: err.code }); // over a spend limit: no call was made
       this.log({ event: 'tunelio_error', id, status: err.status, code: err.code, message: String(err.message).slice(0, 200) });
       if (err.status === 402 || err.status === 401) {
         this.pausedUntil = this.now() + this.pauseMs;
@@ -413,6 +434,8 @@ export class Playback {
     const direct = this.#direct(data);
     if (direct?.via === 'restricted') return { state: 'failed', reason: 'restricted', error: 'restricted' };
     if (direct) return { state: direct.reason === 'live' ? 'live' : 'youtube', reason: direct.reason };
+    const refused = warm ? this.spendRefusal(data, quality, { hls }) : null;
+    if (refused) return { state: 'youtube', reason: refused };
     const job = warm ? this.start(data, quality, { hls }) : this.peek(data, quality, { hls });
     if (!job) return { state: 'idle' };
     if (job.state === 'ready') return { state: 'ready', format: job.format, quality: job.quality, mb: job.mb, elapsed: Math.round((job.endedMs - job.startedMs) / 1000) };
@@ -440,7 +463,10 @@ export class Playback {
   async location(data, { holdMs = Infinity, quality = this.quality, hls = false } = {}) {
     const direct = this.#direct(data);
     if (direct) return { ...direct, ready: true };
+    const refused = this.spendRefusal(data, quality, { hls });
+    if (refused) return { location: watch(data.id), via: 'youtube', reason: refused, ready: true };
     const job = this.start(data, quality, { hls });
+    if (!job) return { location: watch(data.id), via: 'youtube', reason: 'refused', ready: true };
     await this.wait(job, holdMs);
     if (job.state === 'building') return { location: job.url, via: 'tunelio', reason: 'building', ready: false };
     if (job.state === 'ready') return { location: job.url, via: 'tunelio', quality: job.quality, ready: true };

@@ -864,6 +864,60 @@
   ]
  },
  {
+  "uid": "eiok-spend-rate",
+  "title": "Tunelio spend over 400 credits an hour",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "0m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "Over 400 Tunelio credits were spent in the last hour (busiest real hour ~310). Check plays and builds (`node tools/ops.mjs events --event spend_cap,spend_budget,warm`); at SPEND_HOUR_CREDITS the service stops new builds and alerts Discord."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"credits\"}[1h])) > 400",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
   "uid": "eiok-credits-pace",
   "title": "Credits run out before renewal",
   "folderUID": "everything-is-ok",

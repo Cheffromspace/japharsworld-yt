@@ -11,11 +11,21 @@
 // The rate limits count distinct videos that started a paid build in the last minute, so one play's several /create
 // calls (adaptive's two qualities, a downgrade) count once. A room holds 6, hence 6 a minute per shard.
 //
+// Caption transcripts (6 credits each, src/transcripts.js) share the same budget and have their own per-IP limit,
+// SPEND_TRANSCRIPTS_PER_MINUTE_PER_IP, counting every uncached call.
+//
 // Windows roll (the last 60 minutes, the last 24 hours) and the spends are kept in stateFile (times and credits only),
-// so a restart doesn't hand out a fresh budget.
+// so a restart doesn't hand out a fresh budget. A missing file starts empty; an unreadable one is kept as .bak and the
+// hour starts half spent, so a damaged file can't hand out a fresh budget either.
+//
+// The alert: one spend_budget post at most per 24 h, and its all-clear only once spend has stayed under half of both
+// budgets for 30 minutes (without that, steady load at the limit posted hit, ok, hit, ok... as calls aged out).
+//
+// Known gap: a call refunded because it failed on our side (a timeout) may still have been charged by Tunelio, so the
+// count can run a little low. Tunelio's own balance (credits_remaining) is the truth.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, copyFileSync } from 'node:fs';
 
 // The request a paid build would be made for: { ip, shard }. server.js runs each ticket and lookup in it; a build made
 // outside any request (a restart resuming one) has none and meets the budget only.
@@ -23,39 +33,69 @@ export const spendScope = new AsyncLocalStorage();
 
 const HOUR = 3600_000, DAY = 24 * HOUR, MINUTE = 60_000;
 
-// Sets `key` as the most recently active of a map, keeping at most `max` keys: past it, the least recently active go
-// (the first in insertion order, since every update moves its key to the end). Never a wholesale clear, which would
-// hand every key a fresh count at once.
-export function touch(map, key, value, max = 10_000) {
+// Stores `value` (a list of { at } or timestamps) for `key` in a map of at most `max` keys, as its most recently active
+// (every update moves its key to the end, so the first keys are the least recently active). A new key, when the map is
+// full, makes room only from keys with nothing in the last minute; if every key is active, it is refused (false), so the
+// caller treats that client as over its limit. Never a clear or an eviction of an active key: either would hand a
+// client a fresh count, and enough new addresses could do it on purpose.
+export function touch(map, key, value, max = 10_000, now = Date.now()) {
+  if (!map.has(key)) {
+    for (const [k, l] of map) {
+      if (map.size < max || l.some((e) => now - (e?.at ?? e) < MINUTE)) break;
+      map.delete(k);
+    }
+    if (map.size >= max) return false;
+  }
   map.delete(key);
   map.set(key, value);
-  for (const k of map.keys()) { if (map.size <= max) break; map.delete(k); }
+  return true;
 }
 
 export class SpendGate {
   constructor({ hourCredits = 800, dayCredits = 4000, perIpPerMinute = 4, perShardPerMinute = 6, cost = 10,
+    transcriptsPerIpPerMinute = 6, transcriptCost = 6, maxKeys = 10_000, okAfterMs = 30 * MINUTE, alertEveryMs = DAY,
     alert = () => {}, log = () => {}, now = () => Date.now(), stateFile = null } = {}) {
-    Object.assign(this, { hourCredits, dayCredits, perIpPerMinute, perShardPerMinute, cost, alert, log, now, stateFile });
+    Object.assign(this, { hourCredits, dayCredits, perIpPerMinute, perShardPerMinute, cost, transcriptsPerIpPerMinute, transcriptCost,
+      maxKeys, okAfterMs, alertEveryMs, alert, log, now, stateFile });
     this.spends = []; // { at, c }, oldest first, the last 24 h
     this.byIp = new Map(); // ip → [{ id, at }]
     this.byShard = new Map(); // shard → [{ id, at }]
-    this.over = null; // 'hour' | 'day' while over budget (for the one alert and its all-clear)
+    this.transcriptsByIp = new Map(); // ip → [{ at }]
+    this.over = null; // 'hour' | 'day' while over budget
+    this.alertedAt = -Infinity; // the last spend_budget post
+    this.okDue = false; // a post is waiting for its all-clear
+    this.lowSince = null; // since when spend has been under half of both budgets
     this.#load();
   }
 
   #load() {
     if (!this.stateFile) return;
+    let text;
+    try { text = readFileSync(this.stateFile, 'utf8'); } catch (err) {
+      if (err?.code === 'ENOENT') return; // none yet
+      return this.#damaged(err);
+    }
     try {
-      const st = JSON.parse(readFileSync(this.stateFile, 'utf8'));
+      const st = JSON.parse(text);
+      if (!Array.isArray(st?.spends)) throw new Error('no spends list');
       const since = this.now() - DAY;
-      this.spends = (Array.isArray(st.spends) ? st.spends : []).filter((s) => Number.isFinite(s?.at) && s.at > since && s.c > 0);
-    } catch { /* none yet */ }
+      this.spends = st.spends.filter((s) => Number.isFinite(s?.at) && s.at > since && s.c > 0);
+      if (Number.isFinite(st.alertedAt)) this.alertedAt = st.alertedAt;
+      this.okDue = Boolean(st.okDue);
+    } catch (err) { this.#damaged(err); }
+  }
+
+  #damaged(err) {
+    try { copyFileSync(this.stateFile, `${this.stateFile}.bak`); } catch { /* unreadable: nothing to keep */ }
+    const c = Math.ceil((this.hourCredits || this.dayCredits || 0) / 2);
+    this.spends = c > 0 ? [{ at: this.now(), c }] : [];
+    this.log({ event: 'spend_state_damaged', assumed: c, message: String(err?.message ?? err).slice(0, 200) });
   }
 
   #save() {
     if (!this.stateFile) return;
     try {
-      writeFileSync(`${this.stateFile}.tmp`, JSON.stringify({ spends: this.spends }));
+      writeFileSync(`${this.stateFile}.tmp`, JSON.stringify({ spends: this.spends, alertedAt: Number.isFinite(this.alertedAt) ? this.alertedAt : null, okDue: this.okDue }));
       renameSync(`${this.stateFile}.tmp`, this.stateFile);
     } catch (err) { this.log({ event: 'spend_state_failed', message: String(err?.message ?? err).slice(0, 200) }); }
   }
@@ -67,19 +107,31 @@ export class SpendGate {
     return n;
   }
 
-  // Which budget another build would break: 'hour', 'day' or null. Sends the alert when it first breaks and the
-  // all-clear when there is room again (check() runs every minute too, so the all-clear doesn't wait for a play).
+  // Which budget a call of `cost` would break: 'hour', 'day' or null. Logs each change; posts as described at the top
+  // (check() runs every minute too, so the all-clear doesn't wait for a play).
   check(cost = this.cost) {
+    const now = this.now();
     const hour = this.spent(HOUR), day = this.spent(DAY);
     const over = this.dayCredits > 0 && day + cost > this.dayCredits ? 'day' : this.hourCredits > 0 && hour + cost > this.hourCredits ? 'hour' : null;
     if (over && !this.over) {
       this.log({ event: 'spend_budget', state: 'hit', window: over, hour, day, hourCredits: this.hourCredits, dayCredits: this.dayCredits });
-      this.alert('spend_budget', `Tunelio spend budget reached (${over === 'day' ? `${day} of ${this.dayCredits} credits in 24 h` : `${hour} of ${this.hourCredits} credits in an hour`}): no new HD builds, plays go to the home relay or youtube.com until it frees up.`, 24 * 60);
+      if (now - this.alertedAt >= this.alertEveryMs) {
+        this.alertedAt = now;
+        this.okDue = true;
+        this.#save();
+        this.alert('spend_budget', `Tunelio spend budget reached (${over === 'day' ? `${day} of ${this.dayCredits} credits in 24 h` : `${hour} of ${this.hourCredits} credits in an hour`}): no new HD builds or paid captions; plays go to the home relay or youtube.com until it frees up.`, 0);
+      }
     } else if (!over && this.over) {
       this.log({ event: 'spend_budget', state: 'reset', window: this.over, hour, day });
-      this.alert.resolve?.('spend_budget', `Tunelio spend is back under budget (${hour} credits in the last hour, ${day} in 24 h): HD builds are back.`);
     }
     this.over = over;
+    const low = !over && (!(this.hourCredits > 0) || hour < this.hourCredits / 2) && (!(this.dayCredits > 0) || day < this.dayCredits / 2);
+    this.lowSince = low ? this.lowSince ?? now : null;
+    if (this.okDue && low && now - this.lowSince >= this.okAfterMs) {
+      this.okDue = false;
+      this.#save();
+      this.alert.resolve?.('spend_budget', `Tunelio spend has stayed well under budget for ${Math.round(this.okAfterMs / MINUTE)} minutes (${hour} credits in the last hour, ${day} in 24 h): HD builds and paid captions are back.`);
+    }
     return over;
   }
 
@@ -106,7 +158,7 @@ export class SpendGate {
     if (ip && !known(ip) && ip.length >= this.perIpPerMinute && this.perIpPerMinute > 0) return 'ip';
     if (shard && !known(shard) && shard.length >= this.perShardPerMinute && this.perShardPerMinute > 0) return 'shard';
     if (!record) return null;
-    if (ip && !known(ip)) touch(this.byIp, ctx.ip, [...ip, { id, at: now }]);
+    if (ip && !known(ip) && !touch(this.byIp, ctx.ip, [...ip, { id, at: now }], this.maxKeys, now)) return 'ip';
     if (shard && !known(shard)) this.byShard.set(ctx.shard, [...shard, { id, at: now }]);
     return null;
   }
@@ -122,5 +174,24 @@ export class SpendGate {
       this.log({ event: 'spend_cap', by: rate, shard: ctx?.shard ?? null });
     }
     return rate ? 'cap' : null;
+  }
+
+  // Why an uncached caption transcript may not be fetched now: 'budget', 'cap' (this request's IP is over
+  // transcriptsPerIpPerMinute) or null (allowed and counted). The caller charges it.
+  refuseTranscript() {
+    if (this.check(this.transcriptCost)) return 'budget';
+    const ip = spendScope.getStore()?.ip;
+    if (!ip || !(this.transcriptsPerIpPerMinute > 0)) return null;
+    const now = this.now();
+    const list = (this.transcriptsByIp.get(ip) ?? []).filter((e) => now - e.at < MINUTE);
+    if (list.length >= this.transcriptsPerIpPerMinute) {
+      this.log({ event: 'spend_cap', by: 'ip', kind: 'transcript' });
+      return 'cap';
+    }
+    if (!touch(this.transcriptsByIp, ip, [...list, { at: now }], this.maxKeys, now)) {
+      this.log({ event: 'spend_cap', by: 'ip', kind: 'transcript' });
+      return 'cap';
+    }
+    return null;
   }
 }

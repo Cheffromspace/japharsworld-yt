@@ -279,6 +279,8 @@ export class Playback {
       if (refused) return Promise.reject(Object.assign(new Error(`spend ${refused}`), { status: 429, code: refused, spend: true }));
       refund = this.spend.charge();
     }
+    // A refund on failure: Tunelio charges nothing for a failed call. A timeout on our side refunds too, though Tunelio
+    // may have charged it (noted in src/spend.js).
     const entry = { made: null };
     entry.promise = this.tunelio.create(id, quality).then((m) => { entry.made = m; this.#saveLive(); return m; },
       (err) => { this.creates.delete(key); refund?.(); throw err; }); // failed calls cost nothing

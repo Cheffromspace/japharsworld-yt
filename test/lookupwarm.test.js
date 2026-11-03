@@ -17,7 +17,7 @@ const link = (l = `https://youtu.be/${ID}`) => encodeURIComponent(`Paste a link 
 async function app(t, { config = {}, video = {}, restricted = false } = {}) {
   const store = new Store({ path: ':memory:', shards: 1, pool: 100, pinHours: 24 });
   const youtube = { async search(q) {
-    return { videos: [{ id: q === ID ? ID : 'ZZZZZZZZZZZ', title: 't', channel: 'c', length: '20:00', seconds: 1200, views: '', age: '', live: false, cc: false, ...video }], more: null };
+    return { videos: [{ id: /^[\w-]{11}$/.test(q) ? q : 'ZZZZZZZZZZZ', title: 't', channel: 'c', length: '20:00', seconds: 1200, views: '', age: '', live: false, cc: false, ...video }], more: null };
   }, thumbnailUrl: (id) => id };
   const created = [];
   const tunelio = { enabled: true, async create(id, q) { created.push([id, q]); return { url: `https://tunelio.dev/tunnel?id=${id}&q=${q}`, expires: Math.floor(Date.now() / 1000) + 3600, quality: q, fileSize: 1e8 }; } };
@@ -34,7 +34,7 @@ async function app(t, { config = {}, video = {}, restricted = false } = {}) {
   const server = http.createServer(a);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
-  const get = (p, ua = UNITY) => fetch(`http://127.0.0.1:${server.address().port}${p}`, { redirect: 'manual', headers: { 'user-agent': ua } });
+  const get = (p, ua = UNITY, ip = null) => fetch(`http://127.0.0.1:${server.address().port}${p}`, { redirect: 'manual', headers: { 'user-agent': ua, ...(ip ? { 'x-forwarded-for': ip } : {}) } });
   // The warm runs after the answer is sent.
   const settle = () => new Promise((r) => setTimeout(r, 50));
   return { get, created, starts, logs, counts, settle, events: (e) => logs.filter((o) => o.event === e) };
@@ -116,4 +116,41 @@ test('#449: the lookup counts against the per-IP search limit; over it nothing i
   assert.equal((await a.get(`/v1/0/s?q=${link()}`)).status, 429);
   await a.settle();
   assert.deepEqual(a.created, []);
+});
+
+test('#449: uncached lookup warms are capped per IP and in all; over a cap the lookup still answers, with no warm', async (t) => {
+  const ids = ['AAAAAAAAAA1', 'AAAAAAAAAA2', 'AAAAAAAAAA3', 'AAAAAAAAAA4'];
+  const a = await app(t, { config: { lookupWarmsPerMinutePerIp: 2, lookupWarmsPerMinute: 3 } });
+  for (const id of ids.slice(0, 3)) {
+    const r = await a.get(`/v1/0/s?q=${link(`https://youtu.be/${id}`)}`, UNITY, '10.0.0.1');
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).results[0].id, id, 'the lookup answers as usual');
+    await a.settle();
+  }
+  assert.deepEqual(a.created.map(([id]) => id), ids.slice(0, 2), 'the per-IP cap: two uncached warms');
+  assert.deepEqual(a.events('warm_skip').map((o) => [o.reason, o.skipped, o.id]), [['lookup', 'cap', ids[2]]]);
+  // A cached build doesn't count: the first link again is looked up and found ready, nothing new is spent.
+  await a.get(`/v1/0/s?q=${link(`https://youtu.be/${ids[0]}`)}`, UNITY, '10.0.0.1');
+  await a.settle();
+  assert.equal(a.events('lookup_warm').at(-1).warm, 'ready');
+  assert.equal(a.events('warm_skip').length, 1);
+  // The global cap: another IP gets one (3 in all), then a third IP none.
+  await a.get(`/v1/0/s?q=${link(`https://youtu.be/${ids[2]}`)}`, UNITY, '10.0.0.2');
+  await a.settle();
+  await a.get(`/v1/0/s?q=${link(`https://youtu.be/${ids[3]}`)}`, UNITY, '10.0.0.3');
+  await a.settle();
+  assert.deepEqual(a.created.map(([id]) => id), ids.slice(0, 3));
+  assert.deepEqual(a.events('warm_skip').map((o) => o.id), [ids[2], ids[3]]);
+  // The tablet's own status load of a capped video still warms it (the cap is the lookup's alone).
+  const r = await (await a.get(`/v1/0/s?q=${link(`https://youtu.be/${ids[3]}`)}`, UNITY, '10.0.0.3')).json();
+  await a.settle();
+  await a.get(`/v1/0/${r.results[0].t}`, UNITY, '10.0.0.3');
+  assert.deepEqual(a.created.map(([id]) => id), [...ids.slice(0, 3), ids[3]]);
+});
+
+test('uaDevice: a User-Agent naming Quest without Android is android; UnityWebRequest alone is not', async (t) => {
+  const a = await app(t);
+  await a.get('/v1/0/s?q=x', 'VRChat/2026.4 (Meta Quest 3)');
+  await a.get('/v1/0/s?q=x', UNITY);
+  assert.deepEqual(a.events('search_shape').map((o) => o.device), ['android', 'unity']);
 });

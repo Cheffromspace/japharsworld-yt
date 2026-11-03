@@ -176,6 +176,45 @@ test('a mostly line-timed English track stays estimated: segs are weighed by the
   assert.equal(chunksFromCues(timed, 'en', { realWordsOnly: true }).words, 'real');
 });
 
+// Mixed English tracks: line-timed cues next to word-timed ones. Expected output taken from the code before #463
+// (8387357^, run 2026-11-03); the two vote changes tried in this series moved each of these across the line.
+const w8 = ['we', 'walked', 'down', 'to', 'the', 'old', 'river', 'today'].map((x, i) => [i * 300, i ? ` ${x}` : x]);
+const mixedEn = {
+  music: Array.from({ length: 10 }, (_, k) => [k * 2000, 1800, [[0, k % 2 ? 'go now' : '[Music]']]]),
+  ab: [[0, 1000, [[0, 'a'], [400, ' b']]], [1000, 1000, [[0, 'cc dd']]]],
+  // Emoji are two UTF-16 units: English line widths stay UTF-16, as before.
+  emoji: [[0, 4000, [[0, Array(15).fill('🎵').join(' ')]]], [4000, 2000, [[0, 'I'], [300, ' love'], [600, ' 🎵'], [900, ' you.']]]],
+  lines: [...Array.from({ length: 10 }, (_, k) => [k * 3000, 2800, [[0, `we walked down to the river today ${k}`]]]), [30000, 2800, w8], [33000, 2800, w8]],
+};
+const mixedEnBefore463 = {
+  emoji: { words: "estimated", chunks: [
+    [0,3.73,"🎵 🎵 🎵 🎵 🎵 🎵 🎵 🎵 🎵 🎵 🎵 🎵 🎵 🎵",0,""],
+    [3.73,6,"🎵 I love 🎵 you.",3,""]] },
+  music: { words: "estimated", chunks: [
+    [0,10.77,"[Music] go now [Music] go now [Music] go",0,""],
+    [10.77,19.8,"now [Music] go now [Music] go now",3,""]] },
+  ab: { words: "real", chunks: [
+    [0,2,"a b cc dd",3,"0:0,40:2,100:4,150:7"]] },
+  lines: { words: "estimated", chunks: [
+    [0,3.23,"we walked down to the river today 0 we",0,""],
+    [3.23,6.78,"walked down to the river today 1 we walked",0,""],
+    [6.78,10.17,"down to the river today 2 we walked down",0,""],
+    [10.17,13.71,"to the river today 3 we walked down to the",0,""],
+    [13.71,17.18,"river today 4 we walked down to the river",0,""],
+    [17.18,20.64,"today 5 we walked down to the river today",0,""],
+    [20.64,24.23,"6 we walked down to the river today 7 we",0,""],
+    [24.23,27.78,"walked down to the river today 8 we walked",0,""],
+    [27.78,30.9,"down to the river today 9 we walked down",0,""],
+    [30.9,34.2,"to the old river today we walked down to",0,""],
+    [34.2,35.8,"the old river today",3,""]] },
+};
+
+test('English mixed tracks give exactly what they gave before #463: word layouts keep the per-word vote', () => {
+  for (const [name, cues] of Object.entries(mixedEn)) {
+    assert.deepEqual(chunksFromCues(cues, 'en', { realWordsOnly: true }), mixedEnBefore463[name], name);
+  }
+});
+
 test('line width is counted in code points everywhere: a two-unit CJK character is one of the 16 (#463 follow-up)', () => {
   // 𠮷 (U+20BB7) is two UTF-16 units. Ten of them fit one 16-wide line; counted in UTF-16 they made two lines.
   const ws = Array.from({ length: 10 }, (_, k) => ({ t: k * 100, e: k * 100 + 100, w: '𠮷', sp: false, real: true }));

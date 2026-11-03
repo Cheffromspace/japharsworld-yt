@@ -157,14 +157,17 @@ const sec = (ms) => Math.round(ms / 10) / 100;
 // words → chunks. Greedy lines of up to maxChars that stop early at a sentence end, a long silence, or a clause end
 // once the line is reasonably full; a line that would otherwise end mid-sentence looks back for the best break in
 // its second half.
-export function chunkWords(words, { maxChars = 42, join = ' ', minFill = 0.45 } = {}) {
+export function chunkWords(words, { maxChars = 42, join = ' ', minFill = 0.45, units = 'words' } = {}) {
+  // Character layouts measure in code points; word layouts keep UTF-16 length as before #463, so an English line
+  // with emoji breaks where it did (English provably unchanged, coordinator 2026-11-03).
+  const size = units === 'chars' ? width : (text) => text.length;
   const chunks = [];
   let i = 0;
   const strength = words.map((_, k) => breakAfter(words, k));
   while (i < words.length) {
     let j = i, len = 0;
     while (j < words.length) {
-      const add = (j > i && words[j].sp && join === ' ' ? 1 : 0) + width(words[j].w);
+      const add = (j > i && words[j].sp && join === ' ' ? 1 : 0) + size(words[j].w);
       if (j > i && len + add > maxChars) break;
       len += add; j++;
       const s = strength[j - 1];
@@ -188,7 +191,7 @@ export function chunkWords(words, { maxChars = 42, join = ' ', minFill = 0.45 } 
     const prev = chunks[c - 1], cur = chunks[c];
     if (cur.count === 1 && prev.brk === 0 && prev.count > 2 && cur.brk >= 2) {
       const moved = words.slice(prev.from, prev.to - 1), rest = words.slice(prev.to - 1, cur.to);
-      const restLen = width(textOf(rest, join)), movedLen = width(textOf(moved, join));
+      const restLen = size(textOf(rest, join)), movedLen = size(textOf(moved, join));
       if (restLen <= maxChars && movedLen >= maxChars * 0.3) {
         chunks[c - 1] = make(words, prev.from, prev.to - 1, 0, join);
         chunks[c] = make(words, prev.to - 1, cur.to, cur.brk, join);
@@ -223,11 +226,17 @@ export function timedChunks(cues, code) {
   const chunks = chunkWords(words, layout);
   // Each chunk ends no later than the next one begins.
   for (let i = 0; i + 1 < chunks.length; i++) if (chunks[i][1] > chunks[i + 1][0]) chunks[i][1] = Math.max(chunks[i][0], chunks[i + 1][0]);
-  // Real when at least half of the text (in code points) is in segs that kept the source's own time; a seg counts as
-  // real when all its units are. Per unit, a seg that falls back to estimates in a character layout (untimed, or wider
-  // than a line) made one estimated unit per character and outvoted a cue YouTube timed seg by seg (#463 follow-up,
-  // 2cf007d); per seg, ten English line cues of eight words each lost to two word-timed cues (16 of 26 segs). By
-  // width, 今日は|いい|天気|ですね is 6 real of 10, and those English line cues stay estimated (about a sixth real).
+  // Word layouts (English and every other language that splits on spaces) keep the vote they had before #463: half the
+  // words real. Each seg vote tried for them moved some mixed English tracks across the line, both ways (coordinator,
+  // 2026-11-03: English must be provably unchanged).
+  if (layout.units === 'words') {
+    const realWords = words.filter((w) => w.real).length;
+    return { chunks, words: words.length && realWords >= words.length / 2 ? 'real' : 'estimated' };
+  }
+  // Character layouts (ja, zh, th): real when at least half of the text (in code points) is in segs that kept the
+  // source's own time; a seg counts as real when all its units are. Per unit, a seg that falls back to estimates
+  // (untimed, or wider than a line) made one estimated unit per character and outvoted a cue YouTube timed seg by seg
+  // (#463 follow-up): by width, 今日は|いい|天気|ですね is 6 real of 10.
   const segs = new Map();
   for (const w of words) {
     const s = segs.get(w.seg) ?? { real: true, width: 0 };

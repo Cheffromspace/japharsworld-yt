@@ -13,7 +13,7 @@
  "schemaVersion": 39,
  "editable": true,
  "graphTooltip": 1,
- "description": "The vibe right now: counts only (world #248). Ops stay on the Everything is OK dashboard.",
+ "description": "How lively the world is and what people do there, counts only. Right now tiles show the present; the rest follow the selected range (several weeks can overcount where the usage counters restarted). Ops stay on the Everything is OK dashboard.",
  "templating": {
   "list": [
    {
@@ -44,7 +44,7 @@
    "type": "canvas",
    "id": 2,
    "title": "The vibe",
-   "description": "People in the production world now (VRChat, polled every ~15 min): 0 quiet, 1–3 cozy, 4 or more lively.",
+   "description": "People in the production world right now (polled every minute): 0 quiet, 1–3 cozy, 4 or more lively.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -458,7 +458,7 @@
    "type": "stat",
    "id": 3,
    "title": "People here",
-   "description": "Production world occupants by instance type (VRChat's counts, polled every ~15 min).",
+   "description": "People in the production world right now, in public and private instances (polled every minute).",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -522,7 +522,7 @@
    "type": "stat",
    "id": 4,
    "title": "Rooms",
-   "description": "Instances of the production world (VRChat), and the tablet shards that made any request in the last hour (hourly rows). Includes the owner's own testing: the TEST world uses the same service and these counts can't tell them apart (most of 10-26's Channels plays were testing).",
+   "description": "Public instances of the production world right now (VRChat lists only those), and the tablets (rooms) that made any request in the selected range. Includes the owner's testing in the TEST world, which these counts can't tell apart.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -541,7 +541,7 @@
       "uid": "${ds}"
      },
      "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"instances\"})",
-     "legendFormat": "instances",
+     "legendFormat": "public instances",
      "instant": true
     },
     {
@@ -550,8 +550,8 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "count(increase(eiok_shard_active_hours_total{env!=\"staging\"}[1h]) > 0) or vector(0)",
-     "legendFormat": "tablets in use, last hour",
+     "expr": "count(increase(eiok_shard_active_hours_total{env!=\"staging\"}[$__range]) > 0) or vector(0)",
+     "legendFormat": "tablets in use",
      "instant": true
     }
    ],
@@ -586,7 +586,7 @@
    "type": "stat",
    "id": 5,
    "title": "Warmth, this range",
-   "description": "Growth of the production world's visit and favorite totals over the selected time range (VRChat's public numbers; unfavorites net out).",
+   "description": "New visits and favorites of the production world over the selected range (unfavorites net out).",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -651,7 +651,7 @@
    "type": "canvas",
    "id": 6,
    "title": "Heat",
-   "description": "VRChat's heat for the production world (the flames on its world page), polled every ~15 min: one lit flame per point, up to 7; above 7 the number shows beside them.",
+   "description": "VRChat's heat for the production world right now (the flames on its world page, polled every 15 min): one lit flame per point up to 7, and the number beside them above that.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1369,7 +1369,7 @@
    "type": "bargauge",
    "id": 8,
    "title": "Plays by length",
-   "description": "Search videos played, once per room, by length, over the time range. Includes the owner's own testing: the TEST world uses the same service and these counts can't tell them apart (most of 10-26's Channels plays were testing).",
+   "description": "Videos played over the selected range, once per room, by length. Includes the owner's testing in the TEST world, which these counts can't tell apart.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1469,7 +1469,7 @@
    "type": "bargauge",
    "id": 9,
    "title": "Channels and searches",
-   "description": "Channels: a slot opened from the Channels tab. Searches with a query, and videos played once per room, over the time range. Includes the owner's own testing: the TEST world uses the same service and these counts can't tell them apart (most of 10-26's Channels plays were testing).",
+   "description": "Over the selected range: Channels slots opened, searches with a query, and videos played (once per room). Includes the owner's testing in the TEST world, which these counts can't tell apart.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1549,7 +1549,7 @@
    "type": "bargauge",
    "id": 10,
    "title": "Captions and quality",
-   "description": "\"Show captions\" list loads and tracks picked on the tablet, and rooms that picked a playback quality, over the time range. Includes the owner's own testing: the TEST world uses the same service and these counts can't tell them apart (most of 10-26's Channels plays were testing).",
+   "description": "Over the selected range: captions turned on, caption tracks picked on a tablet, and 1080p or 720p picked on a tablet. Includes the owner's testing in the TEST world, which these counts can't tell apart.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1652,7 +1652,7 @@
    "type": "stat",
    "id": 12,
    "title": "Here lately",
-   "description": "All 16 VRChat client languages; a square lights up when that language had joins in the last 2 hours (whatever the time range), from visitors who allow untrusted URLs: the bare search address the world loads once after join. It counts arrivals, not who is still here, so a square stays lit for 2 h after its last join. Dark: none; 1 join grey; 2–3 blue; 4 or more purple.",
+   "description": "Joins over the selected range by VRChat client language, from visitors who allow untrusted URLs. It counts arrivals, not who is still here. Dark: none; 1 grey; 2–3 blue; 4 or more purple.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1670,7 +1670,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"en\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"en\"}[$__range]))) or vector(0)",
      "legendFormat": "en",
      "instant": true
     },
@@ -1680,7 +1680,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"fr\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"fr\"}[$__range]))) or vector(0)",
      "legendFormat": "fr",
      "instant": true
     },
@@ -1690,7 +1690,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"es\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"es\"}[$__range]))) or vector(0)",
      "legendFormat": "es",
      "instant": true
     },
@@ -1700,7 +1700,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"it\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"it\"}[$__range]))) or vector(0)",
      "legendFormat": "it",
      "instant": true
     },
@@ -1710,7 +1710,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"ko\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"ko\"}[$__range]))) or vector(0)",
      "legendFormat": "ko",
      "instant": true
     },
@@ -1720,7 +1720,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"de\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"de\"}[$__range]))) or vector(0)",
      "legendFormat": "de",
      "instant": true
     },
@@ -1730,7 +1730,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"ja\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"ja\"}[$__range]))) or vector(0)",
      "legendFormat": "ja",
      "instant": true
     },
@@ -1740,7 +1740,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"pl\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"pl\"}[$__range]))) or vector(0)",
      "legendFormat": "pl",
      "instant": true
     },
@@ -1750,7 +1750,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"ru\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"ru\"}[$__range]))) or vector(0)",
      "legendFormat": "ru",
      "instant": true
     },
@@ -1760,7 +1760,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"pt-BR\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"pt-BR\"}[$__range]))) or vector(0)",
      "legendFormat": "pt-BR",
      "instant": true
     },
@@ -1770,7 +1770,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"zh-CN\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"zh-CN\"}[$__range]))) or vector(0)",
      "legendFormat": "zh-CN",
      "instant": true
     },
@@ -1780,7 +1780,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"zh-HK\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"zh-HK\"}[$__range]))) or vector(0)",
      "legendFormat": "zh-HK",
      "instant": true
     },
@@ -1790,7 +1790,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"he\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"he\"}[$__range]))) or vector(0)",
      "legendFormat": "he",
      "instant": true
     },
@@ -1800,7 +1800,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"tok\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"tok\"}[$__range]))) or vector(0)",
      "legendFormat": "tok",
      "instant": true
     },
@@ -1810,7 +1810,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"uk\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"uk\"}[$__range]))) or vector(0)",
      "legendFormat": "uk",
      "instant": true
     },
@@ -1820,7 +1820,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"th\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"join_lang\",key=\"th\"}[$__range]))) or vector(0)",
      "legendFormat": "th",
      "instant": true
     }
@@ -1872,7 +1872,7 @@
    "type": "stat",
    "id": 13,
    "title": "Search languages",
-   "description": "The same squares for searches with a query in the last 2 hours, by VRChat client language. Includes the owner's own testing: the TEST world uses the same service and these counts can't tell them apart (most of 10-26's Channels plays were testing).",
+   "description": "Searches with a query over the selected range, by VRChat client language; colours as in Here lately. Includes the owner's testing in the TEST world, which these counts can't tell apart.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1890,7 +1890,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"en\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"en\"}[$__range]))) or vector(0)",
      "legendFormat": "en",
      "instant": true
     },
@@ -1900,7 +1900,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"fr\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"fr\"}[$__range]))) or vector(0)",
      "legendFormat": "fr",
      "instant": true
     },
@@ -1910,7 +1910,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"es\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"es\"}[$__range]))) or vector(0)",
      "legendFormat": "es",
      "instant": true
     },
@@ -1920,7 +1920,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"it\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"it\"}[$__range]))) or vector(0)",
      "legendFormat": "it",
      "instant": true
     },
@@ -1930,7 +1930,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"ko\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"ko\"}[$__range]))) or vector(0)",
      "legendFormat": "ko",
      "instant": true
     },
@@ -1940,7 +1940,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"de\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"de\"}[$__range]))) or vector(0)",
      "legendFormat": "de",
      "instant": true
     },
@@ -1950,7 +1950,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"ja\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"ja\"}[$__range]))) or vector(0)",
      "legendFormat": "ja",
      "instant": true
     },
@@ -1960,7 +1960,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"pl\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"pl\"}[$__range]))) or vector(0)",
      "legendFormat": "pl",
      "instant": true
     },
@@ -1970,7 +1970,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"ru\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"ru\"}[$__range]))) or vector(0)",
      "legendFormat": "ru",
      "instant": true
     },
@@ -1980,7 +1980,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"pt-BR\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"pt-BR\"}[$__range]))) or vector(0)",
      "legendFormat": "pt-BR",
      "instant": true
     },
@@ -1990,7 +1990,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"zh-CN\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"zh-CN\"}[$__range]))) or vector(0)",
      "legendFormat": "zh-CN",
      "instant": true
     },
@@ -2000,7 +2000,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"zh-HK\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"zh-HK\"}[$__range]))) or vector(0)",
      "legendFormat": "zh-HK",
      "instant": true
     },
@@ -2010,7 +2010,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"he\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"he\"}[$__range]))) or vector(0)",
      "legendFormat": "he",
      "instant": true
     },
@@ -2020,7 +2020,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"tok\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"tok\"}[$__range]))) or vector(0)",
      "legendFormat": "tok",
      "instant": true
     },
@@ -2030,7 +2030,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"uk\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"uk\"}[$__range]))) or vector(0)",
      "legendFormat": "uk",
      "instant": true
     },
@@ -2040,7 +2040,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"th\"}[2h]))) or vector(0)",
+     "expr": "sum(round(increase(eiok_events_total{env!=\"staging\",metric=\"search_lang\",key=\"th\"}[$__range]))) or vector(0)",
      "legendFormat": "th",
      "instant": true
     }
@@ -2092,7 +2092,7 @@
    "type": "bargauge",
    "id": 14,
    "title": "Quest and PC",
-   "description": "Plays by player platform, once per room and platform, and joins that loaded the search address (untrusted URLs allowed), over the time range. Includes the owner's own testing: the TEST world uses the same service and these counts can't tell them apart (most of 10-26's Channels plays were testing).",
+   "description": "Over the selected range: plays by player platform (once per room and platform) and joins from visitors who allow untrusted URLs. Includes the owner's testing in the TEST world, which these counts can't tell apart.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2185,7 +2185,7 @@
    "type": "timeseries",
    "id": 16,
    "title": "Through the night (Chicago time)",
-   "description": "Production world occupants, stacked by instance type, in America/Chicago time.",
+   "description": "People in the production world over the selected range, stacked by public and private instances, in Chicago time.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2249,7 +2249,7 @@
    "type": "canvas",
    "id": 17,
    "title": "Stayed past 03:00",
-   "description": "The most people in the world between 03:00 and 06:00 Chicago time (summer and winter time alike) in the last 24 h. Do people sleep here?",
+   "description": "The most people in the world between 03:00 and 06:00 Chicago time within the selected range; \"no one\" also when the range holds no such hours. Do people sleep here?",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2267,7 +2267,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "max_over_time((max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"occupants\"}) and on() (((hour() + 18 + ((vector(1) and on() ((month() > 3 and month() < 11) or (month() == 3 and (day_of_month() - day_of_week()) >= 8) or (month() == 11 and (day_of_month() - day_of_week()) <= 0))) or vector(0))) % 24) >= 3) and on() (((hour() + 18 + ((vector(1) and on() ((month() > 3 and month() < 11) or (month() == 3 and (day_of_month() - day_of_week()) >= 8) or (month() == 11 and (day_of_month() - day_of_week()) <= 0))) or vector(0))) % 24) < 6))[24h:15m]) or vector(0)",
+     "expr": "max_over_time((max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"occupants\"}) and on() (((hour() + 18 + ((vector(1) and on() ((month() > 3 and month() < 11) or (month() == 3 and (day_of_month() - day_of_week()) >= 8) or (month() == 11 and (day_of_month() - day_of_week()) <= 0))) or vector(0))) % 24) >= 3) and on() (((hour() + 18 + ((vector(1) and on() ((month() > 3 and month() < 11) or (month() == 3 and (day_of_month() - day_of_week()) >= 8) or (month() == 11 and (day_of_month() - day_of_week()) <= 0))) or vector(0))) % 24) < 6))[$__range:15m]) or vector(0)",
      "legendFormat": "late",
      "instant": true
     }

@@ -96,82 +96,88 @@ export function dashboard() {
   id = 0; grid.x = 0; grid.y = 0; grid.rowH = 0;
   const p = [];
   p.push(row('Now'));
-  p.push(stat('Search service', 'min(eiok_search_up)', { w: 3, mappings: upDown, thresholds: [{ color: BAD, value: null }, { color: OK, value: 1 }] }));
-  p.push(stat('Public /healthz', 'min(probe_success{job=~".*search-healthz.*"})', { w: 3, mappings: upDown, thresholds: [{ color: BAD, value: null }, { color: OK, value: 1 }] }));
-  p.push(stat('Relay workers', 'max(eiok_relay_workers_online)', { w: 3, thresholds: [{ color: BAD, value: null }, { color: OK, value: 1 }], description: 'The Optiplex long-polling for searches.' }));
-  p.push(stat('In the world now', 'max(eiok_poll{source="world:prod",metric="occupants"})', { w: 3, thresholds: [{ color: INK, value: null }] }));
-  p.push(stat('Credits left', 'max(eiok_credits_remaining)', { w: 3, thresholds: [{ color: BAD, value: null }, { color: WARN, value: 500 }, { color: OK, value: 1500 }] }));
-  p.push(stat('Channels hidden', 'sum(eiok_slot_hidden * on(slot) (1 - eiok_slot_spare))', { w: 3, thresholds: [{ color: OK, value: null }, { color: WARN, value: 1 }, { color: BAD, value: 5 }] }));
-  p.push(stat('Flash fails now', 'count(eiok_slot_flash_pass == 0) or vector(0)', { w: 3, thresholds: [{ color: OK, value: null }, { color: BAD, value: 1 }], description: 'Slots whose current stream failed its last flash check.' }));
-  p.push(stat('Oldest waiting check', 'max(eiok_jobs_oldest_pending_seconds{reason="other"})', { w: 3, unit: 's', thresholds: [{ color: OK, value: null }, { color: WARN, value: 3600 }, { color: BAD, value: 7200 }], description: 'New, candidate and manual resolution + flash jobs wait for the Optiplex worker (every 20 min); the daily batch is in Check queue.' }));
+  p.push(stat('Search service', 'min(eiok_search_up)', { w: 3, mappings: upDown, thresholds: [{ color: BAD, value: null }, { color: OK, value: 1 }],
+    description: 'Whether the search service answers its own health check on the Linode, now.' }));
+  p.push(stat('Public /healthz', 'min(probe_success{job=~".*search-healthz.*"})', { w: 3, mappings: upDown, thresholds: [{ color: BAD, value: null }, { color: OK, value: 1 }],
+    description: 'Whether https://yt.japharsworld.com/healthz answers from outside (Caddy, TLS and DNS included), now.' }));
+  p.push(stat('Relay workers', 'max(eiok_relay_workers_online)', { w: 3, thresholds: [{ color: BAD, value: null }, { color: OK, value: 1 }], description: 'Home relay workers (the Optiplex) connected now and waiting for searches. At 0, searches fall back to the Linode.' }));
+  p.push(stat('In the world now', 'max(eiok_poll{source="world:prod",metric="occupants"})', { w: 3, thresholds: [{ color: INK, value: null }],
+    description: 'People in the production world now, as VRChat reports it (polled every minute).' }));
+  p.push(stat('Credits left', 'max(eiok_credits_remaining)', { w: 3, thresholds: [{ color: BAD, value: null }, { color: WARN, value: 500 }, { color: OK, value: 1500 }],
+    description: 'Tunelio credits left on the plan now. At 0, plays go to youtube.com.' }));
+  p.push(stat('Channels hidden', 'sum(eiok_slot_hidden * on(slot) (1 - eiok_slot_spare))', { w: 3, thresholds: [{ color: OK, value: null }, { color: WARN, value: 1 }, { color: BAD, value: 5 }],
+    description: 'Channels slots hidden from the world now (stream down or failed its checks); spare slots not counted.' }));
+  p.push(stat('Flash fails now', 'count(eiok_slot_flash_pass == 0) or vector(0)', { w: 3, thresholds: [{ color: OK, value: null }, { color: BAD, value: 1 }], description: 'Channels slots whose current stream failed its last flash check, now.' }));
+  p.push(stat('Oldest waiting check', 'max(eiok_jobs_oldest_pending_seconds{reason="other"})', { w: 3, unit: 's', thresholds: [{ color: OK, value: null }, { color: WARN, value: 3600 }, { color: BAD, value: 7200 }], description: 'How long the oldest new, candidate or manual Channels check has waited for the Optiplex worker, which runs every 20 min. The daily batch is in Check queue.' }));
 
-  const startupNote = 'Last 3 h, per ticket request: a slow video the player retries counts several timeouts. A timeout means the player waited 90 s and got youtube.com at 360p.';
+  const startupNote = 'Over the selected range, per ticket request, so a slow video the player retries counts several timeouts. A timeout means the player waited 90 s and got youtube.com.';
   const noBuilds = [{ type: 'special', options: { match: 'nan', result: { text: 'no builds' } } }, { type: 'special', options: { match: 'null', result: { text: 'no builds' } } }];
-  p.push(stat('Total visits (production)', 'max(eiok_poll{source="world:prod",metric="visits"})', { w: 5, unit: 'locale', decimals: 0, thresholds: [{ color: INK, value: null }] }));
-  p.push(stat('Favorites (production)', 'max(eiok_poll{source="world:prod",metric="favorites"})', { w: 4, unit: 'locale', decimals: 0, thresholds: [{ color: INK, value: null }] }));
-  p.push(stat('Start-up problems, last 3 h', [
-    ['sum(increase(eiok_events_total{metric="ticket_timeout"}[3h])) or vector(0)', 'player timeouts'],
-    ['sum(increase(eiok_events_total{metric="build",key="failed"}[3h])) or vector(0)', 'failed builds'],
+  p.push(stat('Total visits (production)', 'max(eiok_poll{source="world:prod",metric="visits"})', { w: 5, unit: 'locale', decimals: 0, thresholds: [{ color: INK, value: null }],
+    description: 'All-time visits to the production world, from VRChat.' }));
+  p.push(stat('Favorites (production)', 'max(eiok_poll{source="world:prod",metric="favorites"})', { w: 4, unit: 'locale', decimals: 0, thresholds: [{ color: INK, value: null }],
+    description: 'All-time favorites of the production world, from VRChat.' }));
+  p.push(stat('Start-up problems, this range', [
+    ['sum(increase(eiok_events_total{metric="ticket_timeout"}[$__range])) or vector(0)', 'player timeouts'],
+    ['sum(increase(eiok_events_total{metric="build",key="failed"}[$__range])) or vector(0)', 'failed builds'],
   ], { w: 7, decimals: 0, thresholds: [{ color: OK, value: null }, { color: WARN, value: 0.5 }, { color: BAD, value: 3 }], description: startupNote }));
   p.push(stat('Tunelio build time', [
-    ['histogram_quantile(0.95, sum by (le) (increase(eiok_build_progressive_seconds_bucket[3h])))', 'visitors p95, 3 h'],
+    ['histogram_quantile(0.95, sum by (le) (increase(eiok_build_progressive_seconds_bucket[$__range])))', 'visitors p95'],
     ['max(eiok_poll{source="tunelio:progressive",metric="start_s"})', 'probe progressive'],
     ['max(eiok_poll{source="tunelio:hls",metric="start_s"})', 'probe HLS'],
   ], { w: 8, unit: 's', decimals: 0, mappings: noBuilds, thresholds: [{ color: OK, value: null }, { color: WARN, value: 20 }, { color: BAD, value: 60 }],
-    description: 'Visitors’ progressive builds (p95 over 3 h, from the daily buckets) and the speed probe’s latest start times (src/probe.js). Over ~20 s the visitor waits past the resolver hold; over ~100 s the player gives up.' }));
+    description: 'Visitors’ progressive build time (p95 over the selected range) and the speed probe’s latest start times. Over ~20 s a visitor waits past the resolver hold; over ~90 s the player gives up.' }));
 
   p.push(row('Visitors and search'));
   p.push(series('In world (production)', [
     ['max(eiok_poll{source="world:prod",metric="occupants"})', 'in world'],
     ['max(eiok_poll{source="world:prod",metric="publicOccupants"})', 'public instances'],
     ['max(eiok_poll{source="world:prod",metric="privateOccupants"})', 'private instances'],
-    ['max(eiok_poll{source="group",metric="online"})', 'group online'],
-  ], { w: 12, min: 0, description: 'VRChat’s world counts, polled about every minute (japharsworld-yt-occupants.timer). VRChat updates them on its own schedule.' }));
+  ], { w: 12, min: 0, description: 'People in the production world, in all and by instance type, polled every minute. VRChat updates its counts on its own schedule.' }));
   p.push(series('Total visits (production)', [
     ['max(eiok_poll{source="world:prod",metric="visits"})', 'visits'],
     ['max(eiok_poll{source="world:prod",metric="favorites"})', 'favorites'],
   ], { w: 12, unit: 'locale', decimals: 0, overrides: [{ matcher: { id: 'byName', options: 'favorites' }, properties: [{ id: 'custom.axisPlacement', value: 'right' }] }],
-    description: 'All-time counts from VRChat. Grafana has them from 2026-10-21; /stats has the daily history before that.' }));
+    description: 'All-time visits and favorites (right axis) of the production world, from VRChat. Older history is on /stats.' }));
   p.push(series('Searches, plays, joins (per hour)', [
     ['sum by (metric) (increase(eiok_events_total{metric=~"search|play|join|more",key=""}[1h]))', '{{metric}}'],
-  ], { w: 24, h: 6 }));
+  ], { w: 24, h: 6, description: 'Searches, More pages, plays (once per room) and joins (the world\'s first load of the search address), each point counting the hour before it.' }));
   p.push(series('Search latency', [
     ['histogram_quantile(0.5, sum by (le) (increase(eiok_search_seconds_bucket[3h])))', 'p50'],
     ['histogram_quantile(0.95, sum by (le) (increase(eiok_search_seconds_bucket[3h]))) and on() sum(increase(eiok_search_seconds_count[3h])) >= 20', 'p95'],
     ['sum(increase(eiok_search_seconds_count[3h]))', 'searches in window'],
   ], { w: 8, unit: 's', min: 0, overrides: [{ matcher: { id: 'byName', options: 'searches in window' }, properties: [{ id: 'unit', value: 'short' }, { id: 'decimals', value: 0 }, { id: 'custom.axisPlacement', value: 'right' }, { id: 'custom.lineStyle', value: { fill: 'dash', dash: [4, 4] } }, { id: 'custom.lineWidth', value: 1 }] }],
-    description: 'From the daily buckets, over 3 h windows. p95 shows only when the window holds 20 or more searches: with fewer, one slow search sets it for 3 h (the plateaus). Searches in window on the right axis.' }));
+    description: 'Search time p50 and p95 over the 3 h before each point. p95 shows only when those 3 h hold 20 or more searches, so one slow search can\'t set it; the count is on the right axis.' }));
   p.push(series('Search failure rate', [
     ['sum(increase(eiok_events_total{metric="search_fail"}[3h])) / clamp_min(sum(increase(eiok_events_total{metric="search",key=""}[3h])) + sum(increase(eiok_events_total{metric="search_fail"}[3h])), 1)', 'failures'],
-  ], { w: 8, unit: 'percentunit', min: 0 }));
+  ], { w: 8, unit: 'percentunit', min: 0, description: 'Share of searches that failed (rate limited or YouTube not answering) over the 3 h before each point.' }));
   p.push(series('Play routes (per 3 h)', [
     ['sum by (key) (increase(eiok_events_total{metric="play_route"}[3h]))', '{{key}}'],
-  ], { w: 8, stack: true }));
-  p.push(series('Tunelio credits left', [['max(eiok_credits_remaining)', 'left']], { w: 8, min: 0 }));
+  ], { w: 8, stack: true, description: 'Where each play went (once per room) over the 3 h before each point: Tunelio progressive, HLS or adaptive, the home relay, a live stream, or youtube.com as a fallback.' }));
+  p.push(series('Tunelio credits left', [['max(eiok_credits_remaining)', 'left']], { w: 8, min: 0, description: 'Tunelio credits left on the plan; it jumps back up when the plan renews.' }));
   p.push(series('Tunelio build time', [
     ['histogram_quantile(0.5, sum by (le) (increase(eiok_build_progressive_seconds_bucket[6h])))', 'progressive p50'],
     ['histogram_quantile(0.95, sum by (le) (increase(eiok_build_progressive_seconds_bucket[6h])))', 'progressive p95'],
     ['histogram_quantile(0.5, sum by (le) (increase(eiok_build_hls_seconds_bucket[6h])))', 'HLS p50'],
     ['histogram_quantile(0.95, sum by (le) (increase(eiok_build_hls_seconds_bucket[6h])))', 'HLS p95'],
     ['histogram_quantile(0.95, sum by (le) (increase(eiok_ticket_hold_seconds_bucket[6h])))', 'ticket hold p95'],
-  ], { w: 8, unit: 's', description: 'From the daily buckets, over 6 h windows. A player is held up to 90 s, the resolver 12 s (claude/play-latency.md).' }));
+  ], { w: 8, unit: 's', description: 'Visitors\' Tunelio build times and the ticket hold, p50 and p95 over the 6 h before each point. A player is held up to 90 s, the resolver 12 s.' }));
   p.push(series('Start-up problems (per 3 h)', [
     ['sum(increase(eiok_events_total{metric="ticket_timeout"}[3h]))', 'player timeouts (got youtube.com)'],
     ['sum(increase(eiok_events_total{metric="ticket_fastfail"}[3h]))', 'resolver fast-fails (normal while building)'],
     ['sum(increase(eiok_events_total{metric="build",key="failed"}[3h]))', 'failed builds'],
     ['sum by (key) (increase(eiok_events_total{metric="play_fallback"}[3h]))', 'fallback: {{key}}'],
-  ], { w: 8, min: 0, description: 'Per ticket request, so one slow video retried by the player counts several timeouts; plays count once per room.' }));
-  const probeNote = 'Speed probe about hourly (src/probe.js; every ~20 min before 2026-10-23): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 2–2.5 h. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment).';
+  ], { w: 8, min: 0, description: 'Player timeouts, resolver fast-fails, failed builds and youtube.com fallbacks by reason, over the 3 h before each point. Timeouts count per ticket request, so a retried video counts several.' }));
+  const probeNote = 'The speed probe builds a fresh 12–30 min video at 1080p about hourly, progressive and HLS on alternate runs, so each line moves every 2–3 h.';
   p.push(series('Tunelio probe: time to start', [
     ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="start_s"})', '{{source}}'],
     ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="create_s"})', '{{source}} /create'],
-  ], { w: 12, unit: 's', min: 0, description: probeNote }));
+  ], { w: 12, unit: 's', min: 0, description: `${probeNote} Start is what a player waits for (progressive: first byte; HLS: playlist and first segment).` }));
   p.push(series('Tunelio probe: build speed', [
     ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="mb_per_s"})', '{{source}} MB/s'],
     ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="mb"})', '{{source}} file MB'],
-  ], { w: 12, min: 0, description: `${probeNote} 2026-10-19 measured ~60 MB/s progressive.`,
+  ], { w: 12, min: 0, description: `${probeNote} Build speed in MB/s, file size on the right axis.`,
     overrides: [{ matcher: { id: 'byRegexp', options: '.*file MB' }, properties: [{ id: 'custom.axisPlacement', value: 'right' }] }] }));
-  const dropNote = 'The speed probe reads the link of each progressive run at playback speed for 10 minutes and resumes at the byte reached after a cut (src/probe.js, Everything-is-OK#361): about 11 reads a day. A read is skipped if a visitor\'s build or held player is in flight when it would start; that is checked only then, so a visitor who arrives during a read doesn\'t stop it. A sample of 2026-10-29 from a home PC gave ~3 cuts per playback hour. No alert on the rate until there is a baseline.';
+  const dropNote = 'The speed probe reads each progressive link at playback speed for 10 minutes and resumes after a cut, skipping a read while a visitor\'s build is in flight. Each point covers the 24 h before it; empty while the drop check is off.';
   p.push(series('Tunelio cuts per playback hour (24 h)', [
     ['sum(increase(eiok_tunelio_probe_cuts_total[24h])) / (sum(increase(eiok_tunelio_probe_read_minutes_total[24h])) / 60)', 'cuts per hour'],
   ], { w: 12, min: 0, description: dropNote }));
@@ -180,59 +186,61 @@ export function dashboard() {
     ['sum(increase(eiok_tunelio_probe_cuts_total[24h]))', 'cuts'],
     ['sum(increase(eiok_tunelio_probe_reopen_fail_total[24h]))', 'failed reopens'],
     ['sum(increase(eiok_tunelio_probe_open_fail_total[24h]))', 'reads that could not open'],
-  ], { w: 12, min: 0, description: `${dropNote} A failed reopen: another status, the wrong offset, or no first byte in 10 s. A read that could not open: three first opens in a row failed that way.` }));
+  ], { w: 12, min: 0, description: 'The speed probe\'s paced reads over the 24 h before each point: minutes read, cuts, failed reopens (wrong status or offset, or no first byte in 10 s) and reads that could not open at all. Empty while the drop check is off.' }));
 
   // Playback plans, the home relay, captions and credits (2026-10-23 audit: all of these were counted but not shown).
   const ev = (metric, w = '6h') => `sum by (key) (increase(eiok_events_total{metric="${metric}"}[${w}]))`;
-  p.push(row('What visitors saw (world #274)'));
+  p.push(row('What visitors saw'));
   p.push(series('Time to first frame, visitors', [
     ['histogram_quantile(0.5, sum by (le, platform) (increase(eiok_play_first_frame_seconds_bucket{who="visitor"}[6h])))', 'p50 {{platform}}'],
     ['histogram_quantile(0.95, sum by (le, platform) (increase(eiok_play_first_frame_seconds_bucket{who="visitor"}[6h])))', 'p95 {{platform}}'],
-  ], { unit: 's', min: 0, description: 'From the load starting to the first frame, on each visitor\'s own client; testers apart. Buckets are coarse (5, 10, 20, 30, 45, 60, 90 s). Compare releases by time.' }));
+  ], { unit: 's', min: 0, description: 'From the load starting to the first frame on each visitor\'s own client (testers left out), p50 and p95 by platform over the 6 h before each point. Coarse buckets: 5, 10, 20, 30, 45, 60, 90 s.' }));
   p.push(series('Plays that never showed a picture, visitors', [
     ['sum by (outcome) (increase(eiok_play_outcome_total{who="visitor",outcome=~"e.*|timeout|after|left"}[6h]))', '{{outcome}}'],
-  ], { stack: true, min: 0, description: 'e*: VizVid gave up, by its error class. timeout: nothing after the world\'s cap. after: gave up after a first frame. left: the room moved on first, not a fault.' }));
+  ], { stack: true, min: 0, description: 'Visitor plays with no picture over the 6 h before each point. e*: the player gave up, by error class; timeout: nothing by the world\'s cap; after: gave up after a first frame; left: the room moved on first, not a fault.' }));
   p.push(row('Playback plans, home relay, captions'));
   p.push(series('Playback plans (per 6 h)', [[ev('adaptive').replace('}[', ',key=~"plan_.*|paced_off"}['), '{{key}}']], { w: 8, stack: true, min: 0,
-    description: 'Which plan each video got (src/adaptive.js): plan_direct = 1080p at once, plan_adaptive = 720p then 1080p, plan_start = the 360p first rung, plan_lower = 720p only; paced_off = kept at 720p by the credit pacer.' }));
+    description: 'Which plan each video got, per 6 h: plan_direct 1080p at once, plan_adaptive 720p then 1080p, plan_start from a 360p first rung, plan_lower 720p only; paced_off kept at 720p by the credit pacer.' }));
   p.push(series('Adaptive steps and Quest tickets (per 6 h)', [[ev('adaptive').replace('}[', ',key!~"plan_.*|paced_off"}['), '{{key}}']], { w: 8, min: 0,
-    description: 'master = adaptive playlists served, upgrade / upgrade_served / upgrade_failed = 1080p step-ups started, played, failed; hls_ticket = .m3u8 tickets (the world’s Android build); android_progressive = Quest players sent progressive; defer = resolver told to wait. reload_after_upgrade / reload_before_upgrade = the same player loading the master again after / before it got 1080p: the freeze proxy (a freeze shows no error, so Play pressed again is the closest signal; compare the two).' }));
+    description: 'Per 6 h: adaptive playlists served (master), 1080p step-ups started, played and failed, Quest .m3u8 tickets, resolvers told to wait (defer), and playlist reloads before and after 1080p (after is the freeze signal).' }));
   p.push(series('Ticket requests by client (per 6 h)', [[ev('ticket_client'), '{{key}}']], { w: 8, stack: true, min: 0,
-    description: 'string = the tablet’s status checks, ytdlp = VRChat’s resolver, avpro = the player. Per request, not per play.' }));
+    description: 'Ticket requests per 6 h by who asked: string is the tablet’s status checks, ytdlp VRChat’s resolver, avpro the video player. Per request, not per play.' }));
   p.push(stat('Home relay today', [
     ['max(eiok_home_today{key="mb"}) / 1000', 'GB'],
     ['max(eiok_home_today{key="cap_mb"}) / 1000', 'cap GB'],
     ['max(eiok_home_today{key="builds"})', 'videos'],
     ['max(eiok_home_today{key="workers"})', 'workers'],
     ['max(eiok_home_today{key="cache_mb"}) / 1000', 'from cache GB'],
-  ], { w: 8, decimals: 1, thresholds: [{ color: INK, value: null }], description: 'What the Optiplex downloaded for home relay plays today (Chicago day) against HOME_DAILY_MB, what the worker uploaded from its own cache instead (not counted against the cap, relay/cache.js), and the media workers connected now. Set every minute by the search service.' }));
+  ], { w: 8, decimals: 1, thresholds: [{ color: INK, value: null }], description: 'Today (Chicago day), now: what the Optiplex downloaded for home relay plays against its daily cap, the videos, what it served from its own cache (not counted against the cap), and the media workers connected.' }));
   p.push(series('Home relay (per 6 h)', [[ev('home'), '{{key}}'], [ev('home_why'), 'why: {{key}}']], { w: 8, min: 0,
-    description: 'Sessions started / ready / failed / capped (refused by the daily cap) / timeout, and why a play went home (long video, Tunelio off or failed, the pacer).' }));
+    description: 'Home relay sessions per 6 h (started, ready, failed, refused by the cap or for room, cache hits, step-downs), and why a play went home: a long video, Tunelio off, slow or failed, the pacer, or the spend budget or build cap.' }));
   p.push(series('Home relay start time', [
     ['histogram_quantile(0.5, sum by (le) (increase(eiok_home_start_seconds_bucket[6h])))', 'p50'],
     ['histogram_quantile(0.95, sum by (le) (increase(eiok_home_start_seconds_bucket[6h])))', 'p95'],
-  ], { w: 8, unit: 's', min: 0, description: 'Play → first playlist with a segment from the Optiplex, 6 h windows.' }));
+  ], { w: 8, unit: 's', min: 0, description: 'From a home relay play to its first playlist with a segment from the Optiplex, p50 and p95 over the 6 h before each point.' }));
   p.push(series('Credits spent per day, by use', [[ev('credits', '1d'), '{{key}}']], { w: 8, stack: true, min: 0,
-    description: 'playback = /create for visitors, captions = transcripts, probe = the speed probe, test = test slot refills. Rolling 24 h.' }));
+    description: 'Tunelio credits spent in the 24 h before each point, by use: playback builds, caption transcripts, the speed probe, and test slot refills.' }));
   p.push(series('Search sources (per 6 h)', [[ev('search_source'), '{{key}}'], ['max(eiok_youtube_api_units_today)', 'Data API units today']], { w: 8, stack: false, min: 0,
-    description: 'worker = the Optiplex relay, local = InnerTube from the Linode, api = the YouTube Data API (quota).' }));
+    description: 'Which source answered searches, per 6 h: worker the home relay, local the Linode, api the YouTube Data API (quota), with today\'s Data API units.' }));
   p.push(series('Captions (per 6 h)', [
     ['sum by (metric) (increase(eiok_events_total{metric=~"cc_list|cc_track",key=""}[6h]))', '{{metric}}'],
     [ev('cc_via'), 'via {{key}}'], [ev('cc_words'), 'words {{key}}'], [ev('cc_unavailable'), 'unavailable: {{key}}'],
-  ], { w: 8, min: 0, description: 'Track lists and tracks served, which source answered (worker, local yt-dlp, Tunelio), word timing real or estimated, and why none was available.' }));
+  ], { w: 8, min: 0, description: 'Per 6 h: caption lists and picked tracks served, which source answered (home relay, Linode yt-dlp, Tunelio), real or estimated word timing, and why none was available.' }));
   p.push(series('YouTube refusals (per hour)', [[ev('yt_refusal', '1h'), '{{key}}']], { w: 8, stack: true, min: 0,
-    description: 'Failed YouTube lookups by where (home = the Optiplex relay, linode, flash = the Optiplex flash-check worker) and class: bot = "Sign in to confirm", rate = 429 / try again later / a caption track that failed after its list, forbidden = 403, potoken = PO token, other. Counted from 2026-10-25 (src/refusal.js).' }));
+    description: 'YouTube refusals per hour by where (home relay, Linode, flash-check worker) and class: bot ("Sign in to confirm"), rate (429 or try again later), forbidden (403), potoken, restricted (age gate), other.' }));
   p.push(series('Rooms active (shards with a request, per hour)', [
     ['count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)', 'rooms'],
-  ], { w: 8, min: 0, decimals: 0, description: 'Distinct shards that saw a request in the past hour (from the hourly shard table).' }));
+  ], { w: 8, min: 0, decimals: 0, description: 'Tablet shards (rooms) that made any request in the hour before each point.' }));
   p.push(series('Plays by platform (per 6 h)', [[ev('play_platform'), '{{key}}']], { w: 8, stack: true, min: 0,
-    description: 'Once per room and platform (a room with PC and Quest players counts one of each), from the player’s User-Agent or a .m3u8 ticket. Counted from 2026-10-23.' }));
+    description: 'Plays per 6 h by player platform, once per room and platform (a room with PC and Quest players counts one of each).' }));
   p.push(series('Room quality picks and tablet warm-ups (per 6 h)', [[ev('quality_pick'), 'pick {{key}}'],
-    ['sum(increase(eiok_events_total{metric="warm"}[6h]))', 'warm builds'], ['sum(increase(eiok_events_total{metric="warm_played"}[6h]))', 'warm then played']], { w: 8, min: 0 }));
+    ['sum(increase(eiok_events_total{metric="warm"}[6h]))', 'warm builds'], ['sum(increase(eiok_events_total{metric="warm_played"}[6h]))', 'warm then played']], { w: 8, min: 0,
+    description: 'Per 6 h: quality picks on room tablets, builds started before Play (tablet status checks and pasted-link lookups), and how many of those a player then asked for.' }));
 
   p.push(row('Channels and flash checks'));
   p.push({
     type: 'table', id: ++id, title: 'Slots', datasource: DS, gridPos: place(14, 12),
+    description: 'Every Channels slot now: up or down, hidden from the world, stream height, flashes per second at its last check, and how long ago that was.',
     targets: targets([
       ['max by (slot, category) (eiok_slot_up)', '', { instant: true, format: 'table' }],
       ['max by (slot, category) (eiok_slot_hidden)', '', { instant: true, format: 'table' }],
@@ -255,23 +263,24 @@ export function dashboard() {
       ],
     },
   });
-  p.push(series('Flash checks (per 6 h)', [['sum by (verdict) (increase(eiok_flash_checks_total[6h]))', '{{verdict}}']], { w: 10, h: 6, stack: true }));
+  p.push(series('Flash checks (per 6 h)', [['sum by (verdict) (increase(eiok_flash_checks_total[6h]))', '{{verdict}}']], { w: 10, h: 6, stack: true, description: 'Channels flash checks by verdict over the 6 h before each point.' }));
   p.push(series('Check queue', [
     ['max(eiok_jobs_pending)', 'waiting'],
     ['max by (reason) (eiok_jobs_oldest_pending_seconds) / 60', 'oldest {{reason}} (min)'],
-  ], { w: 10, h: 6, min: 0 }));
+  ], { w: 10, h: 6, min: 0, description: 'Channels check jobs waiting for the Optiplex worker, and how many minutes the oldest of each kind has waited.' }));
 
   p.push(row('Hosts'));
-  p.push(series('CPU busy', [['1 - avg by (host) (rate(node_cpu_seconds_total{mode="idle"}[5m]))', '{{host}}']], { w: 8, unit: 'percentunit', min: 0 }));
-  p.push(series('Memory available', [['max by (host) (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)', '{{host}}']], { w: 8, unit: 'percentunit', min: 0 }));
-  p.push(series('Disk free (/)', [['max by (host) (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})', '{{host}}']], { w: 8, unit: 'percentunit', min: 0 }));
-  p.push(series('Public endpoints', [['max by (job) (probe_success)', '{{job}}'], ['max by (job) (probe_duration_seconds)', '{{job}} seconds']], { w: 12 }));
-  p.push(series('Failed units', [['sum by (host, name) (node_systemd_unit_state{state="failed"}) > 0', '{{host}} {{name}}']], { w: 12, description: 'japharsworld-yt units, bgutil-pot and caddy in the failed state.' }));
+  p.push(series('CPU busy', [['1 - avg by (host) (rate(node_cpu_seconds_total{mode="idle"}[5m]))', '{{host}}']], { w: 8, unit: 'percentunit', min: 0, description: 'Share of CPU time busy on each host (5 min rate).' }));
+  p.push(series('Memory available', [['max by (host) (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)', '{{host}}']], { w: 8, unit: 'percentunit', min: 0, description: 'Share of memory available on each host.' }));
+  p.push(series('Disk free (/)', [['max by (host) (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})', '{{host}}']], { w: 8, unit: 'percentunit', min: 0, description: 'Share of the root disk free on each host.' }));
+  p.push(series('Public endpoints', [['max by (job) (probe_success)', '{{job}}'], ['max by (job) (probe_duration_seconds)', '{{job}} seconds']], { w: 12, description: 'Outside health checks of the public addresses: 1 up, 0 down, and how long each check took in seconds.' }));
+  p.push(series('Failed units', [['sum by (host, name) (node_systemd_unit_state{state="failed"}) > 0', '{{host}} {{name}}']], { w: 12, description: 'systemd units in the failed state on either host; empty when all is well.' }));
 
   p.push(row('Versions and deploys'));
   // A band per world version over time (the polled version number), so uploads read as a timeline.
   p.push({
     type: 'state-timeline', id: ++id, title: 'World version over time', datasource: DS, gridPos: place(24, 4),
+    description: 'The published version of the production and TEST worlds over time, one band per version.',
     targets: targets([
       ['max(eiok_poll{source="world:prod",metric="version"})', 'production'],
       ['max(eiok_poll{source="world:test",metric="version"})', 'TEST'],
@@ -280,13 +289,14 @@ export function dashboard() {
     fieldConfig: { defaults: { unit: 'prefix:v', decimals: 0, color: { mode: 'continuous-BlPu' }, custom: { fillOpacity: 70, lineWidth: 0 } }, overrides: [] },
   });
   p.push(versions('World uploads and releases', 'max by (source, version) (eiok_release_timestamp_seconds) * 1000', ['source', 'version'],
-    'VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.'));
+    'World versions (production and TEST, at VRChat’s upload time) and GitHub release tags, newest first.'));
   p.push(versions('Deploys of main', 'max by (host, commit, outcome) (eiok_deploy_timestamp_seconds) * 1000', ['host', 'commit', 'outcome'],
-    'Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.'));
+    'Deploys of main per host, newest first: the Linode (search service; no_restart when only files it doesn’t run changed) and the Optiplex (relay worker).'));
 
   return scoped({
     uid: DASH_UID, title: 'Everything is OK', tags: ['everything-is-ok'], timezone: 'America/Chicago', refresh: '5m',
     time: { from: 'now-2d', to: 'now' }, schemaVersion: 39, editable: true, graphTooltip: 1,
+    description: 'Service health, playback, search, Channels and hosts for the Everything is OK world. Time series plot each point over a fixed window before it (named in the title or description); stats marked "this range" follow the selected range. Ranges of several weeks can overcount where the usage counters restarted.',
     templating: { list: [{ name: 'ds', label: 'Data source', type: 'datasource', query: 'prometheus', regex: '.*-prom$', current: {} }] },
     annotations: { list: [
       { builtIn: 1, name: 'Annotations & Alerts', type: 'dashboard', datasource: { type: 'grafana', uid: '-- Grafana --' }, enable: true, hide: true, iconColor: 'rgba(0, 211, 255, 1)' },
@@ -302,7 +312,7 @@ export function dashboard() {
 // doing"): a separate, friendly board from aggregates the service already keeps (claude/metrics.md), counts only. Tokyo
 // Night accents, no red; big tiles first. Grafana's own theme sets the page ground, so the tiles carry the colours.
 const NIGHT = { ground: '#24283b', blue: '#7aa2f7', purple: '#bb9af7', green: '#9ece6a', dim: '#414868', quiet: '#565f89', amber: '#e0af68', orange: '#ff9e64' };
-const OWN_TESTS = 'Includes the owner\'s own testing: the TEST world uses the same service and these counts can\'t tell them apart (most of 10-26\'s Channels plays were testing).';
+const OWN_TESTS = 'Includes the owner\'s testing in the TEST world, which these counts can\'t tell apart.';
 const inRange = (metric, key) => `sum(increase(eiok_events_total{metric="${metric}"${key == null ? '' : `,key="${key}"`}}[$__range])) or vector(0)`;
 const occ = (m) => `max(eiok_poll{source="world:prod",metric="${m}"})`;
 // Bars of named counts for the time range ([expr, name] pairs), in the accents.
@@ -316,11 +326,11 @@ function bars(title, list, { w = 8, h = 7, description } = {}) {
 }
 // One square per VRChat client language (src/query.js LANGS), always all 16: Grafana 13 stretches stat and bar gauge
 // tiles to fill the panel (minVizWidth/minVizHeight and the bar gauge's manual sizing only set minimums; one "en" filled
-// the whole panel, 2026-10-27), so a fixed grid keeps them one size. Dark when the language had none in the last 2 h,
-// lit by count as people arrive (#248).
+// the whole panel, 2026-10-27), so a fixed grid keeps them one size. Dark when the language had none in the selected
+// range, lit by count (#248; a fixed 2 h until the owner asked for the range, 2026-11-03).
 const LANG_CODES = ['en', 'fr', 'es', 'it', 'ko', 'de', 'ja', 'pl', 'ru', 'pt-BR', 'zh-CN', 'zh-HK', 'he', 'tok', 'uk', 'th'];
 function squares(title, metric, { w = 12, h = 6, description } = {}) {
-  const p = stat(title, LANG_CODES.map((l) => [`sum(round(increase(eiok_events_total{metric="${metric}",key="${l}"}[2h]))) or vector(0)`, l]), { w, h, decimals: 0, description,
+  const p = stat(title, LANG_CODES.map((l) => [`sum(round(increase(eiok_events_total{metric="${metric}",key="${l}"}[$__range]))) or vector(0)`, l]), { w, h, decimals: 0, description,
     thresholds: [{ color: NIGHT.ground, value: null }, { color: NIGHT.dim, value: 1 }, { color: NIGHT.blue, value: 2 }, { color: NIGHT.purple, value: 4 }] });
   Object.assign(p.options, { textMode: 'name', colorMode: 'background_solid', orientation: 'auto', wideLayout: false, justifyMode: 'center' });
   return p;
@@ -363,16 +373,16 @@ export function tonight() {
   const people = occ('occupants');
   p.push(canvas('The vibe', [[people, 'vibe'], [`${people} == bool 0`, 'quiet'], [`(${people} >= bool 1) * (${people} <= bool 3)`, 'cozy'], [`${people} >= bool 4`, 'lively']],
     [icon('moon', 'moon', 'quiet', [4, 60, 10, 10]), icon('cup', 'cup', 'cozy', [4, 60, 10, 10]), icon('sparkle', 'sparkle', 'lively', [4, 60, 10, 10]), label('word', 'vibe', 44, [40, 2, 10, 10])],
-    { w: 5, description: 'People in the production world now (VRChat, polled every ~15 min): 0 quiet, 1–3 cozy, 4 or more lively.',
+    { w: 5, description: 'People in the production world right now (polled every minute): 0 quiet, 1–3 cozy, 4 or more lively.',
       colors: { vibe: [{ color: NIGHT.quiet, value: null }, { color: NIGHT.amber, value: 1 }, { color: NIGHT.purple, value: 4 }], quiet: lit(NIGHT.quiet), cozy: lit(NIGHT.amber), lively: lit(NIGHT.purple) },
       mappings: [{ type: 'value', options: { 0: { text: 'quiet' } } }, { type: 'range', options: { from: 1, to: 3, result: { text: 'cozy' } } }, { type: 'range', options: { from: 4, to: 1e6, result: { text: 'lively' } } }] }));
   p.push(stat('People here', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 5, thresholds: tile(NIGHT.blue),
-    description: 'Production world occupants by instance type (VRChat\'s counts, polled every ~15 min).' }));
-  p.push(stat('Rooms', [[occ('instances'), 'instances'], ['count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)', 'tablets in use, last hour']], { w: 4, thresholds: tile(NIGHT.purple),
-    description: `Instances of the production world (VRChat), and the tablet shards that made any request in the last hour (hourly rows). ${OWN_TESTS}` }));
+    description: 'People in the production world right now, in public and private instances (polled every minute).' }));
+  p.push(stat('Rooms', [[occ('instances'), 'public instances'], ['count(increase(eiok_shard_active_hours_total[$__range]) > 0) or vector(0)', 'tablets in use']], { w: 4, thresholds: tile(NIGHT.purple),
+    description: `Public instances of the production world right now (VRChat lists only those), and the tablets (rooms) that made any request in the selected range. ${OWN_TESTS}` }));
   p.push(stat('Warmth, this range', [[`${occ('visits')} - min(min_over_time(eiok_poll{source="world:prod",metric="visits"}[$__range]))`, 'new visits'],
     [`${occ('favorites')} - min(min_over_time(eiok_poll{source="world:prod",metric="favorites"}[$__range]))`, 'new favorites']], { w: 4, decimals: 0, thresholds: tile(NIGHT.green),
-    description: 'Growth of the production world\'s visit and favorite totals over the selected time range (VRChat\'s public numbers; unfavorites net out).' }));
+    description: 'New visits and favorites of the production world over the selected range (unfavorites net out).' }));
 
   // VRChat's world heat (its trending flames; the owner believes 7 is the top, unconfirmed): seven flame slots, lit up to
   // the heat (Canvas can't repeat an element by value), Tokyo Night orange, the rest dim. Above 7 the number shows
@@ -381,42 +391,42 @@ export function tonight() {
   p.push(canvas('Heat', [...Array.from({ length: SLOTS }, (_, k) => [`${occ('heat')} >= bool ${k + 1}`, `flame${k + 1}`]), [occ('heat'), 'heat']],
     [...Array.from({ length: SLOTS }, (_, k) => icon(`flame${k + 1}`, 'flame', `flame${k + 1}`, [1 + k * (SPAN / SLOTS), 99 - 1 - (k + 1) * (SPAN / SLOTS), 10, 10])),
       label('over', 'heat', 28, [SPAN + 1, 1, 10, 10])],
-    { w: 6, description: 'VRChat\'s heat for the production world (the flames on its world page), polled every ~15 min: one lit flame per point, up to 7; above 7 the number shows beside them.',
+    { w: 6, description: 'VRChat\'s heat for the production world right now (the flames on its world page, polled every 15 min): one lit flame per point up to 7, and the number beside them above that.',
       colors: { ...Object.fromEntries(Array.from({ length: SLOTS }, (_, k) => [`flame${k + 1}`, [{ color: NIGHT.dim, value: null }, { color: NIGHT.orange, value: 1 }]])),
         heat: [{ color: 'transparent', value: null }, { color: NIGHT.orange, value: SLOTS + 1 }] } }));
 
   p.push(row('What\'s on'));
   p.push(bars('Plays by length', [[inRange('play_length', 'lt10m'), 'under 10 min'], [inRange('play_length', 'lt1h'), '10 min – 1 h'], [inRange('play_length', 'lt3h'), '1–3 h'],
-    [inRange('play_length', 'longer'), '3 h+ (sleep)'], [inRange('play_length', 'live'), 'live']], { description: `Search videos played, once per room, by length, over the time range. ${OWN_TESTS}` }));
+    [inRange('play_length', 'longer'), '3 h+ (sleep)'], [inRange('play_length', 'live'), 'live']], { description: `Videos played over the selected range, once per room, by length. ${OWN_TESTS}` }));
   p.push(bars('Channels and searches', [[inRange('channel', 'redirect'), 'Channels'], [inRange('search', ''), 'searches'], [inRange('play', ''), 'plays']],
-    { description: `Channels: a slot opened from the Channels tab. Searches with a query, and videos played once per room, over the time range. ${OWN_TESTS}` }));
+    { description: `Over the selected range: Channels slots opened, searches with a query, and videos played (once per room). ${OWN_TESTS}` }));
   p.push(bars('Captions and quality', [[inRange('cc_list', ''), 'captions shown'], [inRange('cc_track', ''), 'tracks picked'], [inRange('quality_pick', '1080p'), '1080p picked'], [inRange('quality_pick', '720p'), '720p picked']],
-    { description: `"Show captions" list loads and tracks picked on the tablet, and rooms that picked a playback quality, over the time range. ${OWN_TESTS}` }));
+    { description: `Over the selected range: captions turned on, caption tracks picked on a tablet, and 1080p or 720p picked on a tablet. ${OWN_TESTS}` }));
 
   p.push(row('Who, broadly'));
-  // Joins, not presence: a square lights as people of that language arrive and goes dark 2 h after the last one. A quarter
+  // Joins, not presence: a square lights as people of that language arrive within the range. A quarter
   // of the width each (owner, #248), so the 16 squares sit 4 × 4.
-  p.push(squares('Here lately', 'join_lang', { w: 6, h: 10, description: 'All 16 VRChat client languages; a square lights up when that language had joins in the last 2 hours (whatever the time range), from visitors who allow untrusted URLs: the bare search address the world loads once after join. It counts arrivals, not who is still here, so a square stays lit for 2 h after its last join. Dark: none; 1 join grey; 2–3 blue; 4 or more purple.' }));
-  p.push(squares('Search languages', 'search_lang', { w: 6, h: 10, description: `The same squares for searches with a query in the last 2 hours, by VRChat client language. ${OWN_TESTS}` }));
+  p.push(squares('Here lately', 'join_lang', { w: 6, h: 10, description: 'Joins over the selected range by VRChat client language, from visitors who allow untrusted URLs. It counts arrivals, not who is still here. Dark: none; 1 grey; 2–3 blue; 4 or more purple.' }));
+  p.push(squares('Search languages', 'search_lang', { w: 6, h: 10, description: `Searches with a query over the selected range, by VRChat client language; colours as in Here lately. ${OWN_TESTS}` }));
   p.push(bars('Quest and PC', [[inRange('play_platform', 'pc'), 'PC plays'], [inRange('play_platform', 'android'), 'Quest plays'], [inRange('join', ''), 'joins']],
-    { w: 12, h: 10, description: `Plays by player platform, once per room and platform, and joins that loaded the search address (untrusted URLs allowed), over the time range. ${OWN_TESTS}` }));
+    { w: 12, h: 10, description: `Over the selected range: plays by player platform (once per room and platform) and joins from visitors who allow untrusted URLs. ${OWN_TESTS}` }));
 
   p.push(row('The night\'s shape'));
   const curve = series('Through the night (Chicago time)', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 18, h: 9, stack: true, min: 0, decimals: 0,
-    description: 'Production world occupants, stacked by instance type, in America/Chicago time.' });
+    description: 'People in the production world over the selected range, stacked by public and private instances, in Chicago time.' });
   curve.fieldConfig.defaults.color = { mode: 'continuous-BlPu' };
   curve.fieldConfig.defaults.custom.lineInterpolation = 'smooth';
   p.push(curve);
-  // The most people at any 15-minute step of the last 24 h whose Chicago hour was 3–5.
-  const lateExpr = `max_over_time((max(eiok_poll{source="world:prod",metric="occupants"}) and on() (${CHICAGO_HOUR} >= 3) and on() (${CHICAGO_HOUR} < 6))[24h:15m]) or vector(0)`;
+  // The most people at any 15-minute step of the range whose Chicago hour was 3–5 (the last 24 h until 2026-11-03).
+  const lateExpr = `max_over_time((max(eiok_poll{source="world:prod",metric="occupants"}) and on() (${CHICAGO_HOUR} >= 3) and on() (${CHICAGO_HOUR} < 6))[$__range:15m]) or vector(0)`;
   p.push(canvas('Stayed past 03:00', [[lateExpr, 'late']], [icon('zzz', 'zzz', 'late', [6, 52, 14, 14]), label('count', 'late', 64, [46, 4, 10, 10])],
-    { w: 6, h: 9, description: 'The most people in the world between 03:00 and 06:00 Chicago time (summer and winter time alike) in the last 24 h. Do people sleep here?',
+    { w: 6, h: 9, description: 'The most people in the world between 03:00 and 06:00 Chicago time within the selected range; "no one" also when the range holds no such hours. Do people sleep here?',
       colors: { late: [{ color: NIGHT.dim, value: null }, { color: NIGHT.blue, value: 1 }] }, mappings: [{ type: 'value', options: { 0: { text: 'no one' } } }] }));
 
   return scoped({
     uid: TONIGHT_UID, title: 'Everything is OK · Tonight', tags: ['everything-is-ok'], timezone: 'America/Chicago', refresh: '1m',
     time: { from: 'now-12h', to: 'now' }, schemaVersion: 39, editable: true, graphTooltip: 1,
-    description: 'The vibe right now: counts only (world #248). Ops stay on the Everything is OK dashboard.',
+    description: 'How lively the world is and what people do there, counts only. Right now tiles show the present; the rest follow the selected range (several weeks can overcount where the usage counters restarted). Ops stay on the Everything is OK dashboard.',
     templating: { list: [{ name: 'ds', label: 'Data source', type: 'datasource', query: 'prometheus', regex: '.*-prom$', current: {} }] },
     panels: p,
   });

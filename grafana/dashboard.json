@@ -13,6 +13,7 @@
  "schemaVersion": 39,
  "editable": true,
  "graphTooltip": 1,
+ "description": "Service health, playback, search, Channels and hosts for the Everything is OK world. Time series plot each point over a fixed window before it (named in the title or description); stats marked \"this range\" follow the selected range. Ranges of several weeks can overcount where the usage counters restarted.",
  "templating": {
   "list": [
    {
@@ -104,6 +105,7 @@
    "type": "stat",
    "id": 2,
    "title": "Search service",
+   "description": "Whether the search service answers its own health check on the Linode, now.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -175,6 +177,7 @@
    "type": "stat",
    "id": 3,
    "title": "Public /healthz",
+   "description": "Whether https://yt.japharsworld.com/healthz answers from outside (Caddy, TLS and DNS included), now.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -246,7 +249,7 @@
    "type": "stat",
    "id": 4,
    "title": "Relay workers",
-   "description": "The Optiplex long-polling for searches.",
+   "description": "Home relay workers (the Optiplex) connected now and waiting for searches. At 0, searches fall back to the Linode.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -304,6 +307,7 @@
    "type": "stat",
    "id": 5,
    "title": "In the world now",
+   "description": "People in the production world now, as VRChat reports it (polled every minute).",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -357,6 +361,7 @@
    "type": "stat",
    "id": 6,
    "title": "Credits left",
+   "description": "Tunelio credits left on the plan now. At 0, plays go to youtube.com.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -418,6 +423,7 @@
    "type": "stat",
    "id": 7,
    "title": "Channels hidden",
+   "description": "Channels slots hidden from the world now (stream down or failed its checks); spare slots not counted.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -479,7 +485,7 @@
    "type": "stat",
    "id": 8,
    "title": "Flash fails now",
-   "description": "Slots whose current stream failed its last flash check.",
+   "description": "Channels slots whose current stream failed its last flash check, now.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -537,7 +543,7 @@
    "type": "stat",
    "id": 9,
    "title": "Oldest waiting check",
-   "description": "New, candidate and manual resolution + flash jobs wait for the Optiplex worker (every 20 min); the daily batch is in Check queue.",
+   "description": "How long the oldest new, candidate or manual Channels check has waited for the Optiplex worker, which runs every 20 min. The daily batch is in Check queue.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -599,6 +605,7 @@
    "type": "stat",
    "id": 10,
    "title": "Total visits (production)",
+   "description": "All-time visits to the production world, from VRChat.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -653,6 +660,7 @@
    "type": "stat",
    "id": 11,
    "title": "Favorites (production)",
+   "description": "All-time favorites of the production world, from VRChat.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -706,8 +714,8 @@
   {
    "type": "stat",
    "id": 12,
-   "title": "Start-up problems, last 3 h",
-   "description": "Last 3 h, per ticket request: a slow video the player retries counts several timeouts. A timeout means the player waited 90 s and got youtube.com at 360p.",
+   "title": "Start-up problems, this range",
+   "description": "Over the selected range, per ticket request, so a slow video the player retries counts several timeouts. A timeout means the player waited 90 s and got youtube.com.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -725,7 +733,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"ticket_timeout\"}[3h])) or vector(0)",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"ticket_timeout\"}[$__range])) or vector(0)",
      "legendFormat": "player timeouts",
      "instant": true
     },
@@ -735,7 +743,7 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"build\",key=\"failed\"}[3h])) or vector(0)",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"build\",key=\"failed\"}[$__range])) or vector(0)",
      "legendFormat": "failed builds",
      "instant": true
     }
@@ -780,7 +788,7 @@
    "type": "stat",
    "id": 13,
    "title": "Tunelio build time",
-   "description": "Visitors’ progressive builds (p95 over 3 h, from the daily buckets) and the speed probe’s latest start times (src/probe.js). Over ~20 s the visitor waits past the resolver hold; over ~100 s the player gives up.",
+   "description": "Visitors’ progressive build time (p95 over the selected range) and the speed probe’s latest start times. Over ~20 s a visitor waits past the resolver hold; over ~90 s the player gives up.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -798,8 +806,8 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
-     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_build_progressive_seconds_bucket{env!=\"staging\"}[3h])))",
-     "legendFormat": "visitors p95, 3 h",
+     "expr": "histogram_quantile(0.95, sum by (le) (increase(eiok_build_progressive_seconds_bucket{env!=\"staging\"}[$__range])))",
+     "legendFormat": "visitors p95",
      "instant": true
     },
     {
@@ -895,7 +903,7 @@
    "type": "timeseries",
    "id": 15,
    "title": "In world (production)",
-   "description": "VRChat’s world counts, polled about every minute (japharsworld-yt-occupants.timer). VRChat updates them on its own schedule.",
+   "description": "People in the production world, in all and by instance type, polled every minute. VRChat updates its counts on its own schedule.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -933,15 +941,6 @@
      },
      "expr": "max(eiok_poll{env!=\"staging\",source=\"world:prod\",metric=\"privateOccupants\"})",
      "legendFormat": "private instances"
-    },
-    {
-     "refId": "D",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${ds}"
-     },
-     "expr": "max(eiok_poll{env!=\"staging\",source=\"group\",metric=\"online\"})",
-     "legendFormat": "group online"
     }
    ],
    "options": {
@@ -972,7 +971,7 @@
    "type": "timeseries",
    "id": 16,
    "title": "Total visits (production)",
-   "description": "All-time counts from VRChat. Grafana has them from 2026-10-21; /stats has the daily history before that.",
+   "description": "All-time visits and favorites (right axis) of the production world, from VRChat. Older history is on /stats.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1044,6 +1043,7 @@
    "type": "timeseries",
    "id": 17,
    "title": "Searches, plays, joins (per hour)",
+   "description": "Searches, More pages, plays (once per room) and joins (the world's first load of the search address), each point counting the hour before it.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1092,7 +1092,7 @@
    "type": "timeseries",
    "id": 18,
    "title": "Search latency",
-   "description": "From the daily buckets, over 3 h windows. p95 shows only when the window holds 20 or more searches: with fewer, one slow search sets it for 3 h (the plateaus). Searches in window on the right axis.",
+   "description": "Search time p50 and p95 over the 3 h before each point. p95 shows only when those 3 h hold 20 or more searches, so one slow search can't set it; the count is on the right axis.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1195,6 +1195,7 @@
    "type": "timeseries",
    "id": 19,
    "title": "Search failure rate",
+   "description": "Share of searches that failed (rate limited or YouTube not answering) over the 3 h before each point.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1244,6 +1245,7 @@
    "type": "timeseries",
    "id": 20,
    "title": "Play routes (per 3 h)",
+   "description": "Where each play went (once per room) over the 3 h before each point: Tunelio progressive, HLS or adaptive, the home relay, a live stream, or youtube.com as a fallback.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1292,6 +1294,7 @@
    "type": "timeseries",
    "id": 21,
    "title": "Tunelio credits left",
+   "description": "Tunelio credits left on the plan; it jumps back up when the plan renews.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1341,7 +1344,7 @@
    "type": "timeseries",
    "id": 22,
    "title": "Tunelio build time",
-   "description": "From the daily buckets, over 6 h windows. A player is held up to 90 s, the resolver 12 s (claude/play-latency.md).",
+   "description": "Visitors' Tunelio build times and the ticket hold, p50 and p95 over the 6 h before each point. A player is held up to 90 s, the resolver 12 s.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1426,7 +1429,7 @@
    "type": "timeseries",
    "id": 23,
    "title": "Start-up problems (per 3 h)",
-   "description": "Per ticket request, so one slow video retried by the player counts several timeouts; plays count once per room.",
+   "description": "Player timeouts, resolver fast-fails, failed builds and youtube.com fallbacks by reason, over the 3 h before each point. Timeouts count per ticket request, so a retried video counts several.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1503,7 +1506,7 @@
    "type": "timeseries",
    "id": 24,
    "title": "Tunelio probe: time to start",
-   "description": "Speed probe about hourly (src/probe.js; every ~20 min before 2026-10-23): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 2–2.5 h. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment).",
+   "description": "The speed probe builds a fresh 12–30 min video at 1080p about hourly, progressive and HLS on alternate runs, so each line moves every 2–3 h. Start is what a player waits for (progressive: first byte; HLS: playlist and first segment).",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1562,7 +1565,7 @@
    "type": "timeseries",
    "id": 25,
    "title": "Tunelio probe: build speed",
-   "description": "Speed probe about hourly (src/probe.js; every ~20 min before 2026-10-23): a fresh 12–30 min video at 1080p, progressive and HLS on alternate runs, so each line moves about every 2–2.5 h. Start = what a player waits for (progressive: first byte; HLS: playlist + first segment). 2026-10-19 measured ~60 MB/s progressive.",
+   "description": "The speed probe builds a fresh 12–30 min video at 1080p about hourly, progressive and HLS on alternate runs, so each line moves every 2–3 h. Build speed in MB/s, file size on the right axis.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1634,7 +1637,7 @@
    "type": "timeseries",
    "id": 26,
    "title": "Tunelio cuts per playback hour (24 h)",
-   "description": "The speed probe reads the link of each progressive run at playback speed for 10 minutes and resumes at the byte reached after a cut (src/probe.js, Everything-is-OK#361): about 11 reads a day. A read is skipped if a visitor's build or held player is in flight when it would start; that is checked only then, so a visitor who arrives during a read doesn't stop it. A sample of 2026-10-29 from a home PC gave ~3 cuts per playback hour. No alert on the rate until there is a baseline.",
+   "description": "The speed probe reads each progressive link at playback speed for 10 minutes and resumes after a cut, skipping a read while a visitor's build is in flight. Each point covers the 24 h before it; empty while the drop check is off.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1684,7 +1687,7 @@
    "type": "timeseries",
    "id": 27,
    "title": "Tunelio read and reopens (24 h)",
-   "description": "The speed probe reads the link of each progressive run at playback speed for 10 minutes and resumes at the byte reached after a cut (src/probe.js, Everything-is-OK#361): about 11 reads a day. A read is skipped if a visitor's build or held player is in flight when it would start; that is checked only then, so a visitor who arrives during a read doesn't stop it. A sample of 2026-10-29 from a home PC gave ~3 cuts per playback hour. No alert on the rate until there is a baseline. A failed reopen: another status, the wrong offset, or no first byte in 10 s. A read that could not open: three first opens in a row failed that way.",
+   "description": "The speed probe's paced reads over the 24 h before each point: minutes read, cuts, failed reopens (wrong status or offset, or no first byte in 10 s) and reads that could not open at all. Empty while the drop check is off.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1760,7 +1763,7 @@
   {
    "type": "row",
    "id": 28,
-   "title": "What visitors saw (world #274)",
+   "title": "What visitors saw",
    "collapsed": false,
    "gridPos": {
     "x": 0,
@@ -1774,7 +1777,7 @@
    "type": "timeseries",
    "id": 29,
    "title": "Time to first frame, visitors",
-   "description": "From the load starting to the first frame, on each visitor's own client; testers apart. Buckets are coarse (5, 10, 20, 30, 45, 60, 90 s). Compare releases by time.",
+   "description": "From the load starting to the first frame on each visitor's own client (testers left out), p50 and p95 by platform over the 6 h before each point. Coarse buckets: 5, 10, 20, 30, 45, 60, 90 s.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1833,7 +1836,7 @@
    "type": "timeseries",
    "id": 30,
    "title": "Plays that never showed a picture, visitors",
-   "description": "e*: VizVid gave up, by its error class. timeout: nothing after the world's cap. after: gave up after a first frame. left: the room moved on first, not a fault.",
+   "description": "Visitor plays with no picture over the 6 h before each point. e*: the player gave up, by error class; timeout: nothing by the world's cap; after: gave up after a first frame; left: the room moved on first, not a fault.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1896,7 +1899,7 @@
    "type": "timeseries",
    "id": 32,
    "title": "Playback plans (per 6 h)",
-   "description": "Which plan each video got (src/adaptive.js): plan_direct = 1080p at once, plan_adaptive = 720p then 1080p, plan_start = the 360p first rung, plan_lower = 720p only; paced_off = kept at 720p by the credit pacer.",
+   "description": "Which plan each video got, per 6 h: plan_direct 1080p at once, plan_adaptive 720p then 1080p, plan_start from a 360p first rung, plan_lower 720p only; paced_off kept at 720p by the credit pacer.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1946,7 +1949,7 @@
    "type": "timeseries",
    "id": 33,
    "title": "Adaptive steps and Quest tickets (per 6 h)",
-   "description": "master = adaptive playlists served, upgrade / upgrade_served / upgrade_failed = 1080p step-ups started, played, failed; hls_ticket = .m3u8 tickets (the world’s Android build); android_progressive = Quest players sent progressive; defer = resolver told to wait. reload_after_upgrade / reload_before_upgrade = the same player loading the master again after / before it got 1080p: the freeze proxy (a freeze shows no error, so Play pressed again is the closest signal; compare the two).",
+   "description": "Per 6 h: adaptive playlists served (master), 1080p step-ups started, played and failed, Quest .m3u8 tickets, resolvers told to wait (defer), and playlist reloads before and after 1080p (after is the freeze signal).",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -1996,7 +1999,7 @@
    "type": "timeseries",
    "id": 34,
    "title": "Ticket requests by client (per 6 h)",
-   "description": "string = the tablet’s status checks, ytdlp = VRChat’s resolver, avpro = the player. Per request, not per play.",
+   "description": "Ticket requests per 6 h by who asked: string is the tablet’s status checks, ytdlp VRChat’s resolver, avpro the video player. Per request, not per play.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2046,7 +2049,7 @@
    "type": "stat",
    "id": 35,
    "title": "Home relay today",
-   "description": "What the Optiplex downloaded for home relay plays today (Chicago day) against HOME_DAILY_MB, what the worker uploaded from its own cache instead (not counted against the cap, relay/cache.js), and the media workers connected now. Set every minute by the search service.",
+   "description": "Today (Chicago day), now: what the Optiplex downloaded for home relay plays against its daily cap, the videos, what it served from its own cache (not counted against the cap), and the media workers connected.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2141,7 +2144,7 @@
    "type": "timeseries",
    "id": 36,
    "title": "Home relay (per 6 h)",
-   "description": "Sessions started / ready / failed / capped (refused by the daily cap) / timeout, and why a play went home (long video, Tunelio off or failed, the pacer).",
+   "description": "Home relay sessions per 6 h (started, ready, failed, refused by the cap or for room, cache hits, step-downs), and why a play went home: a long video, Tunelio off, slow or failed, the pacer, or the spend budget or build cap.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2200,7 +2203,7 @@
    "type": "timeseries",
    "id": 37,
    "title": "Home relay start time",
-   "description": "Play → first playlist with a segment from the Optiplex, 6 h windows.",
+   "description": "From a home relay play to its first playlist with a segment from the Optiplex, p50 and p95 over the 6 h before each point.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2259,7 +2262,7 @@
    "type": "timeseries",
    "id": 38,
    "title": "Credits spent per day, by use",
-   "description": "playback = /create for visitors, captions = transcripts, probe = the speed probe, test = test slot refills. Rolling 24 h.",
+   "description": "Tunelio credits spent in the 24 h before each point, by use: playback builds, caption transcripts, the speed probe, and test slot refills.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2309,7 +2312,7 @@
    "type": "timeseries",
    "id": 39,
    "title": "Search sources (per 6 h)",
-   "description": "worker = the Optiplex relay, local = InnerTube from the Linode, api = the YouTube Data API (quota).",
+   "description": "Which source answered searches, per 6 h: worker the home relay, local the Linode, api the YouTube Data API (quota), with today's Data API units.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2368,7 +2371,7 @@
    "type": "timeseries",
    "id": 40,
    "title": "Captions (per 6 h)",
-   "description": "Track lists and tracks served, which source answered (worker, local yt-dlp, Tunelio), word timing real or estimated, and why none was available.",
+   "description": "Per 6 h: caption lists and picked tracks served, which source answered (home relay, Linode yt-dlp, Tunelio), real or estimated word timing, and why none was available.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2445,7 +2448,7 @@
    "type": "timeseries",
    "id": 41,
    "title": "YouTube refusals (per hour)",
-   "description": "Failed YouTube lookups by where (home = the Optiplex relay, linode, flash = the Optiplex flash-check worker) and class: bot = \"Sign in to confirm\", rate = 429 / try again later / a caption track that failed after its list, forbidden = 403, potoken = PO token, other. Counted from 2026-10-25 (src/refusal.js).",
+   "description": "YouTube refusals per hour by where (home relay, Linode, flash-check worker) and class: bot (\"Sign in to confirm\"), rate (429 or try again later), forbidden (403), potoken, restricted (age gate), other.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2495,7 +2498,7 @@
    "type": "timeseries",
    "id": 42,
    "title": "Rooms active (shards with a request, per hour)",
-   "description": "Distinct shards that saw a request in the past hour (from the hourly shard table).",
+   "description": "Tablet shards (rooms) that made any request in the hour before each point.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2546,7 +2549,7 @@
    "type": "timeseries",
    "id": 43,
    "title": "Plays by platform (per 6 h)",
-   "description": "Once per room and platform (a room with PC and Quest players counts one of each), from the player’s User-Agent or a .m3u8 ticket. Counted from 2026-10-23.",
+   "description": "Plays per 6 h by player platform, once per room and platform (a room with PC and Quest players counts one of each).",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2596,6 +2599,7 @@
    "type": "timeseries",
    "id": 44,
    "title": "Room quality picks and tablet warm-ups (per 6 h)",
+   "description": "Per 6 h: quality picks on room tablets, builds started before Play (tablet status checks and pasted-link lookups), and how many of those a player then asked for.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2686,6 +2690,7 @@
     "w": 14,
     "h": 12
    },
+   "description": "Every Channels slot now: up or down, hidden from the world, stream height, flashes per second at its last check, and how long ago that was.",
    "targets": [
     {
      "refId": "A",
@@ -2892,6 +2897,7 @@
    "type": "timeseries",
    "id": 47,
    "title": "Flash checks (per 6 h)",
+   "description": "Channels flash checks by verdict over the 6 h before each point.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2940,6 +2946,7 @@
    "type": "timeseries",
    "id": 48,
    "title": "Check queue",
+   "description": "Channels check jobs waiting for the Optiplex worker, and how many minutes the oldest of each kind has waited.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -3011,6 +3018,7 @@
    "type": "timeseries",
    "id": 50,
    "title": "CPU busy",
+   "description": "Share of CPU time busy on each host (5 min rate).",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -3060,6 +3068,7 @@
    "type": "timeseries",
    "id": 51,
    "title": "Memory available",
+   "description": "Share of memory available on each host.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -3109,6 +3118,7 @@
    "type": "timeseries",
    "id": 52,
    "title": "Disk free (/)",
+   "description": "Share of the root disk free on each host.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -3158,6 +3168,7 @@
    "type": "timeseries",
    "id": 53,
    "title": "Public endpoints",
+   "description": "Outside health checks of the public addresses: 1 up, 0 down, and how long each check took in seconds.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -3215,7 +3226,7 @@
    "type": "timeseries",
    "id": 54,
    "title": "Failed units",
-   "description": "japharsworld-yt units, bgutil-pot and caddy in the failed state.",
+   "description": "systemd units in the failed state on either host; empty when all is well.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -3287,6 +3298,7 @@
     "w": 24,
     "h": 4
    },
+   "description": "The published version of the production and TEST worlds over time, one band per version.",
    "targets": [
     {
      "refId": "A",
@@ -3337,7 +3349,7 @@
    "type": "table",
    "id": 57,
    "title": "World uploads and releases",
-   "description": "VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.",
+   "description": "World versions (production and TEST, at VRChat’s upload time) and GitHub release tags, newest first.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -3410,7 +3422,7 @@
    "type": "table",
    "id": 58,
    "title": "Deploys of main",
-   "description": "Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.",
+   "description": "Deploys of main per host, newest first: the Linode (search service; no_restart when only files it doesn’t run changed) and the Optiplex (relay worker).",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"

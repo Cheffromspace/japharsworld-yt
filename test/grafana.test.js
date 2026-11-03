@@ -110,7 +110,7 @@ test('tonight: Chicago hour follows summer and winter time (the 03:00–06:00 wi
   }
 });
 
-// #248: heat as lit flame slots; one square per language, lit by joins or searches in the last 2 h.
+// #248: heat as lit flame slots; one square per language, lit by joins or searches in the selected range.
 test('tonight: heat shows as that many flames, and join languages as squares coloured by count', () => {
   const d = tonight();
   const heat = d.panels.find((p) => p.title === 'Heat');
@@ -131,7 +131,7 @@ test('tonight: heat shows as that many flames, and join languages as squares col
     const sq = d.panels.find((p) => p.title === title);
     assert.equal(sq.targets.length, 16, title);
     assert.deepEqual(sq.targets.map((x) => x.legendFormat).slice(0, 3), ['en', 'fr', 'es']);
-    for (const x of sq.targets) assert.ok(x.expr.includes(`metric="${metric}",key="${x.legendFormat}"}[2h]`) && x.expr.endsWith('or vector(0)'), x.expr);
+    for (const x of sq.targets) assert.ok(x.expr.includes(`metric="${metric}",key="${x.legendFormat}"}[$__range]`) && x.expr.endsWith('or vector(0)'), x.expr);
     assert.equal(sq.options.textMode, 'name');
     assert.equal(sq.options.colorMode, 'background_solid');
     assert.deepEqual(sq.fieldConfig.defaults.thresholds.steps.map((x) => [x.color, x.value]), [['#24283b', null], ['#414868', 1], ['#7aa2f7', 2], ['#bb9af7', 4]]);

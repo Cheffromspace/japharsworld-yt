@@ -223,14 +223,20 @@ export function timedChunks(cues, code) {
   const chunks = chunkWords(words, layout);
   // Each chunk ends no later than the next one begins.
   for (let i = 0; i + 1 < chunks.length; i++) if (chunks[i][1] > chunks[i + 1][0]) chunks[i][1] = Math.max(chunks[i][0], chunks[i + 1][0]);
-  // Real when at least half of the source's segs kept their own time, counted per seg and not per unit: a seg that
-  // falls back to estimates (untimed, or wider than a line) makes one estimated unit per character in a character
-  // layout, so counting units let two untimed segs outvote a cue YouTube timed seg by seg (#463 follow-up).
-  const segReal = new Map();
-  for (const w of words) segReal.set(w.seg, (segReal.get(w.seg) ?? true) && w.real);
-  let real = 0;
-  for (const r of segReal.values()) if (r) real++;
-  return { chunks, words: segReal.size && real >= segReal.size / 2 ? 'real' : 'estimated' };
+  // Real when at least half of the text (in code points) is in segs that kept the source's own time; a seg counts as
+  // real when all its units are. Per unit, a seg that falls back to estimates in a character layout (untimed, or wider
+  // than a line) made one estimated unit per character and outvoted a cue YouTube timed seg by seg (#463 follow-up,
+  // 2cf007d); per seg, ten English line cues of eight words each lost to two word-timed cues (16 of 26 segs). By
+  // width, 今日は|いい|天気|ですね is 6 real of 10, and those English line cues stay estimated (about a sixth real).
+  const segs = new Map();
+  for (const w of words) {
+    const s = segs.get(w.seg) ?? { real: true, width: 0 };
+    s.real = s.real && w.real; s.width += width(w.w);
+    segs.set(w.seg, s);
+  }
+  let real = 0, total = 0;
+  for (const s of segs.values()) { total += s.width; if (s.real) real += s.width; }
+  return { chunks, words: total && real >= total / 2 ? 'real' : 'estimated' };
 }
 
 // What the world gets. With realWordsOnly (CAPTION_REAL_WORDS_ONLY=on) an estimated track's offsets are left empty.

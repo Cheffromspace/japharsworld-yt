@@ -159,6 +159,23 @@ test('a track is real when half its segs kept YouTube times, counted per seg, no
   checkChunks(thOut.chunks, 42);
 });
 
+test('a mostly line-timed English track stays estimated: segs are weighed by their width (#463 follow-up)', () => {
+  // Ten one-seg line cues (80 estimated words) and two word-timed cues (16 real words): 16 of 26 segs were real,
+  // which sent the line cues' estimated offsets with CAPTION_REAL_WORDS_ONLY on. By width it is about a sixth real.
+  const line = 'we walked down to the river today';
+  const words8 = ['we', 'walked', 'down', 'to', 'the', 'old', 'river', 'today'];
+  const cues = [];
+  for (let k = 0; k < 10; k++) cues.push([k * 3000, 2800, [[0, `${line} ${k}`]]]);
+  for (let k = 0; k < 2; k++) cues.push([30000 + k * 3000, 2800, words8.map((w, i) => [i * 300, i ? ` ${w}` : w])]);
+  assert.equal(wordsFromCues(cues, layoutFor('en')).length, 96);
+  const { chunks, words } = chunksFromCues(cues, 'en', { realWordsOnly: true });
+  assert.equal(words, 'estimated');
+  assert.ok(chunks.every((c) => c[4] === ''), 'no estimated offsets are sent');
+  // The other way round, the same cues with the word-timed ones in the majority are real.
+  const timed = [...cues.slice(0, 2), ...Array.from({ length: 10 }, (_, k) => [60000 + k * 3000, 2800, words8.map((w, i) => [i * 300, i ? ` ${w}` : w])])];
+  assert.equal(chunksFromCues(timed, 'en', { realWordsOnly: true }).words, 'real');
+});
+
 test('line width is counted in code points everywhere: a two-unit CJK character is one of the 16 (#463 follow-up)', () => {
   // 𠮷 (U+20BB7) is two UTF-16 units. Ten of them fit one 16-wide line; counted in UTF-16 they made two lines.
   const ws = Array.from({ length: 10 }, (_, k) => ({ t: k * 100, e: k * 100 + 100, w: '𠮷', sp: false, real: true }));

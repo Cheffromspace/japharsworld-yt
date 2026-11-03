@@ -69,8 +69,10 @@ export function displayName(code, uiLang) {
 }
 
 export class TunelioCaptions {
-  constructor({ store, tunelio, cacheDays = 7, scripts = DEFAULT_SCRIPTS, alert = () => {}, log = () => {} }) {
+  constructor({ store, tunelio, cacheDays = 7, scripts = DEFAULT_SCRIPTS, alert = () => {}, log = () => {}, spend = null }) {
     this.store = store;
+    // Spend limits (src/spend.js, Everything-is-OK#478): every uncached /transcript asks first. null: none.
+    this.spend = spend;
     this.tunelio = tunelio;
     this.maxAgeMs = cacheDays * 86400_000;
     this.scripts = scripts;
@@ -157,9 +159,14 @@ export class TunelioCaptions {
 
   // → transcript | 'none' (the video has no captions) | null (Tunelio failed; try again later, not cached)
   async fetch(videoId, lang, type) {
+    // Over the budget or this IP's transcript limit: captions are unavailable for now (null is not cached).
+    const refused = this.spend?.refuseTranscript();
+    if (refused) { this.log({ event: 'transcript_refused', id: videoId, reason: refused }); return null; }
+    const refund = this.spend?.charge(this.spend.transcriptCost);
     try {
       return await this.tunelio.transcript(videoId, lang, type);
     } catch (err) {
+      refund?.(); // failed calls cost nothing (but see src/spend.js on timeouts)
       this.log({ event: 'transcript_error', id: videoId, lang, type, status: err.status, code: err.code, message: String(err.message).slice(0, 200) });
       if (err.status === 404 || err.status === 400 || err.status === 422) return 'none';
       if (err.status === 402) this.alert('credits_out', 'Tunelio is out of credits: captions and HD playback are off until credits return.');

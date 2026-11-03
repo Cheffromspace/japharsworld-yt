@@ -159,6 +159,12 @@ export const config = {
   spendDayCredits: int('SPEND_DAY_CREDITS', 4000),
   spendBuildsPerMinutePerIp: int('SPEND_BUILDS_PER_MINUTE_PER_IP', 4),
   spendBuildsPerMinutePerShard: int('SPEND_BUILDS_PER_MINUTE_PER_SHARD', 6),
+  // Uncached caption transcripts (6 credits each) a minute per client IP, under the same budget. Over it, or over the
+  // budget, captions are unavailable for now; playback is unaffected.
+  spendTranscriptsPerMinutePerIp: int('SPEND_TRANSCRIPTS_PER_MINUTE_PER_IP', 6),
+  // Most client IPs kept by each per-IP limit (the lookup warm's and the spend limits'); past it the least recently
+  // active go first.
+  rateKeysMax: int('RATE_KEYS_MAX', 10_000),
   ticketPinMarginMs: int('TICKET_PIN_MARGIN_MINUTES', 15) * 60_000,
   // The quality home builds when the room hasn't picked one (owner, 2026-10-25: 1080p; home streams, so 1080p starts
   // about as fast as 720p: first segments 6.2 s vs 2.9 s on the Optiplex, 2026-10-23). A room's own pick wins.

@@ -80,7 +80,7 @@ function page(path) {
 
 const HOME_REFUSED_MS = 5 * 60_000;
 
-export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, adaptive, slots, home, channels, log = console.log } = {}) {
+export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, adaptive, slots, home, channels, spend, log = console.log } = {}) {
   // Recent events for /ops/events, redacted as they are kept.
   const ring = new EventRing();
   const rawLog = log;
@@ -98,12 +98,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (path === '/create') { metrics.inc('credits', 'playback', 10); metrics.latency('tunelio_create_ms', ms); }
     if (path === '/transcript') metrics.inc('credits', 'captions', 6);
   } });
-  // Spend limits (src/spend.js) for this server's own Playback; an injected one brings its own (tests).
-  const ownSpend = playback ? null : new SpendGate({ hourCredits: config.spendHourCredits, dayCredits: config.spendDayCredits,
-    perIpPerMinute: config.spendBuildsPerMinutePerIp, perShardPerMinute: config.spendBuildsPerMinutePerShard, alert, log: logJson,
+  // Spend limits (src/spend.js), shared by this server's Playback and Tunelio captions. Injected (tests), or the injected
+  // Playback's own, or made here when the server makes its Playback.
+  spend ??= playback ? playback.spend ?? null : new SpendGate({ hourCredits: config.spendHourCredits, dayCredits: config.spendDayCredits,
+    perIpPerMinute: config.spendBuildsPerMinutePerIp, perShardPerMinute: config.spendBuildsPerMinutePerShard,
+    transcriptsPerIpPerMinute: config.spendTranscriptsPerMinutePerIp, maxKeys: config.rateKeysMax, alert, log: logJson,
     stateFile: config.metricsPath ? join(dirname(config.metricsPath), 'spend-budget.json') : null });
-  if (ownSpend) setInterval(() => ownSpend.check(), 60_000).unref(); // the all-clear comes without waiting for a play
-  playback ??= new Playback({ tunelio, quality: config.tunelioQuality, spend: ownSpend, lowerQuality: config.tunelioLowerQuality, maxMbForQuality: config.tunelioMaxMb,
+  if (spend && !playback) setInterval(() => spend.check(), 60_000).unref(); // the all-clear comes without waiting for a play
+  playback ??= new Playback({ tunelio, quality: config.tunelioQuality, spend, lowerQuality: config.tunelioLowerQuality, maxMbForQuality: config.tunelioMaxMb,
     progressiveMaxMb: config.progressiveMaxMb, progressiveMaxSeconds: config.progressiveMaxSeconds,
     probe: tunelio.enabled ? linkProbe() : null, alert, log: logJson,
     // Next to metrics.db (tests run without one, so they write nothing).
@@ -170,7 +172,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     relayWaitMs: config.relayCaptionWaitMs, realWordsOnly: config.captionRealWordsOnly,
     local: config.captionLocalYtdlp || !tunelio.enabled ? new Captions({ store, ytdlp: config.ytdlp, extraArgs: config.ytdlpExtraArgs, cacheDays: config.captionCacheDays,
       sourcePrefix: config.sourcePrefix, blockedMinutes: config.blockedMinutes, onRefusal: (cls) => refused('linode', cls) }) : null,
-    tunelio: tunelio.enabled ? new TunelioCaptions({ store, tunelio, cacheDays: config.captionCacheDays, scripts: config.captionScripts, alert, log: logJson }) : null });
+    tunelio: tunelio.enabled ? new TunelioCaptions({ store, tunelio, cacheDays: config.captionCacheDays, scripts: config.captionScripts, alert, log: logJson, spend }) : null });
   api ??= new DataApi({ key: config.youtubeApiKey, dailyUnits: config.youtubeApiDailyUnits, alert, log: logJson });
   const searcher = makeSearch({ relay, youtube, api, alert, log: logJson, workerTimeoutMs: config.relayWaitMs, refused });
   function checkWorkers() {
@@ -202,8 +204,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // (10 credits) for a preview that may never play, and SEARCHES_PER_MINUTE alone let one visitor pasting a new link
   // each time start 20 a minute. Over either cap the lookup is answered as usual with no warm. Cached and home builds
   // don't count.
-  // Per IP, bounded by evicting the least recently active (src/spend.js touch); the global list is kept apart, so no
-  // number of IPs can reset it.
+  // Per IP, bounded without dropping an active IP's count (src/spend.js touch: a new IP is refused while every kept one
+  // was active in the last minute); the global list is kept apart from the per-IP map.
   const lookupWarms = new Map(); // ip → timestamps
   let lookupWarmsAll = [];
   function lookupWarmAllowed(ip) {
@@ -211,7 +213,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const mine = (lookupWarms.get(ip) ?? []).filter((t) => now - t < 60_000);
     lookupWarmsAll = lookupWarmsAll.filter((t) => now - t < 60_000);
     if (mine.length >= config.lookupWarmsPerMinutePerIp || lookupWarmsAll.length >= config.lookupWarmsPerMinute) return false;
-    touch(lookupWarms, ip, [...mine, now]);
+    if (!touch(lookupWarms, ip, [...mine, now], config.rateKeysMax ?? 10_000, now)) return false;
     lookupWarmsAll.push(now);
     return true;
   }
@@ -1076,7 +1078,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return fail(res, 404, 'unknown_ticket', 'Nothing here yet. Search again.');
   }
 
-  async function caption(req, res, shard, raw, url) {
+  // Run in the spend scope: an uncached Tunelio transcript counts against the client IP (src/spend.js).
+  function caption(req, res, shard, raw, url) {
+    return spendScope.run({ ip: clientIp(req), shard }, () => captionIn(req, res, shard, raw, url));
+  }
+  async function captionIn(req, res, shard, raw, url) {
     const byTrack = /^\d+$/.test(raw);
     const listOnly = raw === ''; // the picker's list (free sources only; Everything is OK #76)
     // The list with the visitor's own track ("captions on"), the list alone, or a track picked on the tablet.

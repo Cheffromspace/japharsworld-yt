@@ -109,7 +109,10 @@ export class CaptionChain {
   // Captions that cost nothing are fetched as soon as a video plays, so they are there when someone taps CC.
   warm(videoId) {
     if (!this.free) return;
-    this.get(videoId, 'native').catch(() => {});
+    // Free sources only, even when the free source fails (Everything-is-OK#452: it fell through to Tunelio). A visitor's
+    // CC press later can still use Tunelio.
+    if (this.list(videoId)) return;
+    this.resolve(videoId, { lang: 'native' }, { freeOnly: true }).catch(() => {});
   }
 
   // ---- answers ----
@@ -251,7 +254,13 @@ export class CaptionChain {
 
   async fromTunelio(videoId, want) {
     let a;
-    if (!want || want.lang) a = await this.tunelio.get(videoId, want?.lang ?? 'native');
+    // No want (a track number asked before the list is known): the list alone, one call, so a number beyond the video's
+    // tracks is refused before any track is paid for.
+    if (!want) {
+      const tracks = await this.tunelio.tracks(videoId, null);
+      return tracks ? { tracks: tracks.map((t) => ({ code: t.code, auto: Boolean(t.auto) })), track: null, cues: null } : null;
+    }
+    if (want.lang) a = await this.tunelio.get(videoId, want.lang);
     else {
       const tracks = this.list(videoId) ?? (await this.tunelio.tracks(videoId, null));
       if (!tracks) return null;

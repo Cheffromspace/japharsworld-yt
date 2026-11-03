@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CHICAGO_HOUR, RETIRED_RULES, alertRules, contactPoint, dashboard, prodOnly, tonight } from '../tools/grafana.mjs';
+import { CHICAGO_HOUR, RETIRED_RULES, alertRules, contactPoint, dashboard, prodOnly, pushRule, tonight } from '../tools/grafana.mjs';
 
 // Staging (#160) sends the same metrics with env="staging": every selector of every query and rule leaves them out.
 test('every dashboard query and alert rule excludes staging', () => {
@@ -160,4 +160,31 @@ test('release and deploy markers are off by default, with their toggles availabl
   const list = dashboard().annotations.list.filter((a) => !a.builtIn);
   assert.deepEqual(list.map((a) => a.name), ['World uploads', 'GitHub releases', 'Deploys']);
   assert.ok(list.every((a) => a.enable === false && !a.hide));
+});
+
+// push-rule (2026-11-03): one alert rule only, never the dashboards, contact points or other rules.
+test('push-rule sends only that rule to the alert-rules API, and --dry-run sends nothing', async () => {
+  const calls = [];
+  const call = async (path, { method = 'GET', body } = {}) => {
+    calls.push([method, path, body?.uid ?? null]);
+    if (path.startsWith('/api/datasources/')) return { uid: 'prom-x' };
+    if (method === 'PUT') throw Object.assign(new Error('not found'), { status: 404 }); // a new rule: POST next
+    if (path === '/api/v1/provisioning/alert-rules/eiok-spend-rate') return { uid: 'eiok-spend-rate', title: 'T', data: [{ model: { expr: 'e' } }] };
+    if (path === '/api/prometheus/grafana/api/v1/rules') return { data: { groups: [{ rules: [{ uid: 'eiok-spend-rate', state: 'inactive', health: 'ok' }] }] } };
+    return {};
+  };
+  const dry = await pushRule('eiok-spend-rate', { dryRun: true, call });
+  assert.deepEqual(calls, [], 'dry run: no call at all');
+  assert.equal(dry.request.method, 'PUT');
+  assert.equal(dry.request.path, '/api/v1/provisioning/alert-rules/eiok-spend-rate');
+  assert.equal(dry.request.body.uid, 'eiok-spend-rate');
+
+  const r = await pushRule('eiok-spend-rate', { call });
+  const writes = calls.filter(([m]) => m !== 'GET');
+  assert.deepEqual(writes, [['PUT', '/api/v1/provisioning/alert-rules/eiok-spend-rate', 'eiok-spend-rate'], ['POST', '/api/v1/provisioning/alert-rules', 'eiok-spend-rate']]);
+  assert.ok(calls.every(([, path]) => !/dashboards|contact-points|folders/.test(path)), 'nothing but that rule (and reads)');
+  assert.equal(calls.find(([m]) => m === 'PUT')[2], 'eiok-spend-rate');
+  assert.deepEqual([r.uid, r.state, r.health], ['eiok-spend-rate', 'inactive', 'ok']);
+  assert.equal(writes.find(([m]) => m === 'POST') && calls.filter(([m, p]) => m === 'POST' && p.includes('alert-rules')).length, 1);
+  await assert.rejects(pushRule('no-such-rule', { dryRun: true, call }), /no alert rule/);
 });

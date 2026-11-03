@@ -1,6 +1,8 @@
 // Grafana Cloud dashboard and alert rules for Everything is OK (claude/monitoring.md), kept in the repo.
 //   node tools/grafana.mjs build    writes grafana/dashboard.json, grafana/tonight.json and grafana/alert-rules.json
 //   node tools/grafana.mjs push     uploads them to the stack (and the Discord contact points)
+//   node tools/grafana.mjs push-rule <uid> [--dry-run]   that one alert rule only (no dashboards, contact points or
+//                                   other rules); --dry-run prints the request and sends nothing
 // push reads its settings from the environment or the repo's .env (gitignored; the environment wins):
 //   GRAFANA_URL               https://<stack>.grafana.net
 //   GRAFANA_SA_TOKEN          a service account token (glsa_…, Editor role); not GRAFANA_TOKEN, Alloy's write-only token
@@ -605,6 +607,33 @@ async function push() {
 // 2026-10-29: the mass Channels outage warning is the monitor's alone, outage_watch, once a day at most).
 export const RETIRED_RULES = ['eiok-linode-disk-70', 'eiok-channels-mass-down'];
 
+// One alert rule, alone: a PUT by uid (a POST if Grafana doesn't have it yet), then a read-back with its state. For a
+// rule change that must not touch the dashboards or the other rules (2026-11-03: eiok-spend-rate, pushed with a release).
+// `call` is the API (injectable for tests); dryRun returns the request without calling it at all.
+export async function pushRule(uid, { dryRun = false, call = api, dsUid = null, critical = Boolean(env.DISCORD_CRITICAL_WEBHOOK) } = {}) {
+  if (!uid) throw new Error('usage: node tools/grafana.mjs push-rule <uid> [--dry-run]');
+  const ds = dsUid ?? (dryRun ? '${ds}' : (await promSourceVia(call)).uid);
+  const rule = alertRules(ds, { critical }).find((r) => r.uid === uid);
+  if (!rule) throw new Error(`no alert rule ${uid} in tools/grafana.mjs`);
+  const request = { method: 'PUT', path: `/api/v1/provisioning/alert-rules/${uid}`, body: rule };
+  if (dryRun) return { dryRun: true, request };
+  try { await call(request.path, { method: 'PUT', body: rule }); } catch (err) {
+    if (err.status !== 404) throw err;
+    await call('/api/v1/provisioning/alert-rules', { method: 'POST', body: rule });
+  }
+  const back = await call(`/api/v1/provisioning/alert-rules/${uid}`);
+  const groups = (await call('/api/prometheus/grafana/api/v1/rules'))?.data?.groups ?? [];
+  const live = groups.flatMap((g) => g.rules ?? []).find((r) => r.uid === uid || r.name === rule.title);
+  return { uid: back?.uid, title: back?.title, expr: back?.data?.[0]?.model?.expr, receiver: back?.notification_settings?.receiver,
+    state: live?.state ?? null, health: live?.health ?? null, lastEvaluation: live?.lastEvaluation ?? null };
+}
+
+// promSource() through another API function (pushRule's injectable `call`).
+async function promSourceVia(call) {
+  if (call === api) return promSource();
+  return call(`/api/datasources/uid/${encodeURIComponent(env.GRAFANA_PROM_DS_UID ?? 'grafanacloud-prom')}`);
+}
+
 const cmd = process.argv[2];
 if (cmd === 'build') {
   mkdirSync('grafana', { recursive: true });
@@ -614,7 +643,12 @@ if (cmd === 'build') {
   console.log('wrote grafana/dashboard.json, grafana/tonight.json, grafana/alert-rules.json');
 } else if (cmd === 'push') {
   push().catch((err) => { console.error(err.message); process.exitCode = 1; });
+} else if (cmd === 'push-rule') {
+  const args = process.argv.slice(3);
+  pushRule(args.find((a) => !a.startsWith('--')), { dryRun: args.includes('--dry-run') })
+    .then((r) => console.log(JSON.stringify(r, null, 1)))
+    .catch((err) => { console.error(err.message); process.exitCode = 1; });
 } else if (cmd) {
-  console.error('usage: node tools/grafana.mjs build|push');
+  console.error('usage: node tools/grafana.mjs build|push|push-rule <uid> [--dry-run]');
   process.exit(2);
 }

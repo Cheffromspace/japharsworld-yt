@@ -58,6 +58,7 @@ import { Home } from './home.js';
 import { txBytes, TxDelta } from './net.js';
 import { ChannelSlots } from './channels.js';
 import { statsRoute, latestCredits, billingPeriod, daysBetween } from './stats.js';
+import { SpendGate, spendScope, touch } from './spend.js';
 
 const API = 1;
 const PAGES = {
@@ -97,7 +98,12 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (path === '/create') { metrics.inc('credits', 'playback', 10); metrics.latency('tunelio_create_ms', ms); }
     if (path === '/transcript') metrics.inc('credits', 'captions', 6);
   } });
-  playback ??= new Playback({ tunelio, quality: config.tunelioQuality, lowerQuality: config.tunelioLowerQuality, maxMbForQuality: config.tunelioMaxMb,
+  // Spend limits (src/spend.js) for this server's own Playback; an injected one brings its own (tests).
+  const ownSpend = playback ? null : new SpendGate({ hourCredits: config.spendHourCredits, dayCredits: config.spendDayCredits,
+    perIpPerMinute: config.spendBuildsPerMinutePerIp, perShardPerMinute: config.spendBuildsPerMinutePerShard, alert, log: logJson,
+    stateFile: config.metricsPath ? join(dirname(config.metricsPath), 'spend-budget.json') : null });
+  if (ownSpend) setInterval(() => ownSpend.check(), 60_000).unref(); // the all-clear comes without waiting for a play
+  playback ??= new Playback({ tunelio, quality: config.tunelioQuality, spend: ownSpend, lowerQuality: config.tunelioLowerQuality, maxMbForQuality: config.tunelioMaxMb,
     progressiveMaxMb: config.progressiveMaxMb, progressiveMaxSeconds: config.progressiveMaxSeconds,
     probe: tunelio.enabled ? linkProbe() : null, alert, log: logJson,
     // Next to metrics.db (tests run without one, so they write nothing).
@@ -196,16 +202,17 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // (10 credits) for a preview that may never play, and SEARCHES_PER_MINUTE alone let one visitor pasting a new link
   // each time start 20 a minute. Over either cap the lookup is answered as usual with no warm. Cached and home builds
   // don't count.
-  const lookupWarms = new Map(); // ip → timestamps; '' holds the global list
+  // Per IP, bounded by evicting the least recently active (src/spend.js touch); the global list is kept apart, so no
+  // number of IPs can reset it.
+  const lookupWarms = new Map(); // ip → timestamps
+  let lookupWarmsAll = [];
   function lookupWarmAllowed(ip) {
     const now = Date.now();
-    const recent = (k) => (lookupWarms.get(k) ?? []).filter((t) => now - t < 60_000);
-    const mine = recent(ip);
-    const all = recent('');
-    if (mine.length >= config.lookupWarmsPerMinutePerIp || all.length >= config.lookupWarmsPerMinute) return false;
-    if (lookupWarms.size > 10_000) lookupWarms.clear();
-    lookupWarms.set(ip, [...mine, now]);
-    lookupWarms.set('', [...all, now]);
+    const mine = (lookupWarms.get(ip) ?? []).filter((t) => now - t < 60_000);
+    lookupWarmsAll = lookupWarmsAll.filter((t) => now - t < 60_000);
+    if (mine.length >= config.lookupWarmsPerMinutePerIp || lookupWarmsAll.length >= config.lookupWarmsPerMinute) return false;
+    touch(lookupWarms, ip, [...mine, now]);
+    lookupWarmsAll.push(now);
     return true;
   }
 
@@ -586,6 +593,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if ((data.seconds ?? 0) >= config.homeLongMinutes * 60 && !home.isUneven?.(data)) return 'long';
     const p = adaptive.pacer?.check?.();
     if (p && !p.ok) return 'pacer';
+    // Over a spend limit (src/spend.js): home instead of a new paid build. A Tunelio build already there is still used.
+    const spend = playback.spendRefusal?.(data, undefined, { peek: true });
+    if (spend) return spend;
     return null;
   }
   // Tunelio timed out within the last TUNELIO_SUSPECT_SECONDS: another /create would likely time out too.
@@ -844,7 +854,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // Run after the answer is sent: the card never waits on it. LOOKUP_WARM=off turns it off.
   // Uncached Tunelio warms are capped (LOOKUP_WARMS_PER_MINUTE_PER_IP, LOOKUP_WARMS_PER_MINUTE): over a cap,
   // warm_skip with skipped 'cap'.
-  async function lookupWarm(shard, n, hls, device, ip) {
+  function lookupWarm(shard, n, hls, device, ip) {
+    return spendScope.run({ ip, shard }, () => lookupWarmIn(shard, n, hls, device, ip));
+  }
+  async function lookupWarmIn(shard, n, hls, device, ip) {
     const t = store.get(shard, n);
     if (t?.kind !== 'video') return;
     const skip = playback.restricted?.(t.data.id) ? 'restricted' : overCap(t.data) ? 'too_long' : null;
@@ -856,7 +869,12 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       via: st === 'too_long' ? null : st.plan === 'home' ? 'home' : 'tunelio' });
   }
 
-  async function ticket(req, res, shard, n, hlsTicket = false) {
+  // Every new paid build a ticket starts (tablet warm, player, adaptive planning) is counted against its client IP and
+  // shard (src/spend.js); over a limit the play goes home or to youtube.com.
+  function ticket(req, res, shard, n, hlsTicket = false) {
+    return spendScope.run({ ip: clientIp(req), shard }, () => ticketIn(req, res, shard, n, hlsTicket));
+  }
+  async function ticketIn(req, res, shard, n, hlsTicket = false) {
     const t = store.get(shard, n);
     if (!t) return fail(res, 404, 'unknown_ticket', 'Nothing here yet. Search again.');
     if (t.kind === 'video') {
@@ -989,7 +1007,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           }
         }
         // Tunelio's build failed: home before youtube.com's 360p, for a player that can take home's HLS, when a worker is free.
-        if (!homeFor && !resolver && homeOk && where.ready && where.via === 'youtube' && /^(tunelio_failed|build_failed|too_long)$/.test(where.reason ?? '') && home.worker()) homeFor = 'tunelio_failed';
+        if (!homeFor && !resolver && homeOk && where.ready && where.via === 'youtube' && /^(tunelio_failed|build_failed|too_long|budget|cap)$/.test(where.reason ?? '') && home.worker()) homeFor = 'tunelio_failed';
         if (homeFor) {
           const fallback = startHome(shard, t.data, hq, homeFor);
           if (fallback && fallback.state !== 'failed') {

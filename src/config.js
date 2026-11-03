@@ -152,6 +152,13 @@ export const config = {
   // Uncached lookup warms a minute (10 Tunelio credits each), per IP and in all; cached and home builds don't count.
   lookupWarmsPerMinutePerIp: int('LOOKUP_WARMS_PER_MINUTE_PER_IP', 3),
   lookupWarmsPerMinute: int('LOOKUP_WARMS_PER_MINUTE', 10),
+  // Spend limits on paid Tunelio builds (src/spend.js, where the defaults are worked out from real spend): credits per
+  // rolling hour and 24 h (0 = no limit), and new paid builds a minute per client IP and per shard (distinct videos).
+  // Over one there is no new build: home or youtube.com. The budget alerts Discord once when reached and once when clear.
+  spendHourCredits: int('SPEND_HOUR_CREDITS', 800),
+  spendDayCredits: int('SPEND_DAY_CREDITS', 4000),
+  spendBuildsPerMinutePerIp: int('SPEND_BUILDS_PER_MINUTE_PER_IP', 4),
+  spendBuildsPerMinutePerShard: int('SPEND_BUILDS_PER_MINUTE_PER_SHARD', 6),
   ticketPinMarginMs: int('TICKET_PIN_MARGIN_MINUTES', 15) * 60_000,
   // The quality home builds when the room hasn't picked one (owner, 2026-10-25: 1080p; home streams, so 1080p starts
   // about as fast as 720p: first segments 6.2 s vs 2.9 s on the Optiplex, 2026-10-23). A room's own pick wins.

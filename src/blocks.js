@@ -27,10 +27,12 @@ export function layoutFor(code) {
   return { maxChars: 42, units: 'words', join: ' ' };
 }
 
-// cues → words [{ t, e, w, sp, real }]: t/e in ms, sp = a space precedes the word, real = the source timed it.
+// cues → words [{ t, e, w, sp, real, seg }]: t/e in ms, sp = a space precedes the word, real = the source timed it,
+// seg = the number of the source seg it came from (timedChunks counts segs to call a track real or estimated).
 // A seg the source did not time, or one holding several words, spreads its span over its words by character count.
-export function wordsFromCues(cues, { units = 'words', maxChars = 42 } = {}) {
+export function wordsFromCues(cues, { units = 'words', maxChars = 42, join = ' ' } = {}) {
   const words = [];
+  let segNo = 0;
   for (let c = 0; c < cues.length; c++) {
     const [start, dur, segs] = cues[c];
     const cueEnd = start + Math.max(dur, 300);
@@ -48,7 +50,7 @@ export function wordsFromCues(cues, { units = 'words', maxChars = 42 } = {}) {
     }
     // The source timed this cue's words, not just its start (seg 0's offset is always 0, so a later seg must carry one).
     const wordTimed = segs.some(([o], k) => k > 0 && o != null);
-    for (let i = 0; i < segs.length; i++) {
+    for (let i = 0; i < segs.length; i++, segNo++) {
       const [offset, text] = segs[i];
       const segStart = starts[i], segEnd = i + 1 < segs.length ? starts[i + 1] : cueEnd;
       const real = offset != null;
@@ -56,17 +58,20 @@ export function wordsFromCues(cues, { units = 'words', maxChars = 42 } = {}) {
       // (or short phrase) with its own time, so it stays one real unit instead of characters spread by weight
       // (Everything-is-OK#463: a word-timed Japanese track came out estimated and, with CAPTION_REAL_WORDS_ONLY, lost
       // its highlight). A cue of one seg is a line timed only at its start, so it is still split and estimated; so is
-      // a seg wider than a line or holding a space, which is more than one word.
+      // a seg wider than a line. A seg holding a space is more than one word: in Japanese and Chinese (no spaces in the
+      // line) it is split as before; in Thai, whose spaces mark phrases and stay in the line, it stays one real unit
+      // with its spaces, because YouTube timed the seg once and the phrases after its first have no time of their own:
+      // one highlight at a real time beats estimated pieces, which CAPTION_REAL_WORDS_ONLY exists to avoid.
       if (units === 'chars' && real && wordTimed) {
-        const word = text.trim();
+        const word = text.trim().replace(/\s+/g, ' ');
         if (i > 0 && words.length && PUNCT_ONLY.test(word) && !/^\s/.test(text)) {
           // A seg of only punctuation stays on the word before it, as split() keeps it within a seg.
           words[words.length - 1].w += word;
           words[words.length - 1].e = segEnd;
           continue;
         }
-        if (word && !/\s/.test(word) && Array.from(word).length <= maxChars && !ATTACHED.test(word[0])) {
-          words.push({ t: segStart, e: segEnd, w: word, sp: i === 0 || /^\s/.test(text), real: true });
+        if (word && (join === ' ' || !/\s/.test(word)) && width(word) <= maxChars && !ATTACHED.test(word[0])) {
+          words.push({ t: segStart, e: segEnd, w: word, sp: i === 0 || /^\s/.test(text), real: true, seg: segNo });
           continue;
         }
       }
@@ -74,7 +79,7 @@ export function wordsFromCues(cues, { units = 'words', maxChars = 42 } = {}) {
       if (!pieces.length) continue;
       // A cue's first word starts fresh after the cue before it (json3 only puts the space on words within a cue).
       if (i === 0) pieces[0].sp = true;
-      if (pieces.length === 1) { words.push({ t: segStart, e: segEnd, w: pieces[0].w, sp: pieces[0].sp || /^\s/.test(text), real }); continue; }
+      if (pieces.length === 1) { words.push({ t: segStart, e: segEnd, w: pieces[0].w, sp: pieces[0].sp || /^\s/.test(text), real, seg: segNo }); continue; }
       const weights = pieces.map((p) => Math.max(1, p.w.length + (units === 'words' ? 1 : 0)));
       const total = weights.reduce((a, b) => a + b, 0);
       let acc = 0;
@@ -82,7 +87,7 @@ export function wordsFromCues(cues, { units = 'words', maxChars = 42 } = {}) {
         const t = segStart + (segEnd - segStart) * (acc / total);
         acc += weights[k];
         const e = segStart + (segEnd - segStart) * (acc / total);
-        words.push({ t, e, w: pieces[k].w, sp: k === 0 ? (pieces[k].sp || /^\s/.test(text)) : pieces[k].sp, real: false });
+        words.push({ t, e, w: pieces[k].w, sp: k === 0 ? (pieces[k].sp || /^\s/.test(text)) : pieces[k].sp, real: false, seg: segNo });
       }
     }
   }
@@ -93,6 +98,10 @@ export function wordsFromCues(cues, { units = 'words', maxChars = 42 } = {}) {
   for (const w of words) if (w.e < w.t) w.e = w.t;
   return words;
 }
+
+// Width in code points, the one measure compared with maxChars (a CJK Extension B character such as 𠮷 is two UTF-16
+// units but one character on screen). Chunk offsets stay UTF-16 indexes: the world's strings are C# strings.
+const width = (text) => { let n = 0; for (const _ of text) n++; return n; };
 
 // Text → pieces [{ w, sp }]. Words mode splits on whitespace (a newline counts as a space); chars mode makes every
 // character its own unit so scripts without spaces can still break anywhere, with punctuation kept on the character
@@ -155,7 +164,7 @@ export function chunkWords(words, { maxChars = 42, join = ' ', minFill = 0.45 } 
   while (i < words.length) {
     let j = i, len = 0;
     while (j < words.length) {
-      const add = (j > i && words[j].sp && join === ' ' ? 1 : 0) + words[j].w.length;
+      const add = (j > i && words[j].sp && join === ' ' ? 1 : 0) + width(words[j].w);
       if (j > i && len + add > maxChars) break;
       len += add; j++;
       const s = strength[j - 1];
@@ -179,7 +188,7 @@ export function chunkWords(words, { maxChars = 42, join = ' ', minFill = 0.45 } 
     const prev = chunks[c - 1], cur = chunks[c];
     if (cur.count === 1 && prev.brk === 0 && prev.count > 2 && cur.brk >= 2) {
       const moved = words.slice(prev.from, prev.to - 1), rest = words.slice(prev.to - 1, cur.to);
-      const restLen = textOf(rest, join).length, movedLen = textOf(moved, join).length;
+      const restLen = width(textOf(rest, join)), movedLen = width(textOf(moved, join));
       if (restLen <= maxChars && movedLen >= maxChars * 0.3) {
         chunks[c - 1] = make(words, prev.from, prev.to - 1, 0, join);
         chunks[c] = make(words, prev.to - 1, cur.to, cur.brk, join);
@@ -214,8 +223,14 @@ export function timedChunks(cues, code) {
   const chunks = chunkWords(words, layout);
   // Each chunk ends no later than the next one begins.
   for (let i = 0; i + 1 < chunks.length; i++) if (chunks[i][1] > chunks[i + 1][0]) chunks[i][1] = Math.max(chunks[i][0], chunks[i + 1][0]);
-  const real = words.filter((w) => w.real).length;
-  return { chunks, words: words.length && real >= words.length / 2 ? 'real' : 'estimated' };
+  // Real when at least half of the source's segs kept their own time, counted per seg and not per unit: a seg that
+  // falls back to estimates (untimed, or wider than a line) makes one estimated unit per character in a character
+  // layout, so counting units let two untimed segs outvote a cue YouTube timed seg by seg (#463 follow-up).
+  const segReal = new Map();
+  for (const w of words) segReal.set(w.seg, (segReal.get(w.seg) ?? true) && w.real);
+  let real = 0;
+  for (const r of segReal.values()) if (r) real++;
+  return { chunks, words: segReal.size && real >= segReal.size / 2 ? 'real' : 'estimated' };
 }
 
 // What the world gets. With realWordsOnly (CAPTION_REAL_WORDS_ONLY=on) an estimated track's offsets are left empty.

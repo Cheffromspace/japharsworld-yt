@@ -164,6 +164,11 @@ export const config = {
   // Most client IPs kept by each per-IP limit (the lookup warm's and the spend limits'); past it the least recently
   // active go first.
   rateKeysMax: int('RATE_KEYS_MAX', 10_000),
+  // Trusted client IPs (src/trusted.js): comma-separated IPv4, IPv6 and CIDR, env only (the repo is public). Every per-IP
+  // limit (searches, lookup warms, builds, transcripts) is TRUSTED_IP_FACTOR times as high for them; the per-shard cap,
+  // the global lookup-warm cap and the spend budget are not.
+  trustedIps: process.env.TRUSTED_IPS ?? '',
+  trustedIpFactor: int('TRUSTED_IP_FACTOR', 10),
   ticketPinMarginMs: int('TICKET_PIN_MARGIN_MINUTES', 15) * 60_000,
   // The quality home builds when the room hasn't picked one (owner, 2026-10-25: 1080p; home streams, so 1080p starts
   // about as fast as 720p: first segments 6.2 s vs 2.9 s on the Optiplex, 2026-10-23). A room's own pick wins.

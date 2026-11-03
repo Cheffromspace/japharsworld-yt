@@ -14,6 +14,9 @@
 // Caption transcripts (6 credits each, src/transcripts.js) share the same budget and have their own per-IP limit,
 // SPEND_TRANSCRIPTS_PER_MINUTE_PER_IP, counting every uncached call.
 //
+// A trusted client IP (TRUSTED_IPS, src/trusted.js) gets trustedFactor times both per-IP limits; the per-shard cap and
+// the budget are the same for it as for everyone. Its spend_cap events carry trusted: true.
+//
 // Windows roll (the last 60 minutes, the last 24 hours) and the spends are kept in stateFile (times and credits only),
 // so a restart doesn't hand out a fresh budget. A missing file starts empty; an unreadable one is kept as .bak and the
 // hour starts half spent, so a damaged file can't hand out a fresh budget either.
@@ -26,6 +29,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { readFileSync, writeFileSync, renameSync, copyFileSync } from 'node:fs';
+import { limitFor } from './trusted.js';
 
 // The request a paid build would be made for: { ip, shard }. server.js runs each ticket and lookup in it; a build made
 // outside any request (a restart resuming one) has none and meets the budget only.
@@ -54,9 +58,9 @@ export function touch(map, key, value, max = 10_000, now = Date.now()) {
 export class SpendGate {
   constructor({ hourCredits = 800, dayCredits = 4000, perIpPerMinute = 4, perShardPerMinute = 6, cost = 10,
     transcriptsPerIpPerMinute = 6, transcriptCost = 6, maxKeys = 10_000, okAfterMs = 30 * MINUTE, alertEveryMs = DAY,
-    alert = () => {}, log = () => {}, now = () => Date.now(), stateFile = null } = {}) {
+    alert = () => {}, log = () => {}, now = () => Date.now(), stateFile = null, trusted = null, trustedFactor = 10 } = {}) {
     Object.assign(this, { hourCredits, dayCredits, perIpPerMinute, perShardPerMinute, cost, transcriptsPerIpPerMinute, transcriptCost,
-      maxKeys, okAfterMs, alertEveryMs, alert, log, now, stateFile });
+      maxKeys, okAfterMs, alertEveryMs, alert, log, now, stateFile, trusted, trustedFactor });
     this.spends = []; // { at, c }, oldest first, the last 24 h
     this.byIp = new Map(); // ip → [{ id, at }]
     this.byShard = new Map(); // shard → [{ id, at }]
@@ -145,6 +149,9 @@ export class SpendGate {
     return () => { const i = this.spends.indexOf(s); if (i >= 0) { this.spends.splice(i, 1); this.#save(); } };
   }
 
+  // Whether this request's client IP is in TRUSTED_IPS.
+  #trusted(ip) { return Boolean(ip && this.trusted?.has(ip)); }
+
   // The rate limit this request's new build of `id` would break: 'ip', 'shard' or null. A video this IP (or shard)
   // already started in the window counts once. With record, an allowed build is counted.
   #rate(id, record) {
@@ -155,7 +162,8 @@ export class SpendGate {
     const ip = ctx.ip ? fresh(this.byIp, ctx.ip) : null;
     const shard = ctx.shard != null ? fresh(this.byShard, ctx.shard) : null;
     const known = (list) => !list || list.some((e) => e.id === id);
-    if (ip && !known(ip) && ip.length >= this.perIpPerMinute && this.perIpPerMinute > 0) return 'ip';
+    const perIp = limitFor(this.perIpPerMinute, this.#trusted(ctx.ip), this.trustedFactor);
+    if (ip && !known(ip) && ip.length >= perIp && perIp > 0) return 'ip';
     if (shard && !known(shard) && shard.length >= this.perShardPerMinute && this.perShardPerMinute > 0) return 'shard';
     if (!record) return null;
     if (ip && !known(ip) && !touch(this.byIp, ctx.ip, [...ip, { id, at: now }], this.maxKeys, now)) return 'ip';
@@ -171,7 +179,7 @@ export class SpendGate {
     const rate = this.#rate(id, !peek);
     if (rate && !peek) {
       const ctx = spendScope.getStore();
-      this.log({ event: 'spend_cap', by: rate, shard: ctx?.shard ?? null });
+      this.log({ event: 'spend_cap', by: rate, shard: ctx?.shard ?? null, ...(this.#trusted(ctx?.ip) ? { trusted: true } : {}) });
     }
     return rate ? 'cap' : null;
   }
@@ -181,17 +189,14 @@ export class SpendGate {
   refuseTranscript() {
     if (this.check(this.transcriptCost)) return 'budget';
     const ip = spendScope.getStore()?.ip;
-    if (!ip || !(this.transcriptsPerIpPerMinute > 0)) return null;
+    const trusted = this.#trusted(ip);
+    const perIp = limitFor(this.transcriptsPerIpPerMinute, trusted, this.trustedFactor);
+    if (!ip || !(perIp > 0)) return null;
     const now = this.now();
     const list = (this.transcriptsByIp.get(ip) ?? []).filter((e) => now - e.at < MINUTE);
-    if (list.length >= this.transcriptsPerIpPerMinute) {
-      this.log({ event: 'spend_cap', by: 'ip', kind: 'transcript' });
-      return 'cap';
-    }
-    if (!touch(this.transcriptsByIp, ip, [...list, { at: now }], this.maxKeys, now)) {
-      this.log({ event: 'spend_cap', by: 'ip', kind: 'transcript' });
-      return 'cap';
-    }
+    const capped = () => { this.log({ event: 'spend_cap', by: 'ip', kind: 'transcript', ...(trusted ? { trusted: true } : {}) }); return 'cap'; };
+    if (list.length >= perIp) return capped();
+    if (!touch(this.transcriptsByIp, ip, [...list, { at: now }], this.maxKeys, now)) return capped();
     return null;
   }
 }

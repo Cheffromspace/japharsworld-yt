@@ -192,6 +192,23 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return list.length > config.searchesPerMinutePerIp;
   }
 
+  // Uncached lookup warms in the last minute, per IP and in all (Everything-is-OK#449): each is a paid Tunelio build
+  // (10 credits) for a preview that may never play, and SEARCHES_PER_MINUTE alone let one visitor pasting a new link
+  // each time start 20 a minute. Over either cap the lookup is answered as usual with no warm. Cached and home builds
+  // don't count.
+  const lookupWarms = new Map(); // ip → timestamps; '' holds the global list
+  function lookupWarmAllowed(ip) {
+    const now = Date.now();
+    const recent = (k) => (lookupWarms.get(k) ?? []).filter((t) => now - t < 60_000);
+    const mine = recent(ip);
+    const all = recent('');
+    if (mine.length >= config.lookupWarmsPerMinutePerIp || all.length >= config.lookupWarmsPerMinute) return false;
+    if (lookupWarms.size > 10_000) lookupWarms.clear();
+    lookupWarms.set(ip, [...mine, now]);
+    lookupWarms.set('', [...all, now]);
+    return true;
+  }
+
   // Binds a page of results to tickets: one per video, one for the sheet, one for the next page.
   // A video ticket keeps its title, channel and the start of its description, so the tablet's status answer can show
   // them to everyone in the room, not only to whoever pressed Play (Everything-is-OK#114).
@@ -282,9 +299,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   }
 
   // The User-Agent's class only, never the UA itself (search_shape, video_report).
-  // Quest: /Quest/i also matched "UnityWebRequest", so every PC string load counted as android (world #353; the PC's
+  // \bQuest\b: /Quest/i also matched "UnityWebRequest", so every PC string load counted as android (world #353; the PC's
   // UA, 2026-10-30: "UnityPlayer/6000.0.67f1-DWR (UnityWebRequest…").
-  const uaDevice = (ua) => /Android|Quest|Oculus/i.test(ua) ? 'android' : /UnityPlayer/i.test(ua) ? 'unity' : ua ? 'other' : 'none';
+  const uaDevice = (ua) => /Android|\bQuest\b|Oculus/i.test(ua) ? 'android' : /UnityPlayer/i.test(ua) ? 'unity' : ua ? 'other' : 'none';
 
   // `lang`: from l= on /v1/<shard>/s, or from the compact address's language letter (/s/<shard><letter>, src/query.js).
   // `hlsTicket`: the address ends in .m3u8 (/v1/<shard>/s.m3u8, /s/<shard><letter>.m3u8), for a pasted link's play (#136).
@@ -340,7 +357,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     json(res, 200, body);
     if (linked && kind === 'string' && config.lookupWarm) {
       const device = uaDevice(ua);
-      lookupWarm(shard, body.results[0].t, hlsTicket || device === 'android', device)
+      lookupWarm(shard, body.results[0].t, hlsTicket || device === 'android', device, clientIp(req))
         .catch((err) => logJson({ event: 'lookup_warm_failed', message: String(err?.message ?? err).slice(0, 200) }));
     }
   }
@@ -780,7 +797,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // `reason` names who asked, for the warm's log line: 'tablet' (a ticket's own status load: a row selected, a queued
   // row, the Play bar's polls; the world sends no reason, so the service can't tell those apart) or 'lookup' (a pasted
   // link's search, Everything-is-OK#449). A cached build is no warm and costs nothing.
-  async function tabletStatus(shard, n, t, hlsTicket, reason) {
+  // `gate` (lookups only): asked before a new Tunelio build starts; false skips it and the answer is 'cap'.
+  async function tabletStatus(shard, n, t, hlsTicket, reason, gate = null) {
     // A ticket being played reports the source its players were given (TICKET_PIN), not a new decision.
     const pin = pinned(pinKey(shard, n, hlsTicket, 'avpro'), t.data, { touch: false });
     if (pin?.session) return { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(pin.session), ...meta(t.data) };
@@ -799,6 +817,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (hlsTicket && playback.tooLong?.(t.data.id)) return 'too_long';
     let c = await choice(shard, t.data);
     if (hlsTicket && !t.data.live) c = hlsChoice(c); // live: the watch link, as on a plain ticket (world #270)
+    if (gate && playback.wouldBuild?.(t.data, c.quality, { hls: c.hls }) && !gate()) return 'cap';
     const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
     const st = playback.status(t.data, { quality: c.quality, hls: c.hls });
     if (hlsTicket && st.reason === 'too_long') return 'too_long';
@@ -822,12 +841,15 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // what a PC player of a plain ticket opens. The same rules as a tablet's own warm: restricted and over-cap videos
   // are never warmed, a cached build costs nothing, and the lookup already counted against the per-IP search limit.
   // Run after the answer is sent: the card never waits on it. LOOKUP_WARM=off turns it off.
-  async function lookupWarm(shard, n, hls, device) {
+  // Uncached Tunelio warms are capped (LOOKUP_WARMS_PER_MINUTE_PER_IP, LOOKUP_WARMS_PER_MINUTE): over a cap,
+  // warm_skip with skipped 'cap'.
+  async function lookupWarm(shard, n, hls, device, ip) {
     const t = store.get(shard, n);
     if (t?.kind !== 'video') return;
     const skip = playback.restricted?.(t.data.id) ? 'restricted' : overCap(t.data) ? 'too_long' : null;
     if (skip) return logJson({ event: 'warm_skip', shard, n, id: t.data.id, reason: 'lookup', skipped: skip, hls, device });
-    const st = await tabletStatus(shard, n, t, hls, 'lookup');
+    const st = await tabletStatus(shard, n, t, hls, 'lookup', () => lookupWarmAllowed(ip));
+    if (st === 'cap') return logJson({ event: 'warm_skip', shard, n, id: t.data.id, reason: 'lookup', skipped: 'cap', hls, device });
     // `warm`: the build's state after it (building, ready, youtube...), in fields /ops/events already carries.
     logJson({ event: 'lookup_warm', shard, n, id: t.data.id, reason: 'lookup', hls, device, warm: st === 'too_long' ? 'too_long' : st.state ?? null,
       via: st === 'too_long' ? null : st.plan === 'home' ? 'home' : 'tunelio' });

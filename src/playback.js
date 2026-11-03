@@ -194,6 +194,19 @@ export class Playback {
 
   // The job for a video at a quality, started if there is none (or the old one expired or failed long enough ago to
   // retry). ticket data: { id, live?, seconds? }
+  #stale(job, now) {
+    return job.state === 'ready' ? job.expiresMs - this.marginMs <= now
+      : job.state === 'failed' ? now - job.endedMs > (job.reason === 'too_long' ? this.restrictedMs : 30_000) : false;
+  }
+
+  // Whether start() would begin a new build (a paid /create) rather than return a job it holds or refuse; the
+  // lookup warm's cap counts only those (Everything-is-OK#449).
+  wouldBuild(data, quality = this.quality, { hls = false } = {}) {
+    if (data.live || this.restricted(data.id) || this.tooLong(data.id)) return false;
+    const job = this.jobs.get(this.#key(data, quality, hls));
+    return !job || this.#stale(job, this.now());
+  }
+
   start(data, quality = this.quality, { hls = false, maxMb = 0 } = {}) {
     if (data.live) return null; // Tunelio refuses live streams (400 "Live streams are not supported"); they play from youtube.com
     const id = data.id;
@@ -202,9 +215,7 @@ export class Playback {
     const now = this.now();
     let job = this.jobs.get(key);
     if (job) {
-      const stale = job.state === 'ready' ? job.expiresMs - this.marginMs <= now
-        : job.state === 'failed' ? now - job.endedMs > (job.reason === 'too_long' ? this.restrictedMs : 30_000) : false;
-      if (!stale) return job;
+      if (!this.#stale(job, now)) return job;
       this.jobs.delete(key);
     }
     if (this.jobs.size > 2000) for (const [k, j] of this.jobs) if (j.state !== 'building') this.jobs.delete(k);

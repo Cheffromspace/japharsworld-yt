@@ -139,6 +139,37 @@ test('character scripts: only word-timed segs that fit a line stay whole; the re
   assert.equal(wide.map((x) => x.w).join(''), 'ね秒ぐらい遅れて録画の映像が来るやつあい');
 });
 
+test('a track is real when half its segs kept YouTube times, counted per seg, not per character unit (#463 follow-up)', () => {
+  // Two untimed segs make four estimated characters against two real units; per seg it is 2 of 4.
+  const mixed = [[1000, 3000, [[0, '今日は'], [null, 'いい'], [null, '天気'], [1000, 'ですね']]]];
+  const { chunks, words } = chunksFromCues(mixed, 'ja', { realWordsOnly: true });
+  assert.equal(words, 'real');
+  assert.notEqual(chunks[0][4], '', 'offsets are sent');
+  // Mostly untimed is still estimated: 2 of 5 segs.
+  const mostly = [[1000, 3000, [[0, '今日は'], [null, 'いい'], [null, '天気'], [null, 'です'], [1000, 'ね']]]];
+  assert.equal(chunksFromCues(mostly, 'ja', { realWordsOnly: true }).words, 'estimated');
+  // Thai: a timed seg holding a space stays one real unit with its space (its later phrase has no time of its own),
+  // instead of seven estimated characters that made the track estimated.
+  const th = [[1000, 3000, [[0, 'วันนี้'], [500, ' อากาศดี มาก'], [1500, ' ไป'], [2000, 'เที่ยว']]]];
+  const thWords = wordsFromCues(th, layoutFor('th'));
+  assert.deepEqual(thWords.map((x) => [x.w, x.real]), [['วันนี้', true], ['อากาศดี มาก', true], ['ไป', true], ['เที่ยว', true]]);
+  const thOut = chunksFromCues(th, 'th', { realWordsOnly: true });
+  assert.equal(thOut.words, 'real');
+  assert.deepEqual(thOut.chunks, [[1, 4, 'วันนี้ อากาศดี มาก ไปเที่ยว', 3, '0:0,50:7,150:19,200:21']]);
+  checkChunks(thOut.chunks, 42);
+});
+
+test('line width is counted in code points everywhere: a two-unit CJK character is one of the 16 (#463 follow-up)', () => {
+  // 𠮷 (U+20BB7) is two UTF-16 units. Ten of them fit one 16-wide line; counted in UTF-16 they made two lines.
+  const ws = Array.from({ length: 10 }, (_, k) => ({ t: k * 100, e: k * 100 + 100, w: '𠮷', sp: false, real: true }));
+  const chunks = chunkWords(ws, layoutFor('ja'));
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0][2], '𠮷'.repeat(10));
+  // Offsets stay UTF-16 indexes (the world's strings are C# strings).
+  assert.equal(chunks[0][4].split(',')[1], '10:2');
+});
+
+
 const w = (list) => list.map(([t, e, text]) => ({ t, e, w: text, sp: true, real: true }));
 
 test('breaks: sentence > clause > pause > length, and a long silence always ends a line', () => {

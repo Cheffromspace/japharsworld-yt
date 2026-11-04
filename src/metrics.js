@@ -103,7 +103,10 @@ export const METRICS = {
   // Home relay (src/home.js): sessions started / ready / failed, new sessions refused by the daily cap, and why a play
   // started home (Tunelio off, a long video, the credit pacer, Tunelio's build failed), counted once per session.
   home: ['daily', oneOf('start', 'ready', 'failed', 'capped', 'defer', 'timeout', 'cache_hit', 'settled', 'settle_timeout', 'other_quality', 'uneven', 'stepdown', 'no_room', 'race_won')],
-  home_why: ['daily', oneOf('tunelio_off', 'long', 'pacer', 'tunelio_failed', 'av1', 'tunelio_slow', 'slow_build', 'budget', 'cap')],
+  home_why: ['daily', oneOf('tunelio_off', 'long', 'pacer', 'tunelio_failed', 'av1', 'tunelio_slow', 'slow_build', 'budget', 'cap', 'near_budget', 'tunelio_busy')],
+  // Where each new build went (src/server.js routeEvent, owner 2026-11-04): a home session, a paid Tunelio /create, or
+  // youtube.com for a play no source took (a spend limit with home full).
+  build_route: ['daily', oneOf('home', 'tunelio', 'youtube')],
   home_start_s: ['daily', isSBucket],
   // Today's home relay use against its cap and the media workers connected, set every minute (numbers only).
   channel: ['daily', oneOf('redirect', 'unavailable', 'unknown')], // /v1/ch/<key> (src/channels.js)
@@ -122,6 +125,7 @@ export const METRICS = {
   ticket_fastfail: ['daily', none],   // resolver told "not a video" while the build ran on
   ticket_timeout: ['daily', none],    // a player waited the whole hold and got youtube.com instead
   ticket_restricted: ['daily', none], // an age-restricted video answered `restricted` (world #305)
+  ticket_limited: ['daily', none],   // a ticket request over TICKETS_PER_MINUTE_PER_IP (429 rate_limited)
   ticket_too_long: ['daily', none],   // a ticket answered `too_long`: over VIDEO_MAX_HOURS, or a Quest's with Tunelio and home refusing it (world #420)
   build: ['daily', oneOf('ok', 'failed')],
   build_s_progressive: ['daily', isSBucket],

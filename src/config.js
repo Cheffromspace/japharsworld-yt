@@ -17,7 +17,11 @@ export const config = {
   // A video ticket that has been played stays bound to its video this long (late joiners).
   pinHours: int('PIN_HOURS', 24),
   resultsPerPage: int('RESULTS_PER_PAGE', 20),
+  // Searches and More pages a minute per client IP (429 rate_limited over it).
   searchesPerMinutePerIp: int('SEARCHES_PER_MINUTE', 20),
+  // Ticket requests a minute per client IP (status, player, sheet, More; 429 rate_limited over it). VRChat lets a
+  // client load one string and one image per 5 s (24 a minute) plus a few loads per play, so 120 is ~5x a real one.
+  ticketsPerMinutePerIp: int('TICKETS_PER_MINUTE_PER_IP', 120),
   dbPath: process.env.DB_PATH ?? 'data/tickets.db',
   ytdlp: process.env.YTDLP ?? 'yt-dlp',
   ytdlpExtraArgs: (process.env.YTDLP_ARGS ?? '').split(' ').filter(Boolean),
@@ -105,6 +109,10 @@ export const config = {
   // Tunelio's /create timeout, and how long after a Tunelio timeout plays go home (when they can) instead of to Tunelio.
   tunelioCreateTimeoutMs: int('TUNELIO_CREATE_TIMEOUT_SECONDS', 6) * 1000,
   tunelioSuspectMs: int('TUNELIO_SUSPECT_SECONDS', 120) * 1000,
+  // Tunelio builds running at once past which new plays go home first while home has a free stream (src/server.js
+  // homeWhy, tunelio_busy; 0 = never). The busiest real minute had 9 builds (prod 2026-10-31); not measured against
+  // Tunelio's own limits: a point to spread the load at, not a cap.
+  tunelioBusyBuilds: int('TUNELIO_BUSY_BUILDS', 8),
   // The probe's own quality (2026-10-22: it followed TUNELIO_QUALITY, so it measured 720p while Auto decides whether
   // 1080p is fast enough).
   tunelioProbeQuality: process.env.TUNELIO_PROBE_QUALITY ?? '1080p',
@@ -151,13 +159,17 @@ export const config = {
   // Uncached lookup warms a minute (10 Tunelio credits each), per IP and in all; cached and home builds don't count.
   lookupWarmsPerMinutePerIp: int('LOOKUP_WARMS_PER_MINUTE_PER_IP', 3),
   lookupWarmsPerMinute: int('LOOKUP_WARMS_PER_MINUTE', 10),
-  // Spend limits on paid Tunelio builds (src/spend.js, where the defaults are worked out from real spend): credits per
-  // rolling hour and 24 h (0 = no limit), and new paid builds a minute per client IP and per shard (distinct videos).
-  // Over one there is no new build: home or youtube.com. The budget alerts Discord once when reached and once when clear.
-  spendHourCredits: int('SPEND_HOUR_CREDITS', 800),
-  spendDayCredits: int('SPEND_DAY_CREDITS', 4000),
-  spendBuildsPerMinutePerIp: int('SPEND_BUILDS_PER_MINUTE_PER_IP', 4),
-  spendBuildsPerMinutePerShard: int('SPEND_BUILDS_PER_MINUTE_PER_SHARD', 6),
+  // Spend limits on paid Tunelio builds (src/spend.js, where the defaults are worked out from real spend and the 100k a
+  // month plan): credits per rolling hour, 24 h and billing period (TUNELIO_RENEWS_DAY; 0 = no limit), and new paid
+  // builds a minute per client IP and per shard (distinct videos). Over one there is no new build: home or youtube.com.
+  // Past SPEND_HOME_FIRST_PERCENT of the hour or day budget new plays go home first (Tunelio when home is full). The
+  // budget alerts Discord once when reached and once when clear.
+  spendHourCredits: int('SPEND_HOUR_CREDITS', 1500),
+  spendDayCredits: int('SPEND_DAY_CREDITS', 8000),
+  spendMonthCredits: int('SPEND_MONTH_CREDITS', 100_000),
+  spendHomeFirstPercent: int('SPEND_HOME_FIRST_PERCENT', 75),
+  spendBuildsPerMinutePerIp: int('SPEND_BUILDS_PER_MINUTE_PER_IP', 6),
+  spendBuildsPerMinutePerShard: int('SPEND_BUILDS_PER_MINUTE_PER_SHARD', 12),
   // Uncached caption transcripts (6 credits each) a minute per client IP, under the same budget. Over it, or over the
   // budget, captions are unavailable for now; playback is unaffected.
   spendTranscriptsPerMinutePerIp: int('SPEND_TRANSCRIPTS_PER_MINUTE_PER_IP', 6),
@@ -165,7 +177,7 @@ export const config = {
   // active go first.
   rateKeysMax: int('RATE_KEYS_MAX', 10_000),
   // Trusted client IPs (src/trusted.js): comma-separated IPv4, IPv6 and CIDR, env only (the repo is public). Every per-IP
-  // limit (searches, lookup warms, builds, transcripts) is TRUSTED_IP_FACTOR times as high for them; the per-shard cap,
+  // limit (searches and More pages, ticket requests, lookup warms, builds, transcripts) is TRUSTED_IP_FACTOR times as high for them; the per-shard cap,
   // the global lookup-warm cap and the spend budget are not.
   trustedIps: process.env.TRUSTED_IPS ?? '',
   trustedIpFactor: int('TRUSTED_IP_FACTOR', 10),

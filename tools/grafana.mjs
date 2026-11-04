@@ -222,6 +222,8 @@ export function dashboard() {
   ], { w: 8, unit: 's', min: 0, description: 'From a home relay play to its first playlist with a segment from the Optiplex, p50 and p95 over the 6 h before each point.' }));
   p.push(series('Credits spent per day, by use', [[ev('credits', '1d'), '{{key}}']], { w: 8, stack: true, min: 0,
     description: 'Tunelio credits spent in the 24 h before each point, by use: playback builds, caption transcripts, the speed probe, and test slot refills.' }));
+  p.push(series('New builds: home vs Tunelio, per day', [[ev('build_route', '1d'), '{{key}}']], { w: 8, stack: true, min: 0,
+    description: 'New builds in the 24 h before each point, by where they went: home (a new home relay session), tunelio (a paid build), youtube (no source could take it: a spend limit with home full). Next to the credits spent per day, it shows how the load is shared.' }));
   p.push(series('Search sources (per 6 h)', [[ev('search_source'), '{{key}}'], ['max(eiok_youtube_api_units_today)', 'Data API units today']], { w: 8, stack: false, min: 0,
     description: 'Which source answered searches, per 6 h: worker the home relay, local the Linode, api the YouTube Data API (quota), with today\'s Data API units.' }));
   p.push(series('Captions (per 6 h)', [

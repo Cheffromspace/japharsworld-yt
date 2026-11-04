@@ -39,8 +39,10 @@ const SIZE_REFUSAL_MIN_MB = 5000;
 export class Playback {
   constructor({ tunelio, quality = '1080p', lowerQuality = '720p', maxMbForQuality = 1500, progressiveMaxMb = 6000,
     progressiveMaxSeconds = 12 * 3600, progressiveRetries = 2, marginSeconds = 20 * 60,
-    pauseMinutes = 10, restrictedHours = 24, alert = () => {}, log = () => {}, now = () => Date.now(), probe = null, onBuild = () => {}, stateFile = null, liveFile = null, spend = null }) {
+    pauseMinutes = 10, restrictedHours = 24, alert = () => {}, log = () => {}, now = () => Date.now(), probe = null, onBuild = () => {}, stateFile = null, liveFile = null, spend = null, onPaid = () => {} }) {
     this.tunelio = tunelio;
+    // Called with { id, quality } for every paid /create as it is made (src/server.js: the build_route event).
+    this.onPaid = onPaid;
     this.quality = quality;
     // A file above maxMbForQuality MB at `quality` is made again at lowerQuality (10 more credits, roughly half the
     // build); above progressiveMaxMb MB (or progressiveMaxSeconds long) it is served as HLS. Progressive is the better
@@ -227,6 +229,13 @@ export class Playback {
     return !job || this.#stale(job, this.now());
   }
 
+  // Tunelio builds running now (src/server.js homeWhy: tunelio_busy).
+  building() {
+    let n = 0;
+    for (const j of this.jobs.values()) if (j.state === 'building') n++;
+    return n;
+  }
+
   // Why a new build of this video may not start now (src/spend.js): 'budget', 'cap' or null. Null too when start()
   // would not build (a job is there, or the video is refused anyway), so cached plays never meet the limits.
   spendRefusal(data, quality = this.quality, { hls = false, peek = false } = {}) {
@@ -279,6 +288,7 @@ export class Playback {
       if (refused) return Promise.reject(Object.assign(new Error(`spend ${refused}`), { status: 429, code: refused, spend: true }));
       refund = this.spend.charge();
     }
+    try { this.onPaid({ id, quality }); } catch { /* an event, never in the way of the build */ }
     // A refund on failure: Tunelio charges nothing for a failed call. A timeout on our side refunds too, though Tunelio
     // may have charged it (noted in src/spend.js).
     const entry = { made: null };

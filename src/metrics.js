@@ -97,6 +97,8 @@ export const METRICS = {
   // Videos newly built, by where (src/server.js routeEvent, owner 2026-11-04): a home session, a paid Tunelio build, or
   // youtube.com for a play no source took (a spend limit with home full). Each video once an hour per route.
   build_route: ['daily', oneOf('home', 'tunelio', 'youtube')],
+  // Visitors who used up a daily allowance (src/allowance.js), once per visitor, day and kind; no IP.
+  allowance: ['daily', oneOf('credits', 'home_builds', 'home_mb')],
   home_start_s: ['daily', isSBucket],
   // Today's home relay use against its cap and the media workers connected, set every minute (numbers only).
   channel: ['daily', oneOf('redirect', 'unavailable', 'unknown')], // /v1/ch/<key> (src/channels.js)

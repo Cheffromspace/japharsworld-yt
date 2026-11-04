@@ -1,6 +1,6 @@
 // Spend limits for paid Tunelio builds (Everything-is-OK#478): a hard budget in credits per hour and per day, and
 // build rate limits per client IP and per shard. Playback asks before every new paid /create (src/playback.js); over a
-// limit there is no new build, and the play goes home or to youtube.com instead. Cached builds, home builds and
+// limit there is no new build: over the shared budget the play may go home, over a per-minute cap it gets youtube.com. Cached builds, home builds and
 // refused videos never get here.
 //
 // Real spend, prod 2026-10-26..11-03 (metrics.db credits/playback and the journal's builds): busiest day 1,700
@@ -14,7 +14,8 @@
 //
 // The rate limits count distinct videos that started a paid build in the last minute, so one play's several /create
 // calls (adaptive's two qualities, a downgrade) count once: 6 a minute per IP (a visitor browsing rows stays under),
-// 12 per shard (a room of 6 each picking). Over one, the play goes home, not to an error.
+// 12 per shard (a room of 6 each picking). Home sessions share the count (rateCap). Over one, the play gets
+// youtube.com, never home instead (owner, 2026-11-04: no overflow to home for a visitor over their own limits).
 //
 // Caption transcripts (6 credits each, src/transcripts.js) share the same budget and have their own per-IP limit,
 // SPEND_TRANSCRIPTS_PER_MINUTE_PER_IP, counting every uncached call.
@@ -68,9 +69,10 @@ export class SpendGate {
   constructor({ hourCredits = HOUR_CREDITS, dayCredits = 8000, monthCredits = 100_000, monthKey = null, homeFirstPercent = HOME_FIRST_PERCENT,
     perIpPerMinute = 6, perShardPerMinute = 12, cost = 10,
     transcriptsPerIpPerMinute = 6, transcriptCost = 6, maxKeys = 10_000, okAfterMs = 30 * MINUTE, alertEveryMs = DAY,
-    alert = () => {}, log = () => {}, now = () => Date.now(), stateFile = null, trusted = null, trustedFactor = 10 } = {}) {
+    alert = () => {}, log = () => {}, now = () => Date.now(), stateFile = null, trusted = null, trustedFactor = 10, allowance = null } = {}) {
     Object.assign(this, { hourCredits, dayCredits, monthCredits, homeFirstPercent, perIpPerMinute, perShardPerMinute, cost, transcriptsPerIpPerMinute, transcriptCost,
-      maxKeys, okAfterMs, alertEveryMs, alert, log, now, stateFile, trusted, trustedFactor });
+      maxKeys, okAfterMs, alertEveryMs, alert, log, now, stateFile, trusted, trustedFactor, allowance });
+    this.capLogged = new Map(); // "ip:by" → when its spend_cap was last logged (once per minute's stretch)
     // The billing period's key (its first day, 'YYYY-MM-DD', from server.js); without one, the UTC calendar month.
     this.monthKey = monthKey ?? (() => new Date(this.now()).toISOString().slice(0, 7));
     this.month = { key: this.monthKey(), c: 0 }; // credits charged this billing period
@@ -180,6 +182,8 @@ export class SpendGate {
   // A paid call is being made: count it now (so calls at once can't all pass), and give back a refund for a failed one.
   charge(cost = this.cost) {
     const now = this.now();
+    // The request's visitor pays from their daily allowance too (src/allowance.js), refunded with it.
+    const back = this.allowance?.charge(spendScope.getStore()?.ip, { credits: cost }) ?? (() => {});
     while (this.spends.length && this.spends[0].at <= now - DAY) this.spends.shift();
     const s = { at: now, c: cost };
     this.spends.push(s);
@@ -190,10 +194,20 @@ export class SpendGate {
     return () => {
       const i = this.spends.indexOf(s);
       if (i < 0) return;
+      back();
       this.spends.splice(i, 1);
       month.c = Math.max(0, month.c - cost); // a refund after the period rolled over changes only the old one
       this.#save();
     };
+  }
+
+  // The per-minute build caps for a new home session of `id` (src/server.js startHome): 'cap' or null. Home builds
+  // share the count with Tunelio's, so a visitor over 6 new videos a minute gets youtube.com, not home (owner,
+  // 2026-11-04). record: count it (after the session started).
+  rateCap(id, { record = false } = {}) {
+    const rate = this.#rate(id, record);
+    if (rate) this.#capLog(rate, spendScope.getStore(), { kind: 'home' });
+    return rate ? 'cap' : null;
   }
 
   // Whether this request's client IP is in TRUSTED_IPS.
@@ -218,17 +232,29 @@ export class SpendGate {
     return null;
   }
 
-  // Why a new paid build of `id` may not start now: 'budget', 'cap' or null (allowed, and counted against the rate
-  // limits). peek: the same answer without counting it.
+  // Why a new paid build of `id` may not start now: 'budget' (the shared hour/day/month budget: the play may still go
+  // home), 'allowance' (this visitor's daily allowance, src/allowance.js) or 'cap' (this IP's or shard's builds a
+  // minute); over either of those the play gets youtube.com, not home. null: allowed, and counted against the rate
+  // limits. peek: the same answer without counting it.
   refuse(id, { peek = false } = {}) {
     const over = this.check();
     if (over) return 'budget';
+    const ctx = spendScope.getStore();
+    if (this.allowance?.over(ctx?.ip, { credits: this.cost })) return 'allowance';
     const rate = this.#rate(id, !peek);
-    if (rate && !peek) {
-      const ctx = spendScope.getStore();
-      this.log({ event: 'spend_cap', by: rate, shard: ctx?.shard ?? null, ...(this.#trusted(ctx?.ip) ? { trusted: true } : {}) });
-    }
+    if (rate && !peek) this.#capLog(rate, ctx);
     return rate ? 'cap' : null;
+  }
+
+  // spend_cap, once per IP and limit while it keeps refusing (a stretch: nothing logged in the last minute).
+  #capLog(by, ctx, extra = {}) {
+    const now = this.now();
+    const key = `${ctx?.ip ?? ''}:${by}:${extra.kind === 'transcript' ? 'transcript' : 'build'}`; // home and Tunelio builds share a cap
+    if (now - (this.capLogged.get(key) ?? -Infinity) < MINUTE) { this.capLogged.set(key, now); return; }
+    this.capLogged.delete(key);
+    this.capLogged.set(key, now);
+    if (this.capLogged.size > this.maxKeys) this.capLogged.delete(this.capLogged.keys().next().value);
+    this.log({ event: 'spend_cap', by, ...extra, shard: ctx?.shard ?? null, ...(this.#trusted(ctx?.ip) ? { trusted: true } : {}) });
   }
 
   // Why an uncached caption transcript may not be fetched now: 'budget', 'cap' (this request's IP is over
@@ -236,12 +262,13 @@ export class SpendGate {
   refuseTranscript() {
     if (this.check(this.transcriptCost)) return 'budget';
     const ip = spendScope.getStore()?.ip;
+    if (this.allowance?.over(ip, { credits: this.transcriptCost })) return 'allowance';
     const trusted = this.#trusted(ip);
     const perIp = limitFor(this.transcriptsPerIpPerMinute, trusted, this.trustedFactor);
     if (!ip || !(perIp > 0)) return null;
     const now = this.now();
     const list = (this.transcriptsByIp.get(ip) ?? []).filter((e) => now - e.at < MINUTE);
-    const capped = () => { this.log({ event: 'spend_cap', by: 'ip', kind: 'transcript', ...(trusted ? { trusted: true } : {}) }); return 'cap'; };
+    const capped = () => { this.#capLog('ip', spendScope.getStore(), { kind: 'transcript' }); return 'cap'; };
     if (list.length >= perIp) return capped();
     if (!touch(this.transcriptsByIp, ip, [...list, { at: now }], this.maxKeys, now)) return capped();
     return null;

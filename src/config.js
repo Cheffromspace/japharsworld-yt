@@ -28,6 +28,15 @@ export const config = {
   // Ticket requests a minute per client IP (status, player, sheet, More; 429 rate_limited over it). VRChat lets a
   // client load one string and one image per 5 s (24 a minute) plus a few loads per play, so 120 is ~5x a real one.
   ticketsPerMinutePerIp: int('TICKETS_PER_MINUTE_PER_IP', 120),
+  // A video player's ticket loads a minute per client IP, counted apart (429 rate_limited over it, which the world shows
+  // as a load error): 6 players behind one NAT, each resolver + player + a Quest's retry every 6 s, is ~150, so 600.
+  ticketPlayerPerMinutePerIp: int('TICKET_PLAYER_PER_MINUTE_PER_IP', 600),
+  // Each visitor's (client IP's) daily allowance for new builds, Tunelio and home together (src/allowance.js, where the
+  // defaults are worked out from prod): Tunelio credits, home sessions, home MB (expected size). Any one used up: no new
+  // build anywhere, the play gets youtube.com. 0 = no limit. Trusted IPs x TRUSTED_IP_FACTOR.
+  allowanceCreditsPerIp: int('ALLOWANCE_CREDITS_PER_IP', 1500),
+  allowanceHomeBuildsPerIp: int('ALLOWANCE_HOME_BUILDS_PER_IP', 25),
+  allowanceHomeMbPerIp: int('ALLOWANCE_HOME_MB_PER_IP', 35_000),
   dbPath: process.env.DB_PATH ?? 'data/tickets.db',
   ytdlp: process.env.YTDLP ?? 'yt-dlp',
   ytdlpExtraArgs: (process.env.YTDLP_ARGS ?? '').split(' ').filter(Boolean),
@@ -164,7 +173,8 @@ export const config = {
   lookupWarmsPerMinute: int('LOOKUP_WARMS_PER_MINUTE', 10),
   // Spend limits on paid Tunelio builds (src/spend.js, where the defaults are worked out from real spend and the 100k a
   // month plan): credits per rolling hour, 24 h and billing period (TUNELIO_RENEWS_DAY; 0 = no limit), and new paid
-  // builds a minute per client IP and per shard (distinct videos). Over one there is no new build: home or youtube.com.
+  // builds a minute per client IP and per shard (distinct videos, home sessions included). Over the budget the play may
+  // still go home; over a per-minute cap it gets youtube.com, no build anywhere.
   // Past SPEND_HOME_FIRST_PERCENT of the hour or day budget new plays go home first (Tunelio when home is full). The
   // budget alerts Discord once when reached and once when clear.
   spendHourCredits: int('SPEND_HOUR_CREDITS', HOUR_CREDITS),

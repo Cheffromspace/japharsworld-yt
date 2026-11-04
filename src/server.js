@@ -253,6 +253,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     spend?.sweep?.();
     allowance.sweep?.();
     adaptive.sweep?.();
+    ipKeys.sweep(); // a new day's key even with no request
   }, 60_000).unref();
   const ticketHits = new Map(); // ip → timestamps
   const playerHits = new Map(); // the same for video players' loads (their own limit)

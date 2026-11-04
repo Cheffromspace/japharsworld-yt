@@ -28,6 +28,9 @@ export class IpKeys {
     this.trustedCodes = new Set();
   }
   #fresh() { if (dayOf(this.now(), this.tz) !== this.day) this.#rotate(); }
+  // The day check on its own (server.js, every minute), so a quiet night doesn't keep yesterday's key until the next
+  // request: the key is replaced within a minute of the day's start.
+  sweep() { this.#fresh(); }
 
   // The day's code for an address (and, for the reload mark, the player's name with it); null for none.
   code(ip, extra = null) {

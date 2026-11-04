@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../src/server.js';
@@ -35,13 +35,13 @@ function fakeTunelio({ hang = () => false } = {}) {
 }
 
 // The service with a home worker taking `mediaMax` streams, a real Playback over a fake Tunelio and the given spend gate.
-async function routeApp(t, { mediaMax = 4, spend = new SpendGate({ hourCredits: 0, dayCredits: 0, monthCredits: 0 }), tunelio = fakeTunelio(), config: c = {} } = {}) {
+async function routeApp(t, { mediaMax = 4, spend = new SpendGate({ hourCredits: 0, dayCredits: 0, monthCredits: 0 }), tunelio = fakeTunelio(), config: c = {}, playbackOpts = {} } = {}) {
   const dir = tmp(t);
   const config = { ...base, shards: 2, pool: 200, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub',
     metricsPath: '', tunelioQuality: '720p', ticketPlayerHoldMs: 3000, adaptiveHls: false, lookupWarm: false, videoMaxSeconds: 43200, homeFreeFloorGb: 0, ...c };
   const store = new Store({ path: ':memory:', shards: 2, pool: 200, pinHours: 24 });
   const relay = new Relay({ token: TOKEN, pollMs: 200 });
-  const playback = new Playback({ tunelio, quality: '720p', probe: async () => ({ ok: true, refused: false }), spend });
+  const playback = new Playback({ tunelio, quality: '720p', probe: async () => ({ ok: true, refused: false }), spend, ...playbackOpts });
   const logs = [];
   const app = createApp({ config, store, relay, tunelio, playback, spend, captions: { async get() { return {}; } }, log: (l) => { try { logs.push(JSON.parse(l)); } catch { /* request lines */ } } });
   const server = http.createServer(app);
@@ -61,9 +61,10 @@ async function routeApp(t, { mediaMax = 4, spend = new SpendGate({ hourCredits: 
   t.after(() => worker.stop());
   while (!relay.capable('media').length) await new Promise((r) => setTimeout(r, 20));
   const ticket = (id, seconds = 600) => store.allocate(0, [{ kind: 'video', data: { id, title: 'T', seconds, live: false } }])[0];
+  const allocate = (item) => store.allocate(0, [item])[0];
   const get = (n, ua = WMF, ip = '192.0.2.1') => fetch(`${url}/v1/0/${n}`, { redirect: 'manual', headers: { 'user-agent': ua, 'x-forwarded-for': ip } });
   const routes = () => logs.filter((l) => l.event === 'build_route');
-  return { get, ticket, jobs, logs, routes, tunelio, spend, app, url };
+  return { get, ticket, allocate, jobs, logs, routes, tunelio, spend, app, url };
 }
 
 test('spend: the month budget is a hard stop per billing period, survives a restart, starts again at renewal and takes refunds', (t) => {
@@ -204,4 +205,41 @@ test('spend scope: a route set by one request does not leak into another', async
     spendScope.run({ ip: 'b' }, async () => { await new Promise((r) => setTimeout(r, 1)); seen.push(spendScope.getStore().route ?? 'default'); }),
   ]);
   assert.deepEqual(seen.sort(), ['default', 'home_full']);
+});
+
+test('spend: a state file from before the month window starts the month at its 24 h total', (t) => {
+  const stateFile = join(tmp(t), 'spend-budget.json');
+  writeFileSync(stateFile, JSON.stringify({ spends: [{ at: Date.now() - 3600_000, c: 30 }, { at: Date.now() - 60_000, c: 10 }], alertedAt: null, okDue: false }));
+  const g = new SpendGate({ hourCredits: 0, dayCredits: 0, monthCredits: 45, stateFile });
+  assert.equal(g.spentMonth(), 40, 'not a fresh month');
+  assert.equal(g.refuse('x'), 'budget', '40 + 10 passes 45');
+  // A file of another period's month keeps only this period's (none yet).
+  writeFileSync(stateFile, JSON.stringify({ spends: [{ at: Date.now() - 60_000, c: 10 }], month: { key: '1999-01', c: 999 } }));
+  assert.equal(new SpendGate({ hourCredits: 0, dayCredits: 0, monthCredits: 45, stateFile }).spentMonth(), 0);
+});
+
+test('ticket route: a video player is never refused by the ticket limit and does not count toward it; status and other tickets are', async (t) => {
+  const a = await routeApp(t, { config: { ticketsPerMinutePerIp: 2 } });
+  const n = a.ticket(vid(1));
+  for (let i = 0; i < 2; i++) assert.equal((await a.get(n, UNITY)).status, 200);
+  assert.equal((await a.get(n, UNITY)).status, 429, 'the tablet status is limited');
+  for (let i = 0; i < 3; i++) assert.equal((await a.get(n, WMF)).status, 302, 'the player still plays');
+  // A player User-Agent on a ticket that isn't a video (here a More page) is limited like any request.
+  const page = a.allocate({ kind: 'page', data: { page: 1 } });
+  assert.equal((await a.get(page, WMF)).status, 429);
+  // Player loads didn't use up another IP's or this one's count: a fresh IP gets its full 2.
+  for (let i = 0; i < 3; i++) await a.get(n, WMF, '192.0.2.50');
+  assert.equal((await a.get(n, UNITY, '192.0.2.50')).status, 200);
+  assert.equal((await a.get(n, UNITY, '192.0.2.50')).status, 200);
+});
+
+test('routing: the build_route metric counts a video once per route, though its play made two paid /create calls (a downgrade)', async (t) => {
+  // 1080p is over maxMbForQuality, so the play makes it again at 720p: two paid calls, one video.
+  const a = await routeApp(t, { config: { tunelioQuality: '1080p' }, playbackOpts: { quality: '1080p', lowerQuality: '720p', maxMbForQuality: 50 } });
+  assert.match((await a.get(a.ticket(vid(1)))).headers.get('location'), /tunelio\.dev/);
+  assert.deepEqual(a.tunelio.created.map(([, q]) => q), ['1080p', '720p']);
+  assert.deepEqual(a.routes().map((e) => [e.via, e.quality, e.counted]), [['tunelio', '1080p', true], ['tunelio', '720p', false]]);
+  // Another video counts on its own.
+  await a.get(a.ticket(vid(2)));
+  assert.equal(a.routes().filter((e) => e.counted).length, 2);
 });

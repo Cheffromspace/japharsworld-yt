@@ -3,6 +3,8 @@
 // env file can't silently let every length through.
 export const videoMaxSeconds = (raw, fallbackHours = 12) => Math.round((/^\s*\d+(\.\d+)?\s*$/.test(raw ?? '') ? Number.parseFloat(raw) : fallbackHours) * 3600);
 
+import { HOUR_CREDITS, HOME_FIRST_PERCENT } from './spend.js';
+
 const int = (name, fallback) => {
   const v = Number.parseInt(process.env[name] ?? '', 10);
   return Number.isFinite(v) ? v : fallback;
@@ -165,10 +167,10 @@ export const config = {
   // builds a minute per client IP and per shard (distinct videos). Over one there is no new build: home or youtube.com.
   // Past SPEND_HOME_FIRST_PERCENT of the hour or day budget new plays go home first (Tunelio when home is full). The
   // budget alerts Discord once when reached and once when clear.
-  spendHourCredits: int('SPEND_HOUR_CREDITS', 1500),
+  spendHourCredits: int('SPEND_HOUR_CREDITS', HOUR_CREDITS),
   spendDayCredits: int('SPEND_DAY_CREDITS', 8000),
   spendMonthCredits: int('SPEND_MONTH_CREDITS', 100_000),
-  spendHomeFirstPercent: int('SPEND_HOME_FIRST_PERCENT', 75),
+  spendHomeFirstPercent: int('SPEND_HOME_FIRST_PERCENT', HOME_FIRST_PERCENT),
   spendBuildsPerMinutePerIp: int('SPEND_BUILDS_PER_MINUTE_PER_IP', 6),
   spendBuildsPerMinutePerShard: int('SPEND_BUILDS_PER_MINUTE_PER_SHARD', 12),
   // Uncached caption transcripts (6 credits each) a minute per client IP, under the same budget. Over it, or over the

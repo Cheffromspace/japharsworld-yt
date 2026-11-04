@@ -2070,7 +2070,7 @@
    "type": "timeseries",
    "id": 34,
    "title": "New builds: home vs Tunelio, per day",
-   "description": "New builds in the 24 h before each point, by where they went: home (a new home relay session), tunelio (a paid build), youtube (no source could take it: a spend limit with home full). Next to the credits spent per day, it shows how the load is shared.",
+   "description": "Videos newly built in the 24 h before each point, by where they went: home (a new home relay session), tunelio (a paid build), youtube (no source could take it: a spend limit with home full). Each video counts once an hour per route, however many builds its play made. Next to the credits spent per day, it shows how the load is shared.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"

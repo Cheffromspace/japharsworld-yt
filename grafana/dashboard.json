@@ -2069,6 +2069,56 @@
   {
    "type": "timeseries",
    "id": 34,
+   "title": "New builds: home vs Tunelio, per day",
+   "description": "New builds in the 24 h before each point, by where they went: home (a new home relay session), tunelio (a paid build), youtube (no source could take it: a spend limit with home full). Next to the credits spent per day, it shows how the load is shared.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "${ds}"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 65,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"build_route\"}[1d]))",
+     "legendFormat": "{{key}}"
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short",
+     "min": 0,
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 30,
+      "stacking": {
+       "mode": "normal"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "timeseries",
+   "id": 35,
    "title": "Search sources (per 6 h)",
    "description": "worker = the Optiplex relay, local = InnerTube from the Linode, api = the YouTube Data API (quota).",
    "datasource": {
@@ -2076,7 +2126,7 @@
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 8,
+    "x": 16,
     "y": 65,
     "w": 8,
     "h": 8
@@ -2127,7 +2177,7 @@
   },
   {
    "type": "timeseries",
-   "id": 35,
+   "id": 36,
    "title": "Captions (per 6 h)",
    "description": "Track lists and tracks served, which source answered (worker, local yt-dlp, Tunelio), word timing real or estimated, distinct videos whose list had tracks or none, and why none was available.",
    "datasource": {
@@ -2135,8 +2185,8 @@
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 16,
-    "y": 65,
+    "x": 0,
+    "y": 73,
     "w": 8,
     "h": 8
    },
@@ -2213,7 +2263,7 @@
   },
   {
    "type": "timeseries",
-   "id": 36,
+   "id": 37,
    "title": "YouTube refusals (per hour)",
    "description": "Failed YouTube lookups by where (home = the Optiplex relay, linode, flash = the Optiplex flash-check worker) and class: bot = \"Sign in to confirm\", rate = 429 / try again later / a caption track that failed after its list, forbidden = 403, potoken = PO token, other. Counted from 2026-10-25 (src/refusal.js).",
    "datasource": {
@@ -2221,7 +2271,7 @@
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 0,
+    "x": 8,
     "y": 73,
     "w": 8,
     "h": 8
@@ -2263,7 +2313,7 @@
   },
   {
    "type": "timeseries",
-   "id": 37,
+   "id": 38,
    "title": "Rooms active (shards with a request, per hour)",
    "description": "Distinct shards that saw a request in the past hour (from the hourly shard table).",
    "datasource": {
@@ -2271,7 +2321,7 @@
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 8,
+    "x": 16,
     "y": 73,
     "w": 8,
     "h": 8
@@ -2314,7 +2364,7 @@
   },
   {
    "type": "timeseries",
-   "id": 38,
+   "id": 39,
    "title": "Plays by platform (per 6 h)",
    "description": "Once per room and platform (a room with PC and Quest players counts one of each), from the player’s User-Agent or a .m3u8 ticket. Counted from 2026-10-23.",
    "datasource": {
@@ -2322,8 +2372,8 @@
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 16,
-    "y": 73,
+    "x": 0,
+    "y": 81,
     "w": 8,
     "h": 8
    },
@@ -2364,14 +2414,14 @@
   },
   {
    "type": "timeseries",
-   "id": 39,
+   "id": 40,
    "title": "Room quality picks and tablet warm-ups (per 6 h)",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
    },
    "gridPos": {
-    "x": 0,
+    "x": 8,
     "y": 81,
     "w": 8,
     "h": 8
@@ -2431,7 +2481,7 @@
   },
   {
    "type": "row",
-   "id": 40,
+   "id": 41,
    "title": "Channels and flash checks",
    "collapsed": false,
    "gridPos": {
@@ -2444,7 +2494,7 @@
   },
   {
    "type": "table",
-   "id": 41,
+   "id": 42,
    "title": "Slots",
    "datasource": {
     "type": "prometheus",
@@ -2660,7 +2710,7 @@
   },
   {
    "type": "timeseries",
-   "id": 42,
+   "id": 43,
    "title": "Flash checks (per 6 h)",
    "datasource": {
     "type": "prometheus",
@@ -2708,7 +2758,7 @@
   },
   {
    "type": "timeseries",
-   "id": 43,
+   "id": 44,
    "title": "Check queue",
    "datasource": {
     "type": "prometheus",
@@ -2766,7 +2816,7 @@
   },
   {
    "type": "row",
-   "id": 44,
+   "id": 45,
    "title": "Hosts",
    "collapsed": false,
    "gridPos": {
@@ -2779,7 +2829,7 @@
   },
   {
    "type": "timeseries",
-   "id": 45,
+   "id": 46,
    "title": "CPU busy",
    "datasource": {
     "type": "prometheus",
@@ -2828,7 +2878,7 @@
   },
   {
    "type": "timeseries",
-   "id": 46,
+   "id": 47,
    "title": "Memory available",
    "datasource": {
     "type": "prometheus",
@@ -2877,7 +2927,7 @@
   },
   {
    "type": "timeseries",
-   "id": 47,
+   "id": 48,
    "title": "Disk free (/)",
    "datasource": {
     "type": "prometheus",
@@ -2926,7 +2976,7 @@
   },
   {
    "type": "timeseries",
-   "id": 48,
+   "id": 49,
    "title": "Public endpoints",
    "datasource": {
     "type": "prometheus",
@@ -2983,7 +3033,7 @@
   },
   {
    "type": "timeseries",
-   "id": 49,
+   "id": 50,
    "title": "Failed units",
    "description": "japharsworld-yt units, bgutil-pot and caddy in the failed state.",
    "datasource": {
@@ -3032,7 +3082,7 @@
   },
   {
    "type": "timeseries",
-   "id": 50,
+   "id": 51,
    "title": "Search service memory",
    "description": "Its cgroup, without the page cache, which the kernel reclaims at the limit (metrics/exporter.js). Alert at 90 %.",
    "datasource": {
@@ -3091,7 +3141,7 @@
   },
   {
    "type": "row",
-   "id": 51,
+   "id": 52,
    "title": "Versions and deploys",
    "collapsed": false,
    "gridPos": {
@@ -3104,7 +3154,7 @@
   },
   {
    "type": "state-timeline",
-   "id": 52,
+   "id": 53,
    "title": "World version over time",
    "datasource": {
     "type": "prometheus",
@@ -3164,7 +3214,7 @@
   },
   {
    "type": "table",
-   "id": 53,
+   "id": 54,
    "title": "World uploads and releases",
    "description": "VRChat world versions (world:prod, world:test, at VRChat’s upload time) and GitHub release tags.",
    "datasource": {
@@ -3237,7 +3287,7 @@
   },
   {
    "type": "table",
-   "id": 54,
+   "id": 55,
    "title": "Deploys of main",
    "description": "Per host: the Linode (search service; no_restart = only files it does not run changed) and the Optiplex (relay worker). deploy/deploy-record.sh.",
    "datasource": {

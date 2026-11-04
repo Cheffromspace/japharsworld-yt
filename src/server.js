@@ -107,6 +107,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // Spend limits (src/spend.js), shared by this server's Playback and Tunelio captions. Injected (tests), or the injected
   // Playback's own, or made here when the server makes its Playback.
   spend ??= playback ? playback.spend ?? null : new SpendGate({ hourCredits: config.spendHourCredits, dayCredits: config.spendDayCredits,
+    monthCredits: config.spendMonthCredits, homeFirstPercent: config.spendHomeFirstPercent,
+    // The billing period's first day: the month budget starts again when the plan renews (TUNELIO_RENEWS_DAY).
+    monthKey: () => billingPeriod(dayOf(Date.now(), config.metricsTz), config.tunelioRenewsDay).start,
     perIpPerMinute: config.spendBuildsPerMinutePerIp, perShardPerMinute: config.spendBuildsPerMinutePerShard,
     transcriptsPerIpPerMinute: config.spendTranscriptsPerMinutePerIp, maxKeys: config.rateKeysMax, alert, log: logJson, trusted, trustedFactor,
     stateFile: config.metricsPath ? join(dirname(config.metricsPath), 'spend-budget.json') : null });
@@ -121,6 +124,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       metrics.inc('build', ok ? 'ok' : 'failed');
       if (ok) { metrics.inc(format === 'hls' ? 'build_s_hls' : 'build_s_progressive', secondsBucket(buildMs)); metrics.inc('build_length', lengthBucket({ seconds })); metrics.inc('build_size', sizeBucket(mb)); metrics.inc('build_quality', quality); }
     } });
+  // Every paid /create, on this server's Playback or an injected one: a Tunelio build_route, with why the play's
+  // request didn't go home (spendScope's route).
+  if (playback instanceof Playback) playback.onPaid = ({ id, quality }) => routeEvent('tunelio', spendScope.getStore()?.route ?? 'default', { id, quality });
   // Adaptive HLS, paced against the credits left until renewal (claude/play-latency.md).
   const metricsDb = () => (config.metricsPath && metrics.open ? metrics.open() : null);
   // Seed the speed estimate with the probe's builds of the last two hours, so a restart doesn't forget a slow period.
@@ -196,6 +202,37 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const MAX_CONTINUATIONS = 2000;
   const hits = new Map(); // ip → timestamps of recent searches
   const warmed = new Set(); // "shard:videoId" warmed by a tablet and not played yet (warm_played metric)
+
+  // Where each new build went and why, with the load behind it (owner, 2026-11-04: home vs Tunelio share and credits a
+  // day on the dashboard): via home (a new home session; why is home_why's reason), tunelio (a paid /create; why is
+  // default, or home_full when home had no free stream) or youtube (a play no source could take: a spend limit with home
+  // full). The build_route metric counts by via; the event adds home's streams, Tunelio's builds and the spend so far.
+  function routeEvent(via, why, extra = {}) {
+    metrics.inc('build_route', via);
+    const l = home?.load?.() ?? {};
+    const t = spend?.totals?.() ?? {};
+    logJson({ event: 'build_route', via, why, ...extra, homeActive: l.active ?? null, homeMax: l.max ?? null,
+      tunelioBuilding: playback?.building?.() ?? null, hour: t.hour ?? null, day: t.day ?? null, month: t.month ?? null });
+  }
+
+  // Ticket requests a minute per IP (TICKETS_PER_MINUTE_PER_IP): status loads, players, sheets and More pages. Bounded
+  // without dropping an active IP's count (src/spend.js touch). Logged once per IP and minute when it starts refusing.
+  const ticketHits = new Map(); // ip → timestamps
+  function ticketLimited(ip) {
+    const limit = perIp(config.ticketsPerMinutePerIp ?? 0, ip);
+    if (!(limit > 0)) return false;
+    const now = Date.now();
+    const prev = ticketHits.get(ip) ?? [];
+    const list = prev.filter((t) => now - t < 60_000);
+    if (list.length >= limit) {
+      if (!prev.logged) logJson({ event: 'ticket_limited', limit, ...(trusted.has(ip) ? { trusted: true } : {}) });
+      list.logged = true; // until the window drops back under the limit (a new list)
+      ticketHits.set(ip, list);
+      return true;
+    }
+    list.push(now);
+    return !touch(ticketHits, ip, list, config.rateKeysMax ?? 10_000, now);
+  }
 
   function rateLimited(ip) {
     const now = Date.now();
@@ -529,6 +566,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // paused: { worker: { kind: seconds left } }, the workers' back-off after a YouTube refusal (relay/worker.js).
       relay: { enabled: relay.enabled, workers: relay.online(), idleS: Math.round(relay.idleMs() / 1000), paused: relay.paused(), mediaMax: relay.mediaMax() },
       home: home.state(),
+      spend: spend ? { ...spend.totals(), near: spend.near?.() ?? null, over: spend.over ?? null,
+        budget: { hour: spend.hourCredits, day: spend.dayCredits, month: spend.monthCredits, homeFirstPercent: spend.homeFirstPercent } } : null,
       search: { lastVia: searcher.state.lastVia, apiUnitsToday: api.unitsToday },
       plans: {
         on: config.adaptiveHls, shards: config.adaptiveShards, directSeconds: config.adaptiveDirectSeconds,
@@ -593,17 +632,27 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     // plain VOD. Only this reuse, so only the normal Tunelio path: a PC play with its own reason (long, pacer, Tunelio off
     // or slow) still starts home, which is that same session, growing.
     if (s && s.state !== 'failed' && (hlsTicket || s.why !== 'slow_build' || s.ended)) return 'reuse';
-    // No worker for this quality: the video's session at another quality, if it has one (homeKeep), else Tunelio.
-    if (!home.worker()) return home.other?.(data, quality) ? 'reuse' : null;
+    // No worker for this quality (home off, capped or every stream taken: src/home.js worker): the video's session at
+    // another quality, if it has one (homeKeep), else Tunelio. The request's Tunelio build_route says home was full.
+    if (!home.worker()) {
+      if (home.enabled) { const ctx = spendScope.getStore(); if (ctx) ctx.route = 'home_full'; }
+      return home.other?.(data, quality) ? 'reuse' : null;
+    }
     if (!tunelio.enabled || Date.now() < (playback.pausedUntil ?? 0)) return 'tunelio_off';
     if (tunelioSlow()) return 'tunelio_slow';
+    // Many Tunelio builds at once (TUNELIO_BUSY_BUILDS) while home has a free stream: spread the load (owner, 2026-11-04:
+    // "load balance home and tunelio ... while not blowing up either").
+    if (config.tunelioBusyBuilds > 0 && (playback.building?.() ?? 0) >= config.tunelioBusyBuilds) return 'tunelio_busy';
     // Long, unless home already found its keyframes uneven (src/home.js giveUp): then Tunelio while the pacer allows.
     if ((data.seconds ?? 0) >= config.homeLongMinutes * 60 && !home.isUneven?.(data)) return 'long';
     const p = adaptive.pacer?.check?.();
     if (p && !p.ok) return 'pacer';
     // Over a spend limit (src/spend.js): home instead of a new paid build. A Tunelio build already there is still used.
-    const spend = playback.spendRefusal?.(data, undefined, { peek: true });
-    if (spend) return spend;
+    const refused = playback.spendRefusal?.(data, undefined, { peek: true });
+    if (refused) return refused;
+    // Past SPEND_HOME_FIRST_PERCENT of the hour or day budget: home first, so the budget lasts (Tunelio when home is
+    // full, through the path above). Only for a play that would make a new build: a cached one costs nothing.
+    if (spend?.near?.() && playback.wouldBuild?.(data, playback.quality ?? config.tunelioQuality)) return 'near_budget';
     return null;
   }
   // Tunelio timed out within the last TUNELIO_SUSPECT_SECONDS: another /create would likely time out too.
@@ -668,6 +717,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }
     if (s && !s.why) {
       s.why = why; home.save?.(s); metrics.inc('home_why', why);
+      routeEvent('home', why, { id: data.id, quality });
       if (quality !== homePick(shard)) { metrics.inc('home', 'stepdown'); logJson({ event: 'home_stepdown', id: data.id, from: homePick(shard), quality, seconds: data.seconds }); }
     }
     return s;
@@ -1048,6 +1098,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       let via = where.via, reason = where.reason;
       if (where.ready === false) { location = `https://www.youtube.com/watch?v=${t.data.id}`; via = 'youtube'; reason = 'build_timeout'; metrics.inc('ticket_timeout'); }
       logJson({ event: 'play', shard, n, id: t.data.id, via, reason, client: kind, held, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
+      if (via === 'youtube' && (reason === 'budget' || reason === 'cap')) routeEvent('youtube', reason, { id: t.data.id });
       countPlay(shard, t.data, { via, reason, location }, android || hlsTicket ? 'android' : kind === 'avpro' ? 'pc' : null);
       lastAnswer.set(shard, { n, via, reason, quality: where.session?.quality ?? c?.quality, hls: where.session ? true : c?.hls, mode: c?.mode });
       if (warmed.delete(`${shard}:${t.data.id}`)) metrics.inc('warm_played');
@@ -1068,6 +1119,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       return res.end(buf);
     }
     if (t.kind === 'page') {
+      // A More page is a search: it counts against SEARCHES_PER_MINUTE, checked before the continuation is used up.
+      if (rateLimited(clientIp(req))) { metrics.inc('more_fail', '429'); return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.'); }
       metrics.inc('more');
       const more = continuations.get(`${shard}:${n}`);
       if (!more) { metrics.inc('more_fail', '410'); return fail(res, 410, 'expired', 'These results expired. Search again.'); }
@@ -1260,6 +1313,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const n = Number(hlsTicket ? m[2].slice(0, -5) : m[2]);
       if (!store.validTicket(n)) return fail(res, 404, 'unknown_ticket', 'Unknown ticket.');
       route = 'ticket';
+      if (ticketLimited(clientIp(req))) { metrics.inc('ticket_limited'); return fail(res, 429, 'rate_limited', 'Too many requests, wait a minute.'); }
       return await ticket(req, res, shard, n, hlsTicket);
     } catch (err) {
       log(JSON.stringify({ at: new Date().toISOString(), event: 'error', route, message: String(err?.stack ?? err).slice(0, 500) }));

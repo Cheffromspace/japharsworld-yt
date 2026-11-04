@@ -5,11 +5,16 @@
 //
 // Real spend, prod 2026-10-26..11-03 (metrics.db credits/playback and the journal's builds): busiest day 1,700
 // playback credits (10-31), next 710; busiest hour ~310 (31 builds, 10-31 02h UTC); busiest minute 9 builds, the
-// same few videos at more than one quality. So the defaults (SPEND_HOUR_CREDITS 800, SPEND_DAY_CREDITS 4000) are about
-// 2.5x the busiest real hour and 2.4x the busiest real day, under 5 % of the 85,260 credits left on 11-03.
+// same few videos at more than one quality. The plan is 100k credits a month and all of it may be spent (owner,
+// 2026-11-04), ~3.3k a day: the pacer (src/adaptive.js) spreads the month, and these limits only stop a runaway. So
+// the defaults are SPEND_HOUR_CREDITS 1500 (~5x the busiest real hour), SPEND_DAY_CREDITS 8000 (2.4x the average day,
+// at most 8 % of the month in a bad day) and SPEND_MONTH_CREDITS 100000 per billing period (monthKey, the period's
+// first day: TUNELIO_RENEWS_DAY). Past homeFirstPercent (75 %) of the hour or day budget, near() says so and new plays
+// go home first while home has room (src/server.js homeWhy, near_budget); Tunelio still builds when home is full.
 //
 // The rate limits count distinct videos that started a paid build in the last minute, so one play's several /create
-// calls (adaptive's two qualities, a downgrade) count once. A room holds 6, hence 6 a minute per shard.
+// calls (adaptive's two qualities, a downgrade) count once: 6 a minute per IP (a visitor browsing rows stays under),
+// 12 per shard (a room of 6 each picking). Over one, the play goes home, not to an error.
 //
 // Caption transcripts (6 credits each, src/transcripts.js) share the same budget and have their own per-IP limit,
 // SPEND_TRANSCRIPTS_PER_MINUTE_PER_IP, counting every uncached call.
@@ -18,7 +23,7 @@
 // the budget are the same for it as for everyone. Its spend_cap events carry trusted: true.
 //
 // Windows roll (the last 60 minutes, the last 24 hours) and the spends are kept in stateFile (times and credits only),
-// so a restart doesn't hand out a fresh budget. A missing file starts empty; an unreadable one is kept as .bak and the
+// with the billing period's total ({ key, c }), so a restart doesn't hand out a fresh budget. A missing file starts empty; an unreadable one is kept as .bak and the
 // hour starts half spent, so a damaged file can't hand out a fresh budget either.
 //
 // The alert: one spend_budget post at most per 24 h, and its all-clear only once spend has stayed under half of both
@@ -56,11 +61,15 @@ export function touch(map, key, value, max = 10_000, now = Date.now()) {
 }
 
 export class SpendGate {
-  constructor({ hourCredits = 800, dayCredits = 4000, perIpPerMinute = 4, perShardPerMinute = 6, cost = 10,
+  constructor({ hourCredits = 1500, dayCredits = 8000, monthCredits = 100_000, monthKey = null, homeFirstPercent = 75,
+    perIpPerMinute = 6, perShardPerMinute = 12, cost = 10,
     transcriptsPerIpPerMinute = 6, transcriptCost = 6, maxKeys = 10_000, okAfterMs = 30 * MINUTE, alertEveryMs = DAY,
     alert = () => {}, log = () => {}, now = () => Date.now(), stateFile = null, trusted = null, trustedFactor = 10 } = {}) {
-    Object.assign(this, { hourCredits, dayCredits, perIpPerMinute, perShardPerMinute, cost, transcriptsPerIpPerMinute, transcriptCost,
+    Object.assign(this, { hourCredits, dayCredits, monthCredits, homeFirstPercent, perIpPerMinute, perShardPerMinute, cost, transcriptsPerIpPerMinute, transcriptCost,
       maxKeys, okAfterMs, alertEveryMs, alert, log, now, stateFile, trusted, trustedFactor });
+    // The billing period's key (its first day, 'YYYY-MM-DD', from server.js); without one, the UTC calendar month.
+    this.monthKey = monthKey ?? (() => new Date(this.now()).toISOString().slice(0, 7));
+    this.month = { key: this.monthKey(), c: 0 }; // credits charged this billing period
     this.spends = []; // { at, c }, oldest first, the last 24 h
     this.byIp = new Map(); // ip → [{ id, at }]
     this.byShard = new Map(); // shard → [{ id, at }]
@@ -84,6 +93,8 @@ export class SpendGate {
       if (!Array.isArray(st?.spends)) throw new Error('no spends list');
       const since = this.now() - DAY;
       this.spends = st.spends.filter((s) => Number.isFinite(s?.at) && s.at > since && s.c > 0);
+      if (st.month?.key === this.month.key && Number.isFinite(st.month.c) && st.month.c > 0) this.month.c = st.month.c;
+      else if (!st.month) this.month.c = this.spends.reduce((n, sp) => n + sp.c, 0); // a file from before the month window
       if (Number.isFinite(st.alertedAt)) this.alertedAt = st.alertedAt;
       this.okDue = Boolean(st.okDue);
     } catch (err) { this.#damaged(err); }
@@ -93,13 +104,14 @@ export class SpendGate {
     try { copyFileSync(this.stateFile, `${this.stateFile}.bak`); } catch { /* unreadable: nothing to keep */ }
     const c = Math.ceil((this.hourCredits || this.dayCredits || 0) / 2);
     this.spends = c > 0 ? [{ at: this.now(), c }] : [];
+    this.month.c = c;
     this.log({ event: 'spend_state_damaged', assumed: c, message: String(err?.message ?? err).slice(0, 200) });
   }
 
   #save() {
     if (!this.stateFile) return;
     try {
-      writeFileSync(`${this.stateFile}.tmp`, JSON.stringify({ spends: this.spends, alertedAt: Number.isFinite(this.alertedAt) ? this.alertedAt : null, okDue: this.okDue }));
+      writeFileSync(`${this.stateFile}.tmp`, JSON.stringify({ spends: this.spends, month: this.month, alertedAt: Number.isFinite(this.alertedAt) ? this.alertedAt : null, okDue: this.okDue }));
       renameSync(`${this.stateFile}.tmp`, this.stateFile);
     } catch (err) { this.log({ event: 'spend_state_failed', message: String(err?.message ?? err).slice(0, 200) }); }
   }
@@ -111,22 +123,44 @@ export class SpendGate {
     return n;
   }
 
-  // Which budget a call of `cost` would break: 'hour', 'day' or null. Logs each change; posts as described at the top
-  // (check() runs every minute too, so the all-clear doesn't wait for a play).
+  // Credits charged this billing period (a new period starts at 0).
+  spentMonth() {
+    const key = this.monthKey();
+    if (this.month.key !== key) this.month = { key, c: 0 };
+    return this.month.c;
+  }
+
+  // The spend so far, for the routing event and /ops/state: credits in the last hour, 24 h and this billing period.
+  totals() { return { hour: this.spent(HOUR), day: this.spent(DAY), month: this.spentMonth() }; }
+
+  // Which window is past homeFirstPercent of its budget ('day', 'hour') or null: new plays go home first then. The
+  // month's pace is the pacer's (src/adaptive.js), which reads Tunelio's real balance.
+  near() {
+    const p = this.homeFirstPercent / 100;
+    if (!(p > 0)) return null;
+    if (this.dayCredits > 0 && this.spent(DAY) >= this.dayCredits * p) return 'day';
+    if (this.hourCredits > 0 && this.spent(HOUR) >= this.hourCredits * p) return 'hour';
+    return null;
+  }
+
+  // Which budget a call of `cost` would break: 'month', 'day', 'hour' or null. Logs each change; posts as described at
+  // the top (check() runs every minute too, so the all-clear doesn't wait for a play).
   check(cost = this.cost) {
     const now = this.now();
-    const hour = this.spent(HOUR), day = this.spent(DAY);
-    const over = this.dayCredits > 0 && day + cost > this.dayCredits ? 'day' : this.hourCredits > 0 && hour + cost > this.hourCredits ? 'hour' : null;
+    const hour = this.spent(HOUR), day = this.spent(DAY), month = this.spentMonth();
+    const over = this.monthCredits > 0 && month + cost > this.monthCredits ? 'month'
+      : this.dayCredits > 0 && day + cost > this.dayCredits ? 'day' : this.hourCredits > 0 && hour + cost > this.hourCredits ? 'hour' : null;
     if (over && !this.over) {
-      this.log({ event: 'spend_budget', state: 'hit', window: over, hour, day, hourCredits: this.hourCredits, dayCredits: this.dayCredits });
+      this.log({ event: 'spend_budget', state: 'hit', window: over, hour, day, month, hourCredits: this.hourCredits, dayCredits: this.dayCredits, monthCredits: this.monthCredits });
       if (now - this.alertedAt >= this.alertEveryMs) {
         this.alertedAt = now;
         this.okDue = true;
         this.#save();
-        this.alert('spend_budget', `Tunelio spend budget reached (${over === 'day' ? `${day} of ${this.dayCredits} credits in 24 h` : `${hour} of ${this.hourCredits} credits in an hour`}): no new HD builds or paid captions; plays go to the home relay or youtube.com until it frees up.`, 0);
+        const what = over === 'month' ? `${month} of ${this.monthCredits} credits this billing period` : over === 'day' ? `${day} of ${this.dayCredits} credits in 24 h` : `${hour} of ${this.hourCredits} credits in an hour`;
+        this.alert('spend_budget', `Tunelio spend budget reached (${what}): no new HD builds or paid captions; plays go to the home relay or youtube.com until it frees up.`, 0);
       }
     } else if (!over && this.over) {
-      this.log({ event: 'spend_budget', state: 'reset', window: this.over, hour, day });
+      this.log({ event: 'spend_budget', state: 'reset', window: this.over, hour, day, month });
     }
     this.over = over;
     const low = !over && (!(this.hourCredits > 0) || hour < this.hourCredits / 2) && (!(this.dayCredits > 0) || day < this.dayCredits / 2);
@@ -145,8 +179,17 @@ export class SpendGate {
     while (this.spends.length && this.spends[0].at <= now - DAY) this.spends.shift();
     const s = { at: now, c: cost };
     this.spends.push(s);
+    this.spentMonth(); // a new billing period starts at 0 first
+    const month = this.month;
+    month.c += cost;
     this.#save();
-    return () => { const i = this.spends.indexOf(s); if (i >= 0) { this.spends.splice(i, 1); this.#save(); } };
+    return () => {
+      const i = this.spends.indexOf(s);
+      if (i < 0) return;
+      this.spends.splice(i, 1);
+      month.c = Math.max(0, month.c - cost); // a refund after the period rolled over changes only the old one
+      this.#save();
+    };
   }
 
   // Whether this request's client IP is in TRUSTED_IPS.

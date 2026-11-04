@@ -166,7 +166,8 @@ test('search service counts searches, joins, plays, captions, failures and shard
   await s.get('/v1/3/s?l=fr&q=boom');                                            // 502
   await s.get('/v1/3/s?l=fr&q=again');                                           // rate limited (4th search from the IP)
   for (const x of r.results) await s.get(`/v1/1/${x.t}`);
-  await s.get(`/v1/1/${r.next}`);                                                // more results
+  assert.equal((await s.get(`/v1/1/${r.next}`)).status, 429);                     // More is a search: this IP is over its limit
+  await s.get(`/v1/1/${r.next}`, { 'x-forwarded-for': '198.51.100.20' });         // more results, from another visitor
   await s.get('/v1/1/cc/ja');
   await s.get('/v1/1/cc/ko');
   await s.get('/v1/1/cc/1?l=ja');

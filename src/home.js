@@ -128,11 +128,35 @@ export class Home {
     return this.day;
   }
 
-  // The worker that would build a new session, or null: off, no media worker online, or today's cap reached.
+  // The worker that would build a new session, or null: off, no media worker online, today's cap reached, or every
+  // worker already runs as many streams as it takes (the mediaMax it announces, RELAY_MEDIA_MAX: 4 at home). Without
+  // that last check a fifth stream went to a 4-stream worker and only its "busy" answer sent the play on to Tunelio,
+  // after the player's hold. The one with the most free streams first.
   worker() {
     if (!this.enabled || !this.relay?.enabled) return null;
     if (this.capped()) return null;
-    return this.relay.capable?.('media')[0] ?? null;
+    const max = this.relay.mediaMax?.() ?? {};
+    let best = null, left = 0;
+    for (const n of this.relay.capable?.('media') ?? []) {
+      const l = (max[n] ?? Infinity) - this.#active(n);
+      if (l > left) { best = n; left = l; }
+    }
+    return best;
+  }
+  // Streams a worker runs now: its sessions still building or uploading (not ended, failed or stale).
+  #active(worker) {
+    let n = 0;
+    for (const s of this.byToken.values()) if (s.worker === worker && s.state !== 'failed' && !s.ended && !this.#stale(s)) n++;
+    return n;
+  }
+  // Home's load for routing and /ops/state: streams running and the streams the online media workers take (null when
+  // one of them announced no limit), and whether a new session could start now.
+  load() {
+    const workers = this.enabled && this.relay?.enabled ? this.relay.capable?.('media') ?? [] : [];
+    const max = this.relay?.mediaMax?.() ?? {};
+    const active = workers.reduce((n, w) => n + this.#active(w), 0);
+    const total = workers.every((w) => max[w] != null) ? workers.reduce((n, w) => n + max[w], 0) : null;
+    return { active, max: total, free: Boolean(this.worker()) };
   }
   capped() { const d = this.#today(); return d.builds >= this.dailyBuilds || d.mb >= this.dailyMb; }
 
@@ -464,7 +488,8 @@ export class Home {
   state() {
     const all = [...this.byToken.values()];
     const d = this.#today();
-    return { enabled: this.enabled, workers: this.relay?.capable?.('media') ?? [],
+    const { active, max } = this.load();
+    return { enabled: this.enabled, workers: this.relay?.capable?.('media') ?? [], streams: { active, max },
       today: { builds: d.builds, mb: Math.round(d.mb), cacheHits: d.cacheHits ?? 0, cacheMb: Math.round(d.cacheMb ?? 0) },
       cap: { builds: this.dailyBuilds, mb: this.dailyMb, storedGb: this.maxGb },
       building: all.filter((s) => s.state === 'building').length, ready: all.filter((s) => s.state === 'ready' && !s.ended).length,

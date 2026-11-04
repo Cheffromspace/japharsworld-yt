@@ -36,7 +36,7 @@ export const config = {
   // build anywhere, the play gets youtube.com. 0 = no limit. Trusted IPs x TRUSTED_IP_FACTOR.
   allowanceCreditsPerIp: int('ALLOWANCE_CREDITS_PER_IP', 1500),
   allowanceHomeBuildsPerIp: int('ALLOWANCE_HOME_BUILDS_PER_IP', 25),
-  allowanceHomeMbPerIp: int('ALLOWANCE_HOME_MB_PER_IP', 35_000),
+  allowanceHomeMbPerIp: int('ALLOWANCE_HOME_MB_PER_IP', 60_000),
   dbPath: process.env.DB_PATH ?? 'data/tickets.db',
   ytdlp: process.env.YTDLP ?? 'yt-dlp',
   ytdlpExtraArgs: (process.env.YTDLP_ARGS ?? '').split(' ').filter(Boolean),
@@ -199,7 +199,10 @@ export const config = {
   // about as fast as 720p: first segments 6.2 s vs 2.9 s on the Optiplex, 2026-10-23). A room's own pick wins.
   homeQuality: process.env.HOME_QUALITY ?? '1080p',
   homeDailyBuilds: int('HOME_DAILY_BUILDS', 40),
-  homeDailyMb: int('HOME_DAILY_MB', 50_000), // owner, 2026-10-23: 10 GB went in a few long videos (a 6 h mix is ~2.5 GB)
+  // owner, 2026-10-23: 10 GB went in a few long videos, so 50,000; owner, 2026-11-04: 120,000, so two rooms' pickers can each
+  // play their ALLOWANCE_HOME_MB_PER_IP (60,000) of long mixes. The Linode's transfer (each home MB goes to every viewer)
+  // is bounded apart (a guard to come); today it sends at most ~15 GB a day.
+  homeDailyMb: int('HOME_DAILY_MB', 120_000),
   homeKeepHours: int('HOME_KEEP_HOURS', 12),
   homeMaxGb: int('HOME_MAX_GB', 8),
   // Free disk the home store never builds into (src/home.js #room): a build doesn't start when the disk's free space,

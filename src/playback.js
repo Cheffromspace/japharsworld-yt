@@ -18,7 +18,6 @@
 
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { RESTRICTED } from './refusal.js';
-import { spendScope } from './spend.js';
 
 const watch = (id) => `https://www.youtube.com/watch?v=${id}`;
 
@@ -44,6 +43,7 @@ export class Playback {
     this.tunelio = tunelio;
     // Called with { id, quality } for every paid /create as it is made (src/server.js: the build_route event).
     this.onPaid = onPaid;
+    this.refusedLogged = new Map(); // "id@quality:format:reason" → when spend_refused was last logged
     this.quality = quality;
     // A file above maxMbForQuality MB at `quality` is made again at lowerQuality (10 more credits, roughly half the
     // build); above progressiveMaxMb MB (or progressiveMaxSeconds long) it is served as HLS. Progressive is the better
@@ -126,7 +126,7 @@ export class Playback {
     const jobs = [];
     for (const j of this.jobs.values()) {
       if (j.state === 'failed' || (j.state === 'ready' && j.expiresMs <= now)) continue;
-      const { waiters, promise, codecRead, payer, ...rest } = j; // payer: never saved
+      const { waiters, promise, codecRead, ...rest } = j;
       jobs.push(rest);
     }
     try {
@@ -212,6 +212,18 @@ export class Playback {
     return !job || this.#stale(job, this.now());
   }
 
+  // spend_refused once per video, quality and reason while it keeps being refused (a stretch: none in the last minute),
+  // so a rung retried at every master load (src/adaptive.js) or a player's retries log it once.
+  #refusedLog(line) {
+    const now = this.now();
+    const key = `${line.id}@${line.quality}:${line.hls ? 'hls' : 'p'}:${line.reason}`;
+    const last = this.refusedLogged.get(key);
+    this.refusedLogged.delete(key);
+    this.refusedLogged.set(key, now);
+    if (this.refusedLogged.size > 2000) this.refusedLogged.delete(this.refusedLogged.keys().next().value);
+    if (!(now - last < 60_000)) this.log(line);
+  }
+
   // Tunelio builds running now (src/server.js homeWhy: tunelio_busy).
   building() {
     let n = 0;
@@ -239,15 +251,11 @@ export class Playback {
       this.jobs.delete(key);
     }
     const refused = this.spendRefusal(data, quality, { hls });
-    if (refused) { this.log({ event: 'spend_refused', id, reason: refused, quality, hls }); return null; }
+    if (refused) { this.#refusedLog({ event: 'spend_refused', id, reason: refused, quality, hls }); return null; }
     if (this.jobs.size > 2000) for (const [k, j] of this.jobs) if (j.state !== 'building') this.jobs.delete(k);
     const seconds = Math.max(0, data.seconds ?? 0);
     const format = hls || seconds > this.progressiveMaxSeconds ? 'hls' : 'progressive';
     job = { id, seconds, format, fixed: hls, maxMb, mb: 0, requested: quality, quality, state: 'building', startedMs: now, endedMs: 0, url: null, expiresMs: 0, reason: null, waiters: [] };
-    // Who started it (the request's spend scope: the picker's IP and shard), so builds made later for the same play
-    // (adaptive upgrades, src/adaptive.js) are charged to them. In memory only: left out of the saved state below.
-    const scope = spendScope.getStore();
-    if (scope) Object.defineProperty(job, 'payer', { value: { ip: scope.ip, shard: scope.shard, answer: scope.answer }, enumerable: false });
     job.promise = this.#build(job).finally(() => { for (const w of job.waiters) w(); job.waiters = []; });
     this.jobs.set(key, job);
     this.#saveLive();

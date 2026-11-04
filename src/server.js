@@ -60,6 +60,7 @@ import { ChannelSlots } from './channels.js';
 import { statsRoute, latestCredits, billingPeriod, daysBetween } from './stats.js';
 import { SpendGate, spendScope, touch } from './spend.js';
 import { Allowance } from './allowance.js';
+import { IpKeys } from './ipkey.js';
 import { trustedIps, limitFor } from './trusted.js';
 
 const API = 1;
@@ -103,7 +104,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (path === '/transcript') metrics.inc('credits', 'captions', 6);
   } });
   // Trusted client IPs (TRUSTED_IPS, src/trusted.js): every per-IP limit times TRUSTED_IP_FACTOR. Logged as counts only.
-  const trusted = trustedIps(config.trustedIps);
+  // Client IPs are kept only as the day's keyed codes (src/ipkey.js): every limit below gets clientKey(req), and
+  // `trusted` answers for codes too. The raw address is read per request and never kept.
+  const ipKeys = new IpKeys({ tz: config.metricsTz, trusted: trustedIps(config.trustedIps) });
+  const trusted = ipKeys.trusted;
+  const clientKey = (req) => ipKeys.code(clientIp(req));
   const trustedFactor = config.trustedIpFactor ?? 10;
   const perIp = (limit, ip) => limitFor(limit, trusted.has(ip), trustedFactor);
   if (trusted.size || trusted.bad) logJson({ event: 'trusted_ips', count: trusted.size, bad: trusted.bad, factor: trustedFactor });
@@ -389,7 +394,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // `lang`: from l= on /v1/<shard>/s, or from the compact address's language letter (/s/<shard><letter>, src/query.js).
   // `hlsTicket`: the address ends in .m3u8 (/v1/<shard>/s.m3u8, /s/<shard><letter>.m3u8), for a pasted link's play (#136).
   async function search(req, res, shard, url, lang = normalizeLang(url.searchParams.get('l')), hlsTicket = false) {
-    if (rateLimited(clientIp(req))) { metrics.inc('search_fail', '429'); return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.'); }
+    if (rateLimited(clientKey(req))) { metrics.inc('search_fail', '429'); return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.'); }
     // q is the raw rest of the address after q= (rawQuery): a pasted link's own & and + stay in it.
     const rawQ = rawQuery(url.search) ?? '';
     const query = parseQuery(rawQ);
@@ -441,7 +446,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     json(res, 200, body);
     if (linked && kind === 'string' && config.lookupWarm) {
       const device = uaDevice(ua);
-      lookupWarm(shard, body.results[0].t, hlsTicket || device === 'android', device, clientIp(req))
+      lookupWarm(shard, body.results[0].t, hlsTicket || device === 'android', device, clientKey(req))
         .catch((err) => logJson({ event: 'lookup_warm_failed', message: String(err?.message ?? err).slice(0, 200) }));
     }
   }
@@ -501,11 +506,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       return res.end(page);
     }
     // Which player this is, only to tell a reload from a new player (src/adaptive.js master); never stored or logged.
-    const viewer = createHash('sha256').update(`${clientIp(req)} ${req.headers['user-agent'] ?? ''}`).digest('hex').slice(0, 16);
+    const viewer = ipKeys.code(clientIp(req), req.headers['user-agent'] ?? '');
     // The master's first load starts the upgrade builds (src/adaptive.js): run in the spend scope of the player loading
     // it (the ticket's player, redirected here) and the session's shard, so they meet that visitor's allowance and the
     // per-minute caps like any build.
-    const scope = { ip: clientIp(req), shard: adaptive.shardOf?.(m[1]) ?? null, answer: 'lower_rung' };
+    const scope = { ip: clientKey(req), shard: adaptive.shardOf?.(m[1]) ?? null, answer: 'lower_rung' };
     const body = await spendScope.run(scope, () => (m[2] ? adaptive.variant(m[1], m[2], viewer, { android: isAndroidPlayer(req.headers['user-agent']) }) : adaptive.master(m[1], viewer, { android: isAndroidPlayer(req.headers['user-agent']) })));
     if (body == null) return fail(res, 404, 'not_found', m[2] ? 'Not ready.' : 'Unknown path.');
     const buf = Buffer.from(body);
@@ -1001,7 +1006,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     // answer: where a play over this visitor's own limits goes (allowance_reached's route): a Quest's .m3u8 ticket or an
     // Android player gets daily_limit, a PC youtube.com.
     const answer = hlsTicket || isAndroidPlayer(req.headers['user-agent']) ? 'daily_limit' : 'youtube';
-    return spendScope.run({ ip: clientIp(req), shard, answer }, () => ticketIn(req, res, shard, n, hlsTicket));
+    // play: a player's request (not the tablet's status, which warms), the one that may set an adaptive session's payer.
+    const play = clientKind(req.headers['user-agent']) !== 'string';
+    return spendScope.run({ ip: clientKey(req), shard, answer, play }, () => ticketIn(req, res, shard, n, hlsTicket));
   }
   async function ticketIn(req, res, shard, n, hlsTicket = false) {
     const t = store.get(shard, n);
@@ -1194,7 +1201,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }
     if (t.kind === 'page') {
       // A More page is a search: it counts against SEARCHES_PER_MINUTE, checked before the continuation is used up.
-      if (rateLimited(clientIp(req))) { metrics.inc('more_fail', '429'); return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.'); }
+      if (rateLimited(clientKey(req))) { metrics.inc('more_fail', '429'); return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.'); }
       metrics.inc('more');
       const more = continuations.get(`${shard}:${n}`);
       if (!more) { metrics.inc('more_fail', '410'); return fail(res, 410, 'expired', 'These results expired. Search again.'); }
@@ -1213,7 +1220,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
 
   // Run in the spend scope: an uncached Tunelio transcript counts against the client IP (src/spend.js).
   function caption(req, res, shard, raw, url) {
-    return spendScope.run({ ip: clientIp(req), shard, answer: 'captions_unavailable' }, () => captionIn(req, res, shard, raw, url));
+    return spendScope.run({ ip: clientKey(req), shard, answer: 'captions_unavailable' }, () => captionIn(req, res, shard, raw, url));
   }
   async function captionIn(req, res, shard, raw, url) {
     const byTrack = /^\d+$/.test(raw);
@@ -1392,7 +1399,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // build caps and the daily allowance anyway (over them the play gets youtube.com). The tablet's status, sheets
       // and More pages have TICKETS_PER_MINUTE_PER_IP. Each counts apart.
       const playerPlay = clientKind(req.headers['user-agent']) !== 'string' && store.get(shard, n)?.kind === 'video';
-      const ip = clientIp(req);
+      const ip = clientKey(req);
       if (playerPlay ? ticketLimited(ip, playerHits, config.ticketPlayerPerMinutePerIp, 'player') : ticketLimited(ip)) {
         metrics.inc('ticket_limited');
         return fail(res, 429, 'rate_limited', 'Too many requests, wait a minute.');
@@ -1404,7 +1411,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       else res.end();
     }
   }
-  return Object.assign(handler, { relay, checkWorkers, metrics, probe, refusals, home });
+  // kept(): everything that remembers a visitor past the request, for the tests that check no raw IP is in it.
+  const kept = () => ({ hits, ticketHits, playerHits, lookupWarms, allowance, spend, adaptive, playback });
+  return Object.assign(handler, { relay, checkWorkers, metrics, probe, refusals, home, kept });
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

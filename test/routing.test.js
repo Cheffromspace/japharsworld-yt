@@ -15,6 +15,7 @@ import { Playback } from '../src/playback.js';
 import { SpendGate, spendScope } from '../src/spend.js';
 import { Allowance } from '../src/allowance.js';
 import { Adaptive } from '../src/adaptive.js';
+import { IpKeys } from '../src/ipkey.js';
 import { trustedIps } from '../src/trusted.js';
 import { createWorker } from '../relay/worker.js';
 import { config as base } from '../src/config.js';
@@ -348,19 +349,55 @@ function upgradePlayback({ allow = () => true } = {}) {
     } };
 }
 
-test('adaptive: upgrades are charged to the picker (the first build\'s payer) whoever loads the master first', async (t) => {
-  const pb = upgradePlayback();
-  Object.defineProperty(pb.lowerJob, 'payer', { value: { ip: '192.0.2.1', shard: 1, answer: 'youtube' }, enumerable: false });
+test('adaptive: upgrades are charged to the latest picker (a play request), not to a warm or whoever loads the master', async (t) => {
+  const pb = upgradePlayback({ allow: () => false });
   const adaptive = new Adaptive({ playback: pb, base: 'http://pub/hls' });
-  const s = spendScope.run({ ip: '192.0.2.77', shard: 1 }, () => adaptive.session({ id: vid(1), seconds: 600 }, pb.lowerJob));
+  const data = { id: vid(1), seconds: 600 };
+  const s = spendScope.run({ ip: 'code-A', shard: 1, play: true, answer: 'youtube' }, () => adaptive.session(data, pb.lowerJob));
+  spendScope.run({ ip: 'code-W', shard: 1, answer: 'warm_skip' }, () => adaptive.session(data, pb.lowerJob)); // a warm: no change
+  assert.equal(s.payer.ip, 'code-A');
+  spendScope.run({ ip: 'code-C', shard: 1, play: true, answer: 'youtube' }, () => adaptive.session(data, pb.lowerJob)); // a later pick
   assert.equal(adaptive.shardOf(s.token), 1);
-  assert.equal(JSON.stringify(s).includes('192.0.2.1'), false, 'the payer is not in the session\'s enumerable fields');
+  assert.equal(JSON.stringify(s).includes('code-C'), false, 'the payer is not an enumerable field');
   const a = await routeApp(t, { adaptive });
   // A follower (another IP) loads the master first.
   const r = await fetch(`${a.url}/hls/${s.token}.m3u8`, { headers: { 'user-agent': WMF, 'x-forwarded-for': '192.0.2.5' } });
   assert.equal(r.status, 200);
-  assert.deepEqual(pb.seen.map((x) => [x.q, x.scope?.ip, x.scope?.shard, x.scope?.answer]), [['1080p', '192.0.2.1', 1, 'lower_rung']]);
-  assert.match(await r.text(), /1080p\.m3u8/);
+  assert.deepEqual(pb.seen.map((x) => [x.q, x.scope?.ip, x.scope?.shard, x.scope?.answer]), [['1080p', 'code-C', 1, 'lower_rung']]);
+});
+
+test('adaptive: the payer is let go once every rung has started, or after 12 hours', () => {
+  let now = 0, open = false;
+  const pb = upgradePlayback({ allow: () => open });
+  const adaptive = new Adaptive({ playback: pb, base: 'http://pub/hls', now: () => now });
+  const one = spendScope.run({ ip: 'code-A', shard: 1, play: true }, () => adaptive.session({ id: vid(1), seconds: 600 }, pb.lowerJob));
+  adaptive.master(one.token, 'v1');
+  assert.equal(one.payer?.ip, 'code-A', 'kept while a rung is still to start');
+  now += 12 * 3600_000;
+  adaptive.sweep();
+  assert.equal(one.payer, null, 'let go after 12 h');
+  open = true;
+  const pb2 = upgradePlayback();
+  const a2 = new Adaptive({ playback: pb2, base: 'http://pub/hls', now: () => now });
+  const two = spendScope.run({ ip: 'code-B', shard: 1, play: true }, () => a2.session({ id: vid(2), seconds: 600 }, pb2.lowerJob));
+  a2.master(two.token, 'v1');
+  assert.equal(two.payer, null, 'every rung started: nothing left to charge');
+});
+
+test('playback: jobs carry no payer, and spend_refused is logged once per stretch', () => {
+  let now = 0;
+  const logs = [];
+  const spend = new SpendGate({ hourCredits: 10, dayCredits: 0, monthCredits: 0, now: () => now });
+  spend.charge(10);
+  const pb = new Playback({ tunelio: fakeTunelio(), quality: '720p', probe: async () => ({ ok: true }), spend, now: () => now, log: (o) => logs.push(o) });
+  for (let i = 0; i < 3; i++) assert.equal(pb.start({ id: vid(1), seconds: 600 }, '1080p', { hls: true }), null);
+  assert.equal(logs.filter((l) => l.event === 'spend_refused').length, 1);
+  now += 61_000;
+  pb.start({ id: vid(1), seconds: 600 }, '1080p', { hls: true });
+  assert.equal(logs.filter((l) => l.event === 'spend_refused').length, 2, 'a new stretch');
+  const ok = new Playback({ tunelio: fakeTunelio({ hang: () => true }), quality: '720p', probe: async () => ({ ok: true }) });
+  const job = spendScope.run({ ip: 'code-A', shard: 1, play: true }, () => ok.start({ id: vid(2), seconds: 600 }, '720p'));
+  assert.equal('payer' in job, false);
 });
 
 test('adaptive: a rung refused at the first master load is tried again at the next and listed once it starts', async (t) => {
@@ -458,10 +495,55 @@ test('routing: a Tunelio refusal for a per-minute cap is not sent home by the fa
   assert.equal(a.jobs.length, 0, 'no home session for the capped play');
 });
 
-test('playback: a job\'s payer (the picker\'s IP) is kept in memory and never written to the live state file', async (t) => {
-  const liveFile = join(tmp(t), 'playback-live.json');
-  const pb = new Playback({ tunelio: fakeTunelio({ hang: () => true }), quality: '720p', probe: async () => ({ ok: true }), liveFile });
-  const job = spendScope.run({ ip: '192.0.2.123', shard: 1, answer: 'youtube' }, () => pb.start({ id: vid(1), seconds: 600 }, '720p'));
-  assert.equal(job.payer.ip, '192.0.2.123');
-  assert.doesNotMatch(readFileSync(liveFile, 'utf8'), /192\.0\.2\.123/);
+test('ip keys: a keyed daily code, the same for an address all day, new at the day boundary, never the address', () => {
+  let now = Date.parse('2026-11-04T18:00:00Z'); // 12:00 in Chicago
+  const k = new IpKeys({ now: () => now, trusted: trustedIps('198.51.100.7') });
+  const a = k.code('192.0.2.1');
+  assert.equal(k.code('192.0.2.1'), a, 'same address, same day: same code');
+  assert.notEqual(k.code('192.0.2.2'), a);
+  assert.doesNotMatch(a, /192|0\.2/);
+  assert.equal(a.length, 22, '16 bytes, base64url');
+  assert.ok(k.trusted.has(k.code('198.51.100.7')), 'a trusted address code is trusted');
+  assert.equal(k.trusted.has(a), false);
+  now = Date.parse('2026-11-05T05:59:00Z'); // 23:59 Chicago
+  assert.equal(k.code('192.0.2.1'), a);
+  now = Date.parse('2026-11-05T06:01:00Z'); // 00:01 Chicago: a new key
+  assert.notEqual(k.code('192.0.2.1'), a);
+  assert.ok(k.trusted.has(k.code('198.51.100.7')));
+});
+
+// Every string anywhere in a structure (Map/Set keys and values, non-enumerable properties too).
+function strings(x, out = [], seen = new Set()) {
+  if (typeof x === 'string') { out.push(x); return out; }
+  if (!x || typeof x !== 'object' || seen.has(x)) return out;
+  seen.add(x);
+  if (x instanceof Map) for (const [k, v] of x) { strings(k, out, seen); strings(v, out, seen); }
+  else if (x instanceof Set) for (const v of x) strings(v, out, seen);
+  else for (const k of Object.getOwnPropertyNames(x)) { let v; try { v = x[k]; } catch { continue; } if (typeof v !== 'function') { strings(k, out, seen); strings(v, out, seen); } }
+  return out;
+}
+
+test('no raw client IP in anything the service keeps after the request; limits and the allowance still count per visitor', async (t) => {
+  const spend = new SpendGate({ hourCredits: 0, dayCredits: 0, monthCredits: 0, perIpPerMinute: 2, perShardPerMinute: 0 });
+  const a = await routeApp(t, { spend, config: { allowanceCreditsPerIp: 20, searchesPerMinutePerIp: 50 } });
+  const ips = ['192.0.2.41', '192.0.2.42', '198.51.100.43'];
+  for (const ip of ips) {
+    await fetch(`${a.url}/v1/0/s?l=en&q=x`, { headers: { 'user-agent': UNITY, 'x-forwarded-for': ip } });
+    for (let i = 0; i < 3; i++) await a.get(a.ticket(vid(100 + ips.indexOf(ip) * 10 + i)), WMF, ip);
+    await a.get(a.ticket(vid(200)), UNITY, ip);
+  }
+  // The allowance and caps still told the visitors apart: each IP got 2 Tunelio builds (20 credits, and 2 a minute).
+  assert.equal(a.tunelio.created.length, 6);
+  const all = strings(a.app.kept());
+  for (const ip of ips) assert.equal(all.some((x) => x.includes(ip)), false, `${ip} kept somewhere`);
+  assert.ok(a.app.kept().allowance.state().ips >= 3, 'counted per visitor, by code');
+});
+
+test('allowance defaults (owner, 2026-11-04): 1500 credits, 25 home sessions, 60000 MB per IP, each under the home daily caps (40, 120000)', () => {
+  const env = ['ALLOWANCE_CREDITS_PER_IP', 'ALLOWANCE_HOME_BUILDS_PER_IP', 'ALLOWANCE_HOME_MB_PER_IP', 'HOME_DAILY_BUILDS', 'HOME_DAILY_MB'].filter((k) => process.env[k] != null);
+  assert.deepEqual(env, [], 'no env override while testing the defaults');
+  assert.deepEqual([base.allowanceCreditsPerIp, base.allowanceHomeBuildsPerIp, base.allowanceHomeMbPerIp], [1500, 25, 60000]);
+  assert.deepEqual([base.homeDailyBuilds, base.homeDailyMb], [40, 120000]);
+  assert.ok(base.allowanceHomeBuildsPerIp < base.homeDailyBuilds && base.allowanceHomeMbPerIp < base.homeDailyMb, 'one visitor never takes all of home');
+  assert.deepEqual(new Allowance().state().perIp, { credits: 1500, homeBuilds: 25, homeMb: 60000 });
 });

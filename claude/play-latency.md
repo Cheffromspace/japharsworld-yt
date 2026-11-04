@@ -228,7 +228,7 @@ after 0.1–2.6 s, one after 22 s); yt-dlp itself never noticed (its first reque
 to 30 s.
 
 Daily cap (YT#24, 2026-10-23): one 6 h mix is ~2.5 GB, so 10 GB a day went in a few long videos; owner: 50 GB a day
-(`HOME_DAILY_MB` default 50000).
+(`HOME_DAILY_MB` default 50000 then; 120000 since 2026-11-04).
 
 A deploy (06:03, another session's commit) restarted the service and cut off the home streams, which were in memory
 only; sessions are now saved with their files and reloaded.

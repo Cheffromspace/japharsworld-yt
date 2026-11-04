@@ -8,8 +8,10 @@
 // so this is an upper bound for one visitor): the busiest shard-day had 34 distinct videos on Tunelio (10-31, ~18
 // credits a video that day: 1700 for 95, so ~610 credits) and 12 home sessions (10-31); the most home MB in one
 // shard-day was ~28 GB (10-30, long 1080p mixes). Six people behind one NAT watching ~10 new videos each in an evening
-// at ~20 credits: ~1200. So the defaults: 1500 credits, 25 home builds and 35,000 MB a day per IP, under the home
-// relay's own daily caps (HOME_DAILY_BUILDS 40, HOME_DAILY_MB 50,000) and the spend day budget (8000). A trusted IP
+// at ~20 credits: ~1200. So the defaults: 1500 credits and 25 home builds a day per IP. Home MB: 60,000 (owner,
+// 2026-11-04), about six 4.5 h 1080p mixes (~9.2 GB each) for one room's picker; a sleep world plays long mixes, and
+// 35,000 ran out on the fourth. All under the home relay's own daily caps (HOME_DAILY_BUILDS 40, HOME_DAILY_MB 120,000,
+// raised with it) and the spend day budget (8000). A trusted IP
 // (TRUSTED_IPS) gets trustedFactor times each; the global caps still bind it.
 //
 // Home MB is counted when a session starts, at its expected size (its length at 1080p's rate, src/home.js), since the
@@ -24,7 +26,7 @@ import { dayOf } from './metrics.js';
 const MINUTE = 60_000;
 
 export class Allowance {
-  constructor({ creditsPerIp = 1500, homeBuildsPerIp = 25, homeMbPerIp = 35_000, trusted = null, trustedFactor = 10,
+  constructor({ creditsPerIp = 1500, homeBuildsPerIp = 25, homeMbPerIp = 60_000, trusted = null, trustedFactor = 10,
     maxKeys = 10_000, tz = 'America/Chicago', now = () => Date.now(), log = () => {}, onReached = () => {} } = {}) {
     Object.assign(this, { creditsPerIp, homeBuildsPerIp, homeMbPerIp, trusted, trustedFactor, maxKeys, tz, now, log, onReached });
     this.day = dayOf(this.now(), this.tz);

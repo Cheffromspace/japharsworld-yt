@@ -60,6 +60,7 @@ const RES = { '360p': '640x360', '720p': '1280x720', '1080p': '1920x1080' };
 // (src/slots.js): with CODECS muted (-64 dB, the room alone), without it -26 dB; PC (Media Foundation) has sound either way.
 const PLAN_MS = 30 * 60_000;
 const VIEWER_MS = 12 * 3600_000;
+const PAYER_MS = 12 * 3600_000; // a payer no rung has needed for this long is let go (privacy.html)
 
 export class Adaptive {
   constructor({ playback, pacer, fetcher = fetch, log = () => {}, onEvent = () => {}, lower = '720p', upper = '1080p',
@@ -204,18 +205,22 @@ export class Adaptive {
       const startRung = this.start && job.requested === this.start;
       const ladder = startRung ? [this.start, this.lower, this.upper] : [this.lower, this.upper];
       const rungs = startRung && !this.startMid ? [this.start, this.upper] : ladder;
-      // payer: who picked the video, the spend scope its first build was started in (src/playback.js job.payer), else
-      // this request's. The upgrade builds are charged to them and their shard whoever loads the master (owner's rule,
-      // 2026-11-04: an over-limit follower mustn't hold the room on the lower rung, nor a follower pay for the picker).
-      // In memory only (not in #save); a session reloaded after a restart has none, and its master's loader pays.
-      const scope = spendScope.getStore();
-      s = { token: randomBytes(9).toString('hex'), data, lowerJob: job, rungs, ladder, single, started: false, served: new Set(), viewers: new Map() };
-      Object.defineProperty(s, 'payer', { value: job?.payer ?? (scope ? { ip: scope.ip, shard: scope.shard, answer: scope.answer } : null), enumerable: false });
+      // shard: the ticket's, for the per-shard cap on the upgrades (not personal; not saved either).
+      s = { token: randomBytes(9).toString('hex'), data, lowerJob: job, rungs, ladder, single, started: false, served: new Set(), viewers: new Map(),
+        shard: spendScope.getStore()?.shard ?? null };
+      Object.defineProperty(s, 'payer', { value: null, enumerable: false, writable: true });
       byJob.set(job, s);
       this.sessions.set(s.token, s);
       if (this.sessions.size > 2000) this.sessions.delete(this.sessions.keys().next().value);
       this.#save();
     }
+    // payer: who the upgrade builds are charged to (owner's rule, 2026-11-04: an over-limit follower mustn't hold the
+    // room on the lower rung, nor a follower pay for the picker). Set by a real play's ticket request, whether it makes
+    // the session or reuses it (server.js marks its scope play; a ticket's later players are answered from its pin and
+    // don't get here), so the latest picker pays, not whoever built it hours ago; a warm never sets it. In memory only
+    // (non-enumerable, not in #save), and let go once every rung has started or failed, or after PAYER_MS (sweep).
+    const scope = spendScope.getStore();
+    if (scope?.play) s.payer = { ip: scope.ip, shard: scope.shard, answer: scope.answer, at: this.now() };
     return s;
   }
 
@@ -229,11 +234,14 @@ export class Adaptive {
   // Drops every player mark past VIEWER_MS (server.js, every minute), whether or not its session is loaded again.
   sweep() {
     const now = this.now();
-    for (const s of this.sessions.values()) for (const [k, v] of s.viewers) if (now - v.at >= VIEWER_MS) s.viewers.delete(k);
+    for (const s of this.sessions.values()) {
+      for (const [k, v] of s.viewers) if (now - v.at >= VIEWER_MS) s.viewers.delete(k);
+      if (s.payer && now - s.payer.at >= PAYER_MS) s.payer = null;
+    }
   }
 
   // The shard a session's ticket was in, or null (unknown token, or a session from before a restart).
-  shardOf(token) { return this.sessions.get(token)?.payer?.shard ?? null; }
+  shardOf(token) { return this.sessions.get(token)?.shard ?? null; }
 
   // The URL to send a player to: the master playlist (adaptive), or our copy of a plain HLS build's playlist.
   url(s) { return s.single ? `${this.base}/${s.token}/${s.lowerJob.quality}.m3u8` : `${this.base}/${s.token}.m3u8`; }
@@ -289,6 +297,7 @@ export class Adaptive {
       const job = this.playback.peek(s.data, q, { hls: true }) ?? (s.payer ? spendScope.run({ ...s.payer, answer: 'lower_rung' }, build) : build());
       if (job) started.add(q);
     }
+    if (s.payer && s.ladder.every((q) => started.has(q) || q === s.lowerJob.requested)) s.payer = null; // nothing left to charge
     this.onEvent('master');
     const lines = ['#EXTM3U', '#EXT-X-INDEPENDENT-SEGMENTS'];
     const listed = s.rungs.filter((q) => started.has(q));

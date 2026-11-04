@@ -325,7 +325,8 @@ test('More: a failed fetch is 502, also when it follows an all-over-cap page; a 
     carried: page(async () => ({ videos: [long('over1000000')], more: async () => { throw new Error('youtube down'); } })),
     expired: page(async () => ({ videos: [long('over1000000')], more: async () => { throw new RelayError('expired', 'worker gone'); } })),
   };
-  const s = await start({ youtube: { async search(q) { return answers[q]; }, thumbnailUrl: (id) => `thumb://${id}` } });
+  // Three searches and three More pages from one IP: More counts against the search limit, so the roomy one.
+  const s = await start({ config: { ...config, searchesPerMinutePerIp: 50 }, youtube: { async search(q) { return answers[q]; }, thumbnailUrl: (id) => `thumb://${id}` } });
   t.after(() => s.server.close());
   for (const [q, status, error] of [['plain', 502, 'youtube_failed'], ['carried', 502, 'youtube_failed'], ['expired', 410, 'expired']]) {
     const { next } = (await s.get(`/v1/0/s?q=${q}`)).body;

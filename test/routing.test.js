@@ -14,6 +14,7 @@ import { Home } from '../src/home.js';
 import { Playback } from '../src/playback.js';
 import { SpendGate, spendScope } from '../src/spend.js';
 import { Allowance } from '../src/allowance.js';
+import { Adaptive } from '../src/adaptive.js';
 import { trustedIps } from '../src/trusted.js';
 import { createWorker } from '../relay/worker.js';
 import { config as base } from '../src/config.js';
@@ -37,7 +38,7 @@ function fakeTunelio({ hang = () => false } = {}) {
 }
 
 // The service with a home worker taking `mediaMax` streams, a real Playback over a fake Tunelio and the given spend gate.
-async function routeApp(t, { mediaMax = 4, spend = new SpendGate({ hourCredits: 0, dayCredits: 0, monthCredits: 0 }), tunelio = fakeTunelio(), config: c = {}, playbackOpts = {} } = {}) {
+async function routeApp(t, { mediaMax = 4, spend = new SpendGate({ hourCredits: 0, dayCredits: 0, monthCredits: 0 }), tunelio = fakeTunelio(), config: c = {}, playbackOpts = {}, adaptive } = {}) {
   const dir = tmp(t);
   const config = { ...base, shards: 2, pool: 200, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub',
     metricsPath: '', tunelioQuality: '720p', ticketPlayerHoldMs: 3000, adaptiveHls: false, lookupWarm: false, videoMaxSeconds: 43200, homeFreeFloorGb: 0, ...c };
@@ -45,7 +46,7 @@ async function routeApp(t, { mediaMax = 4, spend = new SpendGate({ hourCredits: 
   const relay = new Relay({ token: TOKEN, pollMs: 200 });
   const playback = new Playback({ tunelio, quality: '720p', probe: async () => ({ ok: true, refused: false }), spend, ...playbackOpts });
   const logs = [];
-  const app = createApp({ config, store, relay, tunelio, playback, spend, captions: { async get() { return {}; } }, log: (l) => { try { logs.push(JSON.parse(l)); } catch { /* request lines */ } } });
+  const app = createApp({ config, store, relay, tunelio, playback, spend, adaptive, captions: { async get() { return {}; } }, log: (l) => { try { logs.push(JSON.parse(l)); } catch { /* request lines */ } } });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
@@ -328,4 +329,75 @@ test('ticket route: video players have their own per-IP limit, far above the tab
   assert.equal((await a.get(n, WMF)).status, 429);
   assert.equal((await a.get(n, UNITY)).status, 200, 'the tablet\'s count is apart');
   assert.deepEqual(a.logs.filter((l) => l.event === 'ticket_limited').map((l) => l.kind), ['player']);
+});
+
+const QUEST = 'AVProMobileVideo/2026.3.3p2 (Linux;Android 14) ExoPlayer';
+
+test('adaptive: the upgrade builds the master starts run in the loading player\'s spend scope with the ticket\'s shard; a refused rung is not listed', async (t) => {
+  const seen = [];
+  const lowerJob = { id: vid(1), requested: '720p', quality: '720p', state: 'ready', mb: 100, seconds: 600, fixed: true };
+  const pb = { peek: () => lowerJob, knownMb: () => null, measured: () => false, predict: () => 0,
+    start(data, q) { seen.push({ q, scope: spendScope.getStore() }); return null; }, spendRefusal: () => 'allowance' };
+  const adaptive = new Adaptive({ playback: pb, base: 'http://pub/hls' });
+  const s = spendScope.run({ ip: '192.0.2.1', shard: 1 }, () => adaptive.session({ id: vid(1), seconds: 600 }, lowerJob));
+  assert.equal(adaptive.shardOf(s.token), 1, 'the ticket\'s shard is kept with the session');
+  const a = await routeApp(t, { adaptive });
+  const r = await fetch(`${a.url}/hls/${s.token}.m3u8`, { headers: { 'user-agent': WMF, 'x-forwarded-for': '192.0.2.5' } });
+  assert.equal(r.status, 200);
+  assert.deepEqual(seen.map((x) => [x.q, x.scope?.ip, x.scope?.shard]), [['1080p', '192.0.2.5', 1]]);
+  const body = await r.text();
+  assert.doesNotMatch(body, /1080p\.m3u8/, 'a refused upgrade is not listed');
+  assert.match(body, /720p\.m3u8/);
+});
+
+test('routing: a home session counts its MB at its own quality (720p at 720p\'s rate)', async (t) => {
+  // 1 h at 720p = 1368 MB; at 1080p's rate it would be 2052, and two of those don't fit 3000.
+  const a = await routeApp(t, { config: { homeQuality: '720p', allowanceHomeMbPerIp: 3000, allowanceHomeBuildsPerIp: 0 } });
+  assert.match((await a.get(a.ticket(vid(1), 3600))).headers.get('location'), /^http:\/\/pub\/home\//);
+  assert.match((await a.get(a.ticket(vid(2), 3600))).headers.get('location'), /^http:\/\/pub\/home\//);
+  assert.deepEqual(a.jobs.map((j) => j.quality), ['720p', '720p']);
+});
+
+test('routing: a home session too big for what is left of the MB allowance goes to Tunelio, labelled home_mb', async (t) => {
+  const a = await routeApp(t, { config: { allowanceHomeMbPerIp: 3000, allowanceHomeBuildsPerIp: 0 } }); // 1 h at 1080p: 2052 MB
+  assert.match((await a.get(a.ticket(vid(1), 3600))).headers.get('location'), /^http:\/\/pub\/home\//);
+  assert.match((await a.get(a.ticket(vid(2), 3600))).headers.get('location'), /tunelio\.dev/);
+  assert.deepEqual(a.routes().map((e) => [e.via, e.why]), [['home', 'long'], ['tunelio', 'home_mb']]);
+});
+
+test('routing: a Quest (.m3u8 ticket) or Android player over its allowance gets a fast 403 daily_limit; the tablet a failed status; a PC youtube.com', async (t) => {
+  const a = await routeApp(t, { config: { allowanceCreditsPerIp: 10 } });
+  assert.match((await a.get(a.ticket(vid(1)))).headers.get('location'), /tunelio\.dev/);
+  const n = a.ticket(vid(2));
+  const t0 = Date.now();
+  const quest = await a.get(`${n}.m3u8`, QUEST);
+  assert.equal(quest.status, 403);
+  assert.equal((await quest.json()).error, 'daily_limit');
+  assert.ok(Date.now() - t0 < 1500, 'answered at once, no hold');
+  const android = await a.get(n, QUEST);
+  assert.deepEqual([android.status, (await android.json()).error], [403, 'daily_limit']);
+  const st = await (await a.get(`${n}.m3u8`, UNITY)).json();
+  assert.deepEqual([st.state, st.reason, st.error], ['failed', 'daily_limit', 'daily_limit']);
+  assert.equal((await a.get(n, WMF)).headers.get('location'), `https://www.youtube.com/watch?v=${vid(2)}`, 'a PC keeps the youtube.com link');
+  assert.equal(a.tunelio.created.length, 1);
+  assert.ok(a.logs.some((l) => l.event === 'play_daily_limit' && l.by === 'allowance'));
+});
+
+test('routing: a Quest over a per-minute build cap gets the same daily_limit answer', async (t) => {
+  const spend = new SpendGate({ hourCredits: 0, dayCredits: 0, monthCredits: 0, perIpPerMinute: 1, perShardPerMinute: 0 });
+  const a = await routeApp(t, { spend });
+  assert.match((await a.get(a.ticket(vid(1)))).headers.get('location'), /tunelio\.dev/);
+  const r = await a.get(`${a.ticket(vid(2))}.m3u8`, QUEST);
+  assert.deepEqual([r.status, (await r.json()).error], [403, 'daily_limit']);
+  assert.ok(a.logs.some((l) => l.event === 'play_daily_limit' && l.by === 'cap'));
+});
+
+test('routing: a Tunelio refusal for a per-minute cap is not sent home by the failure fallback', async (t) => {
+  // The fallback after a Tunelio failure (homeFor tunelio_failed) takes budget refusals only; startHome's own cap
+  // check refuses the same session too, so this test fails only with both removed.
+  const spend = new SpendGate({ hourCredits: 0, dayCredits: 0, monthCredits: 0, perIpPerMinute: 1, perShardPerMinute: 0 });
+  const a = await routeApp(t, { spend });
+  assert.match((await a.get(a.ticket(vid(1)))).headers.get('location'), /tunelio\.dev/);
+  assert.equal((await a.get(a.ticket(vid(2)))).headers.get('location'), `https://www.youtube.com/watch?v=${vid(2)}`);
+  assert.equal(a.jobs.length, 0, 'no home session for the capped play');
 });

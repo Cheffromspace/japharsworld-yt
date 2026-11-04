@@ -95,6 +95,9 @@ export class Allowance {
     return () => { if (this.day === day) { e.credits = Math.max(0, e.credits - credits); e.homeBuilds = Math.max(0, e.homeBuilds - homeBuilds); e.homeMb = Math.max(0, e.homeMb - homeMb); } };
   }
 
+  // The day's counts go at the day's end even with no request to notice it (server.js, every minute).
+  sweep() { this.#today(); }
+
   // For /ops/state: how many IPs have counts today and how many reached each allowance. Numbers only.
   state() {
     this.#today();

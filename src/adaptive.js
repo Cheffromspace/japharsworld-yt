@@ -35,6 +35,7 @@
 // and AVPro failed with "Loading failed"). The same goes for a plain HLS build (videos over 12 hours): the ticket
 // redirects to our copy of its playlist, `single()`, not to Tunelio's.
 import { randomBytes } from 'node:crypto';
+import { spendScope } from './spend.js';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 
 // Allows the extra credits of an adaptive play while today's spend stays under an even share of what is left until the
@@ -202,7 +203,10 @@ export class Adaptive {
       const startRung = this.start && job.requested === this.start;
       const ladder = startRung ? [this.start, this.lower, this.upper] : [this.lower, this.upper];
       const rungs = startRung && !this.startMid ? [this.start, this.upper] : ladder;
-      s = { token: randomBytes(9).toString('hex'), data, lowerJob: job, rungs, ladder, single, started: false, served: new Set(), viewers: new Map() };
+      // shard: the ticket's (server.js runs ticket requests in the spend scope), so the upgrade builds the master starts
+      // later count against that shard's per-minute cap (server.js hlsRoute). In memory only, not saved.
+      s = { token: randomBytes(9).toString('hex'), data, lowerJob: job, rungs, ladder, single, started: false, served: new Set(), viewers: new Map(),
+        shard: spendScope.getStore()?.shard ?? null };
       byJob.set(job, s);
       this.sessions.set(s.token, s);
       if (this.sessions.size > 2000) this.sessions.delete(this.sessions.keys().next().value);
@@ -210,6 +214,9 @@ export class Adaptive {
     }
     return s;
   }
+
+  // The shard a session's ticket was in, or null (unknown token, or a session from before a restart).
+  shardOf(token) { return this.sessions.get(token)?.shard ?? null; }
 
   // The URL to send a player to: the master playlist (adaptive), or our copy of a plain HLS build's playlist.
   url(s) { return s.single ? `${this.base}/${s.token}/${s.lowerJob.quality}.m3u8` : `${this.base}/${s.token}.m3u8`; }
@@ -252,7 +259,12 @@ export class Adaptive {
         this.onEvent(s.rungs.length === s.ladder.length ? 'start_mid' : 'start_one_step');
         this.log({ event: 'adaptive_start_rungs', id: s.data.id, rungs: s.rungs.length, mb, predicted });
       }
-      for (const q of s.ladder.slice(1)) this.playback.start(s.data, q, { hls: true, maxMb: q === this.upper ? this.maxUpperMb : 0 });
+      // Started in the caller's spend scope (server.js hlsRoute): a rung the spend limits refuse (this visitor's
+      // allowance or cap, the budget) is not listed, so players aren't sent to a variant that will never exist.
+      for (const q of s.ladder.slice(1)) {
+        const job = this.playback.start(s.data, q, { hls: true, maxMb: q === this.upper ? this.maxUpperMb : 0 });
+        if (!job && this.playback.spendRefusal?.(s.data, q, { hls: true, peek: true })) s.rungs = s.rungs.filter((r) => r !== q);
+      }
       this.#save();
       this.onEvent('upgrade');
     }

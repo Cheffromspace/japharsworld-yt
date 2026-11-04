@@ -59,6 +59,7 @@ const RES = { '360p': '640x360', '720p': '1280x720', '1080p': '1920x1080' };
 // plays muted, though the same variant playlists alone have sound. Measured 2026-10-23 with test slots 01/08-11
 // (src/slots.js): with CODECS muted (-64 dB, the room alone), without it -26 dB; PC (Media Foundation) has sound either way.
 const PLAN_MS = 30 * 60_000;
+const VIEWER_MS = 12 * 3600_000;
 
 export class Adaptive {
   constructor({ playback, pacer, fetcher = fetch, log = () => {}, onEvent = () => {}, lower = '720p', upper = '1080p',
@@ -203,10 +204,13 @@ export class Adaptive {
       const startRung = this.start && job.requested === this.start;
       const ladder = startRung ? [this.start, this.lower, this.upper] : [this.lower, this.upper];
       const rungs = startRung && !this.startMid ? [this.start, this.upper] : ladder;
-      // shard: the ticket's (server.js runs ticket requests in the spend scope), so the upgrade builds the master starts
-      // later count against that shard's per-minute cap (server.js hlsRoute). In memory only, not saved.
-      s = { token: randomBytes(9).toString('hex'), data, lowerJob: job, rungs, ladder, single, started: false, served: new Set(), viewers: new Map(),
-        shard: spendScope.getStore()?.shard ?? null };
+      // payer: who picked the video, the spend scope its first build was started in (src/playback.js job.payer), else
+      // this request's. The upgrade builds are charged to them and their shard whoever loads the master (owner's rule,
+      // 2026-11-04: an over-limit follower mustn't hold the room on the lower rung, nor a follower pay for the picker).
+      // In memory only (not in #save); a session reloaded after a restart has none, and its master's loader pays.
+      const scope = spendScope.getStore();
+      s = { token: randomBytes(9).toString('hex'), data, lowerJob: job, rungs, ladder, single, started: false, served: new Set(), viewers: new Map() };
+      Object.defineProperty(s, 'payer', { value: job?.payer ?? (scope ? { ip: scope.ip, shard: scope.shard, answer: scope.answer } : null), enumerable: false });
       byJob.set(job, s);
       this.sessions.set(s.token, s);
       if (this.sessions.size > 2000) this.sessions.delete(this.sessions.keys().next().value);
@@ -215,8 +219,21 @@ export class Adaptive {
     return s;
   }
 
+  // A player's mark in a session (to tell a reload from a new player), or null. Kept VIEWER_MS from its first master
+  // load at most: long enough for the longest video (VIDEO_MAX_HOURS 12), and no longer (privacy.html).
+  #viewer(s, viewer) {
+    const v = s.viewers.get(viewer);
+    if (v && this.now() - v.at >= VIEWER_MS) { s.viewers.delete(viewer); return null; }
+    return v ?? null;
+  }
+  // Drops every player mark past VIEWER_MS (server.js, every minute), whether or not its session is loaded again.
+  sweep() {
+    const now = this.now();
+    for (const s of this.sessions.values()) for (const [k, v] of s.viewers) if (now - v.at >= VIEWER_MS) s.viewers.delete(k);
+  }
+
   // The shard a session's ticket was in, or null (unknown token, or a session from before a restart).
-  shardOf(token) { return this.sessions.get(token)?.shard ?? null; }
+  shardOf(token) { return this.sessions.get(token)?.payer?.shard ?? null; }
 
   // The URL to send a player to: the master playlist (adaptive), or our copy of a plain HLS build's playlist.
   url(s) { return s.single ? `${this.base}/${s.token}/${s.lowerJob.quality}.m3u8` : `${this.base}/${s.token}.m3u8`; }
@@ -244,9 +261,9 @@ export class Adaptive {
     const s = this.sessions.get(token);
     if (!s || s.single) return null;
     if (viewer) {
-      const v = s.viewers.get(viewer);
+      const v = this.#viewer(s, viewer);
       if (v) this.onEvent(v.upgraded ? 'reload_after_upgrade' : 'reload_before_upgrade');
-      else { s.viewers.set(viewer, { upgraded: false }); if (s.viewers.size > 200) s.viewers.delete(s.viewers.keys().next().value); }
+      else { s.viewers.set(viewer, { upgraded: false, at: this.now() }); if (s.viewers.size > 200) s.viewers.delete(s.viewers.keys().next().value); }
     }
     if (!s.started) {
       s.started = true;
@@ -259,18 +276,23 @@ export class Adaptive {
         this.onEvent(s.rungs.length === s.ladder.length ? 'start_mid' : 'start_one_step');
         this.log({ event: 'adaptive_start_rungs', id: s.data.id, rungs: s.rungs.length, mb, predicted });
       }
-      // Started in the caller's spend scope (server.js hlsRoute): a rung the spend limits refuse (this visitor's
-      // allowance or cap, the budget) is not listed, so players aren't sent to a variant that will never exist.
-      for (const q of s.ladder.slice(1)) {
-        const job = this.playback.start(s.data, q, { hls: true, maxMb: q === this.upper ? this.maxUpperMb : 0 });
-        if (!job && this.playback.spendRefusal?.(s.data, q, { hls: true, peek: true })) s.rungs = s.rungs.filter((r) => r !== q);
-      }
       this.#save();
       this.onEvent('upgrade');
     }
+    // The builds above the first rung, on every master load until each has started: charged to the payer (above), in
+    // the caller's scope for a session without one (server.js hlsRoute). A rung the spend limits refuse now is not
+    // listed this time, so players aren't sent to a variant that doesn't exist, and is tried again at the next load (a
+    // per-minute cap clears in a minute; a budget or allowance may too).
+    const started = new Set([s.rungs[0]]);
+    for (const q of s.ladder.slice(1)) {
+      const build = () => this.playback.start(s.data, q, { hls: true, maxMb: q === this.upper ? this.maxUpperMb : 0 });
+      const job = this.playback.peek(s.data, q, { hls: true }) ?? (s.payer ? spendScope.run({ ...s.payer, answer: 'lower_rung' }, build) : build());
+      if (job) started.add(q);
+    }
     this.onEvent('master');
     const lines = ['#EXTM3U', '#EXT-X-INDEPENDENT-SEGMENTS'];
-    const rungs = android ? s.rungs.filter((q, i) => i === 0 || this.#job(s, q)?.state === 'ready') : s.rungs;
+    const listed = s.rungs.filter((q) => started.has(q));
+    const rungs = android ? listed.filter((q, i) => i === 0 || this.#job(s, q)?.state === 'ready') : listed;
     rungs.forEach((q, i) => {
       // Before a rung's /create answers its size is unknown: guess from the first rung's.
       const job = this.#job(s, q);
@@ -337,7 +359,7 @@ export class Adaptive {
       return this.#gave(s, got, await this.#playlist(got));
     }
     const text = this.#gave(s, up, await this.#playlist(up));
-    const v = viewer && s.viewers.get(viewer);
+    const v = viewer && this.#viewer(s, viewer);
     if (text && v) v.upgraded = true;
     if (text && !s.served.has(quality)) { s.served.add(quality); this.onEvent('upgrade_served'); this.log({ event: 'adaptive_upgrade_served', id: s.data.id, quality, mb: up.mb, buildMs: up.endedMs - up.startedMs }); }
     return text;

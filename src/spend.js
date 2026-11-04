@@ -240,7 +240,7 @@ export class SpendGate {
     const over = this.check();
     if (over) return 'budget';
     const ctx = spendScope.getStore();
-    if (this.allowance?.over(ctx?.ip, { credits: this.cost })) return 'allowance';
+    if (this.allowance?.over(ctx?.ip, { credits: this.cost, route: ctx?.answer })) return 'allowance';
     const rate = this.#rate(id, !peek);
     if (rate && !peek) this.#capLog(rate, ctx);
     return rate ? 'cap' : null;
@@ -271,7 +271,7 @@ export class SpendGate {
   refuseTranscript() {
     if (this.check(this.transcriptCost)) return 'budget';
     const ip = spendScope.getStore()?.ip;
-    if (this.allowance?.over(ip, { credits: this.transcriptCost })) return 'allowance';
+    if (this.allowance?.over(ip, { credits: this.transcriptCost, route: 'captions_unavailable' })) return 'allowance';
     const trusted = this.#trusted(ip);
     const perIp = limitFor(this.transcriptsPerIpPerMinute, trusted, this.trustedFactor);
     if (!ip || !(perIp > 0)) return null;

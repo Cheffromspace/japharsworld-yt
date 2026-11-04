@@ -63,7 +63,10 @@ export class Allowance {
   // (any one used up stops every new build, home and Tunelio: one allowance), or null. `credits`: a Tunelio call's
   // cost; `home`, `homeMb`: a home session and its expected MB. No IP (a build outside any request): null. The first time each is
   // reached in a day it is logged as allowance_reached (route youtube: where the play goes) and counted.
-  over(ip, { credits = 0, home = false, homeMb = 0 } = {}) {
+  // A home session that only doesn't fit what is left of the MB allowance (it isn't used up) is 'home_mb_fit': not
+  // logged or marked, since the play may go on to Tunelio. route: where a refused play goes (the caller's spend scope:
+  // youtube, daily_limit, warm_skip, captions_unavailable, lower_rung), for the log line.
+  over(ip, { credits = 0, home = false, homeMb = 0, route = 'youtube' } = {}) {
     if (!ip) return null;
     this.#today();
     const e = this.#entry(ip, true);
@@ -72,16 +75,17 @@ export class Allowance {
     const cl = this.#limit(this.creditsPerIp, ip), bl = this.#limit(this.homeBuildsPerIp, ip), ml = this.#limit(this.homeMbPerIp, ip);
     if (cl > 0 && (e.credits >= cl || e.credits + credits > cl)) kind = 'credits';
     else if (bl > 0 && (e.homeBuilds >= bl || (home && e.homeBuilds + 1 > bl))) kind = 'home_builds';
-    else if (ml > 0 && (e.homeMb >= ml || (home && e.homeBuilds > 0 && e.homeMb + homeMb > ml))) kind = 'home_mb'; // a first home build always fits
-    if (kind) this.#reached(ip, e, kind);
+    else if (ml > 0 && e.homeMb >= ml) kind = 'home_mb';
+    else if (ml > 0 && home && e.homeBuilds > 0 && e.homeMb + homeMb > ml) return 'home_mb_fit'; // a first home build always fits
+    if (kind) this.#reached(ip, e, kind, route ?? 'youtube');
     return kind;
   }
 
-  #reached(ip, e, kind) {
+  #reached(ip, e, kind, route) {
     if (e.reached.has(kind)) return;
     e.reached.add(kind);
     this.onReached(kind);
-    this.log({ event: 'allowance_reached', kind, route: 'youtube', ...(this.#trusted(ip) ? { trusted: true } : {}) });
+    this.log({ event: 'allowance_reached', kind, route, ...(this.#trusted(ip) ? { trusted: true } : {}) });
   }
 
   // Count a new build for this IP; returns a refund (a failed Tunelio call gives its credits back).

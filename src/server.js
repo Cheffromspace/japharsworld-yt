@@ -244,6 +244,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     for (const map of [hits, ticketHits, playerHits, lookupWarms]) for (const [k, l] of map) if (!l.some((at) => now - at < 60_000)) map.delete(k);
     spend?.sweep?.();
     allowance.sweep?.();
+    adaptive.sweep?.();
   }, 60_000).unref();
   const ticketHits = new Map(); // ip → timestamps
   const playerHits = new Map(); // the same for video players' loads (their own limit)
@@ -504,7 +505,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     // The master's first load starts the upgrade builds (src/adaptive.js): run in the spend scope of the player loading
     // it (the ticket's player, redirected here) and the session's shard, so they meet that visitor's allowance and the
     // per-minute caps like any build.
-    const scope = { ip: clientIp(req), shard: adaptive.shardOf?.(m[1]) ?? null };
+    const scope = { ip: clientIp(req), shard: adaptive.shardOf?.(m[1]) ?? null, answer: 'lower_rung' };
     const body = await spendScope.run(scope, () => (m[2] ? adaptive.variant(m[1], m[2], viewer, { android: isAndroidPlayer(req.headers['user-agent']) }) : adaptive.master(m[1], viewer, { android: isAndroidPlayer(req.headers['user-agent']) })));
     if (body == null) return fail(res, 404, 'not_found', m[2] ? 'Not ready.' : 'Unknown path.');
     const buf = Buffer.from(body);
@@ -756,8 +757,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (fresh && home.worker()) {
       // The route a refusal hands on: 'home_mb' when only this session's size doesn't fit (the allowance isn't used up,
       // so Tunelio may still take the play within its credits), else 'allowance' or 'cap' (no build anywhere).
-      const over = allowance.over(ip, { home: true, homeMb });
-      const no = over === 'home_mb' && !allowance.over(ip) ? 'home_mb' : over ? 'allowance' : spend?.rateCap?.(data.id) ?? null;
+      const over = allowance.over(ip, { home: true, homeMb, route: spendScope.getStore()?.answer });
+      const no = over === 'home_mb_fit' ? 'home_mb' : over ? 'allowance' : spend?.rateCap?.(data.id) ?? null;
       if (no) { const ctx = spendScope.getStore(); if (ctx) ctx.route = no; return null; }
     }
     const s = home.start(data, quality);
@@ -979,7 +980,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // Uncached Tunelio warms are capped (LOOKUP_WARMS_PER_MINUTE_PER_IP, LOOKUP_WARMS_PER_MINUTE): over a cap,
   // warm_skip with skipped 'cap'.
   function lookupWarm(shard, n, hls, device, ip) {
-    return spendScope.run({ ip, shard }, () => lookupWarmIn(shard, n, hls, device, ip));
+    return spendScope.run({ ip, shard, answer: 'warm_skip' }, () => lookupWarmIn(shard, n, hls, device, ip));
   }
   async function lookupWarmIn(shard, n, hls, device, ip) {
     const t = store.get(shard, n);
@@ -997,7 +998,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // shard (src/spend.js) and their daily allowance (src/allowance.js); over the shared budget the play may go home, over
   // their own limits it gets youtube.com.
   function ticket(req, res, shard, n, hlsTicket = false) {
-    return spendScope.run({ ip: clientIp(req), shard }, () => ticketIn(req, res, shard, n, hlsTicket));
+    // answer: where a play over this visitor's own limits goes (allowance_reached's route): a Quest's .m3u8 ticket or an
+    // Android player gets daily_limit, a PC youtube.com.
+    const answer = hlsTicket || isAndroidPlayer(req.headers['user-agent']) ? 'daily_limit' : 'youtube';
+    return spendScope.run({ ip: clientIp(req), shard, answer }, () => ticketIn(req, res, shard, n, hlsTicket));
   }
   async function ticketIn(req, res, shard, n, hlsTicket = false) {
     const t = store.get(shard, n);
@@ -1209,7 +1213,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
 
   // Run in the spend scope: an uncached Tunelio transcript counts against the client IP (src/spend.js).
   function caption(req, res, shard, raw, url) {
-    return spendScope.run({ ip: clientIp(req), shard }, () => captionIn(req, res, shard, raw, url));
+    return spendScope.run({ ip: clientIp(req), shard, answer: 'captions_unavailable' }, () => captionIn(req, res, shard, raw, url));
   }
   async function captionIn(req, res, shard, raw, url) {
     const byTrack = /^\d+$/.test(raw);

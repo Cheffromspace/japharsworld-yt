@@ -54,7 +54,7 @@ import { Adaptive, Pacer } from './adaptive.js';
 import { TunelioProbe } from './probe.js';
 import { EventRing, opsRoute, gitHead } from './ops.js';
 import { TestSlots } from './slots.js';
-import { Home, MB_PER_SECOND as HOME_MB_PER_SECOND } from './home.js';
+import { Home, mbPerSecond } from './home.js';
 import { txBytes, TxDelta } from './net.js';
 import { ChannelSlots } from './channels.js';
 import { statsRoute, latestCredits, billingPeriod, daysBetween } from './stats.js';
@@ -237,6 +237,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // Ticket requests a minute per IP (TICKETS_PER_MINUTE_PER_IP): status loads, players, sheets and More pages. Bounded
   // without dropping an active IP's count (src/spend.js touch). Logged once per IP and minute when it starts refusing.
   const routed = new Map(); // "via:videoId" → when its build_route was last counted
+  // Every minute: per-minute IP counts older than a minute go (here, in the spend gate, the lookup-warm cap), and the
+  // day's allowance at the day's end, so the privacy page's "about a minute" and "the end of the day" hold.
+  setInterval(() => {
+    const now = Date.now();
+    for (const map of [hits, ticketHits, playerHits, lookupWarms]) for (const [k, l] of map) if (!l.some((at) => now - at < 60_000)) map.delete(k);
+    spend?.sweep?.();
+    allowance.sweep?.();
+  }, 60_000).unref();
   const ticketHits = new Map(); // ip → timestamps
   const playerHits = new Map(); // the same for video players' loads (their own limit)
   function ticketLimited(ip, hits = ticketHits, perMinute = config.ticketsPerMinutePerIp, kind = 'ticket') {
@@ -493,7 +501,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }
     // Which player this is, only to tell a reload from a new player (src/adaptive.js master); never stored or logged.
     const viewer = createHash('sha256').update(`${clientIp(req)} ${req.headers['user-agent'] ?? ''}`).digest('hex').slice(0, 16);
-    const body = m[2] ? await adaptive.variant(m[1], m[2], viewer, { android: isAndroidPlayer(req.headers['user-agent']) }) : adaptive.master(m[1], viewer, { android: isAndroidPlayer(req.headers['user-agent']) });
+    // The master's first load starts the upgrade builds (src/adaptive.js): run in the spend scope of the player loading
+    // it (the ticket's player, redirected here) and the session's shard, so they meet that visitor's allowance and the
+    // per-minute caps like any build.
+    const scope = { ip: clientIp(req), shard: adaptive.shardOf?.(m[1]) ?? null };
+    const body = await spendScope.run(scope, () => (m[2] ? adaptive.variant(m[1], m[2], viewer, { android: isAndroidPlayer(req.headers['user-agent']) }) : adaptive.master(m[1], viewer, { android: isAndroidPlayer(req.headers['user-agent']) })));
     if (body == null) return fail(res, 404, 'not_found', m[2] ? 'Not ready.' : 'Unknown path.');
     const buf = Buffer.from(body);
     res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'content-length': buf.length, 'cache-control': 'no-store' });
@@ -740,9 +752,12 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     // session (the play then gets youtube.com; Tunelio refuses it by the same limits). A session already there is free.
     const fresh = !home.peek(data, quality);
     const ip = spendScope.getStore()?.ip;
-    const homeMb = Math.round((data.seconds ?? 0) * HOME_MB_PER_SECOND);
+    const homeMb = Math.round((data.seconds ?? 0) * mbPerSecond(quality)); // at the session's own quality
     if (fresh && home.worker()) {
-      const no = allowance.over(ip, { home: true, homeMb }) ? 'allowance' : spend?.rateCap?.(data.id) ?? null;
+      // The route a refusal hands on: 'home_mb' when only this session's size doesn't fit (the allowance isn't used up,
+      // so Tunelio may still take the play within its credits), else 'allowance' or 'cap' (no build anywhere).
+      const over = allowance.over(ip, { home: true, homeMb });
+      const no = over === 'home_mb' && !allowance.over(ip) ? 'home_mb' : over ? 'allowance' : spend?.rateCap?.(data.id) ?? null;
       if (no) { const ctx = spendScope.getStore(); if (ctx) ctx.route = no; return null; }
     }
     const s = home.start(data, quality);
@@ -857,6 +872,20 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   }
   // Tunelio builds nothing over 12 h: see VIDEO_MAX_HOURS in src/config.js. Live streams have no length to go by.
   const overCap = (data) => !data.live && config.videoMaxSeconds > 0 && (data.seconds ?? 0) > config.videoMaxSeconds;
+  // A visitor over their own limits (their daily allowance, src/allowance.js, or a per-minute build cap) on a Quest
+  // (.m3u8 ticket) or an Android player: no youtube.com link, which a Quest can't open and retried every 6 s (world #420),
+  // but a fast failed answer with reason daily_limit (owner, 2026-11-04), the shape of tooLongAnswer. The player gets
+  // 403: the request itself is fine and asking again won't change the answer today, which is what a Quest should take
+  // from it (a 429 says "retry after a while"); the world handles a player 403 for restricted and too_long already.
+  // PC players keep the youtube.com 360p link.
+  const overOwnLimit = (reason) => reason === 'allowance' || reason === 'cap';
+  function dailyLimitAnswer(res, kind, shard, n, t, why) {
+    metrics.inc('ticket_daily_limit');
+    if (kind === 'string') return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), state: 'failed', reason: 'daily_limit', error: 'daily_limit', ...meta(t.data) });
+    logJson({ event: 'play_daily_limit', shard, n, id: t.data.id, client: kind, by: why });
+    routeEvent('youtube', why, { id: t.data.id, answer: 'daily_limit' });
+    return fail(res, 403, 'daily_limit', "You've started a lot of new videos today. Try one that's already playing, or come back tomorrow.");
+  }
   function restrictedAnswer(res, kind, shard, n, t) {
     metrics.inc('ticket_restricted');
     if (kind === 'string') return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), state: 'failed', reason: 'restricted', error: 'restricted', ...meta(t.data) });
@@ -982,7 +1011,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // The tablet asking (a row selected, or watching a build): start the build, report it, never redirect.
       if (kind === 'string') {
         const body = await tabletStatus(shard, n, t, hlsTicket, 'tablet');
-        return body === 'too_long' ? tooLongAnswer(res, kind, shard, n, t) : json(res, 200, body);
+        if (body === 'too_long') return tooLongAnswer(res, kind, shard, n, t);
+        if (hlsTicket && body?.state === 'youtube' && overOwnLimit(body.reason)) return dailyLimitAnswer(res, kind, shard, n, t, body.reason);
+        return json(res, 200, body);
       }
       // A player (VRChat's resolver, then AVPro). The resolver gives up after 20 s, so it is held only briefly and
       // then told "this is not a video" (a plain page), which makes VRChat hand the URL straight to AVPro.
@@ -1117,6 +1148,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       metrics.latency('ticket_hold_ms', held);
       if (where.via === 'restricted') return restrictedAnswer(res, kind, shard, n, t);
       if (where.via === 'youtube' && where.reason === 'too_long' && (hlsTicket || android)) return tooLongAnswer(res, kind, shard, n, t);
+      if (where.via === 'youtube' && overOwnLimit(where.reason) && (hlsTicket || android)) return dailyLimitAnswer(res, kind, shard, n, t, where.reason);
       // The last check: from here to pins.set nothing awaits, so of the players of a ticket that held at once the first to
       // get here sets its source and the others follow it. The checks above can't do this alone: the codec read and
       // homeWhere await after them (#293, Everything-is-OK#398).

@@ -45,6 +45,11 @@ const PLAYING_MS = 5 * 60_000;
 // A 1080p home session's MB per second of video, the high end measured (0.46–0.57, 2026-10-26: a 4.1 h mix, 8404 MB):
 // what a build counts against maxGb before its first segments say better (#expectedMb).
 export const MB_PER_SECOND = 0.57;
+// MB per second of video by home quality, for the per-visitor allowance (src/server.js startHome): 1080p as above;
+// 720p files are 1.5-3x smaller than 1080p (claude/play-latency.md, 11 videos, 2026-10-22; a 22-minute 720p video was
+// 216 MB, 0.16 MB/s), so 0.38, the high end. Unknown qualities count at 1080p's rate.
+export const MB_PER_SECOND_AT = { '1080p': MB_PER_SECOND, '720p': 0.38 };
+export const mbPerSecond = (quality) => MB_PER_SECOND_AT[quality] ?? MB_PER_SECOND;
 const FREE_CHECK_MS = 5_000; // a build's uploads look at the disk's free space at most this often
 
 export class Home {

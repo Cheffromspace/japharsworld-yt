@@ -246,6 +246,15 @@ export class SpendGate {
     return rate ? 'cap' : null;
   }
 
+  // Drops what no limit needs any more (server.js, every minute): per-minute counts and cap-log marks older than a
+  // minute, so no IP stays here much past its last minute of use.
+  sweep() {
+    const now = this.now();
+    for (const map of [this.byIp, this.transcriptsByIp]) for (const [k, l] of map) if (!l.some((e) => now - e.at < MINUTE)) map.delete(k);
+    for (const [k, l] of this.byShard) if (!l.some((e) => now - e.at < MINUTE)) this.byShard.delete(k);
+    for (const [k, at] of this.capLogged) if (now - at >= MINUTE) this.capLogged.delete(k);
+  }
+
   // spend_cap, once per IP and limit while it keeps refusing (a stretch: nothing logged in the last minute).
   #capLog(by, ctx, extra = {}) {
     const now = this.now();

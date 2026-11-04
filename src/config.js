@@ -232,6 +232,9 @@ export const config = {
   feedbackUrl: process.env.FEEDBACK_URL ?? 'https://docs.google.com/forms/d/1UXMXbqXXXtClqTAnQAVKA1niKKsIdOLMGjCPCH-yZFA/viewform',
   // The Channels monitor's database (read only, for /stats).
   monitorDb: process.env.MONITOR_DB ?? '/var/lib/japharsworld-yt-monitor/monitor.db',
+  // A host with no monitor DB (staging) asks this service's /v1/ch for Channels slots, server-side (world #519). Empty = the
+  // baked monitor/channels.json only. Never set on production, which has the monitor.
+  channelsUpstream: process.env.CHANNELS_UPSTREAM ?? '',
   // Thumbnail sheet: one cell per result, row-major.
   sheet: { cols: 4, rows: 5, cellW: 256, cellH: 144, background: '#24283b' },
 };

@@ -18,6 +18,7 @@
 
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { RESTRICTED } from './refusal.js';
+import { spendScope } from './spend.js';
 
 const watch = (id) => `https://www.youtube.com/watch?v=${id}`;
 
@@ -126,7 +127,7 @@ export class Playback {
     const jobs = [];
     for (const j of this.jobs.values()) {
       if (j.state === 'failed' || (j.state === 'ready' && j.expiresMs <= now)) continue;
-      const { waiters, promise, codecRead, ...rest } = j;
+      const { waiters, promise, codecRead, payer, ...rest } = j; // payer: never saved
       jobs.push(rest);
     }
     try {
@@ -261,6 +262,10 @@ export class Playback {
     const seconds = Math.max(0, data.seconds ?? 0);
     const format = hls || seconds > this.progressiveMaxSeconds ? 'hls' : 'progressive';
     job = { id, seconds, format, fixed: hls, maxMb, mb: 0, requested: quality, quality, state: 'building', startedMs: now, endedMs: 0, url: null, expiresMs: 0, reason: null, waiters: [] };
+    // Who started it (the request's spend scope: the picker's IP and shard), so builds made later for the same play
+    // (adaptive upgrades, src/adaptive.js) are charged to them. In memory only: left out of the saved state below.
+    const scope = spendScope.getStore();
+    if (scope) Object.defineProperty(job, 'payer', { value: { ip: scope.ip, shard: scope.shard, answer: scope.answer }, enumerable: false });
     job.promise = this.#build(job).finally(() => { for (const w of job.waiters) w(); job.waiters = []; });
     this.jobs.set(key, job);
     this.#saveLive();

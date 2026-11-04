@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../src/server.js';
@@ -333,21 +333,77 @@ test('ticket route: video players have their own per-IP limit, far above the tab
 
 const QUEST = 'AVProMobileVideo/2026.3.3p2 (Linux;Android 14) ExoPlayer';
 
-test('adaptive: the upgrade builds the master starts run in the loading player\'s spend scope with the ticket\'s shard; a refused rung is not listed', async (t) => {
-  const seen = [];
+// A fake Playback for Adaptive: the 720p job is there; start() builds a rung only once `allow()` says so.
+function upgradePlayback({ allow = () => true } = {}) {
   const lowerJob = { id: vid(1), requested: '720p', quality: '720p', state: 'ready', mb: 100, seconds: 600, fixed: true };
-  const pb = { peek: () => lowerJob, knownMb: () => null, measured: () => false, predict: () => 0,
-    start(data, q) { seen.push({ q, scope: spendScope.getStore() }); return null; }, spendRefusal: () => 'allowance' };
+  const jobs = new Map([['720p', lowerJob]]);
+  const seen = [];
+  return { lowerJob, seen, peek: (d, q) => jobs.get(q) ?? null, knownMb: () => null, measured: () => false, predict: () => 0,
+    start(data, q) {
+      seen.push({ q, scope: spendScope.getStore() });
+      if (!allow(q)) return null;
+      const j = { id: data.id, requested: q, quality: q, state: 'building', mb: 0, seconds: 600, fixed: true };
+      jobs.set(q, j);
+      return j;
+    } };
+}
+
+test('adaptive: upgrades are charged to the picker (the first build\'s payer) whoever loads the master first', async (t) => {
+  const pb = upgradePlayback();
+  Object.defineProperty(pb.lowerJob, 'payer', { value: { ip: '192.0.2.1', shard: 1, answer: 'youtube' }, enumerable: false });
   const adaptive = new Adaptive({ playback: pb, base: 'http://pub/hls' });
-  const s = spendScope.run({ ip: '192.0.2.1', shard: 1 }, () => adaptive.session({ id: vid(1), seconds: 600 }, lowerJob));
-  assert.equal(adaptive.shardOf(s.token), 1, 'the ticket\'s shard is kept with the session');
+  const s = spendScope.run({ ip: '192.0.2.77', shard: 1 }, () => adaptive.session({ id: vid(1), seconds: 600 }, pb.lowerJob));
+  assert.equal(adaptive.shardOf(s.token), 1);
+  assert.equal(JSON.stringify(s).includes('192.0.2.1'), false, 'the payer is not in the session\'s enumerable fields');
   const a = await routeApp(t, { adaptive });
+  // A follower (another IP) loads the master first.
   const r = await fetch(`${a.url}/hls/${s.token}.m3u8`, { headers: { 'user-agent': WMF, 'x-forwarded-for': '192.0.2.5' } });
   assert.equal(r.status, 200);
-  assert.deepEqual(seen.map((x) => [x.q, x.scope?.ip, x.scope?.shard]), [['1080p', '192.0.2.5', 1]]);
-  const body = await r.text();
-  assert.doesNotMatch(body, /1080p\.m3u8/, 'a refused upgrade is not listed');
-  assert.match(body, /720p\.m3u8/);
+  assert.deepEqual(pb.seen.map((x) => [x.q, x.scope?.ip, x.scope?.shard, x.scope?.answer]), [['1080p', '192.0.2.1', 1, 'lower_rung']]);
+  assert.match(await r.text(), /1080p\.m3u8/);
+});
+
+test('adaptive: a rung refused at the first master load is tried again at the next and listed once it starts', async (t) => {
+  let open = false;
+  const pb = upgradePlayback({ allow: () => open });
+  const adaptive = new Adaptive({ playback: pb, base: 'http://pub/hls' });
+  const s = spendScope.run({ ip: '192.0.2.1', shard: 1 }, () => adaptive.session({ id: vid(1), seconds: 600 }, pb.lowerJob));
+  const first = adaptive.master(s.token, 'v1');
+  assert.doesNotMatch(first, /1080p\.m3u8/, 'refused now: not listed');
+  open = true; // say the per-minute cap cleared
+  const second = adaptive.master(s.token, 'v2');
+  assert.match(second, /1080p\.m3u8/, 'tried again and listed');
+  assert.deepEqual(pb.seen.map((x) => x.q), ['1080p', '1080p']);
+  adaptive.master(s.token, 'v3');
+  assert.equal(pb.seen.length, 2, 'not started again once there');
+});
+
+test('adaptive: a player\'s reload mark lasts 12 hours at most', () => {
+  let now = 0;
+  const pb = upgradePlayback();
+  const events = [];
+  const adaptive = new Adaptive({ playback: pb, base: 'http://pub/hls', now: () => now, onEvent: (k) => events.push(k) });
+  const s = adaptive.session({ id: vid(1), seconds: 600 }, pb.lowerJob);
+  adaptive.master(s.token, 'v1');
+  now += 11 * 3600_000;
+  adaptive.master(s.token, 'v1');
+  assert.equal(events.filter((e) => e.startsWith('reload_')).length, 1, 'a reload within 12 h');
+  now += 2 * 3600_000;
+  adaptive.sweep();
+  assert.equal(s.viewers.size, 0, 'swept after 12 h');
+});
+
+test('allowance: a home session that only does not fit the MB left is not a use-up; a real use-up logs the caller\'s route', () => {
+  const logs = [];
+  const a = new Allowance({ creditsPerIp: 0, homeBuildsPerIp: 0, homeMbPerIp: 3000, log: (o) => logs.push(o) });
+  a.charge('192.0.2.1', { homeBuilds: 1, homeMb: 2000 });
+  assert.equal(a.over('192.0.2.1', { home: true, homeMb: 2000 }), 'home_mb_fit');
+  assert.equal(a.over('192.0.2.1', { credits: 10 }), null, 'Tunelio may take it');
+  assert.equal(logs.length, 0, 'nothing logged, nothing marked');
+  assert.deepEqual(a.state().reached.home_mb, 0);
+  a.charge('192.0.2.1', { homeBuilds: 1, homeMb: 1000 });
+  assert.equal(a.over('192.0.2.1', { credits: 10, route: 'daily_limit' }), 'home_mb');
+  assert.deepEqual(logs.map((l) => [l.kind, l.route]), [['home_mb', 'daily_limit']]);
 });
 
 test('routing: a home session counts its MB at its own quality (720p at 720p\'s rate)', async (t) => {
@@ -400,4 +456,12 @@ test('routing: a Tunelio refusal for a per-minute cap is not sent home by the fa
   assert.match((await a.get(a.ticket(vid(1)))).headers.get('location'), /tunelio\.dev/);
   assert.equal((await a.get(a.ticket(vid(2)))).headers.get('location'), `https://www.youtube.com/watch?v=${vid(2)}`);
   assert.equal(a.jobs.length, 0, 'no home session for the capped play');
+});
+
+test('playback: a job\'s payer (the picker\'s IP) is kept in memory and never written to the live state file', async (t) => {
+  const liveFile = join(tmp(t), 'playback-live.json');
+  const pb = new Playback({ tunelio: fakeTunelio({ hang: () => true }), quality: '720p', probe: async () => ({ ok: true }), liveFile });
+  const job = spendScope.run({ ip: '192.0.2.123', shard: 1, answer: 'youtube' }, () => pb.start({ id: vid(1), seconds: 600 }, '720p'));
+  assert.equal(job.payer.ip, '192.0.2.123');
+  assert.doesNotMatch(readFileSync(liveFile, 'utf8'), /192\.0\.2\.123/);
 });

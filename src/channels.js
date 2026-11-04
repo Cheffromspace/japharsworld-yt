@@ -21,10 +21,15 @@ export class ChannelSlots {
   // monitor asks the upstream's /v1/ch server-side, without following the redirect, and answers the Quest itself (one
   // hop for the player). The upstream's 302, 404 or 503 is the answer, cached upstreamCacheMs per key; on a timeout,
   // an error or any other answer the baked link is used as before (staging as standby while production is down, #383).
+  // Bounded (verifier, 2026-11-04): at most upstreamCacheMax keys, oldest dropped first, and a 404 for a key the baked
+  // file doesn't have is not kept, so a scan of random keys can't grow it. After a timeout or a network error the
+  // upstream is skipped for upstreamDownMs, so a hanging upstream doesn't add its timeout to every play.
   constructor({ monitorDb, baked = null, cacheMs = 30_000, now = () => Date.now(), upstream = '', upstreamTimeoutMs = 2000,
-    upstreamCacheMs = 5 * 60_000, fetch: fetchFn = globalThis.fetch, log = () => {} }) {
+    upstreamCacheMs = 5 * 60_000, upstreamCacheMax = 256, upstreamDownMs = 20_000, fetch: fetchFn = globalThis.fetch,
+    log = () => {} }) {
     Object.assign(this, { monitorDb, baked, cacheMs, now, upstream: (upstream ?? '').replace(/\/$/, ''), upstreamTimeoutMs,
-      upstreamCacheMs, fetchFn, log });
+      upstreamCacheMs, upstreamCacheMax, upstreamDownMs, fetchFn, log });
+    this.upstreamDownUntil = 0;
     this.cache = new Map();
     this.upstreamCache = new Map();
     this.inflight = new Map();
@@ -36,6 +41,7 @@ export class ChannelSlots {
     if (!this.upstream || (this.monitorDb && existsSync(this.monitorDb))) return this.lookup(key);
     const hit = this.upstreamCache.get(key);
     if (hit && this.now() - hit.at < this.upstreamCacheMs) return hit.v;
+    if (this.now() < this.upstreamDownUntil) return this.lookup(key);
     // A room opening one slot at once shares one upstream call.
     if (!this.inflight.has(key)) {
       this.inflight.set(key, this.#askUpstream(key).finally(() => this.inflight.delete(key)));
@@ -62,7 +68,12 @@ export class ChannelSlots {
     } catch (e) {
       outcome = e?.name === 'TimeoutError' || e?.name === 'AbortError' ? 'timeout' : 'error';
     }
-    if (v) this.upstreamCache.set(key, { at: this.now(), v });
+    if (v && !(v.error === 'unknown_channel' && !this.#bakedHas(key))) {
+      this.upstreamCache.delete(key);
+      this.upstreamCache.set(key, { at: this.now(), v });
+      while (this.upstreamCache.size > this.upstreamCacheMax) this.upstreamCache.delete(this.upstreamCache.keys().next().value);
+    }
+    if (outcome === 'timeout' || outcome === 'error') this.upstreamDownUntil = this.now() + this.upstreamDownMs;
     this.log({ event: 'channel_upstream', outcome, status, ms: this.now() - started, fallback: !v });
     return v;
   }
@@ -74,6 +85,16 @@ export class ChannelSlots {
     const v = this.#read(key);
     if (v.error !== 'monitor_unreadable') this.cache.set(key, { at: this.now(), v });
     return v;
+  }
+
+  // Whether the baked file lists the key; its key list is kept for cacheMs.
+  #bakedHas(key) {
+    if (!this.bakedKeys || this.now() - this.bakedKeys.at >= this.cacheMs) {
+      let keys = new Set();
+      try { keys = new Set(JSON.parse(readFileSync(this.baked, 'utf8')).slots.map((s) => s.key)); } catch { /* none */ }
+      this.bakedKeys = { at: this.now(), keys };
+    }
+    return this.bakedKeys.keys.has(key);
   }
 
   #readBaked(key) {

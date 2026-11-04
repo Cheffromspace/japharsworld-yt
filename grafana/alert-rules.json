@@ -865,7 +865,7 @@
  },
  {
   "uid": "eiok-spend-rate",
-  "title": "Tunelio spend over 400 credits an hour",
+  "title": "Tunelio spend over 1125 credits an hour",
   "folderUID": "everything-is-ok",
   "ruleGroup": "everything-is-ok",
   "condition": "C",
@@ -873,7 +873,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "Over 400 Tunelio credits were spent in the last hour (busiest real hour ~310). Check plays and builds (`node tools/ops.mjs events --event spend_cap,spend_budget,warm`); at SPEND_HOUR_CREDITS the service stops new builds and alerts Discord."
+   "summary": "Over 1125 Tunelio credits were spent in the last hour (75 % of the 1500 hour budget): new plays now go home first while home has room, and at 1500 the service stops new paid builds and alerts Discord. Check builds and routes (`node tools/ops.mjs events --event build_route,spend_cap,spend_budget`)."
   },
   "labels": {
    "project": "everything-is-ok",
@@ -892,7 +892,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"credits\"}[1h])) > 400",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"credits\"}[1h])) > 1125",
      "instant": true
     }
    },

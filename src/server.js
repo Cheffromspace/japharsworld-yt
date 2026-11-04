@@ -82,6 +82,8 @@ function page(path) {
 }
 
 const HOME_REFUSED_MS = 5 * 60_000;
+// A video's build_route is counted once per via in this long (routeEvent): a play's /create calls fall well within it.
+const ROUTE_COUNT_MS = 3600_000;
 
 export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, adaptive, slots, home, channels, spend, log = console.log } = {}) {
   // Recent events for /ops/events, redacted as they are kept.
@@ -209,17 +211,28 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // Where each new build went and why, with the load behind it (owner, 2026-11-04: home vs Tunelio share and credits a
   // day on the dashboard): via home (a new home session; why is home_why's reason), tunelio (a paid /create; why is
   // default, or home_full when home had no free stream) or youtube (a play no source could take: a spend limit with home
-  // full). The build_route metric counts by via; the event adds home's streams, Tunelio's builds and the spend so far.
+  // full). The event adds home's streams, Tunelio's builds and the spend so far, and comes for every paid /create. The
+  // build_route metric counts videos, not calls: each video once an hour per via (counted: true on that event), so a
+  // play's several /create calls (adaptive's two qualities, a downgrade) count Tunelio once.
   function routeEvent(via, why, extra = {}) {
-    metrics.inc('build_route', via);
+    const now = Date.now();
+    const key = `${via}:${extra.id ?? ''}`;
+    const counted = !(now - (routed.get(key) ?? -Infinity) < ROUTE_COUNT_MS);
+    if (counted) {
+      routed.delete(key);
+      routed.set(key, now);
+      if (routed.size > 5000) routed.delete(routed.keys().next().value);
+      metrics.inc('build_route', via);
+    }
     const l = home?.load?.() ?? {};
     const t = spend?.totals?.() ?? {};
-    logJson({ event: 'build_route', via, why, ...extra, homeActive: l.active ?? null, homeMax: l.max ?? null,
+    logJson({ event: 'build_route', via, why, ...extra, counted, homeActive: l.active ?? null, homeMax: l.max ?? null,
       tunelioBuilding: playback?.building?.() ?? null, hour: t.hour ?? null, day: t.day ?? null, month: t.month ?? null });
   }
 
   // Ticket requests a minute per IP (TICKETS_PER_MINUTE_PER_IP): status loads, players, sheets and More pages. Bounded
   // without dropping an active IP's count (src/spend.js touch). Logged once per IP and minute when it starts refusing.
+  const routed = new Map(); // "via:videoId" → when its build_route was last counted
   const ticketHits = new Map(); // ip → timestamps
   function ticketLimited(ip) {
     const limit = perIp(config.ticketsPerMinutePerIp ?? 0, ip);
@@ -1325,7 +1338,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const n = Number(hlsTicket ? m[2].slice(0, -5) : m[2]);
       if (!store.validTicket(n)) return fail(res, 404, 'unknown_ticket', 'Unknown ticket.');
       route = 'ticket';
-      if (ticketLimited(clientIp(req))) { metrics.inc('ticket_limited'); return fail(res, 429, 'rate_limited', 'Too many requests, wait a minute.'); }
+      // A video player's load is never refused here: the world shows a 429 there as a load error with no fallback, and
+      // its new builds already meet the build caps (over them the play goes home or to youtube.com). The tablet's status,
+      // sheets and More pages keep the limit; player loads don't count toward it.
+      const playerPlay = clientKind(req.headers['user-agent']) !== 'string' && store.get(shard, n)?.kind === 'video';
+      if (!playerPlay && ticketLimited(clientIp(req))) { metrics.inc('ticket_limited'); return fail(res, 429, 'rate_limited', 'Too many requests, wait a minute.'); }
       return await ticket(req, res, shard, n, hlsTicket);
     } catch (err) {
       log(JSON.stringify({ at: new Date().toISOString(), event: 'error', route, message: String(err?.stack ?? err).slice(0, 500) }));

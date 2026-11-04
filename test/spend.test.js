@@ -172,13 +172,15 @@ test('#478: the per-IP map stays bounded without dropping an active IP\'s count'
   assert.ok(spend.byIp.size <= 100);
 });
 
-test('#478: a Grafana alert on spend rate over 400 credits an hour, production only', () => {
+test('#478: a Grafana alert on spend rate at the home-first point of the hour budget (1125 credits), production only', () => {
   const r = alertRules('x').find((x) => x.uid === 'eiok-spend-rate');
   assert.ok(r, 'rule present');
   const expr = r.data[0].model.expr;
   assert.match(expr, /metric="credits"/);
   assert.match(expr, /\[1h\]/);
-  assert.match(expr, /> 400/);
+  assert.match(expr, /> 1125(?!\d)/);
+  assert.match(r.title, /1125/);
+  assert.doesNotMatch(JSON.stringify(r), /~310\)|over 400/, 'no old threshold text');
   assert.match(expr, /env!="staging"/);
 });
 

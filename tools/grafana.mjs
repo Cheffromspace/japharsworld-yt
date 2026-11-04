@@ -11,6 +11,7 @@
 //   DISCORD_CRITICAL_WEBHOOK  optional: the critical-alerts channel (world #195, owner 2026-10-26). With it, severity=critical
 //                             rules go to their own contact point there; without it, everything goes to the one above.
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
+import { HOUR_CREDITS, HOME_FIRST_PERCENT } from '../src/spend.js';
 
 const env = { ...dotenv('.env'), ...process.env };
 function dotenv(path) {
@@ -223,7 +224,7 @@ export function dashboard() {
   p.push(series('Credits spent per day, by use', [[ev('credits', '1d'), '{{key}}']], { w: 8, stack: true, min: 0,
     description: 'Tunelio credits spent in the 24 h before each point, by use: playback builds, caption transcripts, the speed probe, and test slot refills.' }));
   p.push(series('New builds: home vs Tunelio, per day', [[ev('build_route', '1d'), '{{key}}']], { w: 8, stack: true, min: 0,
-    description: 'New builds in the 24 h before each point, by where they went: home (a new home relay session), tunelio (a paid build), youtube (no source could take it: a spend limit with home full). Next to the credits spent per day, it shows how the load is shared.' }));
+    description: 'Videos newly built in the 24 h before each point, by where they went: home (a new home relay session), tunelio (a paid build), youtube (no source could take it: a spend limit with home full). Each video counts once an hour per route, however many builds its play made. Next to the credits spent per day, it shows how the load is shared.' }));
   p.push(series('Search sources (per 6 h)', [[ev('search_source'), '{{key}}'], ['max(eiok_youtube_api_units_today)', 'Data API units today']], { w: 8, stack: false, min: 0,
     description: 'Which source answered searches, per 6 h: worker the home relay, local the Linode, api the YouTube Data API (quota), with today\'s Data API units.' }));
   p.push(series('Captions (per 6 h)', [
@@ -499,9 +500,14 @@ export function alertRules(dsUid, { critical = false } = {}) {
     rule('eiok-home-cap', 'Home relay near its daily cap', 'max(eiok_home_today{key="mb"}) / max(eiok_home_today{key="cap_mb"}) >= 0.9', { forM: 5, summary: 'The home relay has used 90 % of HOME_DAILY_MB today; at the cap, long videos go to Tunelio (credits) or youtube.com instead.' }),
     rule('eiok-home-worker', 'Home relay has no worker', '1 - max(eiok_home_today{key="workers"})', { forM: 15, summary: 'No media worker (the Optiplex relay) connected for 15 minutes: home relay plays fall back to Tunelio or youtube.com.' }),
     // Renewal on the 1st (TUNELIO_RENEWS_DAY's default): the last 3 days' spend per day times the days left, minus the credits left.
-    // Spend rate (Everything-is-OK#478): the busiest real hour was ~310 credits (prod 2026-10-31 02h UTC; src/spend.js),
-    // so over 400 in an hour is unusual. The service's own hard budget (SPEND_HOUR_CREDITS, 800) stops new builds later.
-    rule('eiok-spend-rate', 'Tunelio spend over 400 credits an hour', 'sum(increase(eiok_events_total{metric="credits"}[1h])) > 400', { forM: 0, summary: 'Over 400 Tunelio credits were spent in the last hour (busiest real hour ~310). Check plays and builds (`node tools/ops.mjs events --event spend_cap,spend_budget,warm`); at SPEND_HOUR_CREDITS the service stops new builds and alerts Discord.' }),
+    // Spend rate (Everything-is-OK#478): fires at the service's home-first point of the hour budget (the defaults of
+    // SPEND_HOUR_CREDITS and SPEND_HOME_FIRST_PERCENT, src/spend.js: 75 % of 1500 = 1125), where new plays start going
+    // home first. Below it is normal use of the 100k a month plan (owner, 2026-11-04); the busiest real hour was ~310
+    // (prod 2026-10-31). An env override of either on the server doesn't move this rule: rebuild with the same numbers.
+    ...(() => {
+      const at = Math.round(HOUR_CREDITS * HOME_FIRST_PERCENT / 100);
+      return [rule('eiok-spend-rate', `Tunelio spend over ${at} credits an hour`, `sum(increase(eiok_events_total{metric="credits"}[1h])) > ${at}`, { forM: 0, summary: `Over ${at} Tunelio credits were spent in the last hour (${HOME_FIRST_PERCENT} % of the ${HOUR_CREDITS} hour budget): new plays now go home first while home has room, and at ${HOUR_CREDITS} the service stops new paid builds and alerts Discord. Check builds and routes (\`node tools/ops.mjs events --event build_route,spend_cap,spend_budget\`).` })];
+    })(),
     rule('eiok-credits-pace', 'Credits run out before renewal', '(sum(increase(eiok_events_total{metric="credits"}[3d])) / 3) * (days_in_month() - day_of_month() + 1) - max(eiok_credits_remaining) > 0', { forM: 60, summary: 'At the last 3 days’ spend, the Tunelio credits run out before the plan renews on the 1st (the pacer then keeps plays at 720p; at 0 they go to youtube.com).' }),
     // Transfer (owner, 2026-10-24): metrics.db counts from src/net.js; months are Chicago calendar months.
     // The home connection has no ISP data cap (owner, 2026-10-27), so these are only alerts on unusual volume: 100 GB a day

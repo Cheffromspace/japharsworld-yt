@@ -41,6 +41,10 @@ import { limitFor } from './trusted.js';
 export const spendScope = new AsyncLocalStorage();
 
 const HOUR = 3600_000, DAY = 24 * HOUR, MINUTE = 60_000;
+// The hour budget's default (SPEND_HOUR_CREDITS), shared with src/config.js and the Grafana spend-rate alert
+// (tools/grafana.mjs), which fires at the home-first point of it.
+export const HOUR_CREDITS = 1500;
+export const HOME_FIRST_PERCENT = 75;
 
 // Stores `value` (a list of { at } or timestamps) for `key` in a map of at most `max` keys, as its most recently active
 // (every update moves its key to the end, so the first keys are the least recently active). A new key, when the map is
@@ -61,7 +65,7 @@ export function touch(map, key, value, max = 10_000, now = Date.now()) {
 }
 
 export class SpendGate {
-  constructor({ hourCredits = 1500, dayCredits = 8000, monthCredits = 100_000, monthKey = null, homeFirstPercent = 75,
+  constructor({ hourCredits = HOUR_CREDITS, dayCredits = 8000, monthCredits = 100_000, monthKey = null, homeFirstPercent = HOME_FIRST_PERCENT,
     perIpPerMinute = 6, perShardPerMinute = 12, cost = 10,
     transcriptsPerIpPerMinute = 6, transcriptCost = 6, maxKeys = 10_000, okAfterMs = 30 * MINUTE, alertEveryMs = DAY,
     alert = () => {}, log = () => {}, now = () => Date.now(), stateFile = null, trusted = null, trustedFactor = 10 } = {}) {

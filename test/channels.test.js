@@ -128,7 +128,7 @@ test('channel upstream (world #519): its 302, 404 and 503 are the answer and cac
   const baked = bakedFile(t);
   const lines = [];
   let now = 0;
-  const ch = new ChannelSlots({ monitorDb: '/nope/monitor.db', baked, upstream: up.url, upstreamTimeoutMs: 150, now: () => now, log: (o) => lines.push(o) });
+  const ch = new ChannelSlots({ monitorDb: '/nope/monitor.db', baked, upstream: up.url, upstreamTimeoutMs: 150, upstreamDownMs: 0, now: () => now, log: (o) => lines.push(o) });
   assert.deepEqual(await ch.resolve('live'), { id: 'iVTPoB2GelQ' }, 'the upstream video, not the stale baked one');
   assert.deepEqual(await ch.resolve('down'), { error: 'channel_unavailable' }, '503 passed through though the baked link has a video');
   assert.deepEqual(await ch.resolve('gone'), { error: 'unknown_channel' }, '404 passed through');
@@ -187,4 +187,60 @@ test('GET /v1/ch/<key> with CHANNELS_UPSTREAM and no monitor: one hop to the ups
   assert.equal((await get('/v1/ch/down')).status, 503);
   assert.equal((await get('/v1/ch/gone')).status, 404);
   assert.ok(lines.some((l) => l.includes('"event":"channel_upstream"')));
+});
+
+test('channel upstream cache is bounded (verifier, world #519): oldest dropped past the cap; a 404 for a key not in the baked file is not kept', async (t) => {
+  const baked = bakedFile(t);
+  const calls = [];
+  const fetch = async (url) => {
+    const key = url.split('/v1/ch/')[1];
+    calls.push(key);
+    return key.startsWith('scan-') || key === 'gone' ? new Response(null, { status: 404 }) : new Response(null, { status: 503 });
+  };
+  const ch = new ChannelSlots({ monitorDb: '/nope/monitor.db', baked, upstream: 'http://up.invalid', upstreamCacheMax: 3, fetch });
+  for (let i = 0; i < 50; i++) assert.deepEqual(await ch.resolve(`scan-${i}`), { error: 'unknown_channel' });
+  assert.equal(ch.upstreamCache.size, 0, 'random keys are not cached');
+  await ch.resolve('scan-1');
+  assert.equal(calls.filter((k) => k === 'scan-1').length, 2, 'and are asked again');
+  assert.deepEqual(await ch.resolve('gone'), { error: 'unknown_channel' });
+  assert.ok(ch.upstreamCache.has('gone'), 'a 404 for a baked key is kept');
+  for (const k of ['live', 'down', 'slow', 'odd']) await ch.resolve(k);
+  assert.equal(ch.upstreamCache.size, 3);
+  assert.deepEqual([...ch.upstreamCache.keys()], ['down', 'slow', 'odd'], 'oldest first out');
+  const before = calls.length;
+  await ch.resolve('odd');
+  assert.equal(calls.length, before, 'a kept key is answered from the cache');
+});
+
+test('channel upstream skipped for 20 s after a timeout or an error (verifier, world #519): the baked link without the wait', async (t) => {
+  const baked = bakedFile(t);
+  let now = 0, calls = 0, mode = 'hang';
+  const fetch = async (url, { signal }) => {
+    calls++;
+    if (mode === 'hang') return new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)));
+    if (mode === 'refused') throw new TypeError('fetch failed');
+    return new Response(null, { status: 302, headers: { location: 'https://www.youtube.com/watch?v=iVTPoB2GelQ' } });
+  };
+  const lines = [];
+  const ch = new ChannelSlots({ monitorDb: '/nope/monitor.db', baked, upstream: 'http://up.invalid', upstreamTimeoutMs: 100, now: () => now, fetch, log: (o) => lines.push(o) });
+  assert.deepEqual(await ch.resolve('live'), { id: '2f5CjnKt6oI' }, 'timeout: the baked link');
+  assert.equal(calls, 1);
+  const t0 = Date.now();
+  now += 19_000;
+  assert.deepEqual(await ch.resolve('slow'), { id: 'JD-kMIpDfnY' });
+  assert.deepEqual(await ch.resolve('live'), { id: '2f5CjnKt6oI' });
+  assert.equal(calls, 1, 'no upstream call within 20 s');
+  assert.ok(Date.now() - t0 < 50, 'and no wait');
+  now += 1_001;
+  mode = 'refused';
+  assert.deepEqual(await ch.resolve('live'), { id: '2f5CjnKt6oI' }, 'a network error: the baked link');
+  assert.equal(calls, 2);
+  now += 10_000;
+  await ch.resolve('live');
+  assert.equal(calls, 2, 'skipped again after the error');
+  now += 10_001;
+  mode = 'ok';
+  assert.deepEqual(await ch.resolve('live'), { id: 'iVTPoB2GelQ' }, 'back once the 20 s are over');
+  assert.equal(calls, 3);
+  assert.deepEqual(lines.map((l) => l.outcome), ['timeout', 'error', 'redirect'], 'one log line per upstream call, none for skips');
 });

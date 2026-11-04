@@ -88,3 +88,103 @@ test('GET /v1/ch/<key>: 302 to the watch link, no-store; 404 unknown, 503 unavai
   assert.equal((await unknown.json()).error, 'unknown_channel');
   assert.equal((await get('/v1/ch/%zz')).status, 404);
 });
+
+// A stand-in for production's /v1/ch (world #519): answers per key, counts calls; 'slow' never answers.
+async function upstream(t) {
+  const calls = [];
+  const srv = http.createServer((req, res) => {
+    const key = req.url.replace('/v1/ch/', '');
+    calls.push(key);
+    if (key === 'slow') return; // held until the client gives up
+    if (key === 'live') { res.writeHead(302, { location: 'https://www.youtube.com/watch?v=iVTPoB2GelQ' }); return res.end(); }
+    if (key === 'odd') { res.writeHead(302, { location: 'https://example.com/elsewhere' }); return res.end(); }
+    if (key === 'boom') { res.writeHead(500); return res.end(); }
+    if (key === 'down') { res.writeHead(503, { 'content-type': 'application/json' }); return res.end('{"error":"channel_unavailable"}'); }
+    res.writeHead(404, { 'content-type': 'application/json' }); res.end('{"error":"unknown_channel"}');
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  t.after(() => { srv.closeAllConnections(); srv.close(); });
+  return { url: `http://127.0.0.1:${srv.address().port}/`, calls };
+}
+
+function bakedFile(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'jyt-up-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const baked = join(dir, 'channels.json');
+  writeFileSync(baked, JSON.stringify({ slots: [
+    { key: 'live', url: 'https://www.youtube.com/watch?v=2f5CjnKt6oI' }, // the stale baked stream
+    { key: 'down', url: 'https://www.youtube.com/watch?v=2f5CjnKt6oI' },
+    { key: 'gone', url: 'https://www.youtube.com/watch?v=2f5CjnKt6oI' },
+    { key: 'slow', url: 'https://www.youtube.com/watch?v=JD-kMIpDfnY' },
+    { key: 'odd', url: 'https://www.youtube.com/watch?v=JD-kMIpDfnY' },
+    { key: 'boom', url: 'https://www.youtube.com/watch?v=JD-kMIpDfnY' },
+    { key: 'unhidden', url: 'https://www.youtube.com/watch?v=JD-kMIpDfnY', hidden: true },
+  ] }));
+  return baked;
+}
+
+test('channel upstream (world #519): its 302, 404 and 503 are the answer and cached 5 min; timeout, error or an odd answer fall back to the baked link', async (t) => {
+  const up = await upstream(t);
+  const baked = bakedFile(t);
+  const lines = [];
+  let now = 0;
+  const ch = new ChannelSlots({ monitorDb: '/nope/monitor.db', baked, upstream: up.url, upstreamTimeoutMs: 150, now: () => now, log: (o) => lines.push(o) });
+  assert.deepEqual(await ch.resolve('live'), { id: 'iVTPoB2GelQ' }, 'the upstream video, not the stale baked one');
+  assert.deepEqual(await ch.resolve('down'), { error: 'channel_unavailable' }, '503 passed through though the baked link has a video');
+  assert.deepEqual(await ch.resolve('gone'), { error: 'unknown_channel' }, '404 passed through');
+  assert.deepEqual(await ch.resolve('unhidden'), { error: 'unknown_channel' }, 'the upstream decides, not the baked hidden flag');
+  assert.deepEqual(await ch.resolve('slow'), { id: 'JD-kMIpDfnY' }, 'timeout: the baked link');
+  assert.deepEqual(await ch.resolve('odd'), { id: 'JD-kMIpDfnY' }, 'a 302 elsewhere is not trusted: the baked link');
+  assert.deepEqual(await ch.resolve('boom'), { id: 'JD-kMIpDfnY' }, 'a 500: the baked link');
+  assert.deepEqual(await ch.resolve('../etc'), { error: 'unknown_channel' });
+  assert.deepEqual(up.calls, ['live', 'down', 'gone', 'unhidden', 'slow', 'odd', 'boom'], 'a bad key never reaches the upstream');
+  assert.deepEqual(lines.map((l) => [l.event, l.outcome, l.status, l.fallback]), [
+    ['channel_upstream', 'redirect', 302, false], ['channel_upstream', 'unavailable', 503, false],
+    ['channel_upstream', 'unknown', 404, false], ['channel_upstream', 'unknown', 404, false],
+    ['channel_upstream', 'timeout', null, true], ['channel_upstream', 'bad_location', 302, true], ['channel_upstream', 'other', 500, true]]);
+  const logged = JSON.stringify(lines);
+  for (const leak of ['iVTPoB2GelQ', 'JD-kMIpDfnY', 'live', 'down', 'example.com']) assert.ok(!logged.includes(leak), `no ${leak} in the log`);
+  // Cached for 5 minutes; failures are not cached, so the next play asks again.
+  now += 4 * 60_000;
+  await ch.resolve('live'); await ch.resolve('down'); await ch.resolve('slow');
+  assert.deepEqual(up.calls.slice(7), ['slow']);
+  now += 61_000;
+  await ch.resolve('live');
+  assert.deepEqual(up.calls.slice(8), ['live']);
+  // Plays of one slot at once share one call.
+  now += 6 * 60_000;
+  const all = await Promise.all([ch.resolve('down'), ch.resolve('down'), ch.resolve('down')]);
+  assert.deepEqual(all, Array(3).fill({ error: 'channel_unavailable' }));
+  assert.deepEqual(up.calls.slice(9), ['down']);
+});
+
+test('channel upstream unset, or a monitor database present: no upstream call, the lookup as before', async (t) => {
+  const baked = bakedFile(t);
+  let calls = 0;
+  const fetch = async () => { calls++; throw new Error('must not be called'); };
+  const plain = new ChannelSlots({ monitorDb: '/nope/monitor.db', baked, fetch });
+  assert.deepEqual(await plain.resolve('live'), { id: '2f5CjnKt6oI' });
+  assert.deepEqual(await plain.resolve('unhidden'), { error: 'channel_unavailable' });
+  const m = monitorDb(t);
+  const withDb = new ChannelSlots({ monitorDb: m.path, baked, upstream: 'http://127.0.0.1:9/', fetch });
+  assert.deepEqual(await withDb.resolve('jack-oblivion'), { id: 'iVTPoB2GelQ' });
+  assert.equal(calls, 0);
+});
+
+test('GET /v1/ch/<key> with CHANNELS_UPSTREAM and no monitor: one hop to the upstream video; 503 and 404 passed through', async (t) => {
+  const up = await upstream(t);
+  const lines = [];
+  const config = { ...base, shards: 2, pool: 50, monitorDb: '/nope/monitor.db', channelsUpstream: up.url, metricsPath: '' };
+  const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
+  const server = http.createServer(createApp({ config, store, captions: { async get() { return {}; } }, log: (l) => lines.push(l) }));
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const get = (p) => fetch(`http://127.0.0.1:${server.address().port}${p}`, { redirect: 'manual', headers: { 'user-agent': 'AVProMobileVideo/2026.3.3p2 (Linux;Android 14) ExoPlayer' } });
+  const ok = await get('/v1/ch/live');
+  assert.equal(ok.status, 302);
+  assert.equal(ok.headers.get('location'), 'https://www.youtube.com/watch?v=iVTPoB2GelQ', 'YouTube directly, not the upstream');
+  assert.equal(ok.headers.get('cache-control'), 'no-store');
+  assert.equal((await get('/v1/ch/down')).status, 503);
+  assert.equal((await get('/v1/ch/gone')).status, 404);
+  assert.ok(lines.some((l) => l.includes('"event":"channel_upstream"')));
+});

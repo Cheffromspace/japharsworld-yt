@@ -547,3 +547,16 @@ test('allowance defaults (owner, 2026-11-04): 1500 credits, 25 home sessions, 60
   assert.ok(base.allowanceHomeBuildsPerIp < base.homeDailyBuilds && base.allowanceHomeMbPerIp < base.homeDailyMb, 'one visitor never takes all of home');
   assert.deepEqual(new Allowance().state().perIp, { credits: 1500, homeBuilds: 25, homeMb: 60000 });
 });
+
+test('ip keys: the minute sweep replaces the key at the day boundary with no request', () => {
+  let now = Date.parse('2026-11-05T05:59:00Z'); // 23:59 Chicago
+  let made = 0;
+  const k = new IpKeys({ now: () => now, random: () => Buffer.alloc(32, ++made) });
+  const yesterday = k.key;
+  now = Date.parse('2026-11-05T06:01:00Z'); // 00:01 Chicago, no code() asked
+  k.sweep();
+  assert.notEqual(k.key, yesterday, 'yesterday\'s key is gone');
+  assert.equal(made, 2);
+  k.sweep();
+  assert.equal(made, 2, 'once a day, not every sweep');
+});

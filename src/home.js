@@ -55,7 +55,7 @@ const STALE_MS = 5 * 60_000;
 const PLAYING_MS = 5 * 60_000;
 // A 1080p home session's MB per second of video, the high end measured (0.46–0.57, 2026-10-26: a 4.1 h mix, 8404 MB):
 // what a build counts against maxGb before its first segments say better (#expectedMb).
-const MB_PER_SECOND = 0.57;
+export const MB_PER_SECOND = 0.57;
 const FREE_CHECK_MS = 5_000; // a build's uploads look at the disk's free space at most this often
 
 export class Home {

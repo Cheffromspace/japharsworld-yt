@@ -13,6 +13,8 @@ import { Relay } from '../src/relay.js';
 import { Home } from '../src/home.js';
 import { Playback } from '../src/playback.js';
 import { SpendGate, spendScope } from '../src/spend.js';
+import { Allowance } from '../src/allowance.js';
+import { trustedIps } from '../src/trusted.js';
 import { createWorker } from '../relay/worker.js';
 import { config as base } from '../src/config.js';
 
@@ -218,7 +220,7 @@ test('spend: a state file from before the month window starts the month at its 2
   assert.equal(new SpendGate({ hourCredits: 0, dayCredits: 0, monthCredits: 45, stateFile }).spentMonth(), 0);
 });
 
-test('ticket route: a video player is never refused by the ticket limit and does not count toward it; status and other tickets are', async (t) => {
+test('ticket route: a video player does not count toward the ticket limit; status and other tickets do', async (t) => {
   const a = await routeApp(t, { config: { ticketsPerMinutePerIp: 2 } });
   const n = a.ticket(vid(1));
   for (let i = 0; i < 2; i++) assert.equal((await a.get(n, UNITY)).status, 200);
@@ -242,4 +244,88 @@ test('routing: the build_route metric counts a video once per route, though its 
   // Another video counts on its own.
   await a.get(a.ticket(vid(2)));
   assert.equal(a.routes().filter((e) => e.counted).length, 2);
+});
+
+test('allowance: one daily allowance per IP for Tunelio credits and home builds and MB; any one used up stops every new build', () => {
+  let now = Date.parse('2026-11-04T18:00:00Z');
+  const logs = [];
+  const a = new Allowance({ creditsPerIp: 30, homeBuildsPerIp: 2, homeMbPerIp: 1000, now: () => now, log: (o) => logs.push(o) });
+  const ip = '192.0.2.1';
+  assert.equal(a.over(ip, { credits: 10 }), null);
+  a.charge(ip, { credits: 10 }); a.charge(ip, { credits: 10 });
+  const refund = a.charge(ip, { credits: 10 });
+  assert.equal(a.over(ip, { credits: 10 }), 'credits');
+  assert.equal(a.over(ip, { home: true, homeMb: 10 }), 'credits', 'credits used up: no home build either');
+  refund();
+  assert.equal(a.over(ip, { credits: 10 }), null, 'a failed call is given back');
+  assert.equal(a.over('192.0.2.2', { credits: 10 }), null, 'another IP has its own');
+  // Home builds and MB.
+  const h = new Allowance({ creditsPerIp: 0, homeBuildsPerIp: 2, homeMbPerIp: 1000, now: () => now });
+  assert.equal(h.over(ip, { home: true, homeMb: 5000 }), null, 'a first home build always fits');
+  h.charge(ip, { homeBuilds: 1, homeMb: 5000 });
+  assert.equal(h.over(ip, { home: true, homeMb: 10 }), 'home_mb');
+  assert.equal(h.over(ip, { credits: 10 }), 'home_mb', 'home MB used up: no Tunelio build either');
+  const b = new Allowance({ creditsPerIp: 0, homeBuildsPerIp: 1, homeMbPerIp: 0, now: () => now });
+  b.charge(ip, { homeBuilds: 1 });
+  assert.equal(b.over(ip, { home: true }), 'home_builds');
+  // Logged once per IP, day and kind, with no IP; the next day starts again.
+  a.charge(ip, { credits: 10 });
+  a.over(ip, { credits: 10 }); a.over(ip, { credits: 10 });
+  const reached = logs.filter((l) => l.event === 'allowance_reached');
+  assert.equal(reached.length, 1);
+  assert.deepEqual(reached[0], { event: 'allowance_reached', kind: 'credits', route: 'youtube' });
+  assert.deepEqual(a.state().reached, { credits: 1, home_builds: 0, home_mb: 0 });
+  now += 24 * 3600_000;
+  assert.equal(a.over(ip, { credits: 10 }), null, 'a new day');
+  // Trusted: the factor on each.
+  const t = new Allowance({ creditsPerIp: 10, trusted: trustedIps('198.51.100.7'), trustedFactor: 3, now: () => now });
+  t.charge('198.51.100.7', { credits: 30 });
+  assert.equal(t.over('198.51.100.7', { credits: 10 }), 'credits');
+  t.charge('192.0.2.9', { credits: 10 });
+  assert.equal(t.over('192.0.2.9', { credits: 10 }), 'credits');
+});
+
+test('routing: a visitor over their daily allowance gets youtube.com: no Tunelio, and no home even for a long video', async (t) => {
+  const a = await routeApp(t, { config: { allowanceCreditsPerIp: 10 } });
+  assert.match((await a.get(a.ticket(vid(1)))).headers.get('location'), /tunelio\.dev/);
+  assert.equal((await a.get(a.ticket(vid(2)))).headers.get('location'), `https://www.youtube.com/watch?v=${vid(2)}`);
+  assert.equal((await a.get(a.ticket(vid(3), 3600))).headers.get('location'), `https://www.youtube.com/watch?v=${vid(3)}`, 'long: home would take it, but not over the allowance');
+  assert.equal(a.jobs.length, 0, 'no home work');
+  assert.equal(a.tunelio.created.length, 1);
+  assert.equal(a.logs.filter((l) => l.event === 'allowance_reached').length, 1);
+  assert.deepEqual(a.routes().filter((e) => e.via === 'youtube').map((e) => e.why), ['allowance', 'allowance']);
+  // Another visitor is unaffected; the cached first video still plays for this one.
+  assert.match((await a.get(a.ticket(vid(4)), WMF, '192.0.2.2')).headers.get('location'), /tunelio\.dev/);
+  assert.match((await a.get(a.ticket(vid(1)), WMF, '192.0.2.1')).headers.get('location'), /tunelio\.dev/);
+});
+
+test('routing: home builds count against the allowance too; over it, neither home nor Tunelio', async (t) => {
+  const a = await routeApp(t, { config: { allowanceHomeBuildsPerIp: 1 } });
+  assert.match((await a.get(a.ticket(vid(1), 3600))).headers.get('location'), /^http:\/\/pub\/home\//);
+  assert.equal((await a.get(a.ticket(vid(2), 3600))).headers.get('location'), `https://www.youtube.com/watch?v=${vid(2)}`);
+  assert.equal((await a.get(a.ticket(vid(3)))).headers.get('location'), `https://www.youtube.com/watch?v=${vid(3)}`, 'a short one: no Tunelio either');
+  assert.equal(a.jobs.length, 1);
+  assert.equal(a.tunelio.created.length, 0);
+});
+
+test('routing: the per-minute build cap refuses home as well as Tunelio (youtube.com), and logs once per stretch', async (t) => {
+  const spend = new SpendGate({ hourCredits: 0, dayCredits: 0, monthCredits: 0, perIpPerMinute: 1, perShardPerMinute: 0, log: (o) => capLogs.push(o) });
+  const capLogs = [];
+  const a = await routeApp(t, { spend });
+  assert.match((await a.get(a.ticket(vid(1), 3600))).headers.get('location'), /^http:\/\/pub\/home\//, 'the first: home (long)');
+  assert.equal((await a.get(a.ticket(vid(2), 3600))).headers.get('location'), `https://www.youtube.com/watch?v=${vid(2)}`, 'not a second home build');
+  assert.equal((await a.get(a.ticket(vid(3)))).headers.get('location'), `https://www.youtube.com/watch?v=${vid(3)}`, 'nor Tunelio');
+  assert.equal(a.tunelio.created.length, 0);
+  assert.equal(a.jobs.length, 1);
+  assert.equal(capLogs.filter((l) => l.event === 'spend_cap').length, 1, 'one spend_cap for the stretch');
+  assert.deepEqual(a.routes().map((e) => [e.via, e.why]), [['home', 'long'], ['youtube', 'cap'], ['youtube', 'cap']]);
+});
+
+test('ticket route: video players have their own per-IP limit, far above the tablet\'s', async (t) => {
+  const a = await routeApp(t, { config: { ticketsPerMinutePerIp: 1, ticketPlayerPerMinutePerIp: 3 } });
+  const n = a.ticket(vid(1));
+  for (let i = 0; i < 3; i++) assert.equal((await a.get(n, WMF)).status, 302);
+  assert.equal((await a.get(n, WMF)).status, 429);
+  assert.equal((await a.get(n, UNITY)).status, 200, 'the tablet\'s count is apart');
+  assert.deepEqual(a.logs.filter((l) => l.event === 'ticket_limited').map((l) => l.kind), ['player']);
 });

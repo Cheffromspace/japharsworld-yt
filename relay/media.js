@@ -177,16 +177,13 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   const sent = new Set();
   let mb = 0, gone = false, isReady = false, lastPlaylist = '', predicted = null;
 
-  async function pass(final) {
-    let text;
-    try { text = await readFile(join(dir, 'index.m3u8'), 'utf8'); } catch { return; }
-    const segs = text.split(/\r?\n/).filter((l) => SEGMENT.test(l));
+  async function sendSegments(segs) {
     for (const s of segs) {
       if (sent.has(s)) continue;
       // Before the first playlist, seg0 only: a player needs nothing more to start, and the server holds a listed
       // segment that isn't here yet. Uploading all ffmpeg had made first held ready back by up to ~8 s (10–98
       // segments before the first playlist, Optiplex, 2026-10-24/25).
-      if (!isReady && sent.size >= 1) break;
+      if (!isReady && sent.size >= 1) return;
       const body = await readFile(join(dir, s));
       const status = await upload(s, body, 'video/mp2t');
       if (status === 410) { gone = true; return; }
@@ -195,6 +192,14 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       mb += body.length / 1e6;
       if (!cache) rm(join(dir, s), { force: true }).catch(() => {}); // with a cache, kept for it
     }
+  }
+
+  async function pass(final) {
+    let text;
+    try { text = await readFile(join(dir, 'index.m3u8'), 'utf8'); } catch { return; }
+    const segs = text.split(/\r?\n/).filter((l) => SEGMENT.test(l));
+    await sendSegments(segs);
+    if (gone) return;
     // Closed where it got to when ffmpeg died part way, so players end instead of waiting for more.
     if (final && !text.includes('#EXT-X-ENDLIST')) text = `${text.trimEnd()}\n#EXT-X-ENDLIST\n`;
     // Whole or growing is decided once STEADY segments are made (ffmpeg makes dozens a second), before any playlist goes
@@ -212,16 +217,62 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       else text = predicted.text;
       if (final && !differs && actual.length) log({ event: 'media_predicted', segments: segs.length });
     }
-    if (text === lastPlaylist) return;
-    lastPlaylist = text;
-    const status = await upload('index.m3u8', Buffer.from(text), 'application/vnd.apple.mpegurl');
-    if (status === 410) { gone = true; return; }
-    if (status !== 204) throw new Error(`upload playlist answered ${status}`);
-    if (!isReady && segs.length) {
-      isReady = true;
-      ready({ ready: true, segments: segs.length, done: background });
-      log({ event: 'media_ready', ms: Date.now() - started, resolveMs, segments: segs.length });
+    if (text !== lastPlaylist) {
+      lastPlaylist = text;
+      const status = await upload('index.m3u8', Buffer.from(text), 'application/vnd.apple.mpegurl');
+      if (status === 410) { gone = true; return; }
+      if (status !== 204) throw new Error(`upload playlist answered ${status}`);
+      if (!isReady && segs.length) {
+        isReady = true;
+        ready({ ready: true, segments: segs.length, done: background });
+        log({ event: 'media_ready', ms: Date.now() - started, resolveMs, segments: segs.length });
+      }
     }
+    // The last pass sends what the seg0-only rule above held back. Without this, a short video that ffmpeg finished
+    // while seg0 was still uploading got ready here, in the last pass, with only seg0 sent: the playlist listed 24
+    // segments, 1 came, and the play froze at 4 s (Everything-is-OK#553, staging 2026-11-05 17:46Z; prod 2 of 175).
+    if (final) await sendSegments(segs);
+  }
+
+  // Before media_done: every segment the uploaded playlist lists should be on the server. Any that aren't (a race like
+  // #553, or a segment that couldn't be read or sent) are tried once more; if some still can't go up, the playlist is
+  // closed after the last one sent in order, so players end there instead of waiting 20 s for each missing one.
+  async function settleListed() {
+    const listed = lastPlaylist.split(/\r?\n/).filter((l) => SEGMENT.test(l));
+    const missing = listed.filter((s) => !sent.has(s));
+    if (!missing.length || gone) return;
+    for (const s of missing) {
+      let body;
+      try { body = await readFile(join(dir, s)); } catch { break; }
+      const status = await upload(s, body, 'video/mp2t');
+      if (status === 410) { gone = true; break; }
+      if (status !== 204) break;
+      sent.add(s);
+      mb += body.length / 1e6;
+    }
+    const still = listed.filter((s) => !sent.has(s)).length;
+    let closedAt = null;
+    if (still && !gone) {
+      const keep = [];
+      let pending = [];
+      closedAt = 0;
+      for (const l of lastPlaylist.split(/\r?\n/)) {
+        if (!l || l === '#EXT-X-ENDLIST') continue;
+        if (!SEGMENT.test(l)) { pending.push(l); continue; }
+        if (!sent.has(l)) break;
+        keep.push(...pending, l);
+        pending = [];
+        closedAt++;
+      }
+      if (closedAt) {
+        const text = `${keep.join('\n')}\n#EXT-X-ENDLIST\n`;
+        let status;
+        try { status = await upload('index.m3u8', Buffer.from(text), 'application/vnd.apple.mpegurl'); } catch { status = 0; }
+        if (status === 410) gone = true;
+        if (status === 204) lastPlaylist = text;
+      }
+    }
+    log({ event: 'media_short', listed: listed.length, missing: missing.length, resent: missing.length - still, closedAt, gone });
   }
 
   background = (async () => {
@@ -231,6 +282,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
         await pass(false);
       }
       if (!gone) await pass(true);
+      if (isReady && !gone) await settleListed();
       if (gone) ff.kill('SIGKILL');
       log({ event: 'media_done', ms: Date.now() - started, mb: Math.round(mb), segments: sent.size, exit, gone,
         error: exit ? stderr.trim().split('\n').pop()?.slice(0, 200) : undefined });
@@ -239,6 +291,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       ff.kill('SIGKILL');
       log({ event: 'media_failed', ms: Date.now() - started, mb: Math.round(mb), message: String(err?.message ?? err).slice(0, 200) });
       if (!isReady) failed(err);
+      else if (!gone) { try { await exited; await settleListed(); } catch { /* the failure is logged above */ } }
     } finally {
       clearTimeout(killer);
       await exited;

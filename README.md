@@ -322,6 +322,8 @@ the caller's own visitor key, as over the daily allowance (`daily_limit` for a Q
 for a PC) or the per-minute limit (`429 rate_limited`), trusted IPs included, until it lapses (default 30 min, memory
 only). It exists only when `PUBLIC_URL`'s host starts with `staging`; production (and an unset `PUBLIC_URL`) answers
 `403 not_staging` and never matches a play (`src/forced.js`).
+A forced `daily_limit` refuses every video, already-built and pinned ones too, where the real limit only gates new paid builds, so "try one that's already playing" is stricter under it.
+`me=1` covers every client on the caller's IP (from home: the Quest and the PC alts together); `id=` limits just one video.
 
 ## Development
 

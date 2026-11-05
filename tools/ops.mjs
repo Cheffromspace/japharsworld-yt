@@ -66,6 +66,7 @@ async function show() {
     }
   }
   else if (cmd === 'limit') {
+    if (!staging) return fail('limit is staging only: add --staging (production answers 403 not_staging anyway)');
     if (!opt('mode')) path = '/ops/limit';
     else {
       const qs = new URLSearchParams({ mode: opt('mode') });

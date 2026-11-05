@@ -327,7 +327,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   const lengths = new Map(); // segments past the prediction → their EXTINF
   let jumping = null; // a jump waiting for its probes; uploads go on meanwhile
   let ending = false;
-  let mb = 0, gone = false, isReady = false, lastPlaylist = '', realText = '', predicted = null, short = false, jumps = 0, lastWant = null;
+  let mb = 0, gone = false, isReady = false, lastPlaylist = '', realText = '', predicted = null, short = false, closedShort = false, jumps = 0, lastWant = null;
   let seg0At, sourceAt = null; // first frame of run 0's seg0 (undefined until looked at) and of the source
   const name = (i) => `seg${i}.ts`;
   const index = (s) => Number(s.slice(3, -3));
@@ -538,6 +538,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       try { if (!(await send(s))) break; } catch { break; }
     }
     const still = listed.filter((s) => !sent.has(s)).length;
+    if (still) closedShort = true; // not a whole copy: never cached (verifier, #553)
     const upTo = still ? listed.findIndex((s) => !sent.has(s)) : null; // segments sent in order from seg0
     let closed = null;
     if (still && !gone && upTo > 0) {
@@ -597,7 +598,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       // whole goes into the cache (put checks every listed segment is here); anything else is dropped.
       await Promise.all(runs.map((r) => rm(r.dir, { recursive: true, force: true })));
       let kept = false;
-      if (cache && exitCode() === 0 && !gone && !short) {
+      if (cache && exitCode() === 0 && !gone && !short && !closedShort) {
         try { kept = cache.put(videoId, quality, dir, lastPlaylist, { seconds: duration }); } catch (err) { log({ event: 'media_cache_failed', message: String(err?.message ?? err).slice(0, 200) }); }
       }
       if (!kept) await rm(dir, { recursive: true, force: true });

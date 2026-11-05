@@ -175,7 +175,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   let ready, failed, background;
   const first = new Promise((res, rej) => { ready = res; failed = rej; });
   const sent = new Set();
-  let mb = 0, gone = false, isReady = false, lastPlaylist = '', predicted = null;
+  let mb = 0, gone = false, isReady = false, lastPlaylist = '', predicted = null, closedShort = false;
 
   async function sendSegments(segs) {
     for (const s of segs) {
@@ -271,6 +271,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
         if (status === 410) gone = true;
         if (status === 204) lastPlaylist = text;
       }
+      closedShort = true; // not a whole copy: never cached, whether or not the closed playlist went up
     }
     log({ event: 'media_short', listed: listed.length, missing: missing.length, resent: missing.length - still, closedAt, gone });
   }
@@ -290,15 +291,16 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
     } catch (err) {
       ff.kill('SIGKILL');
       log({ event: 'media_failed', ms: Date.now() - started, mb: Math.round(mb), message: String(err?.message ?? err).slice(0, 200) });
+      // Not closed here: main's server has no cut_short rule, so a closed short playlist would be ended and reused for
+      // keepHours. Left open, the session goes stale after STALE_MS and the next play builds it again (verifier, #553).
       if (!isReady) failed(err);
-      else if (!gone) { try { await exited; await settleListed(); } catch { /* the failure is logged above */ } }
     } finally {
       clearTimeout(killer);
       await exited;
       proxy.close();
       // A stream that finished whole goes into the cache (put checks every listed segment is here); anything else is dropped.
       let kept = false;
-      if (cache && exit === 0 && !gone) {
+      if (cache && exit === 0 && !gone && !closedShort) {
         try { kept = cache.put(videoId, quality, dir, lastPlaylist); } catch (err) { log({ event: 'media_cache_failed', message: String(err?.message ?? err).slice(0, 200) }); }
       }
       if (!kept) await rm(dir, { recursive: true, force: true });

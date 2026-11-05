@@ -509,16 +509,44 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       text = differs && jumped() ? closedAt(jumpedList(), sent) : differs ? text : predicted.text;
       if (final && !differs && actual.length) log({ event: 'media_predicted', segments: count });
     }
-    if (text === lastPlaylist) return;
-    lastPlaylist = text;
-    const status = await upload('index.m3u8', Buffer.from(text), 'application/vnd.apple.mpegurl');
-    if (status === 410) { gone = true; return; }
-    if (status !== 204) throw new Error(`upload playlist answered ${status}`);
-    if (!isReady && segs.length) {
-      isReady = true;
-      ready({ ready: true, segments: segs.length, done: background });
-      log({ event: 'media_ready', ms: Date.now() - started, resolveMs, segments: segs.length });
+    if (text !== lastPlaylist) {
+      lastPlaylist = text;
+      const status = await upload('index.m3u8', Buffer.from(text), 'application/vnd.apple.mpegurl');
+      if (status === 410) { gone = true; return; }
+      if (status !== 204) throw new Error(`upload playlist answered ${status}`);
+      if (!isReady && segs.length) {
+        isReady = true;
+        ready({ ready: true, segments: segs.length, done: background });
+        log({ event: 'media_ready', ms: Date.now() - started, resolveMs, segments: segs.length });
+      }
     }
+    // The last pass sends what the seg0-only rule above held back. Without this, a short video that ffmpeg finished
+    // while seg0 was still uploading got ready here, in the last pass, with only seg0 sent: the playlist listed 24
+    // segments, 1 came, and the play froze at 4 s (Everything-is-OK#553, staging 2026-11-05 17:46Z; prod 2 of 175).
+    if (final) for (const s of order()) if (!(await send(s))) return;
+  }
+
+  // Before the job ends: every segment the uploaded playlist lists should be on the server. Any that aren't (a race like
+  // #553, or a segment that couldn't be read or sent) are tried once more; if some still can't go up, the playlist is
+  // closed after the last one sent in order, so players end there instead of waiting 20 s for each missing one.
+  async function settleListed() {
+    const listed = lastPlaylist.split(/\r?\n/).filter((l) => SEGMENT.test(l));
+    const missing = listed.filter((s) => !sent.has(s));
+    if (!missing.length || gone) return;
+    for (const s of missing) {
+      if (!made.has(s)) break;
+      try { if (!(await send(s))) break; } catch { break; }
+    }
+    const still = listed.filter((s) => !sent.has(s)).length;
+    const upTo = still ? listed.findIndex((s) => !sent.has(s)) : null; // segments sent in order from seg0
+    let closed = null;
+    if (still && !gone && upTo > 0) {
+      const text = closedAt(lastPlaylist, sent);
+      const status = await upload('index.m3u8', Buffer.from(text), 'application/vnd.apple.mpegurl').catch(() => 0);
+      if (status === 410) gone = true;
+      if (status === 204) { lastPlaylist = text; closed = upTo; }
+    }
+    log({ event: 'media_short', listed: listed.length, missing: missing.length, resent: missing.length - still, closedAt: closed, gone });
   }
 
   background = (async () => {
@@ -531,6 +559,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       }
       await jumping;
       if (!gone) await pass(true);
+      if (isReady && !gone) await settleListed();
       if (gone) runs.forEach(stop);
       const exit = exitCode();
       const stderr = (failedRun() ?? main).stderr;

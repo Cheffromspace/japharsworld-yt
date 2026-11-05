@@ -301,6 +301,45 @@ seg${i}.ts
   assert.deepEqual(uploads.filter((f) => f !== 'index.m3u8'), ['seg0.ts', 'seg1.ts', 'seg2.ts', 'seg3.ts'], 'the rest follow in order');
 });
 
+// A short video (94 s → 23 × 4 s + 2 s) that ffmpeg makes in one burst: seg0 first, then the rest and exit (service-aj's
+// repro of Everything-is-OK#553, 2026-11-05).
+const SHORT = (() => {
+  const head = '#EXTM3U\n#EXT-X-PLAYLIST-TYPE:EVENT\n';
+  const all = Array.from({ length: 24 }, (_, i) => `#EXTINF:${i < 23 ? '4.000000' : '2.000000'},\nseg${i}.ts\n`);
+  return { first: `${head}${all[0]}`, whole: `${head}${all.join('')}#EXT-X-ENDLIST\n`, names: all.map((_, i) => `seg${i}.ts`) };
+})();
+
+test('mediaJob: ffmpeg finishing a short video while seg0 uploads still sends every listed segment (#553)', async () => {
+  const ff = fakeFfmpeg({ steps: [[SHORT.first, ['seg0.ts']], [SHORT.whole, SHORT.names.slice(1)]] });
+  const uploads = [];
+  const logs = [];
+  const first = await mediaJob({ videoId: 'aaaaaaaaaaa', quality: '720p', token: 'x', seconds: 94 }, { ytdlp: 'yt-dlp', runner, spawnFn: ff.spawnFn,
+    pollMs: 10, log: (o) => logs.push(o),
+    // seg0's upload outlasts ffmpeg (exits at ~130 ms), as on staging 2026-11-05 17:46Z.
+    upload: async (file, body) => { if (file === 'seg0.ts') await new Promise((r) => setTimeout(r, 200)); uploads.push([file, body.toString()]); return 204; } });
+  assert.equal(first.segments, 24);
+  await first.done;
+  const segs = uploads.map(([f]) => f).filter((f) => f !== 'index.m3u8');
+  assert.deepEqual(segs, SHORT.names, '24 of 24 uploaded, in order');
+  assert.deepEqual(uploads.slice(0, 2).map(([f]) => f), ['seg0.ts', 'index.m3u8'], 'the playlist still goes up right after seg0');
+  assert.equal(logs.find((l) => l.event === 'media_done').segments, 24);
+  assert.equal(logs.some((l) => l.event === 'media_short'), false, 'nothing left for the self-check');
+});
+
+test('mediaJob: a listed segment that can\'t go up closes the playlist after the last one sent, not left promised (#553)', async () => {
+  const ff = fakeFfmpeg({ steps: [[SHORT.first, ['seg0.ts']], [SHORT.whole, SHORT.names.slice(1).filter((s) => s !== 'seg5.ts')]] });
+  const uploads = [];
+  const first = await mediaJob({ videoId: 'aaaaaaaaaaa', quality: '720p', token: 'x', seconds: 94 }, { ytdlp: 'yt-dlp', runner, spawnFn: ff.spawnFn,
+    pollMs: 10,
+    upload: async (file, body) => { if (file === 'seg0.ts') await new Promise((r) => setTimeout(r, 200)); uploads.push([file, body.toString()]); return 204; } });
+  await first.done;
+  assert.deepEqual(uploads.map(([f]) => f).filter((f) => f !== 'index.m3u8'), SHORT.names.slice(0, 5));
+  const last = uploads.at(-1);
+  assert.equal(last[0], 'index.m3u8');
+  assert.match(last[1], /seg4\.ts\n#EXT-X-ENDLIST\n$/);
+  assert.equal((last[1].match(/^seg\d+\.ts$/gm) ?? []).length, 5);
+});
+
 test('mediaJob: ffmpeg dying part way closes the playlist where it got to; a 410 stops it', async () => {
   const uploads = [];
   const ff = fakeFfmpeg({ code: 1, steps: [[PL1, ['seg0.ts']]] });

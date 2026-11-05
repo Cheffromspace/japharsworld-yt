@@ -316,6 +316,12 @@ builds, `node tools/ops.mjs slots` shows what the slots hold and when they expir
 /ops/plan?id=<video>&mode=<start|adaptive|direct|lower|clear>&minutes=<1-240>` (`node tools/ops.mjs plan --id <video>
 --mode start`; `GET /ops/plan` lists them) gives that video's plays the plan whatever the prediction, the room's pick
 or the pacer say, so a test can play the 360p `start` plan on demand. The plan is held in memory, and a restart clears it.
+Forced limits, staging only (Everything-is-OK#545): `POST /ops/limit?mode=<daily_limit|rate_limited|clear>&(id=<video>|me=1)&minutes=<1-240>`
+(`node tools/ops.mjs --staging limit --mode daily_limit --me`; `GET /ops/limit` lists them) answers that video, or
+the caller's own visitor key, as over the daily allowance (`daily_limit` for a Quest or Android player, youtube.com
+for a PC) or the per-minute limit (`429 rate_limited`), trusted IPs included, until it lapses (default 30 min, memory
+only). It exists only when `PUBLIC_URL`'s host starts with `staging`; production (and an unset `PUBLIC_URL`) answers
+`403 not_staging` and never matches a play (`src/forced.js`).
 
 ## Development
 

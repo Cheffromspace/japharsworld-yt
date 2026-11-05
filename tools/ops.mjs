@@ -6,6 +6,11 @@
 //   node tools/ops.mjs refill [--id <video>] [--force]    refill them (20 credits) and wait for the builds (~0.5–3 min)
 //   node tools/ops.mjs plan [--id <video> --mode start|adaptive|direct|lower|clear] [--minutes 60]
 //                                                         force a video's play plan for a while (max 240 min); no --id lists
+//   node tools/ops.mjs limit --staging [--mode daily_limit|rate_limited|clear (--id <video> | --me)] [--minutes 30]
+//                                                         staging only (Everything-is-OK#545): answer as over the limit for
+//                                                         a video or your own visitor key (this PC's IP, so the whole home
+//                                                         network) for a while (max 240 min), then it lapses; no --mode lists.
+//                                                         Production answers 403 not_staging.
 // Needs STATS_TOKEN (from /etc/japharsworld-yt.env on the Linode) in .env or the environment; OPS_URL defaults to
 // https://yt.japharsworld.com. Events print one JSON object per line.
 // --staging (anywhere on the line, #160): the staging server instead, https://staging-yt.eiok.cc (OPS_STAGING_URL) with
@@ -60,11 +65,22 @@ async function show() {
       return r.ok ? console.log(JSON.stringify(r.body, null, 1)) : fail(`${r.status} ${JSON.stringify(r.body)}`);
     }
   }
+  else if (cmd === 'limit') {
+    if (!opt('mode')) path = '/ops/limit';
+    else {
+      const qs = new URLSearchParams({ mode: opt('mode') });
+      if (opt('id')) qs.set('id', opt('id'));
+      if (rest.includes('--me')) qs.set('me', '1');
+      if (opt('minutes')) qs.set('minutes', opt('minutes'));
+      const r = await call(`/ops/limit?${qs}`, 'POST');
+      return r.ok ? console.log(JSON.stringify(r.body, null, 1)) : fail(`${r.status} ${JSON.stringify(r.body)}`);
+    }
+  }
   else if (cmd === 'events') {
     const qs = new URLSearchParams();
     for (const k of ['event', 'minutes', 'limit']) if (opt(k)) qs.set(k, opt(k));
     path = `/ops/events?${qs}`;
-  } else return fail('usage: node tools/ops.mjs state | events [--event a,b] [--minutes N] [--limit N] | slots | refill [--id X] [--force] | plan [--id X --mode M] [--minutes N]');
+  } else return fail('usage: node tools/ops.mjs state | events [--event a,b] [--minutes N] [--limit N] | slots | refill [--id X] [--force] | plan [--id X --mode M] [--minutes N] | limit --staging [--mode daily_limit|rate_limited|clear (--id X | --me)] [--minutes N]');
   const r = await call(path);
   if (!r.ok) return fail(`${r.status} ${JSON.stringify(r.body)}`);
   if (cmd === 'events') {

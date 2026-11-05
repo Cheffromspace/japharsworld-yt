@@ -25,6 +25,7 @@
 //   GET /ops/state, /ops/events                        read-only operator view, redacted (STATS_TOKEN; see ops.js)
 //   GET /ops/slots, POST /ops/slots/refill             player test slots: what they hold, refill them (src/slots.js)
 //   GET /ops/plan, POST /ops/plan                      test plans: force a video's play plan for up to 4 h (src/adaptive.js)
+//   GET /ops/limit, POST /ops/limit                    staging only: force daily_limit / rate_limited for a while (src/forced.js)
 //   GET /hls-test/<hex>.m3u8                           player test kit: test playlists and slots (yt-dlp gets a "not a video" page)
 //   GET /hls-test/<hex>/<file>                         player test kit: hand-copied segments and playlists (missing segments held 10 s)
 //   GET /, /privacy, /logo.png                         home page and privacy policy (public/)
@@ -62,6 +63,7 @@ import { SpendGate, spendScope, touch } from './spend.js';
 import { Allowance } from './allowance.js';
 import { IpKeys } from './ipkey.js';
 import { trustedIps, limitFor } from './trusted.js';
+import { ForcedLimits, allowedHere } from './forced.js';
 
 const API = 1;
 const PAGES = {
@@ -117,6 +119,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   allowance ??= new Allowance({ creditsPerIp: config.allowanceCreditsPerIp, homeBuildsPerIp: config.allowanceHomeBuildsPerIp,
     homeMbPerIp: config.allowanceHomeMbPerIp, trusted, trustedFactor, maxKeys: config.rateKeysMax, tz: config.metricsTz, log: logJson,
     onReached: (kind) => metrics.inc('allowance', kind) });
+  // Forced limits for tests (Everything-is-OK#545, src/forced.js): staging only, by PUBLIC_URL. On production `forced` is
+  // null, so nothing below can match and /ops/limit answers 403 not_staging.
+  const forced = allowedHere(config.publicUrl) ? new ForcedLimits() : null;
+  if (forced) logJson({ event: 'forced_limits', ok: true });
+  const forcedHit = (mode, req, id = null) => Boolean(forced?.has(mode, { id, visitor: clientKey(req) }));
   // Spend limits (src/spend.js), shared by this server's Playback and Tunelio captions. Injected (tests), or the injected
   // Playback's own, or made here when the server makes its Playback.
   spend ??= playback ? playback.spend ?? null : new SpendGate({ hourCredits: config.spendHourCredits, dayCredits: config.spendDayCredits,
@@ -396,6 +403,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // `lang`: from l= on /v1/<shard>/s, or from the compact address's language letter (/s/<shard><letter>, src/query.js).
   // `hlsTicket`: the address ends in .m3u8 (/v1/<shard>/s.m3u8, /s/<shard><letter>.m3u8), for a pasted link's play (#136).
   async function search(req, res, shard, url, lang = normalizeLang(url.searchParams.get('l')), hlsTicket = false) {
+    if (forcedHit('rate_limited', req)) { logJson({ event: 'forced_limit', mode: 'rate_limited', route: 'search' }); return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.'); }
     if (rateLimited(clientKey(req))) { metrics.inc('search_fail', '429'); return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.'); }
     // q is the raw rest of the address after q= (rawQuery): a pasted link's own & and + stay in it.
     const rawQ = rawQuery(url.search) ?? '';
@@ -887,11 +895,12 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // from it (a 429 says "retry after a while"); the world handles a player 403 for restricted and too_long already.
   // PC players keep the youtube.com 360p link.
   const overOwnLimit = (reason) => reason === 'allowance' || reason === 'cap';
-  function dailyLimitAnswer(res, kind, shard, n, t, why) {
-    metrics.inc('ticket_daily_limit');
+  // isForced (#545): a forced test answer; no metric or build_route, so the counts stay real visitors' own.
+  function dailyLimitAnswer(res, kind, shard, n, t, why, isForced = false) {
+    if (!isForced) metrics.inc('ticket_daily_limit');
     if (kind === 'string') return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), state: 'failed', reason: 'daily_limit', error: 'daily_limit', ...meta(t.data) });
-    logJson({ event: 'play_daily_limit', shard, n, id: t.data.id, client: kind, by: why });
-    routeEvent('youtube', why, { id: t.data.id, answer: 'daily_limit' });
+    logJson({ event: 'play_daily_limit', shard, n, id: t.data.id, client: kind, by: why, ...(isForced ? { forced: true } : {}) });
+    if (!isForced) routeEvent('youtube', why, { id: t.data.id, answer: 'daily_limit' });
     return fail(res, 403, 'daily_limit', "You've started a lot of new videos today. Try one that's already playing, or come back tomorrow.");
   }
   function restrictedAnswer(res, kind, shard, n, t) {
@@ -1021,8 +1030,15 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (playback.restricted?.(t.data.id)) return restrictedAnswer(res, kind, shard, n, t);
       // Before anything that could spend: no /create, no home build, whoever asks.
       if (overCap(t.data)) return tooLongAnswer(res, kind, shard, n, t);
+      // A forced daily limit (#545, staging only): answered as over the allowance before anything that could spend.
+      const forcedDaily = forcedHit('daily_limit', req, t.data.id);
       // The tablet asking (a row selected, or watching a build): start the build, report it, never redirect.
       if (kind === 'string') {
+        if (forcedDaily) {
+          logJson({ event: 'forced_limit', mode: 'daily_limit', client: kind, hls: hlsTicket });
+          if (hlsTicket) return dailyLimitAnswer(res, kind, shard, n, t, 'allowance', true);
+          return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), state: 'youtube', reason: 'allowance', ...meta(t.data) });
+        }
         const body = await tabletStatus(shard, n, t, hlsTicket, 'tablet');
         if (body === 'too_long') return tooLongAnswer(res, kind, shard, n, t);
         if (hlsTicket && body?.state === 'youtube' && overOwnLimit(body.reason)) return dailyLimitAnswer(res, kind, shard, n, t, body.reason);
@@ -1049,6 +1065,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         res.writeHead(302, { location: pin.location, 'cache-control': 'no-store' });
         return res.end();
       };
+      if (forcedDaily) {
+        // As over the allowance: a Quest or Android player daily_limit, a PC (and VRChat's resolver) youtube.com. No pin.
+        if (hlsTicket || android) return dailyLimitAnswer(res, kind, shard, n, t, 'allowance', true);
+        logJson({ event: 'play', shard, n, id: t.data.id, via: 'youtube', reason: 'allowance', client: kind, held: 0, forced: true });
+        res.writeHead(302, { location: `https://www.youtube.com/watch?v=${t.data.id}`, 'cache-control': 'no-store' });
+        return res.end();
+      }
       const pin = pinned(key, t.data);
       if (pin) return answerPin(pin);
       let where = null;
@@ -1203,6 +1226,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }
     if (t.kind === 'page') {
       // A More page is a search: it counts against SEARCHES_PER_MINUTE, checked before the continuation is used up.
+      if (forcedHit('rate_limited', req)) { logJson({ event: 'forced_limit', mode: 'rate_limited', route: 'more' }); return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.'); }
       if (rateLimited(clientKey(req))) { metrics.inc('more_fail', '429'); return fail(res, 429, 'rate_limited', 'Too many searches, wait a minute.'); }
       metrics.inc('more');
       const more = continuations.get(`${shard}:${n}`);
@@ -1332,7 +1356,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         route = 'stats';
         return statsRoute(req, res, url, { token: config.statsToken, metricsPath: config.metricsPath, monitorDb: config.monitorDb, tz: config.metricsTz, renewDay: config.tunelioRenewsDay, metrics });
       }
-      if (url.pathname.startsWith('/ops/')) { route = 'ops'; return opsRoute(req, res, url, { token: config.statsToken, ring, state: opsState, slots, adaptive }); }
+      if (url.pathname.startsWith('/ops/')) { route = 'ops'; return opsRoute(req, res, url, { token: config.statsToken, ring, state: opsState, slots, adaptive, forced, caller: () => clientKey(req) }); }
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
       if (url.pathname.startsWith('/hls-test/')) { route = 'hls-test'; return await hlsTest(req, res, url); }
       if (url.pathname.startsWith('/hls/')) { route = 'hls'; return await hlsRoute(req, res, url); }
@@ -1402,6 +1426,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // and More pages have TICKETS_PER_MINUTE_PER_IP. Each counts apart.
       const playerPlay = clientKind(req.headers['user-agent']) !== 'string' && store.get(shard, n)?.kind === 'video';
       const ip = clientKey(req);
+      const tk = store.get(shard, n);
+      if (forced && forcedHit('rate_limited', req, tk?.kind === 'video' ? tk.data.id : null)) {
+        logJson({ event: 'forced_limit', mode: 'rate_limited', route: 'ticket', client: clientKind(req.headers['user-agent']) });
+        return fail(res, 429, 'rate_limited', 'Too many requests, wait a minute.');
+      }
       if (playerPlay ? ticketLimited(ip, playerHits, config.ticketPlayerPerMinutePerIp, 'player') : ticketLimited(ip)) {
         metrics.inc('ticket_limited');
         return fail(res, 429, 'rate_limited', 'Too many requests, wait a minute.');

@@ -17,6 +17,7 @@ import { Allowance } from '../src/allowance.js';
 import { Adaptive } from '../src/adaptive.js';
 import { IpKeys } from '../src/ipkey.js';
 import { trustedIps } from '../src/trusted.js';
+import { ForcedLimits, allowedHere } from '../src/forced.js';
 import { createWorker } from '../relay/worker.js';
 import { config as base } from '../src/config.js';
 
@@ -559,4 +560,108 @@ test('ip keys: the minute sweep replaces the key at the day boundary with no req
   assert.equal(made, 2);
   k.sweep();
   assert.equal(made, 2, 'once a day, not every sweep');
+});
+
+// Everything-is-OK#545: forced limits for tests, staging only (src/forced.js).
+const STAGING = 'https://staging-yt.eiok.cc';
+const opsLimit = (a, qs, ip = '192.0.2.1', method = 'POST') => fetch(`${a.url}/ops/limit?${qs}`, { method,
+  headers: { authorization: 'Bearer ops-token', 'x-forwarded-for': ip } }).then(async (r) => ({ status: r.status, body: await r.json() }));
+
+test('forced limits: allowed only when PUBLIC_URL is a staging host; production and the unset default refuse', () => {
+  assert.equal(allowedHere(STAGING), true);
+  assert.equal(allowedHere('https://staging.example.org/'), true);
+  assert.equal(allowedHere('https://yt.japharsworld.com'), false);
+  for (const u of ['', 'http://pub', 'https://eiok.cc', 'https://notstaging-yt.eiok.cc', 'https://yt.japharsworld.com/?staging-', 'garbage', undefined]) {
+    assert.equal(allowedHere(u), false, String(u));
+  }
+});
+
+test('forced limits: the default PUBLIC_URL (unset env) is production, so it fails closed', async () => {
+  const saved = process.env.PUBLIC_URL;
+  delete process.env.PUBLIC_URL;
+  try {
+    const { config: fresh } = await import(`../src/config.js?unset=${Date.now()}`);
+    assert.equal(fresh.publicUrl, 'https://yt.japharsworld.com');
+    assert.equal(allowedHere(fresh.publicUrl), false);
+  } finally { if (saved !== undefined) process.env.PUBLIC_URL = saved; }
+});
+
+test('forced limits: lapse by themselves, at most 240 minutes, clear by mode null; the list never shows a visitor key', () => {
+  let now = 1_000_000;
+  const f = new ForcedLimits({ now: () => now });
+  f.force({ id: vid(1), mode: 'daily_limit', minutes: 10 });
+  f.force({ visitor: 'code-a', mode: 'rate_limited', minutes: 9999 });
+  assert.equal(f.has('daily_limit', { id: vid(1) }), true);
+  assert.equal(f.has('rate_limited', { id: vid(1) }), false, 'only its own mode');
+  assert.equal(f.has('rate_limited', { visitor: 'code-a' }), true);
+  assert.equal(f.has('rate_limited', { visitor: 'code-b' }), false);
+  assert.deepEqual(f.list('code-a').map((x) => [x.target, x.you ?? x.id, x.mode]), [['video', vid(1), 'daily_limit'], ['visitor', true, 'rate_limited']]);
+  assert.doesNotMatch(JSON.stringify(f.list('code-b')), /code-a/);
+  now += 10 * 60_000;
+  assert.equal(f.has('daily_limit', { id: vid(1) }), false, 'lapsed after 10 min');
+  now += 230 * 60_000 - 1;
+  assert.equal(f.has('rate_limited', { visitor: 'code-a' }), true);
+  now += 1;
+  assert.equal(f.has('rate_limited', { visitor: 'code-a' }), false, 'capped at 240 min');
+  f.force({ id: vid(2), mode: 'daily_limit' });
+  f.force({ id: vid(2), mode: null });
+  assert.equal(f.has('daily_limit', { id: vid(2) }), false);
+});
+
+test('forced limits: on a production config /ops/limit answers 403 not_staging and plays are untouched', async (t) => {
+  const a = await routeApp(t, { config: { statsToken: 'ops-token', publicUrl: 'https://yt.japharsworld.com', trustedIps: '198.51.100.7' } });
+  const r = await opsLimit(a, 'me=1&mode=daily_limit', '198.51.100.7');
+  assert.deepEqual([r.status, r.body.error], [403, 'not_staging']);
+  assert.equal((await opsLimit(a, '', '198.51.100.7', 'GET')).status, 403);
+  assert.equal((await opsLimit(a, `id=${vid(1)}&mode=daily_limit`)).status, 403);
+  const n = a.ticket(vid(1));
+  assert.equal((await a.get(`${n}.m3u8`, UNITY, '198.51.100.7')).status, 200);
+  assert.match((await a.get(n, WMF, '198.51.100.7')).headers.get('location'), /tunelio\.dev/);
+  assert.ok(!a.logs.some((l) => l.event === 'forced_limits' || l.event === 'forced_limit'));
+});
+
+test('forced limits (staging): daily_limit for the caller, a trusted IP, answers as over the allowance and spends nothing; others play', async (t) => {
+  const a = await routeApp(t, { config: { statsToken: 'ops-token', publicUrl: STAGING, trustedIps: '198.51.100.7' } });
+  const T = '198.51.100.7';
+  assert.equal((await opsLimit(a, 'me=1&mode=fast', T)).status, 400);
+  assert.equal((await opsLimit(a, 'mode=daily_limit', T)).status, 400, 'a target is needed');
+  assert.equal((await opsLimit(a, `me=1&id=${vid(9)}&mode=daily_limit`, T)).status, 400);
+  const set = await opsLimit(a, 'me=1&mode=daily_limit&minutes=15', T);
+  assert.equal(set.status, 200);
+  assert.deepEqual(set.body.forced.map((x) => [x.target, x.you, x.mode]), [['visitor', true, 'daily_limit']]);
+  assert.doesNotMatch(JSON.stringify(set.body), /198\.51/);
+  const n = a.ticket(vid(1));
+  const quest = await a.get(`${n}.m3u8`, QUEST, T);
+  assert.deepEqual([quest.status, (await quest.json()).error], [403, 'daily_limit']);
+  const android = await a.get(n, QUEST, T);
+  assert.deepEqual([android.status, (await android.json()).error], [403, 'daily_limit']);
+  const st = await (await a.get(`${n}.m3u8`, UNITY, T)).json();
+  assert.deepEqual([st.state, st.reason, st.error], ['failed', 'daily_limit', 'daily_limit']);
+  const plain = await (await a.get(n, UNITY, T)).json();
+  assert.deepEqual([plain.state, plain.reason], ['youtube', 'allowance']);
+  assert.equal((await a.get(n, WMF, T)).headers.get('location'), `https://www.youtube.com/watch?v=${vid(1)}`, 'a PC gets youtube.com');
+  assert.equal(a.tunelio.created.length, 0, 'nothing spent');
+  assert.ok(a.logs.some((l) => l.event === 'play_daily_limit' && l.forced === true));
+  assert.equal(a.routes().length, 0, 'no build_route counted for a forced answer');
+  // Another visitor isn't affected.
+  assert.match((await a.get(n, WMF, '192.0.2.5')).headers.get('location'), /tunelio\.dev/);
+  // Cleared: the trusted caller plays again.
+  assert.deepEqual((await opsLimit(a, 'me=1&mode=clear', T)).body.forced, []);
+  assert.match((await a.get(a.ticket(vid(2)), WMF, T)).headers.get('location'), /tunelio\.dev/);
+});
+
+test('forced limits (staging): a video target answers daily_limit to every visitor; rate_limited gives 429 on tickets and searches', async (t) => {
+  const a = await routeApp(t, { config: { statsToken: 'ops-token', publicUrl: STAGING, trustedIps: '198.51.100.7' } });
+  assert.equal((await opsLimit(a, `id=${vid(1)}&mode=daily_limit`)).status, 200);
+  const n1 = a.ticket(vid(1)), n2 = a.ticket(vid(2));
+  for (const ip of ['192.0.2.8', '198.51.100.7']) assert.equal((await a.get(`${n1}.m3u8`, QUEST, ip)).status, 403, ip);
+  assert.match((await a.get(n2, WMF, '192.0.2.8')).headers.get('location'), /tunelio\.dev/, 'other videos play');
+  assert.equal((await opsLimit(a, 'me=1&mode=rate_limited', '198.51.100.7')).status, 200);
+  const r = await a.get(n2, WMF, '198.51.100.7');
+  assert.deepEqual([r.status, (await r.json()).error], [429, 'rate_limited']);
+  const s = await fetch(`${a.url}/v1/0/s?l=en&q=x`, { headers: { 'x-forwarded-for': '198.51.100.7' } });
+  assert.deepEqual([s.status, (await s.json()).error], [429, 'rate_limited']);
+  assert.equal((await a.get(n2, UNITY, '192.0.2.8')).status, 200, 'not for another visitor');
+  const list = await opsLimit(a, '', '192.0.2.8', 'GET');
+  assert.deepEqual(list.body.forced.map((x) => [x.target, x.you ?? x.id]), [['video', vid(1)], ['visitor', false]]);
 });

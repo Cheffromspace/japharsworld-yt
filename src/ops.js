@@ -3,6 +3,8 @@
 //   GET /ops/events?event=a,b&minutes=1440&limit=500    recent log events from memory, newest last
 //   GET /ops/plan, POST /ops/plan?id=&mode=&minutes=     test plans: force a video's play plan for a while (src/adaptive.js force;
 //                                                       mode restricted: src/playback.js forceRestricted)
+//   GET /ops/limit, POST /ops/limit?mode=&id=|me=1&minutes=  staging only (src/forced.js): force daily_limit or
+//                                                       rate_limited for a video or the caller's visitor key; 403 elsewhere
 //   GET /ops/slots, POST /ops/slots/refill?id=&force=1  the player test slots (src/slots.js); refills are
 //                                                       capped per day, so the test session can refill them itself
 // Behind STATS_TOKEN like /stats (404 without one). Fixed answers only: no parameters reach a shell, a file path or
@@ -12,6 +14,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tokenOk } from './stats.js';
+import { MODES, MAX_MINUTES } from './forced.js';
 
 // Fields an event may carry out. Anything else (id, n, shard, ua, future fields) is dropped.
 const FIELDS = new Set(['at', 'event', 'via', 'reason', 'client', 'held', 'quality', 'hls', 'mb', 'buildMs', 'seconds',
@@ -19,7 +22,7 @@ const FIELDS = new Set(['at', 'event', 'via', 'reason', 'client', 'held', 'quali
   'route', 'ms', 'results', 'failed', 'worker', 'from', 'to', 'kind', 'lang', 'text', 'units', 'pair',
   'cached', 'rungs', 'mode', 'why', 'predicted', 'lowerMb', 'lowerPredicted', 'allowance', 'spent', 'file', 'ended', 'eta',
   'qLen', 'attempt', 'pad', 'arrow', 'before', 'prompt', 'after', 'len', 'chars', 'control', 'device', 'ses', 'seg', 'found', 'range', 'pinned',
-  'who', 'rung', 'top', 'ago', 'counted', 'freeMb', 'growthMb', 'floorGb', 'jumps', 'minutes', 'cuts', 'reopenOk', 'reopenFail', 'readMb', 'rate', 'connS', 'pos', 'lastByteAt', 'offsetOk', 'ttfbMs', 'platform', 'plan', 'outcome', 'trusted', 'homeActive', 'homeMax', 'tunelioBuilding', 'hour', 'day', 'month', 'window', 'limit', 'by', 'answer']); // play_plan: the plan and why (2026-10-23); search_shape: no search text (#143, 2026-10-24); pinned: a play answered from its ticket's pin (#293, 2026-10-28); video_report: who, rung, top, ago, counted (world #353, 2026-10-29); home_no_room: freeMb, growthMb, floorGb (2026-10-30); media_done jumps (#367); tunelio_drop, tunelio_drop_cut, tunelio_drop_reopen: numbers and clock times, no link or video (#361); play_outcome: platform, plan, outcome (#274); trusted: a capped request from a TRUSTED_IPS address, true only (2026-11-03); build_route: homeActive, homeMax, tunelioBuilding and the credits so far (hour, day, month); spend_budget window; ticket_limited limit; spend_cap and play_daily_limit by (ip, shard, allowance, cap), build_route answer (2026-11-04)
+  'who', 'rung', 'top', 'ago', 'counted', 'freeMb', 'growthMb', 'floorGb', 'jumps', 'minutes', 'cuts', 'reopenOk', 'reopenFail', 'readMb', 'rate', 'connS', 'pos', 'lastByteAt', 'offsetOk', 'ttfbMs', 'platform', 'plan', 'outcome', 'trusted', 'homeActive', 'homeMax', 'tunelioBuilding', 'hour', 'day', 'month', 'window', 'limit', 'by', 'answer', 'forced']); // play_plan: the plan and why (2026-10-23); search_shape: no search text (#143, 2026-10-24); pinned: a play answered from its ticket's pin (#293, 2026-10-28); video_report: who, rung, top, ago, counted (world #353, 2026-10-29); home_no_room: freeMb, growthMb, floorGb (2026-10-30); media_done jumps (#367); tunelio_drop, tunelio_drop_cut, tunelio_drop_reopen: numbers and clock times, no link or video (#361); play_outcome: platform, plan, outcome (#274); trusted: a capped request from a TRUSTED_IPS address, true only (2026-11-03); build_route: homeActive, homeMax, tunelioBuilding and the credits so far (hour, day, month); spend_budget window; ticket_limited limit; spend_cap and play_daily_limit by (ip, shard, allowance, cap), build_route answer (2026-11-04)
 
 // An 11-character YouTube-ID-shaped token with a digit, "-", "_" or an inner capital (so ordinary words such as
 // "unavailable" or "Information" stay), and URL query strings (v=, sig=, tokens).
@@ -76,7 +79,7 @@ export function gitHead(dir = new URL('../.git', import.meta.url)) {
   } catch { return null; }
 }
 
-export function opsRoute(req, res, url, { token, ring, state, slots, adaptive, playback }) {
+export function opsRoute(req, res, url, { token, ring, state, slots, adaptive, playback, forced = null, caller = () => null }) {
   const send = (status, body) => {
     const buf = Buffer.from(JSON.stringify(body));
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': buf.length, 'cache-control': 'no-store', 'x-robots-tag': 'noindex' });
@@ -85,7 +88,7 @@ export function opsRoute(req, res, url, { token, ring, state, slots, adaptive, p
   if (!token) return send(404, { v: 1, error: 'not_found', message: 'Unknown path.' });
   if (!tokenOk(req, url, token)) return send(401, { v: 1, error: 'unauthorized', message: 'Bad stats token.' });
   const p = url.pathname.replace(/\/$/, '');
-  if (req.method !== 'GET' && req.method !== 'HEAD' && p !== '/ops/slots/refill' && p !== '/ops/plan') return send(405, { v: 1, error: 'method', message: 'GET only.' });
+  if (req.method !== 'GET' && req.method !== 'HEAD' && p !== '/ops/slots/refill' && p !== '/ops/plan' && p !== '/ops/limit') return send(405, { v: 1, error: 'method', message: 'GET only.' });
   if (p === '/ops/state') return send(200, { v: 1, at: new Date().toISOString(), ...state() });
   if (p === '/ops/events') {
     const num = (k, d, lo, hi) => Math.min(hi, Math.max(lo, Number.parseInt(url.searchParams.get(k) ?? '', 10) || d));
@@ -114,6 +117,22 @@ export function opsRoute(req, res, url, { token, ring, state, slots, adaptive, p
       adaptive.force(id, mode === 'clear' || mode === 'restricted' ? null : mode, minutes);
     }
     return send(200, { v: 1, at: new Date().toISOString(), forced: [...adaptive.forcedPlans(), ...(playback?.forcedRestrictions?.() ?? [])] });
+  }
+  if (p === '/ops/limit') {
+    // Everything-is-OK#545: never on production (src/forced.js allowedHere); there the server passes no `forced`.
+    if (!forced) return send(403, { v: 1, error: 'not_staging', message: 'Forced limits exist on staging only.' });
+    const who = caller();
+    if (req.method === 'POST') {
+      const id = url.searchParams.get('id') ?? '';
+      const me = url.searchParams.get('me') === '1';
+      const mode = url.searchParams.get('mode') ?? '';
+      if (id ? !/^[A-Za-z0-9_-]{11}$/.test(id) : !me) return send(400, { v: 1, error: 'bad_target', message: 'id: an 11-character video id, or me=1 (your own visitor key).' });
+      if (id && me) return send(400, { v: 1, error: 'bad_target', message: 'id or me=1, not both.' });
+      if (![...MODES, 'clear'].includes(mode)) return send(400, { v: 1, error: 'bad_mode', message: `mode: ${MODES.join(', ')} or clear.` });
+      const minutes = Math.min(MAX_MINUTES, Math.max(1, Number.parseInt(url.searchParams.get('minutes') ?? '', 10) || 30));
+      forced.force({ id: id || null, visitor: me ? who : null, mode: mode === 'clear' ? null : mode, minutes });
+    }
+    return send(200, { v: 1, at: new Date().toISOString(), forced: forced.list(who) });
   }
   return send(404, { v: 1, error: 'not_found', message: 'Unknown path.' });
 }

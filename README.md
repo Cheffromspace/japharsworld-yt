@@ -197,14 +197,18 @@ pulls `main` every 5 minutes and restarts the worker when `relay/`, `src/` or th
 YouTube can bot-wall the home IP too (first seen 2026-11-06). The production worker can then retry with a **throwaway**
 Google account's cookies (Everything-is-OK#575; never the owner's main account, `docs/service/youtube-risk.md` §2 in
 the world repo). They live only on the Optiplex, in `/var/lib/japharsworld-yt-relay/cookies.txt` (the unit's
-`StateDirectory`; `YT_COOKIES` overrides), mode 600, owned by `jytrelay`; staging's worker has none.
+`StateDirectory`; `YT_COOKIES` overrides), mode 600, owned by `jytrelay`. Staging's worker has no state dir, so no
+cookies; it runs as the same user, so its unit also gets `InaccessiblePaths=-/var/lib/japharsworld-yt-relay` (a drop-in).
 
 - **When they're used:** yt-dlp (captions and home media) always runs without them first. Only a `bot` or `potoken`
-  refusal is retried once with `--cookies` (`relay/cookies.js`). If that retry is refused the same way, the cookies are
-  marked dead and aren't used again until a new file is installed.
+  refusal is retried once with `--cookies`, on a private copy (yt-dlp rewrites its cookie file, so the installed one
+  only changes by an install; `relay/cookies.js`). If that retry is bot-walled too, `cookies.txt.dead` marks them dead
+  (it survives restarts) and they aren't used again until a new file is installed. Cookie lines yt-dlp echoes are
+  scrubbed from what the worker logs or sends.
 - **What the server sees:** each poll carries `cookies=none|ok|dead`, a state word only (`/ops/state` → `cookies`).
-  Discord (`ALERT_WEBHOOK`, at most once per `COOKIE_NUDGE_HOURS`, 12; 0 = never) asks for a sign-in when the home relay
-  is bot-walled with no working cookies, and says when working cookies stopped working (`src/cookiewatch.js`).
+  Discord (`ALERT_WEBHOOK`, one message per `COOKIE_NUDGE_HOURS`, 12; 0 = never) asks for a sign-in when working cookies
+  stop working, or when the home relay is bot-walled with none, and gives the all-clear once they work
+  (`src/cookiewatch.js`).
 - **Signing in** (the owner, on their Windows PC, which is on the same home IP; Firefox because its cookie store is a
   plain SQLite file, the yt-dlp wiki's sign-in-then-close method):
   1. In `cmd`, start Firefox with a new, empty profile folder:
@@ -213,7 +217,7 @@ the world repo). They live only on the Optiplex, in `/var/lib/japharsworld-yt-re
   2. Sign in with the throwaway account. Then open `https://www.youtube.com/robots.txt` in the same tab and close that
      Firefox window (all of its windows), so it writes its cookies and stops.
   3. Copy and install them (the script keeps only the YouTube/Google cookies, refuses a profile that isn't signed in,
-     writes `cookies.txt` mode 600 for `jytrelay`, deletes the copy and prints only a count; no worker restart):
+     writes `cookies.txt` mode 600 for `jytrelay`, deletes the copy (and any dead mark) and prints only a count; no worker restart):
      `scp "%USERPROFILE%\jyt-signin\cookies.sqlite" jonflatt@192.168.1.4:jyt-cookies.sqlite`
      `ssh -t jonflatt@192.168.1.4 "sudo node /opt/japharsworld-yt-relay/relay/cookies-install.js jyt-cookies.sqlite"`
   4. Delete the profile and never open it again: `rmdir /s /q "%USERPROFILE%\jyt-signin"`. Using it again lets Google

@@ -4,13 +4,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtemp, readFile, stat, rm, writeFile, utimes } from 'node:fs/promises';
+import { mkdtemp, readFile, stat, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CookieJar, readFirefox, toNetscape, signedIn } from '../relay/cookies.js';
 import { install } from '../relay/cookies-install.js';
 import { CookieWatch } from '../src/cookiewatch.js';
+import { makeAlert } from '../src/alert.js';
 import { createApp } from '../src/server.js';
 import { Store } from '../src/store.js';
 import { Relay } from '../src/relay.js';
@@ -78,7 +79,7 @@ test('cookies install: writes cookies.txt mode 600, deletes the copy, prints cou
   firefoxDb(guest, [{ name: 'NID', value: 'g', host: '.google.com' }]);
   const g = await install(guest, { out, owner: null });
   assert.equal(g.ok, false);
-  assert.match(g.message, /No signed-in Google session/);
+  assert.match(g.message, /No signed-in YouTube session/);
   assert.match(await readFile(out, 'utf8'), /made-up-sid/);
   assert.equal(existsSync(guest), false);
   // Not a cookie database.
@@ -100,19 +101,29 @@ test('cookies install: writes cookies.txt mode 600, deletes the copy, prints cou
   await rm(dir, { recursive: true, force: true });
 });
 
-test('cookies: only a bot or PO-token refusal is retried with them, once; a refused retry marks them dead until a new file', async () => {
+test('cookies: only a bot or PO-token refusal is retried, once, with a private copy; a bot-walled retry marks them dead across restarts until a new file', async () => {
   const dir = await tmp();
   const logs = [];
-  const jar = new CookieJar({ path: join(dir, 'cookies.txt'), log: (o) => logs.push(o) });
-  const err = (msg) => Object.assign(new Error('Command failed'), { stderr: msg });
+  const path = join(dir, 'cookies.txt');
+  const jar = new CookieJar({ path, log: (o) => logs.push(o), tmp: dir });
+  const err = (msg) => Object.assign(new Error(`Command failed: yt-dlp\n${msg}`), { stderr: msg });
   const calls = [];
   let answers = [];
-  const runner = jar.wrap(async (cmd, args) => { calls.push(args); const a = answers.shift(); if (a instanceof Error) throw a; return a; });
+  // Like yt-dlp: a run with --cookies rewrites that file when it exits, success or not.
+  const runner = jar.wrap(async (cmd, args) => {
+    calls.push(args);
+    const i = args.indexOf('--cookies');
+    if (i >= 0) await writeFile(args[i + 1], `rewritten ${calls.length}`);
+    const a = answers.shift();
+    if (a instanceof Error) throw a;
+    return a;
+  });
   assert.equal(await jar.state(), 'none');
   answers = [err("ERROR: Sign in to confirm you're not a bot")];
   await assert.rejects(runner('yt-dlp', ['-g', 'x']));
   assert.equal(calls.length, 1, 'no cookies: no retry');
-  await writeFile(jar.path, toNetscape([{ name: 'SID', value: 'made-up', domain: '.google.com' }]).text);
+  const installed = toNetscape([{ name: 'LOGIN_INFO', value: 'made-up', domain: '.youtube.com' }]).text;
+  await writeFile(path, installed);
   assert.equal(await jar.state(), 'ok');
   calls.length = 0; answers = ['ok'];
   assert.equal(await runner('yt-dlp', ['-g', 'x']), 'ok');
@@ -122,47 +133,64 @@ test('cookies: only a bot or PO-token refusal is retried with them, once; a refu
     await assert.rejects(runner('yt-dlp', ['-g', 'x']));
     assert.equal(calls.length, 1, m);
   }
-  calls.length = 0; answers = [err("Sign in to confirm you're not a bot"), 'ok'];
-  assert.equal(await runner('yt-dlp', ['-g', 'x']), 'ok');
-  assert.deepEqual(calls[1], ['--cookies', jar.path, '-g', 'x']);
-  calls.length = 0; answers = [err('The following content is not available: PO Token'), err("Sign in to confirm you're not a bot")];
+  // Bot wall, then the retry with a private copy works; the installed file is untouched and the copy is gone.
+  calls.length = 0; answers = [err("Sign in to confirm you're not a bot"), { stdout: '{}', warnings: ['WARNING: fine', "WARNING: skipping cookie file entry due to invalid length 3: '.youtube.com\tTRUE\tmade-up'"] }];
+  const r = await runner('yt-dlp', ['-g', 'x']);
+  assert.deepEqual(r.warnings, ['WARNING: fine'], 'cookie lines never leave');
+  assert.equal(calls[1][0], '--cookies');
+  assert.notEqual(calls[1][1], path);
+  assert.equal(existsSync(calls[1][1]), false);
+  assert.equal(await readFile(path, 'utf8'), installed);
+  // A PO-token wall on the retry: refused, but not dead (fresh cookies don't fix that).
+  calls.length = 0; answers = [err("Sign in to confirm you're not a bot"), err('PO Token required')];
   await assert.rejects(runner('yt-dlp', ['-g', 'x']));
+  assert.equal(await jar.state(), 'ok');
+  // Bot-walled with them too: dead; the error carries no cookie line.
+  calls.length = 0; answers = [err('PO Token required'), err("WARNING: skipping cookie file entry due to invalid length 2: 'made-up\tx'\nERROR: Sign in to confirm you're not a bot")];
+  const e = await runner('yt-dlp', ['-g', 'x']).catch((x) => x);
+  assert.doesNotMatch(e.message + e.stderr, /made-up/);
   assert.equal(await jar.state(), 'dead');
+  // A restarted worker (a new jar) still knows; and a concurrent run can't revive them (the installed file never changes).
+  const again = new CookieJar({ path, tmp: dir });
+  assert.equal(await again.state(), 'dead');
   calls.length = 0; answers = [err("Sign in to confirm you're not a bot")];
-  await assert.rejects(runner('yt-dlp', ['-g', 'x']));
+  await assert.rejects(again.wrap(async (c, a) => { calls.push(a); throw answers.shift(); })('yt-dlp', ['-g', 'x']));
   assert.equal(calls.length, 1, 'dead: no more retries');
   // A newly installed file is usable again.
-  const later = new Date(Date.now() + 5000);
-  await writeFile(jar.path, 'new');
-  await utimes(jar.path, later, later);
+  await writeFile(path, `${installed}# new\n`);
   assert.equal(await jar.state(), 'ok');
   assert.ok(!JSON.stringify(logs).includes('made-up'));
   await rm(dir, { recursive: true, force: true });
 });
 
-test('cookie watch: asks for a sign-in after a bot refusal with missing or dead cookies, at most once per window; all-clear when they work', () => {
-  const sent = [];
-  const last = new Map();
-  let t = 0;
-  const alert = Object.assign((kind, text, quiet) => { if (t - (last.get(kind) ?? -Infinity) < quiet * 60_000) return false; last.set(kind, t); sent.push({ kind, text }); return true; },
-    { resolve: (kind, text) => { sent.push({ kind: `${kind}_ok`, text }); return true; } });
-  const w = new CookieWatch({ alert, hours: 12 });
+test('cookie watch: one reminder kind for missing and dead cookies, at most once per window, all-clear when they work, stale workers forgotten', () => {
+  let t = 1_000_000;
+  const posted = [];
+  const alert = makeAlert({ webhook: 'https://discord.example/x', now: () => t, fetcher: async (u, o) => { posted.push(JSON.parse(o.body).content); return { ok: true }; } });
+  const w = new CookieWatch({ alert, hours: 12, now: () => t });
   assert.equal(w.refused('bot'), false, 'no worker has said anything (staging)');
   w.set('optiplex', 'none');
   assert.equal(w.refused('rate'), false);
   assert.equal(w.refused('restricted'), false);
   assert.equal(w.refused('bot'), true);
-  assert.match(sent.at(-1).text, /no cookies to retry with/);
+  assert.match(posted.at(-1), /no cookies to retry with/);
   assert.equal(w.refused('potoken'), false, 'once per 12 h');
-  t += 12 * 3_600_000;
-  assert.equal(w.refused('potoken'), true);
   w.set('optiplex', 'ok');
-  assert.ok(sent.some((s) => s.kind === 'cookies_missing_ok'));
+  assert.match(posted.at(-1), /working YouTube cookies/);
   assert.equal(w.refused('bot'), false, 'working cookies: the retry handles it');
+  const n = posted.length;
   w.set('optiplex', 'dead');
-  assert.match(sent.find((s) => s.kind === 'cookies_dead').text, /no longer work/);
+  assert.match(posted.at(-1), /no longer work/);
+  assert.equal(w.refused('bot'), false, 'the same kind: no second message for the same event');
+  assert.equal(posted.length, n + 1);
+  // A server restart: the first word is dead (no transition), so the next refusal asks.
+  const w2 = new CookieWatch({ alert: makeAlert({ webhook: 'x', fetcher: async (u, o) => { posted.push(JSON.parse(o.body).content); return { ok: true }; } }), hours: 12, now: () => t });
+  w2.set('optiplex', 'dead');
+  assert.equal(w2.refused('bot'), true);
   w.set('optiplex', 'bogus');
   assert.deepEqual(w.state(), { optiplex: 'dead' });
+  t += 11 * 60_000;
+  assert.deepEqual(w.state(), {}, 'a worker that stopped polling is forgotten');
   const off = new CookieWatch({ alert: () => { throw new Error('no'); }, hours: 0 });
   off.set('optiplex', 'none');
   assert.equal(off.refused('bot'), false);

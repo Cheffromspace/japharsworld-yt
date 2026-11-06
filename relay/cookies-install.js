@@ -4,7 +4,7 @@
 // cookies, refuses a profile with no signed-in Google session, writes cookies.txt into the worker's state dir (mode 600,
 // owned by jytrelay) and deletes the copy. Prints counts only, never a cookie. The worker picks the file up at its next
 // poll; no restart. --out <path> and --owner <user> for other places; --keep leaves the copy (tests).
-import { rm, chown } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -21,12 +21,15 @@ export async function install(source, { out = DEFAULT_OUT, owner = 'jytrelay', k
   try {
     let cookies;
     try { cookies = readFirefox(source); } catch (err) {
-      return { ok: false, message: `Couldn't read ${source} as a Firefox cookies.sqlite (${String(err?.message ?? err).slice(0, 120)}). Was Firefox closed before the copy?` };
+      return { ok: false, message: `Couldn't read that file as a Firefox cookies.sqlite (${String(err?.message ?? err).slice(0, 120)}). Was Firefox closed before the copy?` };
     }
-    if (!signedIn(cookies)) return { ok: false, message: 'No signed-in Google session in that profile: nothing installed. Sign in at youtube.com first, then close Firefox and copy again.' };
+    if (!signedIn(cookies)) return { ok: false, message: 'No signed-in YouTube session in that profile: nothing installed. Sign in at youtube.com first, then close Firefox and copy again.' };
     const { text, count } = toNetscape(cookies);
-    await writeCookies(out, text);
-    if (owner) { const { uid, gid } = ids(owner); await chown(out, uid, gid); }
+    let owned;
+    try { owned = owner ? ids(owner) : null; } catch { return { ok: false, message: `No user ${owner} here: nothing installed.` }; }
+    await writeCookies(out, text, owned);
+    // A new file ends a "dead" mark (relay/cookies.js); the marker would no longer match it anyway.
+    await rm(`${out}.dead`, { force: true }).catch(() => {});
     return { ok: true, count, message: `Installed ${count} cookies to ${out} (mode 600${owner ? `, owner ${owner}` : ''}).` };
   } finally {
     if (!keep) for (const f of [source, `${source}-wal`, `${source}-shm`]) await rm(f, { force: true }).catch(() => {});
@@ -46,7 +49,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const keep = args.includes('--keep');
   const source = args.find((a) => !a.startsWith('--'));
   if (!source) { console.error('usage: sudo node relay/cookies-install.js <cookies.sqlite> [--out PATH] [--owner USER] [--keep]'); process.exit(2); }
-  const r = await install(source, { out, owner, keep });
+  let r;
+  try { r = await install(source, { out, owner, keep }); } catch (err) { r = { ok: false, message: `Install failed (${String(err?.code ?? 'error')}); nothing installed.` }; }
   console.log(r.message + (r.ok && !keep ? ' Deleted the copy.' : ''));
   process.exit(r.ok ? 0 : 1);
 }

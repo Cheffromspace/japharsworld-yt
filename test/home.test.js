@@ -1266,6 +1266,7 @@ test('home: burst limits hold new builds back by the hour, the gap and the video
   assert.equal(home.fits({ seconds: 3000 }, '1080p'), false, '1710 MB is over the 1200 MB item cap at 1080p');
   assert.equal(home.fits({ seconds: 3000 }, '720p'), true, '1140 MB fits at 720p');
   assert.equal(home.start({ id: 'ccccccccccc', seconds: 3000 }, '1080p'), null);
+  assert.equal(home.refusal, 'big');
   assert.equal(home.start({ id: 'ddddddddddd', seconds: 1800 }, '1080p'), null, '570 + 1026 MB would take the hour over 1500');
   const b = home.start({ id: 'eeeeeeeeeee', seconds: 1000 }, '1080p');
   assert.ok(b, '570 + 570 MB fits the hour');
@@ -1275,7 +1276,7 @@ test('home: burst limits hold new builds back by the hour, the gap and the video
   assert.equal(home.state().limit, 'hour');
   now += 3600_000;
   assert.equal(home.limit(), null, 'an hour later both have left the window');
-  assert.deepEqual(events, ['start', 'spaced', 'too_big', 'capped_hour', 'start']);
+  assert.deepEqual(events, ['start', 'spaced', 'capped_hour', 'start'], 'too_big is counted by the server, once per video an hour');
 });
 
 test('home: a build the worker serves from its own cache leaves the hour, not the gap', (t) => {
@@ -1302,4 +1303,22 @@ test('ticket → home: a play inside the start gap (#576) is not built at home; 
   assert.doesNotMatch(other.headers.get('location') ?? '', /\/home\//, 'the second video goes elsewhere, not home');
   assert.match((await app.play(PC, '')).headers.get('location') ?? '', /\/home\//, 'the first video keeps its home session');
   assert.deepEqual(app.jobs.map((j) => j.videoId), ['aaaaaaaaaaa']);
+});
+
+test('ticket → home (#576 review): a PC play reuses a growing slow_build session inside the start gap', async (t) => {
+  const dir = tmp(t);
+  const config = { ...base, shards: 2, pool: 50, relayToken: TOKEN, homeRelay: true, homeReadyMs: 2000, homeStartGapMs: 45_000, homeHourBuilds: 0, homeHourMb: 0, dbPath: join(dir, 't.db'), publicUrl: 'http://pub', metricsPath: '' };
+  const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
+  const relay = new Relay({ token: TOKEN, pollMs: 200 });
+  relay.capable = () => ['home']; relay.run = () => new Promise(() => {});
+  const home = new Home({ relay, dir: join(dir, 'home'), base: 'http://pub/home', enabled: true, dailyBuilds: 100, dailyMb: 1e9, startGapMs: 45_000, itemMaxMb: 6000 });
+  const app = createApp({ config, store, relay, home, tunelio: { enabled: false }, captions: { async get() { return {}; } }, log: () => {} });
+  const server = http.createServer(app); await new Promise((r) => server.listen(0, '127.0.0.1', r)); t.after(() => server.close());
+  const data = { id: 'aaaaaaaaaaa', title: 'T', seconds: 600, live: false };
+  const [n] = store.allocate(0, [{ kind: 'video', data }]);
+  const s = home.start(data, '1080p'); s.why = 'slow_build';
+  home.put(s.token, 'seg0.ts', Buffer.from('ts0')); home.put(s.token, 'index.m3u8', Buffer.from(PL1));
+  assert.equal(home.limit(), 'gap');
+  const r = await fetch(`http://127.0.0.1:${server.address().port}/v1/0/${n}`, { redirect: 'manual', headers: { 'user-agent': 'NSPlayer/12.00.26100 WMFSDK/12.00' } });
+  assert.match(r.headers.get('location') ?? '', /\/home\//);
 });

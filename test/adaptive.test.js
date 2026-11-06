@@ -575,8 +575,8 @@ test('#584: by size: a known 720p file of QUEST_MP4_MIN_MB or more counts as lon
   assert.equal(st.format, 'hls');
   await settle();
   assert.match((await s.get(`/v1/0/${n}.m3u8`, QUEST)).headers.get('location'), /\/720p\.m3u8$/, 'its HLS build is ready: AVPro gets it');
-  const n2 = await (async () => { s.playback.jobs.delete('AbCdEfGh1jK@720p@hls'); return n; })();
-  assert.ok(await isPreparing(await s.get(`/v1/0/${n2}.m3u8`, QUEST)), 'no HLS build and 1200 MB known: sent on');
+  s.playback.jobs.delete('AbCdEfGh1jK@720p@hls'); // as if it had never been built: the /create (and its size) stay
+  assert.ok(await isPreparing(await s.get(`/v1/0/${n}.m3u8`, QUEST)), 'no HLS build and 1200 MB known: sent on');
 });
 
 test('#584: a 524 on AVPro\'s HLS build: youtube.com as before, the mp4 starts; the next AVPro load is sent on, Unity\'s player gets the mp4', async (t) => {
@@ -604,13 +604,53 @@ test('#584: both builds fail: AVPro, Unity\'s player and the tablet get too_long
   t.after(() => s.srv.close());
   const n = await s.ticket(0);
   const u = await s.get(`/v1/0/${n}.m3u8`, UNITY);
-  assert.equal(u.status, 403, 'Unity\'s player: its mp4 failed, and AVPro\'s HLS is untried, but Unity\'s player can\'t open that');
-  assert.equal((await u.json()).error, 'too_long');
+  assert.equal(u.headers.get('location'), 'https://www.youtube.com/watch?v=AbCdEfGh1jK', 'Unity\'s player: its mp4 failed, AVPro\'s HLS is untried: the old answer');
   const a = await s.get(`/v1/0/${n}.m3u8`, QUEST);
   assert.equal(a.status, 403, 'AVPro: the mp4 failed, so one last try on HLS, which failed too');
   assert.equal((await a.json()).error, 'too_long');
+  const u2 = await s.get(`/v1/0/${n}.m3u8`, UNITY);
+  assert.equal(u2.status, 403, 'and Unity\'s player\'s next turn');
   const st = await (await s.get(`/v1/0/${n}.m3u8`, 'UnityPlayer/2022')).json();
   assert.deepEqual([st.state, st.error], ['failed', 'too_long']);
+});
+
+test('#584: Unity\'s mp4 failing while the HLS build is ready is not "no source": the old answer, and AVPro gets the HLS', async (t) => {
+  const probe = async (url) => (/progressive=1/.test(url) ? { ok: false, refused: false, status: 524 } : { ok: true, refused: false });
+  const s = await server({ pbOpts: { probe, progressiveRetries: 0 } });
+  t.after(() => s.srv.close());
+  const n = await s.ticket(0);
+  assert.match((await s.get(`/v1/0/${n}.m3u8`, QUEST)).headers.get('location'), /\/720p\.m3u8$/);
+  const u = await s.get(`/v1/0/${n}.m3u8`, UNITY);
+  assert.equal(u.status, 302, 'not 403 too_long');
+  assert.match((await s.get(`/v1/0/${n}.m3u8`, QUEST)).headers.get('location'), /\/720p\.m3u8$/, 'AVPro still plays the HLS');
+  const st = await (await s.get(`/v1/0/${n}.m3u8`, 'UnityPlayer/2022')).json();
+  assert.equal(st.state, 'ready');
+});
+
+test('#584: an mp4 build that turns HLS (over PROGRESSIVE_MAX_MB): Unity\'s player is sent on, AVPro gets the HLS, not "not a video" again', async (t) => {
+  const s = await server({ sizes: { '720p': 7000e6, '1080p': 9000e6 } }, {}, { seconds: 2 * 3600 });
+  t.after(() => s.srv.close());
+  const n = await s.ticket(0);
+  assert.ok(await isPreparing(await s.get(`/v1/0/${n}.m3u8`, QUEST)), 'long: sent on while the "mp4" starts');
+  await settle();
+  assert.equal(s.playback.peek({ id: 'AbCdEfGh1jK' }, '720p').format, 'hls', 'the mp4 job turned HLS (7000 MB)');
+  assert.ok(await isPreparing(await s.get(`/v1/0/${n}.m3u8`, UNITY)), 'Unity\'s player: sent on, so AVPro\'s turn comes');
+  assert.match((await s.get(`/v1/0/${n}.m3u8`, QUEST)).headers.get('location'), /\/720p\.m3u8$/, 'AVPro: the HLS');
+});
+
+test('#584: a failed HLS build keeps AVPro sent on past its 30 s retry while the mp4 is ready', async (t) => {
+  let now = Date.now();
+  let failHls = true;
+  const probe = async (url) => (/hls=1/.test(url) && failHls ? { ok: false, refused: false, status: 524 } : { ok: true, refused: false });
+  const s = await server({ pbOpts: { probe, now: () => now } });
+  t.after(() => s.srv.close());
+  const n = await s.ticket(0);
+  assert.equal((await s.get(`/v1/0/${n}.m3u8`, QUEST)).headers.get('location'), 'https://www.youtube.com/watch?v=AbCdEfGh1jK');
+  await settle();
+  assert.equal((await s.get(`/v1/0/${n}.m3u8`, UNITY)).headers.get('location'), MP4_720);
+  now += 60_000; // the failed HLS build is due for a retry
+  assert.ok(await isPreparing(await s.get(`/v1/0/${n}.m3u8`, QUEST)), 'the mp4 is ready: still sent on, no 90 s hold on a new HLS build');
+  assert.equal(s.playback.peek({ id: 'AbCdEfGh1jK' }, '720p', { hls: true }).state, 'failed', 'no HLS rebuild started');
 });
 
 test('#584: a spend refusal is not "can\'t be played here": Unity\'s player keeps the old answer', async (t) => {
@@ -618,7 +658,8 @@ test('#584: a spend refusal is not "can\'t be played here": Unity\'s player keep
   t.after(() => s.srv.close());
   const n = await s.ticket(0);
   const u = await s.get(`/v1/0/${n}.m3u8`, UNITY);
-  assert.notEqual(u.status, 403);
+  assert.equal(u.status, 302, 'not 403 too_long');
+  assert.equal(u.headers.get('location'), 'https://www.youtube.com/watch?v=AbCdEfGh1jK');
 });
 
 test('#584: QUEST_MP4=off: Unity\'s player gets the HLS playlist and a long play holds AVPro on HLS, as before', async (t) => {

@@ -207,6 +207,9 @@ export const config = {
   // starts. Over any of them a play goes to Tunelio. 0 = off.
   homeHourBuilds: int('HOME_HOUR_BUILDS', 8),
   homeHourMb: int('HOME_HOUR_MB', 15_000),
+  // Videos this long (hours) and longer skip HOME_HOUR_MB: Tunelio fails on them (#577), so home is their only good
+  // source (src/home.js blocks). 0 = none skip it.
+  homeHourMbExemptHours: Number.parseFloat(process.env.HOME_HOUR_MB_EXEMPT_HOURS ?? '4') || 0,
   homeStartGapMs: int('HOME_START_GAP_SECONDS', 45) * 1000,
   homeKeepHours: int('HOME_KEEP_HOURS', 12),
   homeMaxGb: int('HOME_MAX_GB', 8),
@@ -215,10 +218,12 @@ export const config = {
   // space drops under half of it. Prod 2026-10-30 00:58Z: two long 1080p plays (8.4 GB played, a 10.7 GB build) over a
   // 12 GB cap filled the Linode's 24.6 GB disk; Alloy's WAL broke and the build failed. 0 = off.
   homeFreeFloorGb: Number.parseFloat(process.env.HOME_FREE_FLOOR_GB ?? '3') || 0,
-  // The largest video home builds (its length × the quality's high-end MB/s, src/home.js MB_PER_SECOND_AT): over it at
-  // 1080p it is built at 720p (world #240), and over it at 720p it isn't built at home at all (Tunelio). It was
-  // HOME_MAX_GB by default (#242; prod 80, so a 20.6 GB video went home on 2026-11-06 before the first bot refusals);
-  // 6 GB since #576 (owner, 2026-11-06). 0 = off.
+  // A home build expected over this size at 1080p (length × ~0.57 MB/s) is built at 720p instead (world #240). It was
+  // HOME_MAX_GB by default (#242; prod 80, so a 20.6 GB 1080p build went home on 2026-11-06 before the first bot
+  // refusals); 6 GB since #576 (owner, 2026-11-06), about 2.9 h. HOME_ITEM_TOO_BIG: what happens to a video over it
+  // even at 720p (about 4.4 h): '720p' (default) builds it at home anyway, since Tunelio fails on such videos (#577);
+  // 'tunelio' sends it there (the owner's first pick, 2026-11-06, pending their answer). 0 = off.
+  homeItemTooBig: process.env.HOME_ITEM_TOO_BIG === 'tunelio' ? 'tunelio' : '720p',
   homeItemMaxGb: (() => { const v = Number.parseFloat(process.env.HOME_ITEM_MAX_GB ?? ''); return Number.isFinite(v) ? v : 6; })(),
   // How long a new session may take to its first playlist: yt-dlp ~3 s, then its stream URLs answer 403 for 0.1–2.6 s,
   // once 22 s, before they work (2026-10-23), then the first segments.

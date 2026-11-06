@@ -65,9 +65,9 @@ const FREE_CHECK_MS = 5_000; // a build's uploads look at the disk's free space 
 
 export class Home {
   constructor({ relay, dir, base = 'https://yt.japharsworld.com/home', enabled = false, dailyBuilds = 40, dailyMb = 10_000,
-    hourBuilds = 0, hourMb = 0, startGapMs = 0, itemMaxMb = 0, keepHours = 12, maxGb = 8, freeFloorGb = 0, freeMb = null, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, tz = 'America/Chicago',
+    hourBuilds = 0, hourMb = 0, hourMbExemptSeconds = 0, startGapMs = 0, itemMaxMb = 0, keepHours = 12, maxGb = 8, freeFloorGb = 0, freeMb = null, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, tz = 'America/Chicago',
     now = () => Date.now(), log = () => {}, onEvent = () => {} }) {
-    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, hourBuilds, hourMb, startGapMs, itemMaxMb, keepHours, maxGb, freeFloorGb, readyMs, segmentHoldMs, startPrecise, tz, now, log, onEvent });
+    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, hourBuilds, hourMb, hourMbExemptSeconds, startGapMs, itemMaxMb, keepHours, maxGb, freeFloorGb, readyMs, segmentHoldMs, startPrecise, tz, now, log, onEvent });
     // The disk's free MB where the sessions are (injectable for tests); Infinity when it can't be read.
     this.freeMb = freeMb ?? (() => { try { const f = statfsSync(this.dir); return (f.bavail * f.bsize) / 1e6; } catch { return Infinity; } });
     this.freeCheckedMs = 0;
@@ -199,12 +199,16 @@ export class Home {
   }
   // The MB a build of this video at this quality is expected to download (its length at the quality's high-end rate).
   expectedMb(data, quality) { return (data.seconds ?? 0) * mbPerSecond(quality); }
-  // Whether a video is small enough to build at home at this quality (itemMaxMb, HOME_ITEM_MAX_GB; 0 = any size).
-  fits(data, quality) { return !(this.itemMaxMb > 0) || this.expectedMb(data, quality) <= this.itemMaxMb; }
-  // What keeps this video from a new home build now, beyond limit(): 'big' (over itemMaxMb at this quality) or 'hour'
-  // (its expected MB would take the hour over hourMb; an empty hour takes any build that fits); null when neither.
+  // What keeps this video from a new home build now, beyond limit(): 'hour' when its expected MB would take the hour
+  // over hourMb (an empty hour takes any build); null otherwise. Videos of hourMbExemptSeconds and longer skip this
+  // check: Tunelio fails on them (Everything-is-OK#577, 2026-11-06: an 11.9 h video 413 after 72 s, a 10 h one timed
+  // out at 106 s), so holding them back from home would leave youtube.com's 360p. They still count in the hour and
+  // meet hourBuilds and the gap.
+  // With itemMaxMb set (HOME_ITEM_TOO_BIG=tunelio, the owner's pick of 2026-11-06, switchable while #577 is decided):
+  // 'big' first, for a video over it at this quality, which then isn't built at home at all.
   blocks(data, quality) {
-    if (!this.fits(data, quality)) return 'big';
+    if (this.itemMaxMb > 0 && this.expectedMb(data, quality) > this.itemMaxMb) return 'big';
+    if (this.hourMbExemptSeconds > 0 && (data.seconds ?? 0) >= this.hourMbExemptSeconds) return null;
     const hour = this.#hour();
     if (this.hourMb > 0 && hour.builds > 0 && hour.mb + this.expectedMb(data, quality) > this.hourMb) return 'hour';
     return null;
@@ -275,7 +279,7 @@ export class Home {
       if (why) this.onEvent(why === 'day' ? 'capped' : why === 'hour' ? 'capped_hour' : 'spaced');
       return null;
     }
-    // Why the last start() made no session though a worker was free: 'big', 'hour' (blocks) or 'room' (#room), so the
+    // Why the last start() made no session though a worker was free: 'big' or 'hour' (blocks) or 'room' (#room), so the
     // server remembers only a room refusal for the video (src/server.js startHome homeRefused).
     this.refusal = this.blocks(data, quality);
     if (this.refusal) { if (this.refusal === 'hour') this.onEvent('capped_hour'); return null; }
@@ -594,7 +598,7 @@ export class Home {
       today: { builds: d.builds, mb: Math.round(d.mb), cacheHits: d.cacheHits ?? 0, cacheMb: Math.round(d.cacheMb ?? 0) },
       cap: { builds: this.dailyBuilds, mb: this.dailyMb, storedGb: this.maxGb },
       hour: (() => { const h = this.#hour(); return { builds: h.builds, mb: Math.round(h.mb), capBuilds: this.hourBuilds, capMb: this.hourMb }; })(),
-      limit: this.enabled ? this.limit() : null, startGapS: Math.round(this.startGapMs / 1000), itemMaxMb: this.itemMaxMb,
+      limit: this.enabled ? this.limit() : null, startGapS: Math.round(this.startGapMs / 1000), hourMbExemptS: this.hourMbExemptSeconds, itemMaxMb: this.itemMaxMb,
       building: all.filter((s) => s.state === 'building').length, ready: all.filter((s) => s.state === 'ready' && !s.ended).length,
       ended: all.filter((s) => s.ended).length, failed: all.filter((s) => s.state === 'failed').length,
       storedMb: Math.round(this.#storedMb()),

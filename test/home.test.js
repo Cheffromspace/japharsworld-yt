@@ -1852,8 +1852,8 @@ test('home: burst limits hold new builds back by the hour, the gap and the video
   assert.equal(home.start({ id: 'aaaaaaaaaaa', seconds: 1000 }, '1080p'), a, 'a session already there is reused inside the gap');
   now += 45_000;
   assert.equal(home.limit(), null);
-  assert.equal(home.fits({ seconds: 3000 }, '1080p'), false, '1710 MB is over the 1200 MB item cap at 1080p');
-  assert.equal(home.fits({ seconds: 3000 }, '720p'), true, '1140 MB fits at 720p');
+  assert.equal(home.blocks({ seconds: 3000 }, '1080p'), 'big', '1710 MB is over the 1200 MB item cap at 1080p');
+  assert.equal(home.blocks({ seconds: 1000 }, '720p'), null, '380 MB fits at 720p and in the hour');
   assert.equal(home.start({ id: 'ccccccccccc', seconds: 3000 }, '1080p'), null);
   assert.equal(home.refusal, 'big');
   assert.equal(home.start({ id: 'ddddddddddd', seconds: 1800 }, '1080p'), null, '570 + 1026 MB would take the hour over 1500');
@@ -1866,6 +1866,17 @@ test('home: burst limits hold new builds back by the hour, the gap and the video
   now += 3600_000;
   assert.equal(home.limit(), null, 'an hour later both have left the window');
   assert.deepEqual(events, ['start', 'spaced', 'capped_hour', 'start'], 'too_big is counted by the server, once per video an hour');
+});
+
+test('home: videos of hourMbExemptSeconds and longer skip the hour MB check (Tunelio fails on them, #577)', (t) => {
+  const relay = fakeRelay();
+  let now = 1_000_000;
+  const home = new Home({ relay, dir: tmp(t), enabled: true, dailyBuilds: 100, dailyMb: 1e9, hourMb: 1500, hourMbExemptSeconds: 4 * 3600, now: () => now });
+  assert.ok(home.start({ id: 'aaaaaaaaaaa', seconds: 1000 }, '1080p'));
+  assert.equal(home.blocks({ seconds: 3 * 3600 }, '720p'), 'hour', '3 h at 720p (4104 MB) would take the hour over 1500');
+  assert.equal(home.blocks({ seconds: 5 * 3600 }, '720p'), null, '5 h is exempt');
+  assert.ok(home.start({ id: 'bbbbbbbbbbb', seconds: 5 * 3600 }, '720p'));
+  assert.equal(home.limit(), 'hour', 'and it counts in the hour for the builds after it');
 });
 
 test('home: a build the worker serves from its own cache leaves the hour, not the gap', (t) => {
@@ -1910,4 +1921,15 @@ test('ticket → home (#576 review): a PC play reuses a growing slow_build sessi
   assert.equal(home.limit(), 'gap');
   const r = await fetch(`http://127.0.0.1:${server.address().port}/v1/0/${n}`, { redirect: 'manual', headers: { 'user-agent': 'NSPlayer/12.00.26100 WMFSDK/12.00' } });
   assert.match(r.headers.get('location') ?? '', /\/home\//);
+});
+
+test('ticket → home: HOME_ITEM_TOO_BIG=tunelio keeps a video over HOME_ITEM_MAX_GB even at 720p off home; 720p (default) builds it', async (t) => {
+  const PC = 'NSPlayer/12.00.26100 WMFSDK/12.00';
+  // The test video is 600 s: ~228 MB at 720p, over 0.1 GB.
+  const off = await homeApp(t, { config: { homeItemMaxGb: 0.1, homeItemTooBig: 'tunelio' } });
+  assert.doesNotMatch((await off.play(PC, '')).headers.get('location') ?? '', /\/home\//);
+  assert.deepEqual(off.jobs, []);
+  const on = await homeApp(t, { config: { homeItemMaxGb: 0.1 } });
+  assert.match((await on.play(PC, '')).headers.get('location') ?? '', /\/home\//);
+  assert.deepEqual(on.jobs.map((j) => j.quality), ['720p']);
 });

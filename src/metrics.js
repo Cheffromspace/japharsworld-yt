@@ -92,7 +92,7 @@ export const METRICS = {
   play_route: ['daily', oneOf('tunelio-progressive', 'tunelio-hls', 'tunelio-adaptive', 'home', 'youtube-live', 'youtube-fallback')],
   // Home relay (src/home.js): sessions started / ready / failed, new sessions refused by the daily cap, and why a play
   // started home (Tunelio off, a long video, the credit pacer, Tunelio's build failed), counted once per session.
-  home: ['daily', oneOf('start', 'ready', 'failed', 'capped', 'defer', 'timeout', 'cache_hit', 'settled', 'settle_timeout', 'other_quality', 'uneven', 'stepdown', 'no_room', 'race_won')],
+  home: ['daily', oneOf('start', 'ready', 'failed', 'capped', 'defer', 'timeout', 'cache_hit', 'settled', 'settle_timeout', 'other_quality', 'uneven', 'stepdown', 'no_room', 'race_won', 'stayed')],
   home_why: ['daily', oneOf('tunelio_off', 'long', 'pacer', 'tunelio_failed', 'av1', 'tunelio_slow', 'slow_build', 'budget', 'cap', 'near_budget', 'tunelio_busy')],
   // Videos newly built, by where (src/server.js routeEvent, owner 2026-11-04): a home session, a paid Tunelio build, or
   // youtube.com for a play no source took (a spend limit with home full). Each video once an hour per route.

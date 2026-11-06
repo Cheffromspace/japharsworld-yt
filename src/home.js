@@ -54,9 +54,9 @@ const FREE_CHECK_MS = 5_000; // a build's uploads look at the disk's free space 
 
 export class Home {
   constructor({ relay, dir, base = 'https://yt.japharsworld.com/home', enabled = false, dailyBuilds = 40, dailyMb = 10_000,
-    keepHours = 12, maxGb = 8, freeFloorGb = 0, freeMb = null, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, tz = 'America/Chicago',
+    hourBuilds = 0, hourMb = 0, startGapMs = 0, itemMaxMb = 0, keepHours = 12, maxGb = 8, freeFloorGb = 0, freeMb = null, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, tz = 'America/Chicago',
     now = () => Date.now(), log = () => {}, onEvent = () => {} }) {
-    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, keepHours, maxGb, freeFloorGb, readyMs, segmentHoldMs, startPrecise, tz, now, log, onEvent });
+    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, hourBuilds, hourMb, startGapMs, itemMaxMb, keepHours, maxGb, freeFloorGb, readyMs, segmentHoldMs, startPrecise, tz, now, log, onEvent });
     // The disk's free MB where the sessions are (injectable for tests); Infinity when it can't be read.
     this.freeMb = freeMb ?? (() => { try { const f = statfsSync(this.dir); return (f.bavail * f.bsize) / 1e6; } catch { return Infinity; } });
     this.freeCheckedMs = 0;
@@ -64,6 +64,10 @@ export class Home {
     this.sessions = new Map(); // "videoId@quality" → session
     this.byToken = new Map();  // token → session
     this.day = { date: '', builds: 0, mb: 0 };
+    // Builds started in the last hour, { t, mb (expected), token }, and when the last one started: the burst limits
+    // (#limit). Memory only: a restart forgets them, which at worst lets one more hour's worth through.
+    this.recent = [];
+    this.lastStartMs = -Infinity;
     this.uneven = new Map(); // video id → until (ms): its home playlist grew, so long plays of it go to Tunelio (giveUp)
     if (dir && enabled) { this.loading = true; this.#load(); this.loading = false; }
   }
@@ -139,7 +143,7 @@ export class Home {
   // after the player's hold. The one with the most free streams first.
   worker() {
     if (!this.enabled || !this.relay?.enabled) return null;
-    if (this.capped()) return null;
+    if (this.limit()) return null;
     const max = this.relay.mediaMax?.() ?? {};
     let best = null, left = 0;
     for (const n of this.relay.capable?.('media') ?? []) {
@@ -164,6 +168,28 @@ export class Home {
     return { active, max: total, free: Boolean(this.worker()) };
   }
   capped() { const d = this.#today(); return d.builds >= this.dailyBuilds || d.mb >= this.dailyMb; }
+
+  // Bursts (Everything-is-OK#576, owner 2026-11-06): the home IP's first bot refusals (2026-11-06 07:23Z) came after
+  // 15 builds and 44.7 GB in seven hours, one video 20.6 GB, two builds a second apart. So besides the daily caps a new
+  // build waits for room in a rolling hour (hourBuilds builds, hourMb expected MB) and starts at least startGapMs after
+  // the last one; a play that meets a limit goes to Tunelio (owner 2026-11-04: shift load, don't answer busy).
+  // → null, or why no new build may start now: 'day', 'hour' or 'gap'.
+  limit() {
+    if (this.capped()) return 'day';
+    const h = this.#hour();
+    if ((this.hourBuilds > 0 && h.builds >= this.hourBuilds) || (this.hourMb > 0 && h.mb >= this.hourMb)) return 'hour';
+    if (this.startGapMs > 0 && this.now() - this.lastStartMs < this.startGapMs) return 'gap';
+    return null;
+  }
+  #hour() {
+    const t = this.now();
+    while (this.recent.length && t - this.recent[0].t >= 3600_000) this.recent.shift();
+    return { builds: this.recent.length, mb: this.recent.reduce((n, r) => n + r.mb, 0) };
+  }
+  // The MB a build of this video at this quality is expected to download (its length at the quality's high-end rate).
+  expectedMb(data, quality) { return (data.seconds ?? 0) * mbPerSecond(quality); }
+  // Whether a video is small enough to build at home at this quality (itemMaxMb, HOME_ITEM_MAX_GB; 0 = any size).
+  fits(data, quality) { return !(this.itemMaxMb > 0) || this.expectedMb(data, quality) <= this.itemMaxMb; }
 
   peek(data, quality) {
     const s = this.sessions.get(`${data.id}@${quality}`);
@@ -225,7 +251,17 @@ export class Home {
     const hit = this.peek(data, quality);
     if (hit) return hit;
     const worker = this.worker();
-    if (!worker) { if (this.enabled && this.capped()) this.onEvent('capped'); return null; }
+    if (!worker) {
+      const why = this.enabled ? this.limit() : null;
+      if (why) this.onEvent(why === 'day' ? 'capped' : why === 'hour' ? 'capped_hour' : 'spaced');
+      return null;
+    }
+    if (!this.fits(data, quality)) { this.onEvent('too_big'); return null; }
+    // The hour's MB with this build counted: a build that would take the hour over hourMb waits (an empty hour takes
+    // any build that fits, so a video between hourMb and itemMaxMb can still be built).
+    const expected = this.expectedMb(data, quality);
+    const hour = this.#hour();
+    if (this.hourMb > 0 && hour.builds > 0 && hour.mb + expected > this.hourMb) { this.onEvent('capped_hour'); return null; }
     this.#drop(this.sessions.get(`${data.id}@${quality}`));
     const s = this.#session({ token: randomBytes(9).toString('hex'), id: data.id, quality, seconds: data.seconds ?? 0, worker });
     this.sessions.set(`${s.id}@${quality}`, s);
@@ -238,6 +274,8 @@ export class Home {
     }
     this.#today().builds++;
     this.#saveDay();
+    this.recent.push({ t: this.now(), mb: expected, token: s.token });
+    this.lastStartMs = this.now();
     this.onEvent('start');
     mkdirSync(join(this.dir, s.token), { recursive: true });
     this.#saveMeta(s);
@@ -336,6 +374,8 @@ export class Home {
       const d = this.#today();
       d.builds = Math.max(0, d.builds - 1);
       d.cacheHits = (d.cacheHits ?? 0) + 1;
+      // From the worker's own cache: nothing asked of YouTube, so it leaves the hour's count too (not the start gap).
+      this.recent = this.recent.filter((r) => r.token !== s.token);
       this.onEvent('cache_hit');
     }
     if (file === 'index.m3u8') {
@@ -497,6 +537,8 @@ export class Home {
     return { enabled: this.enabled, workers: this.relay?.capable?.('media') ?? [], streams: { active, max },
       today: { builds: d.builds, mb: Math.round(d.mb), cacheHits: d.cacheHits ?? 0, cacheMb: Math.round(d.cacheMb ?? 0) },
       cap: { builds: this.dailyBuilds, mb: this.dailyMb, storedGb: this.maxGb },
+      hour: (() => { const h = this.#hour(); return { builds: h.builds, mb: Math.round(h.mb), capBuilds: this.hourBuilds, capMb: this.hourMb }; })(),
+      limit: this.enabled ? this.limit() : null, startGapS: Math.round(this.startGapMs / 1000), itemMaxMb: this.itemMaxMb,
       building: all.filter((s) => s.state === 'building').length, ready: all.filter((s) => s.state === 'ready' && !s.ended).length,
       ended: all.filter((s) => s.ended).length, failed: all.filter((s) => s.state === 'failed').length,
       storedMb: Math.round(this.#storedMb()),

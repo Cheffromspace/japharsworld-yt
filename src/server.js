@@ -172,7 +172,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   });
   relay ??= new Relay({ token: config.relayToken, log: logJson });
   home ??= new Home({ relay, dir: join(dirname(config.dbPath), 'home'), base: `${config.publicUrl}/home`, enabled: config.homeRelay && relay.enabled,
-    dailyBuilds: config.homeDailyBuilds, dailyMb: config.homeDailyMb, keepHours: config.homeKeepHours, maxGb: config.homeMaxGb, freeFloorGb: config.homeFreeFloorGb, readyMs: config.homeReadyMs,
+    dailyBuilds: config.homeDailyBuilds, dailyMb: config.homeDailyMb, hourBuilds: config.homeHourBuilds, hourMb: config.homeHourMb,
+    startGapMs: config.homeStartGapMs, itemMaxMb: config.homeItemMaxGb * 1000, keepHours: config.homeKeepHours, maxGb: config.homeMaxGb, freeFloorGb: config.homeFreeFloorGb, readyMs: config.homeReadyMs,
     segmentHoldMs: config.homeSegmentHoldMs,
     startPrecise: config.homeAndroidGrowing, tz: config.metricsTz, log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
   if (home.enabled) setInterval(() => home.sweep(), 10 * 60_000).unref();
@@ -191,6 +192,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     metrics.gauge('home_today', 'cap_mb', s.cap.mb);
     metrics.gauge('home_today', 'workers', s.workers.length);
     metrics.gauge('home_today', 'cache_mb', s.today.cacheMb);
+    metrics.gauge('home_today', 'hour_mb', s.hour.mb);
+    metrics.gauge('home_today', 'hour_builds', s.hour.builds);
   }, 60_000).unref();
   // YouTube refusals (src/refusal.js): counted by where and class; 3 or more bot/rate/potoken refusals at the home relay
   // within 15 minutes alert Discord, and an hour without one sends the all-clear (checkWorkers).
@@ -227,7 +230,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
 
   // Where each new build went and why, with the load behind it (owner, 2026-11-04: home vs Tunelio share and credits a
   // day on the dashboard): via home (a new home session; why is home_why's reason), tunelio (a paid /create; why is
-  // default, or home_full when home had no free stream) or youtube (a play no source could take: a spend limit with home
+  // default; home_full when home had no free stream; home_day, home_hour or home_gap when a home limit held it back;
+  // home_big for a video too big for home, #576) or youtube (a play no source could take: a spend limit with home
   // full). The event adds home's streams, Tunelio's builds and the spend so far, and comes for every paid /create. The
   // build_route metric counts videos, not calls: each video once an hour per via (counted: true on that event), so a
   // play's several /create calls (adaptive's two qualities, a downgrade) count Tunelio once.
@@ -686,7 +690,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     // No worker for this quality (home off, capped or every stream taken: src/home.js worker): the video's session at
     // another quality, if it has one (homeKeep), else Tunelio. The request's Tunelio build_route says home was full.
     if (!home.worker()) {
-      if (home.enabled) { const ctx = spendScope.getStore(); if (ctx) ctx.route = 'home_full'; }
+      // home_full: every stream taken; home_day / home_hour / home_gap: a daily or burst limit (src/home.js limit, #576).
+      if (home.enabled) { const ctx = spendScope.getStore(); const l = home.limit?.(); if (ctx) ctx.route = l ? `home_${l}` : 'home_full'; }
+      return home.other?.(data, quality) ? 'reuse' : null;
+    }
+    // Too big to build at home at this quality (HOME_ITEM_MAX_GB, #576): Tunelio, or its session at another quality.
+    if (home.fits && !home.fits(data, quality)) {
+      metrics.inc('home', 'too_big');
+      const ctx = spendScope.getStore(); if (ctx) ctx.route = 'home_big';
       return home.other?.(data, quality) ? 'reuse' : null;
     }
     if (!tunelio.enabled || Date.now() < (playback.pausedUntil ?? 0)) return 'tunelio_off';

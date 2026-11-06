@@ -193,6 +193,8 @@ test('play_platform: the PC resolver and player count pc once per room, a Quest 
   const c = await search(2, '198.51.100.33');
   assert.equal((await s.get(`/v1/2/${c}`, OTHER)).status, 302);
   assert.deepEqual(platform(), { pc: 2, android: 1 });
+  const db = openMetricsDb(f.path);
+  try { assert.equal(db.prepare("SELECT value FROM daily WHERE metric = 'play'").get().value, 3); } finally { db.close(); }
 });
 
 test('search service counts searches, joins, plays, captions, failures and shards per day', async (t) => {

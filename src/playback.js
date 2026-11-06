@@ -529,6 +529,8 @@ export function isAndroidPlayer(ua = '') {
 // (NSPlayer/WMF) and VRChat's resolver from Windows are pc. Until #586 the resolver's requests counted no platform, so
 // a PC play whose resolver got the redirect (its player then opens the link, not the ticket) was never counted pc: 27
 // such play events in 24 h on prod (2026-11-06). Anything else (a Mozilla UA from neither, an unknown client) is none.
+// An empty User-Agent counts pc because clientKind treats it as the PC player (as before #586; none among the 24 h of
+// prod plays on 2026-11-06), so a scanner without one would count pc: kept, as the rest of the ticket answer agrees.
 export function playPlatform(ua = '', hlsTicket = false) {
   const s = String(ua);
   if (hlsTicket || isAndroidPlayer(s)) return 'android';

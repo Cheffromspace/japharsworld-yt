@@ -600,7 +600,7 @@ test('media formats: H.264 + m4a at the quality\'s height; one input when YouTub
 
 test('ticket → home: a PC player gets the home playlist when Tunelio is off; the resolver is sent on, Android goes to YouTube', async (t) => {
   const dir = tmp(t);
-  const config = { ...base, shards: 2, pool: 50, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub', metricsPath: '' };
+  const config = { ...base, shards: 2, pool: 50, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, homeStartGapMs: 0, homeHourBuilds: 0, homeHourMb: 0, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub', metricsPath: '' };
   const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
   const relay = new Relay({ token: TOKEN, pollMs: 200 });
   const app = createApp({ config, store, relay, tunelio: { enabled: false }, captions: { async get() { return {}; } }, log: () => {} });
@@ -651,7 +651,7 @@ test('ticket → home: a PC player gets the home playlist when Tunelio is off; t
 // The home app of the test above, with a home worker connected; over: config and createApp overrides.
 async function homeApp(t, { config: c = {}, media = null, playlist = PL1, ...over } = {}) {
   const dir = tmp(t);
-  const config = { ...base, shards: 2, pool: 50, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub', metricsPath: '', ...c };
+  const config = { ...base, shards: 2, pool: 50, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, homeStartGapMs: 0, homeHourBuilds: 0, homeHourMb: 0, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub', metricsPath: '', ...c };
   const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
   const relay = new Relay({ token: TOKEN, pollMs: 200 });
   const app = createApp({ config, store, relay, tunelio: { enabled: false }, captions: { async get() { return {}; } }, log: () => {}, ...over });
@@ -703,7 +703,7 @@ test('ticket → home: a video whose 1080p files would be over HOME_ITEM_MAX_GB 
   await app.play(PC, '');
   assert.deepEqual(app.jobs.map((j) => j.quality), ['720p'], 'one 720p session for all three');
   // Off (0), or within the limit: 1080p as before.
-  assert.equal(base.homeItemMaxGb, base.homeMaxGb, 'by default only an item bigger than the whole cache (#242)');
+  assert.equal(base.homeItemMaxGb, 6, 'by default 6 GB (#576, owner 2026-11-06; was HOME_MAX_GB, #242)');
   for (const homeItemMaxGb of [0, 0.4]) {
     const other = await homeApp(t, { config: { homeItemMaxGb } });
     await other.play(PC, '');
@@ -1835,4 +1835,60 @@ test('#398: a PC player on an adaptive plan (HLS, but a plain ticket) does not r
   app.done();
   assert.equal((await pc).status, 302);
   assert.equal(app.jobs.length, 0);
+});
+
+// Bursts (Everything-is-OK#576): a rolling hour of builds and expected MB, a gap between starts, a largest video.
+test('home: burst limits hold new builds back by the hour, the gap and the video size, and say which', (t) => {
+  const relay = fakeRelay();
+  const events = [];
+  let now = 1_000_000;
+  const home = new Home({ relay, dir: tmp(t), enabled: true, dailyBuilds: 100, dailyMb: 1e9,
+    hourBuilds: 2, hourMb: 1500, startGapMs: 45_000, itemMaxMb: 1200, now: () => now, onEvent: (k) => events.push(k) });
+  const a = home.start({ id: 'aaaaaaaaaaa', seconds: 1000 }, '1080p'); // 570 MB
+  assert.ok(a);
+  assert.equal(home.limit(), 'gap');
+  assert.equal(home.worker(), null, 'no worker inside the gap');
+  assert.equal(home.start({ id: 'bbbbbbbbbbb', seconds: 600 }, '1080p'), null);
+  assert.equal(home.start({ id: 'aaaaaaaaaaa', seconds: 1000 }, '1080p'), a, 'a session already there is reused inside the gap');
+  now += 45_000;
+  assert.equal(home.limit(), null);
+  assert.equal(home.fits({ seconds: 3000 }, '1080p'), false, '1710 MB is over the 1200 MB item cap at 1080p');
+  assert.equal(home.fits({ seconds: 3000 }, '720p'), true, '1140 MB fits at 720p');
+  assert.equal(home.start({ id: 'ccccccccccc', seconds: 3000 }, '1080p'), null);
+  assert.equal(home.start({ id: 'ddddddddddd', seconds: 1800 }, '1080p'), null, '570 + 1026 MB would take the hour over 1500');
+  const b = home.start({ id: 'eeeeeeeeeee', seconds: 1000 }, '1080p');
+  assert.ok(b, '570 + 570 MB fits the hour');
+  now += 45_000;
+  assert.equal(home.limit(), 'hour', 'two builds in the hour');
+  assert.equal(home.state().hour.builds, 2);
+  assert.equal(home.state().limit, 'hour');
+  now += 3600_000;
+  assert.equal(home.limit(), null, 'an hour later both have left the window');
+  assert.deepEqual(events, ['start', 'spaced', 'too_big', 'capped_hour', 'start']);
+});
+
+test('home: a build the worker serves from its own cache leaves the hour, not the gap', (t) => {
+  const relay = fakeRelay();
+  let now = 1_000_000;
+  const home = new Home({ relay, dir: tmp(t), enabled: true, dailyBuilds: 100, dailyMb: 1e9, hourBuilds: 2, startGapMs: 45_000, now: () => now });
+  const s = home.start({ id: 'aaaaaaaaaaa', seconds: 600 }, '720p');
+  now += 46_000;
+  assert.ok(home.start({ id: 'bbbbbbbbbbb', seconds: 600 }, '720p'));
+  now += 46_000;
+  assert.equal(home.limit(), 'hour');
+  assert.equal(home.put(s.token, 'seg0.ts', Buffer.from('ts0'), { cached: true }), 204);
+  assert.equal(home.limit(), null, 'the cached build no longer counts');
+  assert.ok(home.start({ id: 'ccccccccccc', seconds: 600 }, '720p'));
+  assert.equal(home.limit(), 'hour', 'a cache hit frees its place in the hour, the new build takes it');
+});
+
+test('ticket → home: a play inside the start gap (#576) is not built at home; the same video is reused', async (t) => {
+  const PC = 'NSPlayer/12.00.26100 WMFSDK/12.00';
+  const app = await homeApp(t, { config: { homeStartGapMs: 60_000 } });
+  assert.match((await app.play(PC, '')).headers.get('location') ?? '', /\/home\//);
+  const [m] = app.store.allocate(0, [{ kind: 'video', data: { id: 'bbbbbbbbbbb', title: 'U', seconds: 600, live: false } }]);
+  const other = await fetch(`${app.url}/v1/0/${m}`, { redirect: 'manual', headers: { 'user-agent': PC } });
+  assert.doesNotMatch(other.headers.get('location') ?? '', /\/home\//, 'the second video goes elsewhere, not home');
+  assert.match((await app.play(PC, '')).headers.get('location') ?? '', /\/home\//, 'the first video keeps its home session');
+  assert.deepEqual(app.jobs.map((j) => j.videoId), ['aaaaaaaaaaa']);
 });

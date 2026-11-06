@@ -102,7 +102,7 @@ export const METRICS = {
   play_route: ['daily', oneOf('tunelio-progressive', 'tunelio-hls', 'tunelio-adaptive', 'home', 'youtube-live', 'youtube-fallback')],
   // Home relay (src/home.js): sessions started / ready / failed, new sessions refused by the daily cap, and why a play
   // started home (Tunelio off, a long video, the credit pacer, Tunelio's build failed), counted once per session.
-  home: ['daily', oneOf('start', 'ready', 'failed', 'capped', 'defer', 'timeout', 'cache_hit', 'settled', 'settle_timeout', 'other_quality', 'uneven', 'stepdown', 'no_room', 'race_won')],
+  home: ['daily', oneOf('start', 'ready', 'failed', 'capped', 'defer', 'timeout', 'cache_hit', 'settled', 'settle_timeout', 'other_quality', 'uneven', 'stepdown', 'no_room', 'race_won', 'capped_hour', 'spaced', 'too_big')],
   home_why: ['daily', oneOf('tunelio_off', 'long', 'pacer', 'tunelio_failed', 'av1', 'tunelio_slow', 'slow_build', 'budget', 'cap', 'near_budget', 'tunelio_busy')],
   // Videos newly built, by where (src/server.js routeEvent, owner 2026-11-04): a home session, a paid Tunelio build, or
   // youtube.com for a play no source took (a spend limit with home full). Each video once an hour per route.
@@ -113,7 +113,7 @@ export const METRICS = {
   // Today's home relay use against its cap and the media workers connected, set every minute (numbers only).
   channel: ['daily', oneOf('redirect', 'unavailable', 'unknown')], // /v1/ch/<key> (src/channels.js)
   transfer: ['daily', oneOf('linode', 'home')], // MB sent by each host (src/net.js)
-  home_today: ['gauge', oneOf('mb', 'builds', 'cap_mb', 'workers', 'cache_mb')],
+  home_today: ['gauge', oneOf('mb', 'builds', 'cap_mb', 'workers', 'cache_mb', 'hour_mb', 'hour_builds')],
   // Playback plans (src/adaptive.js): which plan each video got, masters served, 1080p upgrades started / served /
   // failed, plays the pacer kept at 720p, resolvers sent on to the player. plan_start: adaptive from a 360p first rung.
   adaptive: ['daily', oneOf('plan_lower', 'plan_direct', 'plan_adaptive', 'plan_start', 'master', 'upgrade', 'upgrade_served', 'upgrade_failed', 'paced_off', 'defer', 'android_progressive', 'hls_ticket',

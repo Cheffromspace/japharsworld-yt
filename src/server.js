@@ -1303,11 +1303,19 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // Quest can open is left: too_long's answer (the world shows "can't be played here" and stops this client) instead of
       // youtube.com, which neither player opens (prod 2026-11-06: a Quest re-asked every ~6 s). One failed format alone
       // keeps the old answer, so the other player's turn can still play.
-      if (config.questMp4 && hlsQ && where.via === 'youtube' && /^(build_failed|tunelio_failed)$/.test(where.reason ?? '')) {
+      if (config.questMp4 && hlsQ && where.via === 'youtube' && /^(build_failed|tunelio_failed|too_long)$/.test(where.reason ?? '')) {
         if (c.hls) playback.start(t.data, questMp4Of(c).quality);
         if (questNoSource(t.data, hlsQ)) {
           logJson({ event: 'quest_no_source', shard, n, id: t.data.id, client: kind, reason: where.reason });
           return tooLongAnswer(res, kind, shard, n, t);
+        }
+        // AVPro's HLS file refused for size (a job's too_long, not the video's): the mp4 may still build, so "not a video"
+        // for Unity's player's turn instead of too_long, which would stop this client (#584 verifier).
+        if (where.reason === 'too_long' && c.hls && !playback.tooLong?.(t.data.id) && !questDead(t.data, questMp4Of(c).quality, false)) {
+          logJson({ event: 'play_defer', shard, n, id: t.data.id, held: Date.now() - started, quest: 'skip', client: kind });
+          const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+          return res.end(body);
         }
       }
       if (where.via === 'youtube' && where.reason === 'too_long' && (hlsTicket || android)) return tooLongAnswer(res, kind, shard, n, t);

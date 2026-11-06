@@ -94,9 +94,12 @@ Tunelio's HLS build answers only once the whole file is built and is cut off at 
   once (`adaptive`/`quest_skip`, `play_defer` with `quest: "skip"`), and the mp4 starts, so VizVid gets to Unity's player in
   ~13 s instead of being held up to 90 s. A ready HLS build still goes to AVPro. The tablet's status reports the mp4
   (`format: "progressive"`, `plan: "quest_mp4"`).
-- After AVPro's HLS build fails, the mp4 starts for Unity's player. When the mp4 fails too, every player and the tablet
-  get `too_long`'s answer (`quest_no_source` in the log; the world shows "can't be played here" and stops only that
-  client) instead of youtube.com, which neither Quest player opens.
+- After AVPro's HLS build fails (or is refused for size: AVPro then gets "not a video", not `too_long`), the mp4 starts
+  for Unity's player. Once both formats have failed (a failed probe or a size refusal, neither due for a retry; an mp4
+  that turned HLS counts as failed), every player and the tablet get `too_long`'s answer (`quest_no_source` in the log;
+  the world shows "can't be played here" and stops only that client) instead of youtube.com, which neither Quest player
+  opens. A failed `/create` (an outage, or Tunelio's 404 for a video it can't fetch) keeps the old answer, and ends
+  AVPro's "not a video" while it stands.
 
 `QUEST_MP4=off`: as before (HLS for every player of a `.m3u8` ticket).
 

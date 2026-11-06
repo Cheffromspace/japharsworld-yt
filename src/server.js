@@ -926,10 +926,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const hlsJob = playback.peek?.(data, c.quality, { hls: true });
     if (hlsJob?.state === 'ready') return null;
     const mp4 = questMp4Of(c);
-    if (questDead(data, mp4.quality, false) || mp4AsHls(data, mp4.quality)) return null;
+    // Any failure of the mp4 (a /create 404 "Video not found or unavailable" too, staging 2026-11-06) ends the skip while it
+    // stands: AVPro then takes the old path instead of "not a video" on every load.
+    const mp4Job = playback.peek?.(data, mp4.quality);
+    if ((mp4Job?.state === 'failed' && !playback.wouldBuild?.(data, mp4.quality)) || mp4AsHls(data, mp4.quality)) return null;
     const mb = playback.knownMb?.(data.id, c.quality) ?? 0;
     const long = (data.seconds ?? 0) >= config.questMp4MinMinutes * 60 || (config.questMp4MinMb > 0 && mb >= config.questMp4MinMb);
-    const mp4State = playback.peek?.(data, mp4.quality)?.state;
+    const mp4State = mp4Job?.state;
     const failed = hlsJob?.state === 'failed' && /^(build_failed|too_long)$/.test(hlsJob.reason ?? '')
       && (!playback.wouldBuild?.(data, c.quality, { hls: true }) || mp4State === 'building' || mp4State === 'ready');
     return long || failed ? mp4 : null;

@@ -5,7 +5,7 @@
 // into cookies.txt and deletes the copy. Firefox, because its cookie store is a plain SQLite file; Chrome's is encrypted.
 // Use (owner, 2026-11-06): yt-dlp runs without them first; only a bot or PO-token refusal is retried once with
 // --cookies. A retry that is bot-walled again marks them dead until a new file is installed.
-import { open, rename, stat, chmod, chown, readFile, writeFile, rm, copyFile, mkdtemp } from 'node:fs/promises';
+import { open, rename, stat, readFile, writeFile, rm, mkdtemp } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -49,15 +49,13 @@ export function toNetscape(cookies, nowS = Date.now() / 1000) {
   return { text: lines.join('\n') + '\n', count };
 }
 
-// Atomic write, mode 600 from the start (the temporary file never exists with wider rights), owned by `ids` before it
-// is renamed into place (so the worker never sees a file it can't read). A failed write leaves no temporary file.
-export async function writeCookies(path, text, ids = null) {
+// Atomic write, mode 600 from the start (the temporary file never exists with wider rights). relay/cookies-install.js
+// runs as the worker's own user, so the file is the worker's without a chown. A failed write leaves no temporary file.
+export async function writeCookies(path, text) {
   const tmp = join(dirname(path), `.cookies-${process.pid}-${Date.now()}.tmp`);
   try {
     const fh = await open(tmp, 'wx', 0o600);
-    try { await fh.writeFile(text); await fh.sync(); } finally { await fh.close(); }
-    await chmod(tmp, 0o600);
-    if (ids) await chown(tmp, ids.uid, ids.gid);
+    try { await fh.writeFile(text); await fh.chmod(0o600); await fh.sync(); } finally { await fh.close(); }
     await rename(tmp, path);
   } catch (err) {
     await rm(tmp, { force: true }).catch(() => {});
@@ -65,19 +63,31 @@ export async function writeCookies(path, text, ids = null) {
   }
 }
 
-// yt-dlp echoes a cookie line it can't parse ("skipping cookie file entry …: '<the line>'"), even with --no-warnings
-// (verifier, 2026-11-06). Lines like that, or with a tab (the cookie file's separator), never leave this process.
-export const scrub = (text) => String(text ?? '').split('\n').filter((l) => !/cookie file entry|\t/i.test(l)).join('\n');
+// What yt-dlp prints about a cookie file can quote a line of it: "skipping cookie file entry …: '<line>'" (even with
+// --no-warnings) and "invalid Netscape format cookies file …: '<line>'" with a LoadError traceback line, the tabs shown
+// as \t (verifiers, 2026-11-06, yt-dlp 2026.08.19). Such lines are dropped, and the file's own values (`secrets`) are
+// masked wherever else they turn up, so nothing that leaves the worker carries a cookie.
+const COOKIE_LINE = /cookie file entry|cookies file|LoadError|\t|\t/i;
+export function scrub(text, secrets = []) {
+  let out = String(text ?? '').split('\n').filter((l) => !COOKIE_LINE.test(l)).join('\n');
+  for (const v of secrets) out = out.split(v).join('…');
+  return out;
+}
+// The values in a cookies.txt worth masking (short ones like "1" would mask ordinary text and say nothing).
+export const secretsOf = (text) => [...new Set(String(text).split('\n').filter((l) => l && !l.startsWith('# ') && l !== '# Netscape HTTP Cookie File')
+  .map((l) => l.split('\t')[6] ?? '').filter((v) => v.length >= 6))];
 
 // The worker's view: none (no file), ok, or dead. Dead is a marker file next to cookies.txt naming the installed file's
-// mtime and size, so it survives worker restarts and ends when a new file is installed. yt-dlp gets a private copy
-// for each run (it rewrites its cookie file when it exits), so the installed file only ever changes by an install.
+// mtime and size, so it survives worker restarts and ends when a new file is installed (kept in memory too, in case the
+// marker can't be written). yt-dlp gets a private copy for each run (it rewrites its cookie file when it exits), so the
+// installed file only ever changes by an install.
 export class CookieJar {
   constructor({ path = null, log = () => {}, tmp = tmpdir() } = {}) {
     this.path = path;
     this.log = log;
     this.tmp = tmp;
     this.marker = path ? `${path}.dead` : null;
+    this.deadId = null;
   }
 
   async #id() {
@@ -88,44 +98,59 @@ export class CookieJar {
   async state() {
     const id = await this.#id();
     if (id == null) return 'none';
+    if (id === this.deadId) return 'dead';
     let dead = null;
     try { dead = (await readFile(this.marker, 'utf8')).trim(); } catch { /* none */ }
     return dead === id ? 'dead' : 'ok';
   }
 
-  // The retry's outcome. Only a bot wall on the retry marks them dead: a PO-token wall isn't something fresh cookies fix.
-  async retried(err) {
+  // The retry's outcome, for the file `usedId` (the installed file the retry's copy came from). Only a bot wall marks it
+  // dead (a PO-token wall isn't something fresh cookies fix), and only if that file is still the installed one: a file
+  // installed while the retry ran is never marked by it.
+  async retried(err, usedId = null) {
     if (!err) { this.log({ event: 'cookie_retry', ok: true }); return 'ok'; }
     const cls = refusalClass(err);
     this.log({ event: 'cookie_retry', ok: false, refusal: cls });
     if (cls !== 'bot') return 'other';
-    const id = await this.#id();
-    if (id) await writeFile(this.marker, id, { mode: 0o600 }).catch(() => {});
+    if (!usedId || (await this.#id()) !== usedId) return 'replaced';
+    this.deadId = usedId;
+    try { await writeFile(this.marker, usedId, { mode: 0o600 }); } catch { this.log({ event: 'cookies_dead_unmarked' }); }
     this.log({ event: 'cookies_dead' });
     return 'dead';
   }
 
   // A yt-dlp runner (cmd, args, timeoutMs) → result that retries a bot/PO-token refusal once with a private copy of the
-  // cookies. Whatever that retry prints is scrubbed of cookie lines before it goes anywhere.
+  // cookies. Whatever that retry prints is scrubbed before it goes anywhere. If the copy can't be made, the original
+  // refusal stands (so the worker still backs off and the server still counts it).
   wrap(runner) {
     return async (cmd, args, timeoutMs) => {
       try { return await runner(cmd, args, timeoutMs); } catch (err) {
         const cls = refusalClass(err);
         if ((cls !== 'bot' && cls !== 'potoken') || (await this.state()) !== 'ok') throw err;
-        const dir = await mkdtemp(join(this.tmp, 'jyt-ck-'));
-        const copy = join(dir, 'cookies.txt');
+        let dir, copy, usedId, secrets;
         try {
-          await copyFile(this.path, copy);
-          await chmod(copy, 0o600);
+          usedId = await this.#id();
+          const text = await readFile(this.path, 'utf8');
+          secrets = secretsOf(text);
+          dir = await mkdtemp(join(this.tmp, 'jyt-ck-'));
+          copy = join(dir, 'cookies.txt');
+          await writeFile(copy, text, { mode: 0o600, flag: 'wx' });
+        } catch {
+          if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+          this.log({ event: 'cookie_retry', ok: false, refusal: 'no_copy' });
+          throw err;
+        }
+        try {
           let r;
           try { r = await runner(cmd, ['--cookies', copy, ...args], timeoutMs); } catch (err2) {
-            err2.message = scrub(err2.message);
-            if (err2.stderr) err2.stderr = scrub(err2.stderr);
-            await this.retried(err2);
+            err2.message = scrub(err2.message, secrets);
+            if (err2.stderr) err2.stderr = scrub(err2.stderr, secrets);
+            await this.retried(err2, usedId);
             throw err2;
           }
           await this.retried(null);
-          if (r && typeof r === 'object' && Array.isArray(r.warnings)) r.warnings = r.warnings.filter((w) => scrub(w) === w);
+          if (r && typeof r === 'object' && Array.isArray(r.warnings)) r.warnings = r.warnings.map((w) => scrub(w, secrets)).filter(Boolean);
+          else if (typeof r === 'string') r = scrub(r, secrets);
           return r;
         } finally { await rm(dir, { recursive: true, force: true }).catch(() => {}); }
       }

@@ -36,9 +36,10 @@ export class CookieWatch {
     else if (state === 'ok') this.alert.resolve?.('cookies_missing', 'The home relay has working YouTube cookies.');
   }
 
-  // A bot or PO-token refusal at the home relay (src/server.js refused()).
+  // A refusal at the home relay (src/server.js refused()). Only a bot wall asks for a sign-in: a PO-token wall is not
+  // something fresh cookies fix (relay/cookies.js marks them dead on a bot wall only, too).
   refused(cls) {
-    if (cls !== 'bot' && cls !== 'potoken') return false;
+    if (cls !== 'bot') return false;
     const states = this.#fresh();
     if (states.includes('ok')) return false; // working cookies: the worker's retry handles it
     const missing = states.find((s) => s === 'none' || s === 'dead');

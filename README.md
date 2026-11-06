@@ -204,11 +204,14 @@ cookies; it runs as the same user, so its unit also gets `InaccessiblePaths=-/va
   refusal is retried once with `--cookies`, on a private copy (yt-dlp rewrites its cookie file, so the installed one
   only changes by an install; `relay/cookies.js`). If that retry is bot-walled too, `cookies.txt.dead` marks them dead
   (it survives restarts) and they aren't used again until a new file is installed. Cookie lines yt-dlp echoes are
-  scrubbed from what the worker logs or sends.
+  scrubbed, and the file's values masked, in what the worker logs or sends. A PO-token wall on the retry doesn't mark
+  them dead (fresh cookies don't fix that), and an install while a retry runs is never marked by it.
 - **What the server sees:** each poll carries `cookies=none|ok|dead`, a state word only (`/ops/state` → `cookies`).
   Discord (`ALERT_WEBHOOK`, one message per `COOKIE_NUDGE_HOURS`, 12; 0 = never) asks for a sign-in when working cookies
   stop working, or when the home relay is bot-walled with none, and gives the all-clear once they work
   (`src/cookiewatch.js`).
+- **Known gap:** staging's worker runs as the same uid, so code on the staging branch could still read the production
+  worker's private copy during a retry through `/proc`. A separate staging user would close it.
 - **Signing in** (the owner, on their Windows PC, which is on the same home IP; Firefox because its cookie store is a
   plain SQLite file, the yt-dlp wiki's sign-in-then-close method):
   1. In `cmd`, start Firefox with a new, empty profile folder:
@@ -216,13 +219,14 @@ cookies; it runs as the same user, so its unit also gets `InaccessiblePaths=-/va
      `"C:\Program Files\Mozilla Firefox\firefox.exe" -no-remote -profile "%USERPROFILE%\jyt-signin" https://www.youtube.com/`
   2. Sign in with the throwaway account. Then open `https://www.youtube.com/robots.txt` in the same tab and close that
      Firefox window (all of its windows), so it writes its cookies and stops.
-  3. Copy and install them (the script keeps only the YouTube/Google cookies, refuses a profile that isn't signed in,
-     writes `cookies.txt` mode 600 for `jytrelay`, deletes the copy (and any dead mark) and prints only a count; no worker restart):
+  3. Copy and install them. The script runs as `jytrelay` (never root), reads the copy from stdin, keeps only the
+     YouTube/Google cookies, refuses a profile that isn't signed in, writes `cookies.txt` mode 600 (ending any dead
+     mark) and prints only a count; no worker restart. The `rm` deletes the copy:
      `scp "%USERPROFILE%\jyt-signin\cookies.sqlite" jonflatt@192.168.1.4:jyt-cookies.sqlite`
-     `ssh -t jonflatt@192.168.1.4 "sudo node /opt/japharsworld-yt-relay/relay/cookies-install.js jyt-cookies.sqlite"`
+     `ssh -t jonflatt@192.168.1.4 "sudo -u jytrelay node /opt/japharsworld-yt-relay/relay/cookies-install.js - < jyt-cookies.sqlite; rm -f jyt-cookies.sqlite"`
   4. Delete the profile and never open it again: `rmdir /s /q "%USERPROFILE%\jyt-signin"`. Using it again lets Google
      rotate the session, and the installed cookies die early.
-  5. Check: `ssh jonflatt@192.168.1.4 "sudo ls -l /var/lib/japharsworld-yt-relay/cookies.txt"` shows `-rw-------` and
+  5. Check: `ssh -t jonflatt@192.168.1.4 "sudo ls -l /var/lib/japharsworld-yt-relay/cookies.txt"` shows `-rw-------` and
      `jytrelay`, and within a minute `node tools/ops.mjs state` shows `"cookies": {"optiplex": "ok"}`.
 
 ## Home relay playback

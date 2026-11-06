@@ -2599,7 +2599,7 @@
    "type": "timeseries",
    "id": 44,
    "title": "Plays by platform (per 6 h)",
-   "description": "Plays per 6 h by player platform, once per room and platform (a room with PC and Quest players counts one of each).",
+   "description": "Plays per 6 h by player platform, once per room and platform (a room with PC and Quest players counts one of each). PC is low before the Everything-is-OK#586 deploy (see the Deploys markers; built 2026-11-06): plays whose resolver got the link were not counted PC, so don’t compare the PC/Quest ratio across it. Quest is in practice unchanged.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"

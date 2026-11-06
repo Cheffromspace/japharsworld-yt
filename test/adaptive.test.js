@@ -57,10 +57,10 @@ test('plans: 720p pick or no budget â†’ lower without the 1080p /create; fast â†
   assert.equal(await new Adaptive({ playback: f.playback, pacer: pacerNo }).plan({ id: 'always00001', seconds: 1200 }, 'always'), 'adaptive');
 });
 
-async function server(over = {}, opts = {}, { live = false, cfg = {} } = {}) {
+async function server(over = {}, opts = {}, { live = false, cfg = {}, seconds = 1200 } = {}) {
   const f = fakes(over);
   const store = new Store({ path: ':memory:', shards: 4, pool: 100, pinHours: 24 });
-  const youtube = { async search() { return { videos: [{ id: 'AbCdEfGh1jK', title: 't', channel: 'c', length: live ? '' : '20:00', seconds: live ? 0 : 1200, views: '', age: '', live }], more: null }; }, thumbnailUrl: () => '' };
+  const youtube = { async search() { return { videos: [{ id: 'AbCdEfGh1jK', title: 't', channel: 'c', length: live ? '' : '20:00', seconds: live ? 0 : seconds, views: '', age: '', live }], more: null }; }, thumbnailUrl: () => '' };
   const config = { ...base, shards: 4, pool: 100, metricsPath: '', tunelioKey: '', tunelioQuality: '720p', tunelioQualities: ['720p', '1080p'],
     adaptiveHls: true, adaptiveShards: [3], adaptiveHoldMs: 200, publicUrl: 'http://pub.example', ...cfg };
   const adaptive = new Adaptive({ playback: f.playback, pacer: { check: () => ({ ok: true }) }, fetcher: f.fetcher, holdMs: 200, base: 'http://pub.example/hls', ...opts });
@@ -522,134 +522,127 @@ test('start rung play with ADAPTIVE_START_MID=on: 360p, 720p, 1080p', async (t) 
   assert.equal((await s.rung('720p')).status, 200);
 });
 
-// Everything-is-OK#584: a Quest (.m3u8 ticket) whose HLS build isn't ready, failed or ran long gets a ready mp4 of the
-// same video and quality instead of a wait and youtube.com.
+// Everything-is-OK#584: on a .m3u8 ticket (Quest), VizVid tries AVPro (needs HLS) and then Unity's Android player
+// ("stagefright", plays only files). Unity's player gets the mp4; a long or HLS-failed play sends AVPro on at once.
 const MP4_720 = 'https://tunelio.dev/tunnel?id=AbCdEfGh1jK-720p&exp=1&sig=s&progressive=1';
+const UNITY = 'stagefright/1.2 (Linux;Android 14)';
+const isPreparing = async (r) => r.status === 200 && /being prepared/.test(await r.text());
 
-test('#584: a .m3u8 ticket whose HLS build is not ready gets the ready mp4 at once, pinned; the tablet reports it', async (t) => {
-  const s = await server({ hold720: true }, {}, { cfg: { ticketPin: true } });
+test('#584: Unity\'s player on a .m3u8 ticket gets the 720p mp4, never HLS; AVPro keeps the HLS playlist; each pinned on its own', async (t) => {
+  const s = await server({}, {}, { cfg: { ticketPin: true } });
   t.after(() => s.srv.close());
-  const n = await s.ticket(0); // plans off: 720p
-  assert.equal((await s.get(`/v1/0/${n}`)).headers.get('location'), MP4_720, 'a PC player: the mp4');
-  const started = Date.now();
-  const q = await s.get(`/v1/0/${n}.m3u8`, QUEST);
-  assert.equal(q.headers.get('location'), MP4_720, 'the Quest gets the ready mp4');
-  assert.ok(Date.now() - started < 1000, 'without holding for the HLS build');
-  assert.equal(s.playback.peek({ id: 'AbCdEfGh1jK' }, '720p', { hls: true }), null, 'no HLS build started for it');
-  assert.equal((await s.get(`/v1/0/${n}.m3u8`, QUEST)).headers.get('location'), MP4_720, 'pinned');
-  const st = await (await s.get(`/v1/0/${n}.m3u8`, 'UnityPlayer/2022')).json();
-  assert.deepEqual([st.state, st.format, st.plan], ['ready', 'progressive', 'quest_mp4']);
-  assert.match(await (await s.get(`/v1/0/${n}.m3u8`, YTDLP)).text(), /being prepared/, 'the resolver is still sent on');
-  assert.deepEqual(s.created, [['AbCdEfGh1jK', '720p']], 'one /create');
-  // TICKET_PIN off: the tablet makes the player's choice itself, and warms no HLS build.
-  const s2 = await server({ hold720: true });
-  t.after(() => s2.srv.close());
-  const n2 = await s2.ticket(0);
-  await s2.get(`/v1/0/${n2}`);
-  const st2 = await (await s2.get(`/v1/0/${n2}.m3u8`, 'UnityPlayer/2022')).json();
-  assert.deepEqual([st2.state, st2.format, st2.plan], ['ready', 'progressive', 'quest_mp4']);
-  assert.equal(s2.playback.peek({ id: 'AbCdEfGh1jK' }, '720p', { hls: true }), null);
+  const n = await s.ticket(0); // plans off: 720p, a 20-minute video
+  const a = await s.get(`/v1/0/${n}.m3u8`, QUEST);
+  assert.match(a.headers.get('location'), /^http:\/\/pub\.example\/hls\/[a-f0-9]{18}\/720p\.m3u8$/, 'AVPro: HLS as before');
+  const u = await s.get(`/v1/0/${n}.m3u8`, UNITY);
+  assert.equal(u.headers.get('location'), MP4_720, 'Unity\'s player: the mp4');
+  assert.equal((await s.get(`/v1/0/${n}.m3u8`, UNITY)).headers.get('location'), MP4_720, 'pinned');
+  assert.match((await s.get(`/v1/0/${n}.m3u8`, QUEST)).headers.get('location'), /\/720p\.m3u8$/, 'AVPro\'s own pin is untouched');
+  assert.deepEqual(s.created, [['AbCdEfGh1jK', '720p']], 'one paid /create for both formats');
+  // A 1080p plan (direct): the Quest's mp4 is still 720p (a 1080p file may be AV1, #101).
+  s.releaseUpper();
+  const n3 = await s.ticket(3);
+  assert.match((await s.get(`/v1/3/${n3}.m3u8`, UNITY)).headers.get('location'), /-720p&.*progressive=1$/);
 });
 
-test('#584: a 524 on the Quest\'s HLS build ends on the mp4 that got ready meanwhile, not youtube.com', async (t) => {
+test('#584: a long video on a .m3u8 ticket: AVPro and the resolver sent on at once, no HLS build, Unity\'s player gets the mp4, the tablet reports it', async (t) => {
+  const s = await server({ hold720: true }, {}, { seconds: 2 * 3600 });
+  t.after(() => { s.release720(); s.srv.close(); });
+  const n = await s.ticket(0);
+  const started = Date.now();
+  assert.ok(await isPreparing(await s.get(`/v1/0/${n}.m3u8`, QUEST)), 'AVPro: "not a video" at once');
+  assert.ok(Date.now() - started < 1000);
+  assert.ok(await isPreparing(await s.get(`/v1/0/${n}.m3u8`, YTDLP)), 'the resolver too');
+  const id = { id: 'AbCdEfGh1jK' };
+  assert.equal(s.playback.peek(id, '720p', { hls: true }), null, 'no HLS build');
+  assert.ok(s.playback.peek(id, '720p'), 'the mp4 build started for Unity\'s player');
+  const st = await (await s.get(`/v1/0/${n}.m3u8`, 'UnityPlayer/2022')).json();
+  assert.deepEqual([st.format, st.plan], ['progressive', 'quest_mp4']);
+  assert.equal((await s.get(`/v1/0/${n}.m3u8`, UNITY)).headers.get('location'), MP4_720);
+  assert.match((await s.get(`/v1/0/${n}`)).headers.get('location'), /progressive=1$/, 'a PC player: unchanged');
+  // QUEST_MP4_MIN_MINUTES above the length: AVPro holds on the HLS build as before.
+  const s2 = await server({}, {}, { seconds: 2 * 3600, cfg: { questMp4MinMinutes: 180 } });
+  t.after(() => s2.srv.close());
+  const n2 = await s2.ticket(0);
+  assert.match((await s2.get(`/v1/0/${n2}.m3u8`, QUEST)).headers.get('location'), /\/720p\.m3u8$/);
+});
+
+test('#584: by size: a known 720p file of QUEST_MP4_MIN_MB or more counts as long; a ready HLS build still goes to AVPro', async (t) => {
+  const s = await server({ sizes: { '720p': 1200e6, '1080p': 2400e6 } });
+  t.after(() => s.srv.close());
+  const n = await s.ticket(0); // 20 minutes, 1200 MB at 720p
+  const st = await (await s.get(`/v1/0/${n}.m3u8`, 'UnityPlayer/2022')).json(); // the warm: HLS, size unknown before it
+  assert.equal(st.format, 'hls');
+  await settle();
+  assert.match((await s.get(`/v1/0/${n}.m3u8`, QUEST)).headers.get('location'), /\/720p\.m3u8$/, 'its HLS build is ready: AVPro gets it');
+  const n2 = await (async () => { s.playback.jobs.delete('AbCdEfGh1jK@720p@hls'); return n; })();
+  assert.ok(await isPreparing(await s.get(`/v1/0/${n2}.m3u8`, QUEST)), 'no HLS build and 1200 MB known: sent on');
+});
+
+test('#584: a 524 on AVPro\'s HLS build: youtube.com as before, the mp4 starts; the next AVPro load is sent on, Unity\'s player gets the mp4', async (t) => {
   let failHls;
   const hlsDone = new Promise((r) => { failHls = r; });
   const probe = async (url) => (/hls=1/.test(url) ? (await hlsDone, { ok: false, refused: false, status: 524 }) : { ok: true, refused: false });
-  for (const questMp4 of [true, false]) {
-    const s = await server({ pbOpts: { probe } }, {}, { cfg: { questMp4 } });
-    t.after(() => s.srv.close());
-    const n = await s.ticket(0);
-    const q = s.get(`/v1/0/${n}.m3u8`, QUEST); // held on the HLS build
-    await settle();
-    assert.equal((await s.get(`/v1/0/${n}`)).headers.get('location'), MP4_720, 'a PC player\'s mp4 is ready meanwhile');
-    failHls();
-    const loc = (await q).headers.get('location');
-    if (questMp4) assert.equal(loc, MP4_720);
-    else assert.equal(loc, 'https://www.youtube.com/watch?v=AbCdEfGh1jK', 'QUEST_MP4=off: as before');
-  }
-});
-
-test('#584: no mp4 at the same quality, or QUEST_MP4=off: the Quest waits on its HLS build as before', async (t) => {
-  for (const [cfg, pcShard] of [[{ questMp4: false }, 0], [{}, 3]]) {
-    const s = await server({ hold720: true }, {}, { cfg });
-    t.after(() => s.srv.close());
-    s.releaseUpper();
-    const n = await s.ticket(0);
-    if (pcShard === 3) {
-      // A 1080p mp4 (another room's direct plan) is not the 720p the Quest asked for.
-      const n3 = await s.ticket(3);
-      assert.match((await s.get(`/v1/3/${n3}`)).headers.get('location'), /1080p.*progressive=1$/);
-    } else await s.get(`/v1/0/${n}`);
-    const q = s.get(`/v1/0/${n}.m3u8`, QUEST);
-    await settle();
-    s.release720();
-    assert.match((await q).headers.get('location'), /^http:\/\/pub\.example\/hls\/[a-f0-9]{18}\/720p\.m3u8$/, JSON.stringify(cfg));
-  }
-});
-
-test('#584: readyProgressive: ready mp4 jobs at that quality only, a stepped-down one too, never HLS or an expiring link', async () => {
-  let now = 1_000_000;
-  const sizes = { '720p': 900e6, '1080p': 2000e6 };
-  const tunelio = { enabled: true, async create(id, q) { const qq = sizes[q] > 1500e6 ? q : q; return { url: `https://t/${id}-${q}?x=1`, expires: (now + 3600_000) / 1000, quality: qq, fileSize: sizes[q] }; } };
-  const p = new Playback({ tunelio, quality: '720p', probe: async () => ({ ok: true }), now: () => now, marginSeconds: 0 });
-  const d = { id: 'vid00000001', seconds: 3600 };
-  assert.equal(p.readyProgressive(d, '720p'), null);
-  await p.start(d, '720p', { hls: true }).promise;
-  assert.equal(p.readyProgressive(d, '720p'), null, 'an HLS job is not an mp4');
-  await p.start(d, '1080p').promise; // 2000 MB > 1500: stepped down to 720p
-  assert.equal(p.readyProgressive(d, '720p')?.requested, '1080p', 'requested 1080p, a 720p file');
-  assert.equal(p.readyProgressive(d, '1080p'), null);
-  await p.start(d, '720p').promise;
-  assert.equal(p.readyProgressive(d, '720p')?.requested, '720p', 'its own quality first');
-  now += 3600_000 - 30_000;
-  assert.equal(p.readyProgressive(d, '720p'), null, 'under a minute of link left');
-  assert.equal(p.readyProgressive({ id: 'other000001' }, '720p'), null);
-});
-
-test('#584: a Quest already holding on its HLS build gets the mp4 as soon as that is ready, not after the hold', async (t) => {
-  let releaseMp4, releaseHls;
-  const mp4 = new Promise((r) => { releaseMp4 = r; }), hls = new Promise((r) => { releaseHls = r; });
-  const probe = async (url) => { await (/hls=1/.test(url) ? hls : mp4); return { ok: true, refused: false }; };
   const s = await server({ pbOpts: { probe } });
-  t.after(() => { releaseHls(); s.srv.close(); });
-  const n = await s.ticket(0);
-  const quest = s.get(`/v1/0/${n}.m3u8`, QUEST); // holds on the HLS build
-  await settle();
-  const pc = s.get(`/v1/0/${n}`); // the PC player's mp4 starts building after the Quest's hold began
-  await settle();
-  const started = Date.now();
-  releaseMp4();
-  assert.equal((await quest).headers.get('location'), MP4_720, 'the mp4, while the HLS build still runs');
-  assert.ok(Date.now() - started < 2500, 'within the next look (every second)');
-  assert.equal(s.playback.peek({ id: 'AbCdEfGh1jK' }, '720p', { hls: true }).state, 'building', 'the HLS build carries on');
-  assert.equal((await pc).headers.get('location'), MP4_720);
-});
-
-test('#584: Tunelio refusing the HLS file for size (413) with the mp4 ready: the Quest and its tablet get the mp4, not too_long', async (t) => {
-  const probe = async (url) => (/hls=1/.test(url) ? { ok: false, refused: true, status: 413 } : { ok: true, refused: false });
-  for (const questMp4 of [true, false]) {
-    const s = await server({ sizes: { '720p': 4500e6, '1080p': 9000e6 }, pbOpts: { probe } }, {}, { cfg: { questMp4 } });
-    t.after(() => s.srv.close());
-    const n = await s.ticket(0);
-    assert.equal((await s.get(`/v1/0/${n}`)).headers.get('location'), MP4_720, 'the PC mp4 builds');
-    const q = await s.get(`/v1/0/${n}.m3u8`, QUEST);
-    const st = await (await s.get(`/v1/0/${n}.m3u8`, 'UnityPlayer/2022')).json();
-    if (questMp4) {
-      assert.equal(q.headers.get('location'), MP4_720);
-      assert.deepEqual([st.state, st.format, st.plan], ['ready', 'progressive', 'quest_mp4']);
-    } else {
-      assert.equal(q.status, 403, 'QUEST_MP4=off: too_long as before');
-      assert.equal(st.error, 'too_long');
-    }
-  }
-});
-
-test('#584: QUEST_MP4=off: the tablet of a .m3u8 ticket warms and reports the HLS build even with an mp4 ready', async (t) => {
-  const s = await server({ hold720: true }, {}, { cfg: { questMp4: false } });
   t.after(() => s.srv.close());
   const n = await s.ticket(0);
-  await s.get(`/v1/0/${n}`);
+  const q = s.get(`/v1/0/${n}.m3u8`, QUEST);
+  await settle();
+  failHls();
+  assert.equal((await q).headers.get('location'), 'https://www.youtube.com/watch?v=AbCdEfGh1jK');
+  await settle();
+  assert.equal(s.playback.peek({ id: 'AbCdEfGh1jK' }, '720p')?.state, 'ready', 'the mp4 was started for Unity\'s player');
+  assert.ok(await isPreparing(await s.get(`/v1/0/${n}.m3u8`, QUEST)), 'AVPro sent on while the failed HLS build is not due for a retry');
+  assert.equal((await s.get(`/v1/0/${n}.m3u8`, UNITY)).headers.get('location'), MP4_720);
   const st = await (await s.get(`/v1/0/${n}.m3u8`, 'UnityPlayer/2022')).json();
-  assert.deepEqual([st.state, st.format], ['building', 'hls']);
-  s.release720();
+  assert.deepEqual([st.state, st.format, st.plan], ['ready', 'progressive', 'quest_mp4']);
+});
+
+test('#584: both builds fail: AVPro, Unity\'s player and the tablet get too_long, not youtube.com', async (t) => {
+  const probe = async () => ({ ok: false, refused: false, status: 524 });
+  const s = await server({ pbOpts: { probe, progressiveRetries: 0 } }, {}, { seconds: 2 * 3600 });
+  t.after(() => s.srv.close());
+  const n = await s.ticket(0);
+  const u = await s.get(`/v1/0/${n}.m3u8`, UNITY);
+  assert.equal(u.status, 403, 'Unity\'s player: its mp4 failed, and AVPro\'s HLS is untried, but Unity\'s player can\'t open that');
+  assert.equal((await u.json()).error, 'too_long');
+  const a = await s.get(`/v1/0/${n}.m3u8`, QUEST);
+  assert.equal(a.status, 403, 'AVPro: the mp4 failed, so one last try on HLS, which failed too');
+  assert.equal((await a.json()).error, 'too_long');
+  const st = await (await s.get(`/v1/0/${n}.m3u8`, 'UnityPlayer/2022')).json();
+  assert.deepEqual([st.state, st.error], ['failed', 'too_long']);
+});
+
+test('#584: a spend refusal is not "can\'t be played here": Unity\'s player keeps the old answer', async (t) => {
+  const s = await server({ pbOpts: { spend: { refuse: () => 'budget', charge: () => () => {} } } });
+  t.after(() => s.srv.close());
+  const n = await s.ticket(0);
+  const u = await s.get(`/v1/0/${n}.m3u8`, UNITY);
+  assert.notEqual(u.status, 403);
+});
+
+test('#584: QUEST_MP4=off: Unity\'s player gets the HLS playlist and a long play holds AVPro on HLS, as before', async (t) => {
+  const s = await server({}, {}, { seconds: 2 * 3600, cfg: { questMp4: false } });
+  t.after(() => s.srv.close());
+  const n = await s.ticket(0);
+  assert.match((await s.get(`/v1/0/${n}.m3u8`, QUEST)).headers.get('location'), /\/720p\.m3u8$/);
+  assert.match((await s.get(`/v1/0/${n}.m3u8`, UNITY)).headers.get('location'), /\/720p\.m3u8$/);
+  const st = await (await s.get(`/v1/0/${n}.m3u8`, 'UnityPlayer/2022')).json();
+  assert.equal(st.format, 'hls');
+});
+
+test('#584: a long video Tunelio refuses as too long: AVPro\'s first load is sent on, then every player gets too_long; one /create', async (t) => {
+  const s = await server({}, {}, { seconds: 2 * 3600 });
+  t.after(() => s.srv.close());
+  let creates = 0;
+  s.tunelio.create = async () => { creates++; throw Object.assign(new Error('Video is too long.'), { status: 413, code: 'Video is too long.' }); };
+  const n = await s.ticket(0);
+  assert.ok(await isPreparing(await s.get(`/v1/0/${n}.m3u8`, QUEST)), 'the first load: sent on while the mp4 starts');
+  await settle();
+  for (const ua of [UNITY, QUEST]) {
+    const r = await s.get(`/v1/0/${n}.m3u8`, ua);
+    assert.equal(r.status, 403, ua);
+    assert.equal((await r.json()).error, 'too_long');
+  }
+  assert.equal(creates, 1);
 });

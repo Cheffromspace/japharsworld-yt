@@ -80,17 +80,25 @@ the video for length or size and home took no build: the same for a `.m3u8` tick
 youtube.com link, status `state: "youtube"`, `reason: "too_long"`; world #420); the world shows its own
 localized text per code.
 
-### A `.m3u8` ticket (Quest) and a ready mp4 (Everything-is-OK#584)
+### A `.m3u8` ticket (Quest) and the mp4 (Everything-is-OK#584)
 
-A `.m3u8` ticket is answered with HLS (a plain Tunelio HLS build, or home). Tunelio's HLS build answers only once the
-whole file is built and is cut off at ~125 s, so a long video's build can fail while the mp4 (progressive) build of
-the same video, which streams while it builds, was ready in ~20 s. With `QUEST_MP4` on (the default), a `.m3u8`
-player whose HLS build isn't ready, failed, was refused for size (`too_long`), or ran past the hold gets a ready mp4
-build of the same video and quality instead of a wait, youtube.com or `too_long`. A player already held is answered
-within a second of such an mp4 getting ready (a PC player's, say); the HLS build carries on. Counted as
-`adaptive`/`quest_mp4`; the tablet's status then reports that build, `format: "progressive"`, `plan: "quest_mp4"`.
-Never for `restricted`, over `VIDEO_MAX_HOURS` or the visitor's own limits, and never for VRChat's resolver (still sent
-on at once). `QUEST_MP4=off`: as before.
+A Quest's video player (VizVid) plays a `.m3u8` ticket with two players in turn: AVPro (ExoPlayer) twice, then Unity's
+own Android player (User-Agent `stagefright`), then alternating, six loads in all. AVPro goes by the extension and plays
+only HLS (an mp4 behind the ticket fails in ~2 s); Unity's player plays only files (an HLS playlist fails, the mp4 plays).
+Tunelio's HLS build answers only once the whole file is built and is cut off at ~125 s, while its mp4 streams within
+~20 s. With `QUEST_MP4` on (the default), for a `.m3u8` ticket:
+- Unity's player always gets the mp4 (the ticket's quality, at most 720p: a 1080p file may be AV1), never home's HLS
+  (`adaptive`/`quest_mp4`).
+- A video of `QUEST_MP4_MIN_MINUTES` (60) or longer, or whose file at that quality is known to be `QUEST_MP4_MIN_MB`
+  (1000) or more, or whose HLS build failed and isn't due for a retry: AVPro and VRChat's resolver get "not a video" at
+  once (`adaptive`/`quest_skip`, `play_defer` with `quest: "skip"`), and the mp4 starts, so VizVid gets to Unity's player in
+  ~13 s instead of being held up to 90 s. A ready HLS build still goes to AVPro. The tablet's status reports the mp4
+  (`format: "progressive"`, `plan: "quest_mp4"`).
+- After AVPro's HLS build fails, the mp4 starts for Unity's player. When the mp4 fails too, every player and the tablet
+  get `too_long`'s answer (`quest_no_source` in the log; the world shows "can't be played here" and stops only that
+  client) instead of youtube.com, which neither Quest player opens.
+
+`QUEST_MP4=off`: as before (HLS for every player of a `.m3u8` ticket).
 
 ### A YouTube link played straight from the search address (world #136)
 

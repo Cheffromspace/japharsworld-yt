@@ -5,7 +5,7 @@
 // (read only) and the search service's /healthz. Labels are metric keys, slot keys and verdicts that already passed
 // the privacy checks in src/metrics.js; never video IDs, queries or addresses.
 import http from 'node:http';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { METRICS, MS_BUCKETS, S_BUCKETS, REPORT_WHO, REPORT_KINDS, OUTCOME_WHO, OUTCOME_PLATFORMS, OUTCOME_FRAME_SECONDS, dayOf } from '../src/metrics.js';
@@ -187,7 +187,16 @@ export function healthSeries(h, o) {
   o.add('eiok_youtube_api_units_today', 'gauge', 'YouTube Data API units the search service used today.', {}, h.apiUnitsToday);
 }
 
-export async function render({ metricsDb, monitorDb, healthUrl, now = Date.now(), fetchImpl = fetch }) {
+// The daily S3 backup's own record (metrics/backup.js, Everything-is-OK#585): when a day last landed. Left out until the
+// first backup, so Grafana's eiok-backup-missing stays quiet where backups are off.
+export function backupSeries(path, o) {
+  let s;
+  try { s = JSON.parse(readFileSync(path, 'utf8')); } catch { return; }
+  if (!Number.isFinite(s?.lastSuccessMs)) return;
+  o.add('eiok_backup_last_success_timestamp_seconds', 'gauge', 'When the daily S3 backup last uploaded a day (metrics/backup.js).', {}, Math.floor(s.lastSuccessMs / 1000));
+}
+
+export async function render({ metricsDb, monitorDb, healthUrl, backupState, now = Date.now(), fetchImpl = fetch }) {
   const o = new Out();
   for (const [name, path, fn] of [['metrics', metricsDb, metricsDbSeries], ['monitor', monitorDb, monitorDbSeries]]) {
     let db, ok = false;
@@ -204,6 +213,7 @@ export async function render({ metricsDb, monitorDb, healthUrl, now = Date.now()
     try { const r = await fetchImpl(healthUrl, { signal: AbortSignal.timeout(3000) }); health = r.ok ? await r.json() : null; } catch { health = null; }
   }
   healthSeries(health, o);
+  if (backupState) backupSeries(backupState, o);
   return o.text();
 }
 
@@ -214,6 +224,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     metricsDb: e.METRICS_DB ?? '/var/lib/japharsworld-yt/metrics.db',
     monitorDb: e.MONITOR_DB ?? '/var/lib/japharsworld-yt-monitor/monitor.db',
     healthUrl: `http://127.0.0.1:${e.PORT ?? 8790}/healthz`,
+    backupState: e.BACKUP_STATE ?? '/var/lib/japharsworld-yt/backup-state.json',
   };
   http.createServer(async (req, res) => {
     if (req.url !== '/metrics') { res.writeHead(404).end(); return; }

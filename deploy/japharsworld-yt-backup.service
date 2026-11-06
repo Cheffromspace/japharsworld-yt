@@ -1,0 +1,25 @@
+[Unit]
+Description=Daily backup to a private S3 bucket: events, metrics.db, Grafana-only series (Everything-is-OK#585)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jyt
+Group=jyt
+# Reads the search service's journal (its events) without root.
+SupplementaryGroups=systemd-journal
+EnvironmentFile=/etc/japharsworld-yt.env
+# The S3 key and the Grafana read token: root only (mode 600), read by systemd, never by the search service.
+EnvironmentFile=-/etc/japharsworld-yt-backup.env
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning /opt/japharsworld-yt/metrics/backup.js
+TimeoutStartSec=30min
+Nice=15
+IOSchedulingClass=idle
+MemoryMax=400M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# The state file, and the databases' -shm files (opened read only; WAL needs them).
+ReadWritePaths=/var/lib/japharsworld-yt

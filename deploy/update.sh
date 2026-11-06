@@ -51,9 +51,10 @@ changed=$(git diff --name-only "$current" "$target")
 # The monitor's own "Channels status" commits (docs/ only) are not deploys worth a marker on the dashboard.
 record() { echo "$changed" | grep -qv '^docs/' || return 0; bash deploy/deploy-record.sh "$1" || echo "deploy record failed"; }
 lock_changed=$(echo "$changed" | grep -x 'package-lock.json' || true)
-service_changed=$(echo "$changed" | grep -v -E '^(docs/|monitor/|relay/|deploy/monitor-setup\.sh$|deploy/slotmon(-remote)?$|deploy/japharsworld-yt-monitor\.|deploy/relay-|deploy/slotworker-|deploy/bgutil-(setup\.sh|pot-relay\.service)$|deploy/bootstrap\.sh$|deploy/(staging-setup|dns-flip|harden)\.sh$|deploy/japharsworld-yt-slotworker|deploy/japharsworld-yt-relay|metrics/|deploy/metrics-setup\.sh$|deploy/japharsworld-yt-(metrics|exporter|occupants|security)\.|deploy/alloy|deploy/update\.sh$|deploy/deploy-record\.sh$|public/|test/|tools/|bench/|claude/|grafana/|infra-check/|README\.md$|CLAUDE\.md$|deploy-now\.cmd$|\.gitignore$)' || true)
+service_changed=$(echo "$changed" | grep -v -E '^(docs/|monitor/|relay/|deploy/monitor-setup\.sh$|deploy/slotmon(-remote)?$|deploy/japharsworld-yt-monitor\.|deploy/relay-|deploy/slotworker-|deploy/bgutil-(setup\.sh|pot-relay\.service)$|deploy/bootstrap\.sh$|deploy/(staging-setup|dns-flip|harden)\.sh$|deploy/japharsworld-yt-slotworker|deploy/japharsworld-yt-relay|metrics/|deploy/metrics-setup\.sh$|deploy/japharsworld-yt-(metrics|exporter|occupants|security|backup)\.|deploy/backup-setup\.sh$|deploy/alloy|deploy/update\.sh$|deploy/deploy-record\.sh$|public/|test/|tools/|bench/|claude/|grafana/|infra-check/|README\.md$|CLAUDE\.md$|deploy-now\.cmd$|\.gitignore$)' || true)
 monitor_setup_changed=$(echo "$changed" | grep -E '^(monitor/requirements\.txt|monitor/seed/|deploy/monitor-setup\.sh|deploy/slotmon|deploy/japharsworld-yt-monitor\.)' || true)
 metrics_setup_changed=$(echo "$changed" | grep -E '^(deploy/metrics-setup\.sh|deploy/japharsworld-yt-(metrics|exporter|occupants|security)\.)' || true)
+backup_setup_changed=$(echo "$changed" | grep -E '^(deploy/backup-setup\.sh|deploy/japharsworld-yt-backup\.)' || true)
 exporter_changed=$(echo "$changed" | grep -E '^(metrics/exporter\.js|src/metrics\.js)$' || true)
 alloy_changed=$(echo "$changed" | grep -E '^deploy/alloy' || true)
 if [ -n "$service_changed" ]; then
@@ -74,6 +75,11 @@ if [ -n "$metrics_setup_changed" ] || metrics_missing; then
   bash deploy/metrics-setup.sh || echo "metrics setup failed"
 elif [ -n "$exporter_changed" ]; then
   systemctl try-restart japharsworld-yt-exporter.service
+fi
+# The S3 backup (Everything-is-OK#585) is installed and enabled by hand (deploy/backup-setup.sh --enable, owner's go);
+# after that its units follow main. Never enabled from here.
+if [ -n "$backup_setup_changed" ] && [ -f /etc/systemd/system/japharsworld-yt-backup.timer ]; then
+  bash deploy/backup-setup.sh || echo "backup setup failed"
 fi
 # Grafana Alloy is installed by hand once (claude/monitoring.md); after that its config follows main.
 if [ -n "$alloy_changed" ] && command -v alloy >/dev/null; then

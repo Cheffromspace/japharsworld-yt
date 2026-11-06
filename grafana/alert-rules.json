@@ -1782,6 +1782,60 @@
   ]
  },
  {
+  "uid": "eiok-backup-missing",
+  "title": "Daily backup missing",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "60m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "No day has reached the S3 backup for over 30 hours (it runs at 01:30 Chicago and catches up to 3 missed days). See `journalctl -u japharsworld-yt-backup` on the Linode."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "time() - max(eiok_backup_last_success_timestamp_seconds{env!=\"staging\"}) - 30 * 3600",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
   "uid": "eiok-disk-low",
   "title": "Disk almost full",
   "folderUID": "everything-is-ok",

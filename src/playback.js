@@ -216,20 +216,6 @@ export class Playback {
   // The job for a video at a quality, if there is one (no build is started).
   peek(data, quality = this.quality, { hls = false } = {}) { return this.jobs.get(this.#key(data, quality, hls)) ?? null; }
 
-  // A ready progressive (mp4) build of this video whose file is at `quality`, with at least `minLeftMs` of its link left,
-  // else null (Everything-is-OK#584: a Quest's HLS build failed or ran long while a PC player's mp4 of the same video was
-  // ready). Requested at `quality` first; then one requested higher and stepped down to it (maxMbForQuality). Never an
-  // HLS job, and never a progressive job served as HLS after a 413 (its format says so).
-  readyProgressive(data, quality = this.quality, { minLeftMs = 60_000 } = {}) {
-    const now = this.now();
-    const ok = (j) => j && !j.fixed && j.state === 'ready' && j.format === 'progressive' && j.quality === quality
-      && j.url && j.expiresMs - now >= minLeftMs && !this.#stale(j, now);
-    const own = this.jobs.get(this.#key(data, quality, false));
-    if (ok(own)) return own;
-    for (const [key, j] of this.jobs) if (key.startsWith(`${data.id}@`) && ok(j)) return j;
-    return null;
-  }
-
   // The job for a video at a quality, started if there is none (or the old one expired or failed long enough ago to
   // retry). ticket data: { id, live?, seconds? }
   #stale(job, now) {

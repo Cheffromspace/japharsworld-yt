@@ -116,7 +116,7 @@ export const METRICS = {
   home_today: ['gauge', oneOf('mb', 'builds', 'cap_mb', 'workers', 'cache_mb', 'hour_mb', 'hour_builds')],
   // Playback plans (src/adaptive.js): which plan each video got, masters served, 1080p upgrades started / served /
   // failed, plays the pacer kept at 720p, resolvers sent on to the player. plan_start: adaptive from a 360p first rung.
-  adaptive: ['daily', oneOf('plan_lower', 'plan_direct', 'plan_adaptive', 'plan_start', 'master', 'upgrade', 'upgrade_served', 'upgrade_failed', 'paced_off', 'defer', 'android_progressive', 'hls_ticket', 'quest_mp4',
+  adaptive: ['daily', oneOf('plan_lower', 'plan_direct', 'plan_adaptive', 'plan_start', 'master', 'upgrade', 'upgrade_served', 'upgrade_failed', 'paced_off', 'defer', 'android_progressive', 'hls_ticket', 'quest_mp4', 'quest_skip',
     'reload_before_upgrade', 'reload_after_upgrade', 'android_av1', 'android_av1_rung', 'start_one_step', 'start_mid')], // reloads: the freeze proxy (src/adaptive.js master)
   play_fallback: ['daily', oneOf('disabled', 'paused', 'tunelio_failed', 'too_long', 'build_failed', 'build_timeout')],
   play_length: ['daily', oneOf('live', 'unknown', 'lt10m', 'lt1h', 'lt3h', 'longer')],

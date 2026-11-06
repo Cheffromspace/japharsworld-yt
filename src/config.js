@@ -147,7 +147,7 @@ export const config = {
   // Hold a player up to this long for a home session's playlist to finish when it is due that soon (src/home.js settle).
   homeSettleMs: int('HOME_SETTLE_SECONDS', 10) * 1000,
   // A PC player on a ready but still growing home session of a video this long (hours) stays on it instead of waiting
-  // for Tunelio, unless Tunelio's build is already there (src/server.js leaveHome, Everything-is-OK#577). 0 = off.
+  // for Tunelio (src/server.js leaveHome, Everything-is-OK#577). 0 = off.
   homeStayHours: (() => { const v = Number.parseFloat(process.env.HOME_STAY_HOURS ?? ''); return Number.isFinite(v) ? v : 3; })(),
   // The home relay for .m3u8 tickets too (the world's Android build: Quest opens HLS behind those), by the same rules
   // as a PC player, and for an AV1 Tunelio build, which the Quest 2 can't decode (home is always H.264). Off until

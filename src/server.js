@@ -173,7 +173,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   relay ??= new Relay({ token: config.relayToken, log: logJson });
   home ??= new Home({ relay, dir: join(dirname(config.dbPath), 'home'), base: `${config.publicUrl}/home`, enabled: config.homeRelay && relay.enabled,
     dailyBuilds: config.homeDailyBuilds, dailyMb: config.homeDailyMb, hourBuilds: config.homeHourBuilds, hourMb: config.homeHourMb,
-    startGapMs: config.homeStartGapMs, itemMaxMb: config.homeItemMaxGb * 1000, keepHours: config.homeKeepHours, maxGb: config.homeMaxGb, freeFloorGb: config.homeFreeFloorGb, readyMs: config.homeReadyMs,
+    hourMbExemptSeconds: config.homeHourMbExemptHours * 3600, startGapMs: config.homeStartGapMs,
+    itemMaxMb: config.homeItemTooBig === 'tunelio' ? config.homeItemMaxGb * 1000 : 0, keepHours: config.homeKeepHours, maxGb: config.homeMaxGb, freeFloorGb: config.homeFreeFloorGb, readyMs: config.homeReadyMs,
     segmentHoldMs: config.homeSegmentHoldMs,
     startPrecise: config.homeAndroidGrowing, tz: config.metricsTz, log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
   if (home.enabled) setInterval(() => home.sweep(), 10 * 60_000).unref();
@@ -231,7 +232,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // Where each new build went and why, with the load behind it (owner, 2026-11-04: home vs Tunelio share and credits a
   // day on the dashboard): via home (a new home session; why is home_why's reason), tunelio (a paid /create; why is
   // default; home_full when home had no free stream; home_day, home_hour or home_gap when a home limit held it back;
-  // home_big for a video too big for home, #576) or youtube (a play no source could take: a spend limit with home
+  // home_big for one over HOME_ITEM_MAX_GB with HOME_ITEM_TOO_BIG=tunelio, #576) or youtube (a play no source could take:
+  // a spend limit with home
   // full). The event adds home's streams, Tunelio's builds and the spend so far, and comes for every paid /create. The
   // build_route metric counts videos, not calls: each video once an hour per via (counted: true on that event), so a
   // play's several /create calls (adaptive's two qualities, a downgrade) count Tunelio once.
@@ -698,8 +700,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (home.enabled) { const ctx = spendScope.getStore(); const l = home.limit?.(); if (ctx) ctx.route = l ? `home_${l}` : 'home_full'; }
       return home.other?.(data, quality) ? 'reuse' : null;
     }
-    // Too big to build at home at this quality (HOME_ITEM_MAX_GB), or its MB would take the rolling hour over HOME_HOUR_MB
-    // (#576): Tunelio, or its session at another quality. too_big is counted once per video an hour (tablets poll this).
+    // Its MB would take the rolling hour over HOME_HOUR_MB, or (HOME_ITEM_TOO_BIG=tunelio) it is over HOME_ITEM_MAX_GB
+    // even at 720p (#576): Tunelio, or its session at another quality. too_big is counted once per video an hour.
     const blocked = existing ? null : home.blocks?.(data, quality);
     if (blocked) {
       if (blocked === 'big' && !(Date.now() - (tooBig.get(data.id) ?? -Infinity) < 3600_000)) {
@@ -798,7 +800,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (no) { const ctx = spendScope.getStore(); if (ctx) ctx.route = no; return null; }
     }
     const s = home.start(data, quality);
-    // null with a worker free: home.start's #room said no (a size or hourly limit, home.refusal big/hour, isn't kept). Without a worker it has made no room check.
+    // null with a worker free: home.start's #room said no (a size or hourly MB limit, home.refusal big/hour, isn't kept). Without a worker it has made no room check.
     if (!s && home.worker() && (home.refusal ?? 'room') === 'room') {
       homeRefused.set(data.id, Date.now() + HOME_REFUSED_MS);
       if (homeRefused.size > 5000) homeRefused.delete(homeRefused.keys().next().value);

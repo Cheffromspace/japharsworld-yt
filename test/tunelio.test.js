@@ -447,7 +447,9 @@ async function tooLongApp(t, { home = undefined, config = {}, video = {}, playba
   const playback = given ?? new Playback({ tunelio });
   const counts = {};
   const metrics = new Proxy({ counts, inc(m, k = '') { counts[m + ':' + k] = (counts[m + ':' + k] ?? 0) + 1; } }, { get: (o, k) => (k in o ? o[k] : () => {}) });
-  const app = createApp({ config: { ...base, shards: 1, pool: 50, ticketPlayerHoldMs: 5000, homeAndroid: true, videoMaxSeconds: 0, ...config }, store, youtube, playback, tunelio: { enabled: true }, metrics, log: () => {}, ...(home ? { home } : {}) });
+  // questMp4 off: these are the #420 rules for every player of a .m3u8 ticket; with it on (#584) AVPro's first load of a
+  // long video is "not a video" while the mp4's /create runs (tested in test/adaptive.test.js).
+  const app = createApp({ config: { ...base, shards: 1, pool: 50, ticketPlayerHoldMs: 5000, homeAndroid: true, videoMaxSeconds: 0, questMp4: false, ...config }, store, youtube, playback, tunelio: { enabled: true }, metrics, log: () => {}, ...(home ? { home } : {}) });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());

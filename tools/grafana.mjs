@@ -214,7 +214,7 @@ export function dashboard() {
     ['count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)', 'rooms'],
   ], { w: 8, min: 0, decimals: 0, description: 'Distinct shards that saw a request in the past hour (from the hourly shard table).' }));
   p.push(series('Plays by platform (per 6 h)', [[ev('play_platform'), '{{key}}']], { w: 8, stack: true, min: 0,
-    description: 'Once per room and platform (a room with PC and Quest players counts one of each), from the ticket request’s User-Agent or a .m3u8 ticket. Counted from 2026-10-23. PC is an undercount before the Everything-is-OK#586 deploy (see the Deploys markers; built 2026-11-06): plays whose resolver got the link were not counted PC, so don’t compare the PC/Quest ratio across it. Quest is unchanged.' }));
+    description: 'Once per room and platform (a room with PC and Quest players counts one of each), from the ticket request’s User-Agent or a .m3u8 ticket. Counted from 2026-10-23. PC is an undercount before the Everything-is-OK#586 deploy (see the Deploys markers; built 2026-11-06): plays whose resolver got the link were not counted PC, so don’t compare the PC/Quest ratio across it. Quest is in practice unchanged.' }));
   p.push(series('Room quality picks and tablet warm-ups (per 6 h)', [[ev('quality_pick'), 'pick {{key}}'],
     ['sum(increase(eiok_events_total{metric="warm"}[6h]))', 'warm builds'], ['sum(increase(eiok_events_total{metric="warm_played"}[6h]))', 'warm then played']], { w: 8, min: 0 }));
 

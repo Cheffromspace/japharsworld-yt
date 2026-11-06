@@ -1,7 +1,7 @@
 // Installs the throwaway account's cookies for the home relay worker (Everything-is-OK#575), on the Optiplex, run as the
 // worker's own user (never root: the file is the worker's without a chown, and root never runs code from the
 // jytrelay-owned checkout):
-//   sudo -u jytrelay node /opt/japharsworld-yt-relay/relay/cookies-install.js - < jyt-cookies.sqlite && rm jyt-cookies.sqlite
+//   sudo -u jytrelay node /opt/japharsworld-yt-relay/relay/cookies-install.js - < jyt-cookies.sqlite; rm -f jyt-cookies.sqlite
 // Reads a Firefox cookies.sqlite (copied from the owner's fresh, closed sign-in profile) from stdin, keeps the YouTube and
 // Google cookies, refuses a profile with no signed-in YouTube session, and writes cookies.txt into the worker's state dir
 // (mode 600; a new file also ends a "dead" mark). Prints counts only, never a cookie. The worker picks the file up at its

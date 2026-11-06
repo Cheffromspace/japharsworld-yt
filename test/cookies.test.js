@@ -4,12 +4,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtemp, readFile, stat, rm, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, stat, rm, writeFile, readdir } from 'node:fs/promises';
+import { existsSync, createReadStream } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CookieJar, readFirefox, toNetscape, signedIn } from '../relay/cookies.js';
-import { install } from '../relay/cookies-install.js';
+import { install, installFromStream } from '../relay/cookies-install.js';
 import { CookieWatch } from '../src/cookiewatch.js';
 import { makeAlert } from '../src/alert.js';
 import { createApp } from '../src/server.js';
@@ -60,44 +60,39 @@ test('cookies: a Firefox cookies.sqlite becomes a Netscape file with Google and 
   await rm(dir, { recursive: true, force: true });
 });
 
-test('cookies install: writes cookies.txt mode 600, deletes the copy, prints counts only; refuses a profile that never signed in', async () => {
+test('cookies install: from stdin as the worker\'s user, mode 600, counts only, its own copy deleted; refuses a profile that never signed in', async () => {
   const dir = await tmp();
   const src = join(dir, 'jyt-cookies.sqlite');
   const out = join(dir, 'cookies.txt');
   firefoxDb(src, SIGNED_IN);
-  await writeFile(`${src}-wal`, '');
-  const r = await install(src, { out, owner: null });
-  assert.ok(r.ok);
+  await writeFile(`${out}.dead`, 'old mark');
+  const before = new Set(await readdir(tmpdir()));
+  const r = await installFromStream(createReadStream(src), { out });
+  assert.ok(r.ok, r.message);
   assert.equal(r.count, 3);
   assert.doesNotMatch(r.message, /made-up/);
   assert.match(await readFile(out, 'utf8'), /made-up-sid/);
   if (process.platform !== 'win32') assert.equal((await stat(out)).mode & 0o777, 0o600);
-  assert.equal(existsSync(src), false, 'the copy is deleted');
-  assert.equal(existsSync(`${src}-wal`), false);
-  // Not signed in: nothing installed, the old file stays, the copy still goes.
+  assert.equal(existsSync(`${out}.dead`), false, 'a new file ends the dead mark');
+  assert.deepEqual((await readdir(tmpdir())).filter((f) => f.startsWith('jyt-ckin-') && !before.has(f)), [], 'its temporary copy is gone');
+  // Not signed in: nothing installed, the old file stays.
   const guest = join(dir, 'guest.sqlite');
-  firefoxDb(guest, [{ name: 'NID', value: 'g', host: '.google.com' }]);
-  const g = await install(guest, { out, owner: null });
+  firefoxDb(guest, [{ name: 'NID', value: 'g', host: '.google.com' }, { name: 'SID', value: 'google-only', host: '.google.com' }]);
+  const g = await install(guest, { out });
   assert.equal(g.ok, false);
   assert.match(g.message, /No signed-in YouTube session/);
   assert.match(await readFile(out, 'utf8'), /made-up-sid/);
-  assert.equal(existsSync(guest), false);
-  // Not a cookie database.
+  // Not a cookie database; a missing state dir.
   const junk = join(dir, 'junk.sqlite');
   await writeFile(junk, 'not sqlite');
-  assert.equal((await install(junk, { out, owner: null })).ok, false);
-  assert.equal(existsSync(junk), false, 'an unreadable copy is deleted too');
-  const nodir = join(dir, 'nodir.sqlite');
-  firefoxDb(nodir, SIGNED_IN);
-  assert.match((await install(nodir, { out: join(dir, 'missing', 'cookies.txt'), owner: null })).message, /doesn't exist yet/);
-  assert.equal(existsSync(nodir), false);
-  // --keep leaves the copy (tests); the owner gets the file.
-  const kept = join(dir, 'kept.sqlite');
-  firefoxDb(kept, SIGNED_IN);
-  const chowned = [];
-  const k = await install(kept, { out, owner: 'jytrelay', keep: true, ids: (u) => { chowned.push(u); return { uid: process.getuid?.() ?? 0, gid: process.getgid?.() ?? 0 }; } });
-  assert.ok(k.ok && existsSync(kept));
-  assert.deepEqual(chowned, ['jytrelay']);
+  assert.equal((await install(junk, { out })).ok, false);
+  assert.equal(existsSync(junk), true, 'install never deletes what it was given');
+  assert.match((await install(src, { out: join(dir, 'missing', 'cookies.txt') })).message, /doesn't exist/);
+  // Expired cookies are left out.
+  const old = join(dir, 'old.sqlite');
+  firefoxDb(old, [...SIGNED_IN, { name: 'stale', value: 'gone', host: '.youtube.com', expiry: 1000 }]);
+  await install(old, { out });
+  assert.doesNotMatch(await readFile(out, 'utf8'), /stale/);
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -163,6 +158,40 @@ test('cookies: only a bot or PO-token refusal is retried, once, with a private c
   await rm(dir, { recursive: true, force: true });
 });
 
+test('cookies: an install during a retry is never marked dead by it; yt-dlp\'s cookie-file errors are scrubbed; a failed copy keeps the original refusal', async () => {
+  const dir = await tmp();
+  const path = join(dir, 'cookies.txt');
+  const jar = new CookieJar({ path, tmp: dir });
+  const bot = () => Object.assign(new Error("Command failed: yt-dlp\nERROR: Sign in to confirm you're not a bot"), { stderr: "ERROR: Sign in to confirm you're not a bot" });
+  await writeFile(path, toNetscape([{ name: 'LOGIN_INFO', value: 'old-session-value', domain: '.youtube.com' }]).text);
+  // The owner installs new cookies while a retry with the old ones is running; that retry is then bot-walled.
+  let n = 0;
+  const racing = jar.wrap(async (cmd, args) => {
+    if (n++ === 0) throw bot();
+    await writeFile(path, toNetscape([{ name: 'LOGIN_INFO', value: 'new-session-value', domain: '.youtube.com' }]).text + '# new\n');
+    throw bot();
+  });
+  await assert.rejects(racing('yt-dlp', ['x']));
+  assert.equal(await jar.state(), 'ok', 'the new file is untouched by the old retry');
+  // Real yt-dlp quotes a bad line with \t escapes (verifier, yt-dlp 2026.08.19); and a value anywhere else is masked.
+  const loadErr = "ERROR: invalid Netscape format cookies file '/tmp/x/cookies.txt': '.youtube.com\tFALSE\t/\tTRUE\t0\tLOGIN_INFO\tnew-session-value'\n"
+    + "http.cookiejar.LoadError: invalid Netscape format cookies file: '.youtube.com\tFALSE\t/\tTRUE\t0\tLOGIN_INFO\tnew-session-value'\n"
+    + "ERROR: Sign in to confirm you're not a bot (new-session-value)";
+  n = 0;
+  const leaky = jar.wrap(async () => { if (n++ === 0) throw bot(); throw Object.assign(new Error(`Command failed: yt-dlp\n${loadErr}`), { stderr: loadErr }); });
+  const e = await leaky('yt-dlp', ['x']).catch((x) => x);
+  assert.doesNotMatch(e.message + e.stderr, /new-session-value/);
+  assert.match(e.message, /Sign in to confirm/, 'the refusal itself stays, so it is still classed');
+  // The private copy can't be made (no temp dir): the original bot refusal is what comes back, and nothing ran again.
+  const broken = new CookieJar({ path: join(dir, 'other.txt'), tmp: join(dir, 'no', 'such', 'dir') });
+  await writeFile(broken.path, 'x');
+  const orig = bot();
+  let runs = 0;
+  assert.equal(await broken.wrap(async () => { runs++; throw orig; })('yt-dlp', ['x']).catch((x) => x), orig);
+  assert.equal(runs, 1);
+  await rm(dir, { recursive: true, force: true });
+});
+
 test('cookie watch: one reminder kind for missing and dead cookies, at most once per window, all-clear when they work, stale workers forgotten', () => {
   let t = 1_000_000;
   const posted = [];
@@ -174,7 +203,8 @@ test('cookie watch: one reminder kind for missing and dead cookies, at most once
   assert.equal(w.refused('restricted'), false);
   assert.equal(w.refused('bot'), true);
   assert.match(posted.at(-1), /no cookies to retry with/);
-  assert.equal(w.refused('potoken'), false, 'once per 12 h');
+  assert.equal(w.refused('potoken'), false, 'a PO-token wall is not something a sign-in fixes');
+  assert.equal(w.refused('bot'), false, 'once per 12 h');
   w.set('optiplex', 'ok');
   assert.match(posted.at(-1), /working YouTube cookies/);
   assert.equal(w.refused('bot'), false, 'working cookies: the retry handles it');

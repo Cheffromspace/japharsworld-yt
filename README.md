@@ -220,7 +220,7 @@ opens a growing playlist as live, at its end, with the clock from 0 (2026-10-23,
 ahead of the captions), so a player is held up to `HOME_SETTLE_SECONDS` (10) when the upload rate says the rest is due
 by then, and gets the finished playlist (`home`/`settled`; `home_first_segment` logs where each session's first
 player started). A video of `HOME_STAY_HOURS` (3) or longer keeps a PC player on its growing home playlist rather than
-sending it to Tunelio for a seek bar, unless Tunelio's build is already there (`home`/`stayed`; Everything-is-OK#577,
+sending it to Tunelio for a seek bar (`home`/`stayed`; a Quest's `.m3u8` ticket follows `HOME_ANDROID_GROWING`; Everything-is-OK#577,
 2026-11-06: players of 10-12 h videos were held 72-90 s for Tunelio builds that then failed). Sessions are saved
 next to their files and reloaded on restart (a deploy doesn't cut plays off, and the worker retries its uploads through
 it); the day's use is saved too. Files are kept `HOME_KEEP_HOURS`, oldest finished first out above `HOME_MAX_GB`

@@ -1248,7 +1248,7 @@ test('#398: a PC player on an adaptive plan (HLS, but a plain ticket) does not r
   assert.equal(app.jobs.length, 0);
 });
 
-test('ticket → home (#577): a PC player of a video over HOME_STAY_HOURS stays on its growing home session unless Tunelio is already built', async (t) => {
+test('ticket → home (#577): a PC player of a video over HOME_STAY_HOURS stays on its growing home session; Tunelio is not waited on', async (t) => {
   const { Adaptive } = await import('../src/adaptive.js');
   const make = (state) => {
     const job = { id: 'aaaaaaaaaaa', quality: '1080p', state, url: 'https://tunelio.dev/t?id=x' };
@@ -1268,7 +1268,7 @@ test('ticket → home (#577): a PC player of a video over HOME_STAY_HOURS stays 
   assert.ok(Date.now() - t0 < 3000, 'answered at home-ready time');
   assert.equal(building.playback.asked(), 0, 'Tunelio was never waited on');
   const built = await homeApp(t, make('ready'));
-  assert.doesNotMatch((await built.play(PC, '')).headers.get('location'), /\/home\//, 'Tunelio already built: the seekable build');
+  assert.match((await built.play(PC, '')).headers.get('location'), /\/home\//, 'a Tunelio build already there is no reason to leave (#577 verifier)');
   const off = await homeApp(t, { ...make('building'), config: { homeLongMinutes: 5, homeStayHours: 0 } });
   assert.doesNotMatch((await off.play(PC, '')).headers.get('location'), /\/home\//, 'HOME_STAY_HOURS=0: as before (#127 a)');
 });

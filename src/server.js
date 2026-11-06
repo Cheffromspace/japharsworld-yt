@@ -799,12 +799,26 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // A ready home session that went home only for being long and whose playlist grows (uneven keyframes, not due to
   // finish within HOME_SETTLE_SECONDS): given up for Tunelio while the pacer allows (#127 a, owner 2026-10-24). Home
   // keeps even-keyframe videos (their whole playlist goes up at once) and every play while over budget.
+  // Whether Tunelio holds a finished build of this video (any quality we build, progressive or HLS), so a player that
+  // leaves home for it waits for nothing.
+  function tunelioReady(s) {
+    const data = { id: s.id, seconds: s.seconds };
+    return [...new Set([playback.quality, ...config.tunelioQualities])].some((q) =>
+      [false, true].some((hls) => playback.peek?.(data, q, { hls })?.state === 'ready'));
+  }
   function leaveHome(s, hlsTicket = false) {
     if (s?.state === 'failed' && s.reason === 'uneven') return true; // another player of it gave it up meanwhile
     if (hlsTicket && config.homeAndroidGrowing) return false; // the Quest stays on the growing playlist (world #250)
     if (s?.state !== 'ready' || s.why !== 'long' || s.ended || s.endlist) return false;
     const eta = home.eta(s);
     if (eta != null && eta <= config.homeSettleMs) return false;
+    // A video of HOME_STAY_HOURS and longer stays on its ready home session unless Tunelio's build is already there
+    // (Everything-is-OK#577, prod 2026-11-06: two PC players of an 11.9 h video left a home session ready since 8.7 s
+    // and were held 72-77 s for a Tunelio build that ended in a 413; a 10 h video's players were held ~90 s and got
+    // youtube.com when Tunelio took 106 s). The growing playlist plays as live (no seek bar) but at once; Tunelio's
+    // builds of such lengths take longer than a player is held, or are refused for size.
+    const stay = config.homeStayHours > 0 && (s.seconds ?? 0) >= config.homeStayHours * 3600;
+    if (stay && !tunelioReady(s)) { metrics.inc('home', 'stayed'); return false; }
     const p = adaptive.pacer?.check?.();
     if (p && !p.ok) return false;
     // A Quest player may be on this session (world #250): the PC goes to Tunelio and the video is remembered as uneven,

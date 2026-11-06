@@ -33,8 +33,9 @@ const FIXED_PRIOR = { progressive: 2, hls: 3 };
 // fresh builds seen took 3.4 s (30 MB at 360p); the fastest real speed seen was ~82 MB/s.
 export const cachedBuild = (mb, buildMs) => buildMs < 3000 || mb / (buildMs / 1000) > 120;
 
-// Smallest file whose first-byte 413 counts as refused for size. The smallest refused in the 2026-10-31 bracket was 5.2 GB.
-const SIZE_REFUSAL_MIN_MB = 5000;
+// Smallest file whose first-byte 413 counts as refused for size. The smallest refused in the 2026-10-31 bracket was 5.2 GB;
+// on 2026-11-06 Tunelio refused a 4389 MB 720p HLS build (sF80I-TQiW0, 11.9 h; Everything-is-OK#577), so 4000.
+export const SIZE_REFUSAL_MIN_MB = 4000;
 
 export class Playback {
   constructor({ tunelio, quality = '1080p', lowerQuality = '720p', maxMbForQuality = 1500, progressiveMaxMb = 6000,

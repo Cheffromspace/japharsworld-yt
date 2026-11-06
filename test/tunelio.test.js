@@ -552,6 +552,18 @@ test('Playback: a stray first-byte 413 on a small file is a failed build, retrie
   assert.equal(p.start(data, '720p', { hls: true }).state, 'building', 'asked again');
 });
 
+test('Playback: a 4389 MB 720p HLS refused for size is remembered as too_long, not retried; 3.9 GB is a failed build (Everything-is-OK#577)', async () => {
+  let now = 1000;
+  for (const [mb, reason] of [[4389, 'too_long'], [3900, 'build_failed']]) {
+    const tunelio = { enabled: true, async create(id, quality) { return { url: 'https://t/x?a=1', quality, fileSize: mb * 1e6, expires: 0 }; } };
+    const p = new Playback({ tunelio, now: () => now, lowerQuality: '720p', probe: async () => ({ ok: false, refused: true, status: 413 }) });
+    const data = { id: 'sF80I-TQiW0', seconds: 42825 };
+    assert.equal((await p.location(data, { quality: '720p', hls: true })).reason, reason, `${mb} MB`);
+    now += 31_000;
+    assert.equal(p.start(data, '720p', { hls: true })?.state === 'building', reason === 'build_failed', `${mb} MB: asked again only when not remembered`);
+  }
+});
+
 test('VIDEO_MAX_HOURS: the default is 12 h; only an explicit 0 is off; empty or garbage keeps the default (world #420)', () => {
   for (const raw of [undefined, '', ' ', 'abc', '12h', '-5', '0x10', 'NaN', '1e3']) assert.equal(videoMaxSeconds(raw), 43200, String(raw));
   assert.equal(videoMaxSeconds('0'), 0);

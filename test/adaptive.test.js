@@ -687,3 +687,14 @@ test('#584: a long video Tunelio refuses as too long: AVPro\'s first load is sen
   }
   assert.equal(creates, 1);
 });
+
+test('#584: the mp4 /create failing (404 "Video not found or unavailable") ends the AVPro skip: AVPro takes the old path', async (t) => {
+  const s = await server({}, {}, { seconds: 2 * 3600 });
+  t.after(() => s.srv.close());
+  s.tunelio.create = async () => { throw Object.assign(new Error('Video not found or unavailable.'), { status: 404, code: 'Video not found or unavailable.' }); };
+  const n = await s.ticket(0);
+  assert.ok(await isPreparing(await s.get(`/v1/0/${n}.m3u8`, QUEST)), 'the first load: sent on while the mp4 starts');
+  await settle();
+  const a = await s.get(`/v1/0/${n}.m3u8`, QUEST);
+  assert.equal(a.headers.get('location'), 'https://www.youtube.com/watch?v=AbCdEfGh1jK', 'then the old answer, not "not a video" again');
+});

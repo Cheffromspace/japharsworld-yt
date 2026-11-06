@@ -138,6 +138,9 @@ export const config = {
   relayWaitMs: int('RELAY_WAIT_MS', 8000),
   // Minutes without any worker before the "no search worker" alert.
   relayIdleAlertMinutes: int('RELAY_IDLE_ALERT_MINUTES', 10),
+  // The home relay's throwaway-account cookies (Everything-is-OK#575, src/cookiewatch.js): Discord asks for a new sign-in
+  // at most once per this many hours. 0 = never.
+  cookieNudgeHours: int('COOKIE_NUDGE_HOURS', 12),
   // Home relay playback (src/home.js, relay/media.js): a relay worker with ffmpeg streams the video from the home
   // connection as HLS. Tunelio stays first while today's credits are within the pacer's allowance; home serves when they
   // aren't, when Tunelio is off or failing, and for videos of HOME_LONG_MINUTES and longer (Tunelio's build time grows

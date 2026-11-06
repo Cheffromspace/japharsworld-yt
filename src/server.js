@@ -48,6 +48,7 @@ import { Playback, linkProbe, clientKind, isAndroidPlayer } from './playback.js'
 import { TunelioCaptions } from './transcripts.js';
 import { CaptionChain } from './captionchain.js';
 import { makeAlert } from './alert.js';
+import { CookieWatch } from './cookiewatch.js';
 import { Relay, RelayError } from './relay.js';
 import { DataApi } from './dataapi.js';
 import { makeSearch } from './search.js';
@@ -173,6 +174,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }),
   });
   relay ??= new Relay({ token: config.relayToken, log: logJson });
+  const cookieWatch = new CookieWatch({ alert, hours: config.cookieNudgeHours, log: logJson });
   home ??= new Home({ relay, dir: join(dirname(config.dbPath), 'home'), base: `${config.publicUrl}/home`, enabled: config.homeRelay && relay.enabled,
     dailyBuilds: config.homeDailyBuilds, dailyMb: config.homeDailyMb, hourBuilds: config.homeHourBuilds, hourMb: config.homeHourMb,
     hourMbExemptSeconds: config.homeHourMbExemptHours * 3600, startGapMs: config.homeStartGapMs,
@@ -203,6 +205,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const refusals = new RefusalWatch();
   function refused(where, cls) {
     metrics.inc('yt_refusal', `${where}:${cls}`);
+    if (where === 'home') cookieWatch.refused(cls);
     if (where === 'home' && refusals.add(cls)) {
       alert('yt_refused', `YouTube refused the home relay ${refusals.times.length} times in 15 minutes (${refusals.summary()}): searches go to the Linode, captions to Tunelio, home plays to Tunelio or youtube.com.`, 60);
     }
@@ -594,7 +597,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const jobs = [...(playback.jobs?.values?.() ?? [])];
     const count = (st) => jobs.filter((j) => j.state === st).length;
     return {
-      version: gitHead(), uptimeS: Math.round((now - startedAt) / 1000), busy: busy(), holding,
+      version: gitHead(), uptimeS: Math.round((now - startedAt) / 1000), busy: busy(), holding, cookies: cookieWatch.state(),
       tunelio: { enabled: tunelio.enabled, credits: tunelio.credits, pausedS: Math.max(0, Math.round(((playback.pausedUntil ?? 0) - now) / 1000)) },
       builds: { building: count('building'), ready: count('ready'), failed: count('failed'),
         inFlight: jobs.filter((j) => j.state === 'building').map((j) => ({ format: j.format, quality: j.quality, mb: j.mb, seconds: j.seconds,
@@ -1456,6 +1459,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const gone = new AbortController();
       res.on('close', () => gone.abort());
       const mediaMax = /^\d{1,2}$/.test(url.searchParams.get('mediaMax') ?? '') ? Number(url.searchParams.get('mediaMax')) : null;
+      // The worker's cookie state word (relay/cookies.js): none, ok or dead.
+      if (url.searchParams.has('cookies')) cookieWatch.set(name, url.searchParams.get('cookies'));
       const job = await relay.next(name, version, gone.signal, caps, (url.searchParams.get('paused') ?? '').slice(0, 200), mediaMax);
       if (!job) { res.writeHead(204, { 'cache-control': 'no-store' }); return res.end(); }
       return json(res, 200, { job });

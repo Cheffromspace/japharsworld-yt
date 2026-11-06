@@ -8,12 +8,17 @@
 // 1080p plays need ~1.1 MB/s of the ~12 MB/s upload), RELAY_CACHE_GB (40; 0 = no cache of finished streams, relay/cache.js) in RELAY_CACHE_DIR (else systemd's CACHE_DIRECTORY), YT_BACKOFF_MINUTES (10)
 // and YT_BACKOFF_MAX_MINUTES (120): how long a kind of job pauses after YouTube refuses it (see refused() below),
 // RELAY_SPLIT_BY_TIME (off; on = media segments cut on time, not keyframes, relay/media.js).
+// YT_COOKIES (Everything-is-OK#575; default cookies.txt in systemd's STATE_DIRECTORY, none without one): a throwaway
+// account's cookies, put there by relay/cookies-install.js. A bot or PO-token refusal is retried once with them
+// (relay/cookies.js); polls carry their state word (none, ok, dead) so the server can ask the owner for a new sign-in.
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { youtube as defaultYoutube, resetClient } from '../src/youtube.js';
-import { captionsJob, findYtdlp, ytdlpArgs } from './captions.js';
+import { captionsJob, findYtdlp, ytdlpArgs, runWarn } from './captions.js';
+import { run as runPlain } from '../src/captions.js';
+import { CookieJar } from './cookies.js';
 import { mediaJob } from './media.js';
 import { MediaCache } from './cache.js';
 import { txBytes as defaultTxBytes } from '../src/net.js';
@@ -28,13 +33,13 @@ const pauseKind = (kind) => (kind === 'more' ? 'search' : kind);
 
 export function createWorker({ url, token, name = 'worker', version = '', polls = 3, youtube = defaultYoutube, reset = resetClient,
   txBytes = defaultTxBytes, captions = null, ytdlp = null, ytdlpExtraArgs = ytdlpArgs(), media = null, caps = [], mediaMax = 4, ffmpeg = 'ffmpeg', cache = null, splitByTime = false,
-  backoffMinutes = 10, backoffMaxMinutes = 120, fetcher = fetch, log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o })), now = () => Date.now(),
+  backoffMinutes = 10, backoffMaxMinutes = 120, jar = null, fetcher = fetch, log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o })), now = () => Date.now(),
   sleep = (ms, signal) => new Promise((r) => { const t = setTimeout(r, ms); signal?.addEventListener('abort', () => { clearTimeout(t); r(); }); }) }) {
   // Caption jobs: an injected function (tests) or yt-dlp, found once on first use.
   let ytdlpPath = ytdlp;
   const runCaptions = captions ?? (async (job) => {
     ytdlpPath ??= await findYtdlp();
-    return captionsJob(job, { ytdlp: ytdlpPath, extraArgs: ytdlpExtraArgs, log });
+    return captionsJob(job, { ytdlp: ytdlpPath, extraArgs: ytdlpExtraArgs, log, ...(jar ? { runner: jar.wrap(runWarn) } : {}) });
   });
   const base = String(url).replace(/\/+$/, '');
   const headers = { authorization: `Bearer ${token}` };
@@ -54,7 +59,7 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
       return res.status;
     };
     const attempt = () => mediaJob(job, { ytdlp: ytdlpPath, ffmpeg, extraArgs: ytdlpExtraArgs, upload, wanted: () => want, cache, splitByTime,
-      log: (o) => log({ ...o, quality: job.quality }) });
+      log: (o) => log({ ...o, quality: job.quality }), ...(jar ? { runner: jar.wrap(runPlain) } : {}) });
     // ffmpeg that can't open the streams: once more from a fresh yt-dlp resolve (2026-10-23, 1 of 8 test videos: its
     // fresh stream URLs answered 403 for a minute or two).
     return attempt().catch((err) => (/ffmpeg exited/.test(err?.message ?? '') ? attempt() : Promise.reject(err)));
@@ -172,6 +177,8 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
     while (!stopping.signal.aborted) {
       const p = paused();
       if (p.length) q.set('paused', p.join(',')); else q.delete('paused');
+      // The cookies' state word only (none, ok, dead), never the cookies: the server asks for a new sign-in when needed.
+      if (jar?.path) q.set('cookies', await jar.state());
       // This host's bytes sent, for the server's transfer count (src/net.js).
       const tx = txBytes();
       if (Number.isFinite(tx)) q.set('tx', String(tx));
@@ -211,7 +218,8 @@ function gitVersion() {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const { RELAY_URL, RELAY_TOKEN, WORKER_NAME = 'worker', RELAY_POLLS = '3', FFMPEG = 'ffmpeg', RELAY_MEDIA = 'on', RELAY_MEDIA_MAX = '4',
     RELAY_CACHE_GB = '40', RELAY_CACHE_DIR = process.env.CACHE_DIRECTORY, RELAY_SPLIT_BY_TIME = 'off',
-    YT_BACKOFF_MINUTES = '10', YT_BACKOFF_MAX_MINUTES = '120' } = process.env;
+    YT_BACKOFF_MINUTES = '10', YT_BACKOFF_MAX_MINUTES = '120',
+    YT_COOKIES = process.env.STATE_DIRECTORY ? join(process.env.STATE_DIRECTORY.split(':')[0], 'cookies.txt') : '' } = process.env;
   if (!RELAY_URL || !RELAY_TOKEN) { console.error('Set RELAY_URL and RELAY_TOKEN.'); process.exit(2); }
   // Media jobs only when ffmpeg runs here; the server sends them only to workers that announce caps=media.
   let hasFfmpeg = false;
@@ -225,6 +233,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   }
   const worker = createWorker({ url: RELAY_URL, token: RELAY_TOKEN, name: WORKER_NAME, version: gitVersion(), polls: Number(RELAY_POLLS) || 3,
     caps, ffmpeg: FFMPEG, mediaMax: Number(RELAY_MEDIA_MAX) || 2, cache, splitByTime: RELAY_SPLIT_BY_TIME === 'on',
+    // Cookies only where a cookie path is set (production's unit has a StateDirectory; staging's worker has none).
+    jar: YT_COOKIES ? new CookieJar({ path: YT_COOKIES, log: (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o })) }) : null,
     backoffMinutes: Number(YT_BACKOFF_MINUTES) || 10, backoffMaxMinutes: Number(YT_BACKOFF_MAX_MINUTES) || 120 });
   for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { worker.stop(); setTimeout(() => process.exit(0), 500).unref(); });
   worker.start();

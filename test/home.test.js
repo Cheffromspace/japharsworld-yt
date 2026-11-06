@@ -1876,7 +1876,10 @@ test('home: videos of hourMbExemptSeconds and longer skip the hour MB check (Tun
   assert.equal(home.blocks({ seconds: 3 * 3600 }, '720p'), 'hour', '3 h at 720p (4104 MB) would take the hour over 1500');
   assert.equal(home.blocks({ seconds: 5 * 3600 }, '720p'), null, '5 h is exempt');
   assert.ok(home.start({ id: 'bbbbbbbbbbb', seconds: 5 * 3600 }, '720p'));
-  assert.equal(home.limit(), 'hour', 'and it counts in the hour for the builds after it');
+  assert.equal(home.limit(), null, 'the hour MB is per video: limit() holds nothing back for it');
+  assert.equal(home.blocks({ seconds: 600 }, '720p'), 'hour', 'it counts in the hour for the shorter videos after it');
+  assert.equal(home.blocks({ seconds: 10 * 3600 }, '720p'), null, 'and never for another exempt one (#576 verifier)');
+  assert.ok(home.start({ id: 'ccccccccccc', seconds: 10 * 3600 }, '720p'));
 });
 
 test('home: a build the worker serves from its own cache leaves the hour, not the gap', (t) => {

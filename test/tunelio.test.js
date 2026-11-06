@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { Tunelio } from '../src/tunelio.js';
-import { Playback, clientKind, isAndroidPlayer } from '../src/playback.js';
+import { Playback, clientKind, isAndroidPlayer, playPlatform } from '../src/playback.js';
 import { TunelioCaptions, orderTracks, pickTrack, displayName } from '../src/transcripts.js';
 import { makeAlert } from '../src/alert.js';
 import { Store } from '../src/store.js';
@@ -417,6 +417,23 @@ test('room quality: q/auto clears the pick', async () => {
   assert.equal(store.quality(1, 3600_000), '1080p');
   store.setQuality(1, null);
   assert.equal(store.quality(1, 3600_000), null);
+});
+
+test('playPlatform: every client and User-Agent seen on prod (2026-11-06), Everything-is-OK#586', () => {
+  const RESOLVER = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
+  const NSPLAYER = 'NSPlayer/12.00.26100.7019 WMFSDK/12.00.26100.7019';
+  const QUEST = 'AVProMobileVideo/2026.3.3p1-1937-299983b13b-Release (Linux;Android 14) ExoPlayer';
+  const UNITY = 'stagefright/1.2 (Linux;Android 14)';
+  const TABLET = 'UnityPlayer/2022.3.22f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)';
+  for (const [ua, hls, want] of [
+    [RESOLVER, false, 'pc'], [NSPLAYER, false, 'pc'], ['', false, 'pc'],
+    [QUEST, false, 'android'], [QUEST, true, 'android'], [UNITY, false, 'android'], [UNITY, true, 'android'],
+    [RESOLVER, true, 'android'], // only the world's Android build bakes .m3u8 tickets
+    ['Mozilla/5.0 (Linux; Android 14; Quest 3) Chrome/149.0 Mobile Safari/537.36', false, 'android'],
+    ['Mozilla/5.0 (X11; Linux x86_64) Chrome/149.0 Safari/537.36', false, null],
+    ['Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) Safari/605.1.15', false, null],
+    ['curl/8.5.0', false, null], [TABLET, false, null],
+  ]) assert.equal(playPlatform(ua, hls), want, `${ua} hls=${hls}`);
 });
 
 test('isAndroidPlayer: the Quest players (seen 2026-10-22), not the PC player, the resolver or the tablet', () => {

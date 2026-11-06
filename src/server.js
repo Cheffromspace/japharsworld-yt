@@ -42,7 +42,7 @@ import { youtube as defaultYoutube } from './youtube.js';
 import { cachedSheet } from './sheet.js';
 import { Captions, errorLine } from './captions.js';
 import { Tunelio } from './tunelio.js';
-import { Playback, linkProbe, clientKind, isAndroidPlayer } from './playback.js';
+import { Playback, linkProbe, clientKind, isAndroidPlayer, playPlatform } from './playback.js';
 import { TunelioCaptions } from './transcripts.js';
 import { CaptionChain } from './captionchain.js';
 import { makeAlert } from './alert.js';
@@ -1153,7 +1153,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         store.markPlayed(shard, n, t.data.id);
         captions.warm?.(t.data.id);
         logJson({ event: 'play', shard, n, id: t.data.id, via: pin.via, reason: pin.reason, client: kind, held, pinned: true, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
-        countPlay(shard, t.data, { via: pin.via, reason: pin.reason, location: pin.location }, android || hlsTicket ? 'android' : kind === 'avpro' ? 'pc' : null);
+        countPlay(shard, t.data, { via: pin.via, reason: pin.reason, location: pin.location }, playPlatform(req.headers['user-agent'], hlsTicket));
         res.writeHead(302, { location: pin.location, 'cache-control': 'no-store' });
         return res.end();
       };
@@ -1343,7 +1343,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (where.ready === false) { location = `https://www.youtube.com/watch?v=${t.data.id}`; via = 'youtube'; reason = 'build_timeout'; metrics.inc('ticket_timeout'); }
       logJson({ event: 'play', shard, n, id: t.data.id, via, reason, client: kind, held, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
       if (via === 'youtube' && /^(budget|cap|allowance)$/.test(reason ?? '')) routeEvent('youtube', reason, { id: t.data.id });
-      countPlay(shard, t.data, { via, reason, location }, android || hlsTicket ? 'android' : kind === 'avpro' ? 'pc' : null);
+      countPlay(shard, t.data, { via, reason, location }, playPlatform(req.headers['user-agent'], hlsTicket));
       lastAnswer.set(shard, { n, via, reason, quality: where.session?.quality ?? c?.quality, hls: where.session ? true : c?.hls, mode: c?.mode });
       if (warmed.delete(`${shard}:${t.data.id}`)) metrics.inc('warm_played');
       if (config.ticketPin && via !== 'youtube') {
@@ -1413,8 +1413,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // (or a late joiner, or a replay) until ROOM_PLAY_MS after it was counted. Held in memory only; video IDs never reach the metrics.
   const ROOM_PLAY_MS = 3 * 3600_000;
   const roomPlays = new Map(); // "shard:videoId" → when it was last counted (ms)
-  // The platform (pc / android, from the player's User-Agent or a .m3u8 ticket) counts once per room and platform, so a
-  // room with PC and Quest players counts one of each; the resolver's requests can't tell, so they don't count it.
+  // The platform (pc / android, playPlatform: the User-Agent or a .m3u8 ticket) counts once per room and platform, so a
+  // room with PC and Quest players counts one of each, and a PC play counts once whether its resolver or its player
+  // (or both) asked the ticket. The resolver from Windows counts pc since Everything-is-OK#586 (2026-11-06).
   function countPlay(shard, data, where, platform) {
     const key = `${shard}:${data.id}`;
     const now = Date.now();

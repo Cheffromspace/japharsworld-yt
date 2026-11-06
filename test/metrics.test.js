@@ -156,6 +156,42 @@ async function startApp(path) {
   return { server, get, metrics };
 }
 
+// Everything-is-OK#586: a PC play counts pc once whether its resolver (redirected, so its player never asks the ticket),
+// its player, or both asked; a Quest play counts android once; a resolver from neither Windows nor Android counts none.
+test('play_platform: the PC resolver and player count pc once per room, a Quest android once', async (t) => {
+  const f = tmp();
+  const s = await startApp(f.path);
+  t.after(() => { s.server.close(); s.metrics.close(); f.done(); });
+  const RESOLVER = { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36' };
+  const NSPLAYER = { 'user-agent': 'NSPlayer/12.00.26100.1 WMFSDK/12.00.26100.1' };
+  const QUEST = { 'user-agent': 'AVProMobileVideo/2026.3.3p2-1937-299983b13b-Release (Linux;Android 14) ExoPlayer' };
+  const UNITY = { 'user-agent': 'stagefright/1.2 (Linux;Android 14)' };
+  const OTHER = { 'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) Chrome/149.0 Safari/537.36' };
+  const search = async (shard, ip) => (await (await s.get(`/v1/${shard}/s?l=en&q=x`, { 'x-forwarded-for': ip })).json()).results[0].t;
+  const platform = () => { s.metrics.flush(); const db = openMetricsDb(f.path); try { return Object.fromEntries(db.prepare("SELECT key, value FROM daily WHERE metric = 'play_platform'").all().map((x) => [x.key, x.value])); } finally { db.close(); } };
+  // Room 0: the resolver gets the redirect (a short video, ready at once) and its player follows the link: pc once.
+  const a = await search(0, '198.51.100.31');
+  const first = await s.get(`/v1/0/${a}`, RESOLVER);
+  assert.equal(first.status, 302);
+  await s.get(`/v1/0/${a}`, RESOLVER);
+  assert.deepEqual(platform(), { pc: 1 });
+  // The same room's NSPlayer on the same video: still one pc.
+  await s.get(`/v1/0/${a}`, NSPLAYER);
+  assert.deepEqual(platform(), { pc: 1 });
+  // Room 1: the player alone (the resolver was sent on): pc once; then a Quest in that room on the .m3u8 ticket, with
+  // both its players: android once.
+  const b = await search(1, '198.51.100.32');
+  await s.get(`/v1/1/${b}`, NSPLAYER);
+  await s.get(`/v1/1/${b}.m3u8`, QUEST);
+  await s.get(`/v1/1/${b}.m3u8`, UNITY);
+  await s.get(`/v1/1/${b}`, QUEST);
+  assert.deepEqual(platform(), { pc: 2, android: 1 });
+  // Room 2: a resolver from neither Windows nor Android counts no platform (the play still counts).
+  const c = await search(2, '198.51.100.33');
+  assert.equal((await s.get(`/v1/2/${c}`, OTHER)).status, 302);
+  assert.deepEqual(platform(), { pc: 2, android: 1 });
+});
+
 test('search service counts searches, joins, plays, captions, failures and shards per day', async (t) => {
   const f = tmp();
   const s = await startApp(f.path);

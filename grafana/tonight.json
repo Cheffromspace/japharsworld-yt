@@ -2092,7 +2092,7 @@
    "type": "bargauge",
    "id": 14,
    "title": "Quest and PC",
-   "description": "Plays by player platform, once per room and platform, and joins that loaded the search address (untrusted URLs allowed), over the time range. Includes the owner's own testing: the TEST world uses the same service and these counts can't tell them apart (most of 10-26's Channels plays were testing).",
+   "description": "Plays by player platform, once per room and platform, and joins that loaded the search address (untrusted URLs allowed), over the time range. PC plays are low before the Everything-is-OK#586 deploy (built 2026-11-06; plays whose resolver got the link were not counted PC), so a range that spans it mixes the two. Includes the owner's own testing: the TEST world uses the same service and these counts can't tell them apart (most of 10-26's Channels plays were testing).",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"

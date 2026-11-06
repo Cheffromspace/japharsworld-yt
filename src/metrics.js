@@ -88,7 +88,7 @@ export const METRICS = {
   more: ['daily', none],
   more_fail: ['daily', isStatus],
   play: ['daily', none],
-  play_platform: ['daily', oneOf('pc', 'android')], // once per room and platform: the player's User-Agent or a .m3u8 ticket
+  play_platform: ['daily', oneOf('pc', 'android')], // once per room and platform: playPlatform (src/playback.js), the UA or a .m3u8 ticket
   play_route: ['daily', oneOf('tunelio-progressive', 'tunelio-hls', 'tunelio-adaptive', 'home', 'youtube-live', 'youtube-fallback')],
   // Home relay (src/home.js): sessions started / ready / failed, new sessions refused by the daily cap, and why a play
   // started home (Tunelio off, a long video, the credit pacer, Tunelio's build failed), counted once per session.

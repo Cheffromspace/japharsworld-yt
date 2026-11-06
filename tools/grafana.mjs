@@ -214,7 +214,7 @@ export function dashboard() {
     ['count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)', 'rooms'],
   ], { w: 8, min: 0, decimals: 0, description: 'Distinct shards that saw a request in the past hour (from the hourly shard table).' }));
   p.push(series('Plays by platform (per 6 h)', [[ev('play_platform'), '{{key}}']], { w: 8, stack: true, min: 0,
-    description: 'Once per room and platform (a room with PC and Quest players counts one of each), from the player’s User-Agent or a .m3u8 ticket. Counted from 2026-10-23.' }));
+    description: 'Once per room and platform (a room with PC and Quest players counts one of each), from the ticket request’s User-Agent or a .m3u8 ticket. Counted from 2026-10-23. PC is an undercount before the Everything-is-OK#586 deploy (see the Deploys markers; built 2026-11-06): plays whose resolver got the link were not counted PC, so don’t compare the PC/Quest ratio across it. Quest is unchanged.' }));
   p.push(series('Room quality picks and tablet warm-ups (per 6 h)', [[ev('quality_pick'), 'pick {{key}}'],
     ['sum(increase(eiok_events_total{metric="warm"}[6h]))', 'warm builds'], ['sum(increase(eiok_events_total{metric="warm_played"}[6h]))', 'warm then played']], { w: 8, min: 0 }));
 
@@ -392,7 +392,7 @@ export function tonight() {
   p.push(squares('Here lately', 'join_lang', { w: 6, h: 10, description: 'All 16 VRChat client languages; a square lights up when that language had joins in the last 2 hours (whatever the time range), from visitors who allow untrusted URLs: the bare search address the world loads once after join. It counts arrivals, not who is still here, so a square stays lit for 2 h after its last join. Dark: none; 1 join grey; 2–3 blue; 4 or more purple.' }));
   p.push(squares('Search languages', 'search_lang', { w: 6, h: 10, description: `The same squares for searches with a query in the last 2 hours, by VRChat client language. ${OWN_TESTS}` }));
   p.push(bars('Quest and PC', [[inRange('play_platform', 'pc'), 'PC plays'], [inRange('play_platform', 'android'), 'Quest plays'], [inRange('join', ''), 'joins']],
-    { w: 12, h: 10, description: `Plays by player platform, once per room and platform, and joins that loaded the search address (untrusted URLs allowed), over the time range. ${OWN_TESTS}` }));
+    { w: 12, h: 10, description: `Plays by player platform, once per room and platform, and joins that loaded the search address (untrusted URLs allowed), over the time range. PC plays are low before the Everything-is-OK#586 deploy (built 2026-11-06; plays whose resolver got the link were not counted PC), so a range that spans it mixes the two. ${OWN_TESTS}` }));
 
   p.push(row('The night\'s shape'));
   const curve = series('Through the night (Chicago time)', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 18, h: 9, stack: true, min: 0, decimals: 0,

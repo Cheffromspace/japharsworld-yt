@@ -506,6 +506,20 @@ export function isAndroidPlayer(ua = '') {
   return /Android/i.test(s) && !/Mozilla\//i.test(s) && !/UnityPlayer|UnityWebRequest/i.test(s);
 }
 
+// The platform a ticket request comes from, for play_platform (Everything-is-OK#586): a .m3u8 ticket (only the world's
+// Android build bakes those) or an Android player (AVPro's ExoPlayer, Unity's stagefright) is android; the PC's player
+// (NSPlayer/WMF) and VRChat's resolver from Windows are pc. Until #586 the resolver's requests counted no platform, so
+// a PC play whose resolver got the redirect (its player then opens the link, not the ticket) was never counted pc: 27
+// such play events in 24 h on prod (2026-11-06). Anything else (a Mozilla UA from neither, an unknown client) is none.
+export function playPlatform(ua = '', hlsTicket = false) {
+  const s = String(ua);
+  if (hlsTicket || isAndroidPlayer(s)) return 'android';
+  const kind = clientKind(s);
+  if (kind === 'avpro') return 'pc';
+  if (kind === 'ytdlp') return /Android/i.test(s) ? 'android' : /Windows NT/i.test(s) ? 'pc' : null;
+  return null;
+}
+
 export function clientKind(ua = '') {
   const s = String(ua);
   if (/UnityPlayer|UnityWebRequest/i.test(s)) return 'string';

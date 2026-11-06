@@ -1004,6 +1004,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (hlsTicket && playback.tooLong?.(t.data.id)) return 'too_long';
     let c = await choice(shard, t.data);
     if (hlsTicket && !t.data.live) c = hlsChoice(c); // live: the watch link, as on a plain ticket (world #270)
+    // What the Quest's player would get (#584): a ready mp4 while the HLS build isn't ready. Reported, and no HLS warm.
+    if (config.questMp4 && hlsTicket && c.hls && !t.data.live && playback.peek?.(t.data, c.quality, { hls: true })?.state !== 'ready') {
+      const mp4 = playback.readyProgressive?.(t.data, c.quality);
+      if (mp4) {
+        const st = playback.status(t.data, { warm: false, quality: mp4.requested });
+        return { v: API, shard, t: n, room: roomQuality(shard), ...st, plan: 'quest_mp4', ...meta(t.data) };
+      }
+    }
     if (gate && playback.wouldBuild?.(t.data, c.quality, { hls: c.hls }) && !gate()) return 'cap';
     const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
     const st = playback.status(t.data, { quality: c.quality, hls: c.hls });
@@ -1180,12 +1188,29 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
           return res.end(body);
         }
-        holding++;
-        try {
-          if (config.homeRaceMs > 0 && hlsTicket && homeOk && c.hls) where = await raceHome(req, shard, t.data, c, hq, key);
-          else where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs,
-            quality: c.quality, hls: c.hls });
-        } finally { holding--; }
+        // A Quest player (.m3u8 ticket) whose HLS build isn't ready, or failed, or ran past the hold, while an mp4 build of
+        // the same video and quality is ready (a PC player's, say): the mp4 instead of a wait and then youtube.com
+        // (Everything-is-OK#584, prod 2026-11-06 14:06Z: an 1888 MB 720p mp4 ready in 19 s, its HLS build cut off at 125 s,
+        // five Quest players held 47-90 s each and sent to youtube.com). QUEST_MP4=off: as before.
+        const questMp4 = () => {
+          if (!config.questMp4 || !hlsTicket || resolver || !c.hls || t.data.live) return null;
+          const job = playback.readyProgressive?.(t.data, c.quality);
+          return job ? { location: job.url, via: 'tunelio', reason: 'quest_mp4', quality: job.quality, ready: true, mp4: job } : null;
+        };
+        const hlsReady = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state === 'ready';
+        where = hlsReady ? null : questMp4();
+        if (!where) {
+          holding++;
+          try {
+            if (config.homeRaceMs > 0 && hlsTicket && homeOk && c.hls) where = await raceHome(req, shard, t.data, c, hq, key);
+            else where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs,
+              quality: c.quality, hls: c.hls });
+          } finally { holding--; }
+          // The hold ended without the HLS build: an mp4 that got ready meanwhile. Not for an answer no build would change
+          // (too_long, restricted, the visitor's own limits).
+          if (where.ready === false || (where.via === 'youtube' && /^(build_failed|tunelio_failed)$/.test(where.reason ?? ''))) where = questMp4() ?? where;
+        }
+        if (where.mp4) metrics.inc('adaptive', 'quest_mp4');
         if (c.hls && !c.single && where.ready && where.via === 'tunelio') {
           where = { ...where, location: adaptive.url(adaptive.session(t.data, playback.peek(t.data, c.quality, { hls: true }))) };
         } else if (!resolver && where.ready && where.via === 'tunelio' && /[?&]hls=1$/.test(where.location)) {
@@ -1196,7 +1221,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         // An AV1 build on a .m3u8 ticket: the Quest 2 can't decode AV1 (Everything-is-OK #101), and home is always
         // H.264 + AAC (relay/media.js). Counted whether or not HOME_ANDROID is on, to show how often it happens.
         let homeFor = null;
-        if (hlsTicket && !resolver && where.ready && where.via === 'tunelio' && c.hls) {
+        if (hlsTicket && !resolver && where.ready && where.via === 'tunelio' && c.hls && !where.mp4) {
           const codec = await adaptive.codec?.(playback.peek(t.data, c.quality, { hls: true }));
           if (codec === 'av1') {
             metrics.inc('adaptive', 'android_av1');
@@ -1241,14 +1266,17 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       logJson({ event: 'play', shard, n, id: t.data.id, via, reason, client: kind, held, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
       if (via === 'youtube' && /^(budget|cap|allowance)$/.test(reason ?? '')) routeEvent('youtube', reason, { id: t.data.id });
       countPlay(shard, t.data, { via, reason, location }, android || hlsTicket ? 'android' : kind === 'avpro' ? 'pc' : null);
-      lastAnswer.set(shard, { n, via, reason, quality: where.session?.quality ?? c?.quality, hls: where.session ? true : c?.hls, mode: c?.mode });
+      // An mp4 answer to a .m3u8 ticket (#584) is that progressive job's: its pin, report and status follow it, not the
+      // HLS build the plan named.
+      const src = where.mp4 ? { quality: where.mp4.requested, hls: false, mode: 'quest_mp4' } : c;
+      lastAnswer.set(shard, { n, via, reason, quality: where.session?.quality ?? src?.quality, hls: where.session ? true : src?.hls, mode: src?.mode });
       if (warmed.delete(`${shard}:${t.data.id}`)) metrics.inc('warm_played');
       if (config.ticketPin && via !== 'youtube') {
         const session = via === 'home' ? where.session ?? null : null;
-        const job = !session && c ? playback.peek?.(t.data, c.quality, { hls: c.hls }) : null;
+        const job = !session && src ? playback.peek?.(t.data, src.quality, { hls: src.hls }) : null;
         if (session || job?.url) {
-          pins.set(key, { id: t.data.id, via, reason, location, playlist: session ? true : Boolean(c.hls), session,
-            quality: c?.quality, hls: c?.hls, jobUrl: job?.url, mode: c?.mode ?? null, until: Date.now() + pinWindow(t.data) });
+          pins.set(key, { id: t.data.id, via, reason, location, playlist: session ? true : Boolean(src.hls), session,
+            quality: src?.quality, hls: src?.hls, jobUrl: job?.url, mode: src?.mode ?? null, until: Date.now() + pinWindow(t.data) });
         }
       }
       res.writeHead(302, { location, 'cache-control': 'no-store' });

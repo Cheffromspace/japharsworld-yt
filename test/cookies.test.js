@@ -174,13 +174,15 @@ test('cookies: an install during a retry is never marked dead by it; yt-dlp\'s c
   await assert.rejects(racing('yt-dlp', ['x']));
   assert.equal(await jar.state(), 'ok', 'the new file is untouched by the old retry');
   // Real yt-dlp quotes a bad line with \t escapes (verifier, yt-dlp 2026.08.19); and a value anywhere else is masked.
-  const loadErr = "ERROR: invalid Netscape format cookies file '/tmp/x/cookies.txt': '.youtube.com\tFALSE\t/\tTRUE\t0\tLOGIN_INFO\tnew-session-value'\n"
-    + "http.cookiejar.LoadError: invalid Netscape format cookies file: '.youtube.com\tFALSE\t/\tTRUE\t0\tLOGIN_INFO\tnew-session-value'\n"
+  const loadErr = String.raw`ERROR: invalid Netscape format cookies file '/tmp/x/cookies.txt': '.youtube.com\tFALSE\t/\tTRUE\t0\tLOGIN_INFO\tnew-session-value'` + '\n'
+    + String.raw`http.cookiejar.LoadError: invalid Netscape format cookies file: '.youtube.com\tFALSE\t/\tTRUE\t0\tLOGIN_INFO\tnew-session-value'` + '\n'
+    // The 2000-character stderr tail can cut a quoted line after its keyword: the short value there must still go.
+    + String.raw`TRUE\t/\tTRUE\t0\tYSC\tabc12'` + '\n'
     + "ERROR: Sign in to confirm you're not a bot (new-session-value)";
   n = 0;
   const leaky = jar.wrap(async () => { if (n++ === 0) throw bot(); throw Object.assign(new Error(`Command failed: yt-dlp\n${loadErr}`), { stderr: loadErr }); });
   const e = await leaky('yt-dlp', ['x']).catch((x) => x);
-  assert.doesNotMatch(e.message + e.stderr, /new-session-value/);
+  assert.doesNotMatch(e.message + e.stderr, /new-session-value|abc12/);
   assert.match(e.message, /Sign in to confirm/, 'the refusal itself stays, so it is still classed');
   // The private copy can't be made (no temp dir): the original bot refusal is what comes back, and nothing ran again.
   const broken = new CookieJar({ path: join(dir, 'other.txt'), tmp: join(dir, 'no', 'such', 'dir') });

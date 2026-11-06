@@ -67,7 +67,9 @@ export async function writeCookies(path, text) {
 // --no-warnings) and "invalid Netscape format cookies file …: '<line>'" with a LoadError traceback line, the tabs shown
 // as \t (verifiers, 2026-11-06, yt-dlp 2026.08.19). Such lines are dropped, and the file's own values (`secrets`) are
 // masked wherever else they turn up, so nothing that leaves the worker carries a cookie.
-const COOKIE_LINE = /cookie file entry|cookies file|LoadError|\t|\t/i;
+// A real tab, or the two characters backslash-t (Python's repr of one): the second catches a fragment of a quoted line
+// whose keyword was cut off by the 2000-character stderr tail.
+const COOKIE_LINE = /cookie file entry|cookies file|LoadError|\t|\\t/i;
 export function scrub(text, secrets = []) {
   let out = String(text ?? '').split('\n').filter((l) => !COOKIE_LINE.test(l)).join('\n');
   for (const v of secrets) out = out.split(v).join('…');
@@ -150,6 +152,7 @@ export class CookieJar {
           }
           await this.retried(null);
           if (r && typeof r === 'object' && Array.isArray(r.warnings)) r.warnings = r.warnings.map((w) => scrub(w, secrets)).filter(Boolean);
+          if (r && typeof r === 'object' && typeof r.stdout === 'string') r.stdout = scrub(r.stdout, secrets);
           else if (typeof r === 'string') r = scrub(r, secrets);
           return r;
         } finally { await rm(dir, { recursive: true, force: true }).catch(() => {}); }

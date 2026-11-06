@@ -198,7 +198,10 @@ YouTube can bot-wall the home IP too (first seen 2026-11-06). The production wor
 Google account's cookies (Everything-is-OK#575; never the owner's main account, `docs/service/youtube-risk.md` §2 in
 the world repo). They live only on the Optiplex, in `/var/lib/japharsworld-yt-relay/cookies.txt` (the unit's
 `StateDirectory`; `YT_COOKIES` overrides), mode 600, owned by `jytrelay`. Staging's worker has no state dir, so no
-cookies; it runs as the same user, so its unit also gets `InaccessiblePaths=-/var/lib/japharsworld-yt-relay` (a drop-in).
+cookies. It runs as the same user, so before the first install the owner adds a drop-in that hides the folder from it:
+`sudo mkdir -p /etc/systemd/system/japharsworld-yt-relay-staging.service.d && printf '[Service]
+InaccessiblePaths=-/var/lib/japharsworld-yt-relay
+' | sudo tee /etc/systemd/system/japharsworld-yt-relay-staging.service.d/no-cookies.conf && sudo systemctl daemon-reload && sudo systemctl restart japharsworld-yt-relay-staging`.
 
 - **When they're used:** yt-dlp (captions and home media) always runs without them first. Only a `bot` or `potoken`
   refusal is retried once with `--cookies`, on a private copy (yt-dlp rewrites its cookie file, so the installed one

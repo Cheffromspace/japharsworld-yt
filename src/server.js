@@ -1001,10 +1001,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const hw = hlsTicket && !config.homeAndroid ? null : homeWhy(t.data, hq, hlsTicket);
     const hs = hw ? homeKeep(t.data, hq, startHome(shard, t.data, hq, hw)) : null;
     if (hs && hs.state !== 'failed' && !leaveHome(hs, hlsTicket, { count: false })) return { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(hs), ...meta(t.data) };
-    if (hlsTicket && playback.tooLong?.(t.data.id)) return 'too_long';
     let c = await choice(shard, t.data);
     if (hlsTicket && !t.data.live) c = hlsChoice(c); // live: the watch link, as on a plain ticket (world #270)
-    // What the Quest's player would get (#584): a ready mp4 while the HLS build isn't ready. Reported, and no HLS warm.
+    // What the Quest's player would get (#584): a ready mp4 while the HLS build isn't ready, or was refused as too long.
+    // Reported, and no HLS warm.
     if (config.questMp4 && hlsTicket && c.hls && !t.data.live && playback.peek?.(t.data, c.quality, { hls: true })?.state !== 'ready') {
       const mp4 = playback.readyProgressive?.(t.data, c.quality);
       if (mp4) {
@@ -1012,6 +1012,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         return { v: API, shard, t: n, room: roomQuality(shard), ...st, plan: 'quest_mp4', ...meta(t.data) };
       }
     }
+    if (hlsTicket && playback.tooLong?.(t.data.id)) return 'too_long';
     if (gate && playback.wouldBuild?.(t.data, c.quality, { hls: c.hls }) && !gate()) return 'cap';
     const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
     const st = playback.status(t.data, { quality: c.quality, hls: c.hls });
@@ -1203,12 +1204,27 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           holding++;
           try {
             if (config.homeRaceMs > 0 && hlsTicket && homeOk && c.hls) where = await raceHome(req, shard, t.data, c, hq, key);
-            else where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs,
-              quality: c.quality, hls: c.hls });
+            else {
+              const hold = playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs,
+                quality: c.quality, hls: c.hls });
+              // An mp4 of this video that gets ready during the hold (a PC player's, started before or after this one):
+              // looked for every second, so a Quest isn't held the whole hold when the mp4 is ready in ~20 s (#584
+              // verifier). The HLS build carries on. Not in raceHome, whose own timer would still start a home session
+              // after the answer.
+              if (config.questMp4 && hlsTicket && !resolver && c.hls) {
+                let timer = null, done = false;
+                const found = new Promise((resolve) => {
+                  const look = () => { if (done) return; const m = questMp4(); if (m) resolve(m); else timer = setTimeout(look, 1000); };
+                  timer = setTimeout(look, 1000);
+                });
+                try { where = await Promise.race([hold, found]); } finally { done = true; clearTimeout(timer); }
+              } else where = await hold;
+            }
           } finally { holding--; }
-          // The hold ended without the HLS build: an mp4 that got ready meanwhile. Not for an answer no build would change
-          // (too_long, restricted, the visitor's own limits).
-          if (where.ready === false || (where.via === 'youtube' && /^(build_failed|tunelio_failed)$/.test(where.reason ?? ''))) where = questMp4() ?? where;
+          // The hold ended without the HLS build: an mp4 that got ready meanwhile. too_long too: Tunelio can refuse the HLS
+          // file for size (413) while the mp4 of the same video builds (src/playback.js SIZE_REFUSAL_MIN_MB). Not for
+          // restricted or the visitor's own limits, which no build changes.
+          if (where.ready === false || (where.via === 'youtube' && /^(build_failed|tunelio_failed|too_long)$/.test(where.reason ?? ''))) where = questMp4() ?? where;
         }
         if (where.mp4) metrics.inc('adaptive', 'quest_mp4');
         if (c.hls && !c.single && where.ready && where.via === 'tunelio') {

@@ -921,20 +921,34 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // The Quest's mp4 ({ quality, hls: false, mode: 'quest_mp4' }) for a .m3u8 ticket's HLS choice c: at most the lower
   // rung (720p), since a 1080p file may be AV1, which the Quest 2 can't decode (#101).
   const questMp4Of = (c) => ({ quality: c.quality === adaptive.upper ? adaptive.lower ?? c.quality : c.quality, hls: false, single: true, mode: 'quest_mp4' });
-  // That mp4 for a .m3u8 ticket's long play, or one whose HLS build failed and isn't due for a retry yet, else null.
-  // Null too once the video or that mp4 is known refused or failed (not yet due for a retry): the usual path then answers
-  // (too_long, restricted, #584's no-source answer), not another "not a video".
+  // A build that failed for this video and isn't due for a retry yet: a failed probe (524, 503) or a refusal for size.
+  // Not tunelio_failed (the /create itself failed: an outage, retried in 30 s) and not a spend refusal.
+  const questDead = (data, quality, hls) => {
+    const j = playback.peek?.(data, quality, { hls });
+    return j?.state === 'failed' && /^(build_failed|too_long)$/.test(j.reason ?? '') && !playback.wouldBuild?.(data, quality, { hls });
+  };
+  // The mp4 build turned HLS (a file over PROGRESSIVE_MAX_MB, or a 413 on its mp4): Unity's player can't open it.
+  const mp4AsHls = (data, quality) => playback.peek?.(data, quality)?.format === 'hls';
+  // Both formats of a .m3u8 ticket's play failed (hlsQ: the HLS build's quality): nothing a Quest opens is left.
+  const questNoSource = (data, hlsQ) => {
+    const mq = questMp4Of({ quality: hlsQ }).quality;
+    return questDead(data, hlsQ, true) && (questDead(data, mq, false) || mp4AsHls(data, mq));
+  };
+  // That mp4 for a .m3u8 ticket's long play, or one whose HLS build failed (while that failure stands, or while the mp4
+  // is building or ready), else null. Null too once the video is refused, or the mp4 failed or turned HLS: the usual path
+  // then answers (too_long, restricted, the HLS build, #584's no-source answer), not another "not a video".
   function questMp4(data, c, hlsTicket) {
     if (!config.questMp4 || !hlsTicket || data.live || !c.hls) return null;
     if (playback.tooLong?.(data.id) || playback.restricted?.(data.id)) return null;
     const hlsJob = playback.peek?.(data, c.quality, { hls: true });
     if (hlsJob?.state === 'ready') return null;
     const mp4 = questMp4Of(c);
-    if (playback.peek?.(data, mp4.quality)?.state === 'failed' && !playback.wouldBuild?.(data, mp4.quality)) return null;
+    if (questDead(data, mp4.quality, false) || mp4AsHls(data, mp4.quality)) return null;
     const mb = playback.knownMb?.(data.id, c.quality) ?? 0;
     const long = (data.seconds ?? 0) >= config.questMp4MinMinutes * 60 || (config.questMp4MinMb > 0 && mb >= config.questMp4MinMb);
-    const failed = hlsJob?.state === 'failed' && /^(build_failed|tunelio_failed|too_long)$/.test(hlsJob.reason ?? '')
-      && !playback.wouldBuild?.(data, c.quality, { hls: true });
+    const mp4State = playback.peek?.(data, mp4.quality)?.state;
+    const failed = hlsJob?.state === 'failed' && /^(build_failed|too_long)$/.test(hlsJob.reason ?? '')
+      && (!playback.wouldBuild?.(data, c.quality, { hls: true }) || mp4State === 'building' || mp4State === 'ready');
     return long || failed ? mp4 : null;
   }
 
@@ -1035,18 +1049,16 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     let c = await choice(shard, t.data);
     if (hlsTicket && !t.data.live) c = hlsChoice(c); // live: the watch link, as on a plain ticket (world #270)
     // A long video or a failed HLS build on a .m3u8 ticket (#584): its players end on Unity's player, so the tablet warms
-    // and reports the mp4. When that fails too, too_long: the world shows "can't be played here" and stops this client.
+    // and reports the mp4. When both have failed, too_long: the world shows "can't be played here" and stops this client.
+    const hlsQ = c.quality;
+    if (config.questMp4 && hlsTicket && !t.data.live && c.hls && questNoSource(t.data, hlsQ)) return 'too_long';
     const mp4 = questMp4(t.data, c, hlsTicket);
     if (mp4) c = mp4;
     if (gate && playback.wouldBuild?.(t.data, c.quality, { hls: c.hls }) && !gate()) return 'cap';
     const before = playback.peek?.(t.data, c.quality, { hls: c.hls })?.state;
     const st = playback.status(t.data, { quality: c.quality, hls: c.hls });
     if (hlsTicket && st.reason === 'too_long') return 'too_long';
-    // Both formats failed (the mp4 first or after the HLS build): no source a Quest opens.
-    if (config.questMp4 && hlsTicket && !t.data.live && st.state === 'failed' && /^(build_failed|tunelio_failed)$/.test(st.reason ?? '')) {
-      const other = c.hls ? playback.peek?.(t.data, questMp4Of(c).quality) : playback.peek?.(t.data, hlsChoice(c).quality, { hls: true });
-      if (!c.hls || (other?.state === 'failed' && /^(build_failed|tunelio_failed)$/.test(other.reason ?? ''))) return 'too_long';
-    }
+    if (config.questMp4 && hlsTicket && !t.data.live && st.state === 'failed' && questNoSource(t.data, hlsQ)) return 'too_long';
     if (c.mode) st.plan = c.mode;
     // Adaptive and start plays: the rung their players have reached (src/adaptive.js progress). Both fields are
     // always there for those plans: rung null and top 'pending' before the session's master is first loaded.
@@ -1178,6 +1190,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         if (where && leaveHome(hs, hlsTicket)) where = null;
       }
       let c = null;
+      let hlsQ = null; // the HLS build's quality of a .m3u8 ticket's Tunelio play (#584)
       if (!where) {
         c = await choice(shard, t.data);
         // The plan's own /create (or another play's) just timed out: home now, not another /create that would likely
@@ -1209,6 +1222,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         if (hlsTicket && !t.data.live) {
           if (!c.hls && !resolver) metrics.inc('adaptive', 'hls_ticket');
           c = hlsChoice(c);
+          hlsQ = c.quality;
           // #584 (see questMp4): Unity's player gets the mp4 whatever the plan; AVPro and the resolver are sent on at once
           // for a long or HLS-failed play, with the mp4 started for Unity's player.
           const mp4 = unityPlayer ? questMp4Of(c) : questMp4(t.data, c, hlsTicket);
@@ -1227,6 +1241,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
           return res.end(body);
         }
+        if (unityPlayer && mp4AsHls(t.data, c.quality)) questSkip = true;
+        if (questSkip && unityPlayer) {
+          // Its "mp4" is HLS (a file over PROGRESSIVE_MAX_MB, or a 413 on the mp4): "not a video", so AVPro's turn comes.
+          logJson({ event: 'play_defer', shard, n, id: t.data.id, held: Date.now() - started, quest: 'hls_only', client: kind });
+          const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+          return res.end(body);
+        }
         if (unityPlayer) metrics.inc('adaptive', 'quest_mp4');
         holding++;
         try {
@@ -1234,6 +1256,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           else where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs,
             quality: c.quality, hls: c.hls });
         } finally { holding--; }
+        // The mp4 build turned HLS while Unity's player held on it: no use to that player either (see above).
+        if (unityPlayer && where.via === 'tunelio' && /[?&]hls=1$/.test(where.location ?? '')) {
+          logJson({ event: 'play_defer', shard, n, id: t.data.id, held: Date.now() - started, quest: 'hls_only', client: kind });
+          const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+          return res.end(body);
+        }
         if (c.hls && !c.single && where.ready && where.via === 'tunelio') {
           where = { ...where, location: adaptive.url(adaptive.session(t.data, playback.peek(t.data, c.quality, { hls: true }))) };
         } else if (!resolver && where.ready && where.via === 'tunelio' && /[?&]hls=1$/.test(where.location)) {
@@ -1267,14 +1296,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       metrics.latency('ticket_hold_ms', held);
       if (where.via === 'restricted') return restrictedAnswer(res, kind, shard, n, t);
       // #584: a .m3u8 ticket's Tunelio build failed (AVPro's HLS, or Unity's player's mp4). After AVPro's HLS failure the
-      // mp4 starts for Unity's player's turn. Once the mp4 failed as well, no source this Quest can open is left: too_long's
-      // answer (the world shows "can't be played here" and stops this client) instead of youtube.com, which neither player
-      // opens (prod 2026-11-06: a Quest re-asked every ~6 s).
-      if (config.questMp4 && hlsTicket && !t.data.live && c && where.via === 'youtube' && /^(build_failed|tunelio_failed)$/.test(where.reason ?? '')) {
-        const q = c.hls ? questMp4Of(c).quality : c.quality;
-        if (c.hls) playback.start(t.data, q);
-        const mp4Job = playback.peek?.(t.data, q);
-        if (mp4Job?.state === 'failed' && /^(build_failed|tunelio_failed)$/.test(mp4Job.reason ?? '')) {
+      // mp4 starts for Unity's player's turn. Once both formats failed (and neither is due for a retry), no source this
+      // Quest can open is left: too_long's answer (the world shows "can't be played here" and stops this client) instead of
+      // youtube.com, which neither player opens (prod 2026-11-06: a Quest re-asked every ~6 s). One failed format alone
+      // keeps the old answer, so the other player's turn can still play.
+      if (config.questMp4 && hlsQ && where.via === 'youtube' && /^(build_failed|tunelio_failed)$/.test(where.reason ?? '')) {
+        if (c.hls) playback.start(t.data, questMp4Of(c).quality);
+        if (questNoSource(t.data, hlsQ)) {
           logJson({ event: 'quest_no_source', shard, n, id: t.data.id, client: kind, reason: where.reason });
           return tooLongAnswer(res, kind, shard, n, t);
         }

@@ -605,3 +605,51 @@ test('#584: readyProgressive: ready mp4 jobs at that quality only, a stepped-dow
   assert.equal(p.readyProgressive(d, '720p'), null, 'under a minute of link left');
   assert.equal(p.readyProgressive({ id: 'other000001' }, '720p'), null);
 });
+
+test('#584: a Quest already holding on its HLS build gets the mp4 as soon as that is ready, not after the hold', async (t) => {
+  let releaseMp4, releaseHls;
+  const mp4 = new Promise((r) => { releaseMp4 = r; }), hls = new Promise((r) => { releaseHls = r; });
+  const probe = async (url) => { await (/hls=1/.test(url) ? hls : mp4); return { ok: true, refused: false }; };
+  const s = await server({ pbOpts: { probe } });
+  t.after(() => { releaseHls(); s.srv.close(); });
+  const n = await s.ticket(0);
+  const quest = s.get(`/v1/0/${n}.m3u8`, QUEST); // holds on the HLS build
+  await settle();
+  const pc = s.get(`/v1/0/${n}`); // the PC player's mp4 starts building after the Quest's hold began
+  await settle();
+  const started = Date.now();
+  releaseMp4();
+  assert.equal((await quest).headers.get('location'), MP4_720, 'the mp4, while the HLS build still runs');
+  assert.ok(Date.now() - started < 2500, 'within the next look (every second)');
+  assert.equal(s.playback.peek({ id: 'AbCdEfGh1jK' }, '720p', { hls: true }).state, 'building', 'the HLS build carries on');
+  assert.equal((await pc).headers.get('location'), MP4_720);
+});
+
+test('#584: Tunelio refusing the HLS file for size (413) with the mp4 ready: the Quest and its tablet get the mp4, not too_long', async (t) => {
+  const probe = async (url) => (/hls=1/.test(url) ? { ok: false, refused: true, status: 413 } : { ok: true, refused: false });
+  for (const questMp4 of [true, false]) {
+    const s = await server({ sizes: { '720p': 4500e6, '1080p': 9000e6 }, pbOpts: { probe } }, {}, { cfg: { questMp4 } });
+    t.after(() => s.srv.close());
+    const n = await s.ticket(0);
+    assert.equal((await s.get(`/v1/0/${n}`)).headers.get('location'), MP4_720, 'the PC mp4 builds');
+    const q = await s.get(`/v1/0/${n}.m3u8`, QUEST);
+    const st = await (await s.get(`/v1/0/${n}.m3u8`, 'UnityPlayer/2022')).json();
+    if (questMp4) {
+      assert.equal(q.headers.get('location'), MP4_720);
+      assert.deepEqual([st.state, st.format, st.plan], ['ready', 'progressive', 'quest_mp4']);
+    } else {
+      assert.equal(q.status, 403, 'QUEST_MP4=off: too_long as before');
+      assert.equal(st.error, 'too_long');
+    }
+  }
+});
+
+test('#584: QUEST_MP4=off: the tablet of a .m3u8 ticket warms and reports the HLS build even with an mp4 ready', async (t) => {
+  const s = await server({ hold720: true }, {}, { cfg: { questMp4: false } });
+  t.after(() => s.srv.close());
+  const n = await s.ticket(0);
+  await s.get(`/v1/0/${n}`);
+  const st = await (await s.get(`/v1/0/${n}.m3u8`, 'UnityPlayer/2022')).json();
+  assert.deepEqual([st.state, st.format], ['building', 'hls']);
+  s.release720();
+});

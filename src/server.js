@@ -662,6 +662,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // Whether a play goes to the home relay (src/home.js), and why; null = the Tunelio path. Tunelio comes first while
   // today's credits are within the pacer's allowance (owner, 2026-10-23); live streams stay on youtube.com. A session
   // already there (late joiners, replays) is reused whatever the reason.
+  const tooBig = new Map(); // video id → when home:too_big was last counted for it
   function homeWhy(data, quality, hlsTicket = false) {
     if (!home.enabled || data.live) return null;
     const s = home.peek(data, quality);
@@ -670,17 +671,26 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     // plain VOD. Only this reuse, so only the normal Tunelio path: a PC play with its own reason (long, pacer, Tunelio off
     // or slow) still starts home, which is that same session, growing.
     if (s && s.state !== 'failed' && (hlsTicket || s.why !== 'slow_build' || s.ended)) return 'reuse';
+    // A session of this video already there (a growing slow_build one, for a PC player) is reused by home.start whatever
+    // the limits, so they don't apply to it: only to a play that would start a new build (#576 review).
+    const existing = Boolean(s && s.state !== 'failed');
     // No worker for this quality (home off, capped or every stream taken: src/home.js worker): the video's session at
     // another quality, if it has one (homeKeep), else Tunelio. The request's Tunelio build_route says home was full.
-    if (!home.worker()) {
+    if (!existing && !home.worker()) {
       // home_full: every stream taken; home_day / home_hour / home_gap: a daily or burst limit (src/home.js limit, #576).
       if (home.enabled) { const ctx = spendScope.getStore(); const l = home.limit?.(); if (ctx) ctx.route = l ? `home_${l}` : 'home_full'; }
       return home.other?.(data, quality) ? 'reuse' : null;
     }
-    // Too big to build at home at this quality (HOME_ITEM_MAX_GB, #576): Tunelio, or its session at another quality.
-    if (home.fits && !home.fits(data, quality)) {
-      metrics.inc('home', 'too_big');
-      const ctx = spendScope.getStore(); if (ctx) ctx.route = 'home_big';
+    // Too big to build at home at this quality (HOME_ITEM_MAX_GB), or its MB would take the rolling hour over HOME_HOUR_MB
+    // (#576): Tunelio, or its session at another quality. too_big is counted once per video an hour (tablets poll this).
+    const blocked = existing ? null : home.blocks?.(data, quality);
+    if (blocked) {
+      if (blocked === 'big' && !(Date.now() - (tooBig.get(data.id) ?? -Infinity) < 3600_000)) {
+        tooBig.delete(data.id); tooBig.set(data.id, Date.now());
+        if (tooBig.size > 2000) tooBig.delete(tooBig.keys().next().value);
+        metrics.inc('home', 'too_big');
+      }
+      const ctx = spendScope.getStore(); if (ctx) ctx.route = blocked === 'big' ? 'home_big' : 'home_hour';
       return home.other?.(data, quality) ? 'reuse' : null;
     }
     if (!tunelio.enabled || Date.now() < (playback.pausedUntil ?? 0)) return 'tunelio_off';
@@ -771,8 +781,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (no) { const ctx = spendScope.getStore(); if (ctx) ctx.route = no; return null; }
     }
     const s = home.start(data, quality);
-    // null with a worker free: home.start's #room said no. Without a worker it has made no room check.
-    if (!s && home.worker()) {
+    // null with a worker free: home.start's #room said no (a size or hourly limit, home.refusal big/hour, isn't kept). Without a worker it has made no room check.
+    if (!s && home.worker() && (home.refusal ?? 'room') === 'room') {
       homeRefused.set(data.id, Date.now() + HOME_REFUSED_MS);
       if (homeRefused.size > 5000) homeRefused.delete(homeRefused.keys().next().value);
     }

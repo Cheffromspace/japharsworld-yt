@@ -201,6 +201,14 @@ export class Home {
   expectedMb(data, quality) { return (data.seconds ?? 0) * mbPerSecond(quality); }
   // Whether a video is small enough to build at home at this quality (itemMaxMb, HOME_ITEM_MAX_GB; 0 = any size).
   fits(data, quality) { return !(this.itemMaxMb > 0) || this.expectedMb(data, quality) <= this.itemMaxMb; }
+  // What keeps this video from a new home build now, beyond limit(): 'big' (over itemMaxMb at this quality) or 'hour'
+  // (its expected MB would take the hour over hourMb; an empty hour takes any build that fits); null when neither.
+  blocks(data, quality) {
+    if (!this.fits(data, quality)) return 'big';
+    const hour = this.#hour();
+    if (this.hourMb > 0 && hour.builds > 0 && hour.mb + this.expectedMb(data, quality) > this.hourMb) return 'hour';
+    return null;
+  }
 
   peek(data, quality) {
     const s = this.sessions.get(`${data.id}@${quality}`);
@@ -267,18 +275,18 @@ export class Home {
       if (why) this.onEvent(why === 'day' ? 'capped' : why === 'hour' ? 'capped_hour' : 'spaced');
       return null;
     }
-    if (!this.fits(data, quality)) { this.onEvent('too_big'); return null; }
-    // The hour's MB with this build counted: a build that would take the hour over hourMb waits (an empty hour takes
-    // any build that fits, so a video between hourMb and itemMaxMb can still be built).
+    // Why the last start() made no session though a worker was free: 'big', 'hour' (blocks) or 'room' (#room), so the
+    // server remembers only a room refusal for the video (src/server.js startHome homeRefused).
+    this.refusal = this.blocks(data, quality);
+    if (this.refusal) { if (this.refusal === 'hour') this.onEvent('capped_hour'); return null; }
     const expected = this.expectedMb(data, quality);
-    const hour = this.#hour();
-    if (this.hourMb > 0 && hour.builds > 0 && hour.mb + expected > this.hourMb) { this.onEvent('capped_hour'); return null; }
     this.#drop(this.sessions.get(`${data.id}@${quality}`));
     const s = this.#session({ token: randomBytes(9).toString('hex'), id: data.id, quality, seconds: data.seconds ?? 0, worker });
     this.sessions.set(`${s.id}@${quality}`, s);
     this.byToken.set(s.token, s);
     this.sweep(); // with the new build's expected size counted, so room is made before it grows
     if (!this.#room()) {
+      this.refusal = 'room';
       this.#drop(s);
       this.onEvent('no_room');
       return null;

@@ -177,7 +177,8 @@ export class Home {
   limit() {
     if (this.capped()) return 'day';
     const h = this.#hour();
-    if ((this.hourBuilds > 0 && h.builds >= this.hourBuilds) || (this.hourMb > 0 && h.mb >= this.hourMb)) return 'hour';
+    // The hour's MB is checked per video (blocks), so the videos exempt from it are never held back by it.
+    if (this.hourBuilds > 0 && h.builds >= this.hourBuilds) return 'hour';
     if (this.startGapMs > 0 && this.now() - this.lastStartMs < this.startGapMs) return 'gap';
     return null;
   }

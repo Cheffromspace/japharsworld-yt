@@ -204,13 +204,15 @@ kept in `home/day.json` across restarts). Otherwise, or when the first segments 
 builds in seven hours): a new build also needs room in a rolling hour, at most `HOME_HOUR_BUILDS` (8) builds and
 `HOME_HOUR_MB` (15000) MB expected (a build counts its length × its quality's MB/s from its start; one from the worker's
 own cache leaves the count), and starts at least `HOME_START_GAP_SECONDS` (45) after the last one. A play held back goes
-to Tunelio, and its `build_route` says why (`home_hour`, `home_gap`, `home_day`, `home_big`). The hour is kept in memory
-only, so a restart forgets it. Each is off at 0. `/ops/state` shows the hour's builds and MB and the limit holding now.
+to Tunelio, and its `build_route` says why (`home_hour`, `home_gap`, `home_day`, `home_big`). Videos of
+`HOME_HOUR_MB_EXEMPT_HOURS` (4) and longer skip the MB check, because Tunelio fails on them (#577) and would leave
+youtube.com's 360p; they still count in the hour and meet the build cap and the gap. The hour is kept in memory only, so
+a restart forgets it. Each is off at 0. `/ops/state` shows the hour's builds and MB and the limit holding now.
 
 **Quality and concurrency** (owner, 2026-10-25): home builds the room's own pick, or `HOME_QUALITY` (1080p) when
 the room hasn't picked, but 720p for a video whose 1080p files would be over `HOME_ITEM_MAX_GB` (6 GB by default since #576, about 2.9 h at
-1080p; it was `HOME_MAX_GB`, world #240 and #242), and not home at all when its 720p files would be over it too (about
-4.4 h): those go to Tunelio. It streams, so 1080p starts about as fast as 720p (first segments 6.2 s vs 2.9 s on the
+1080p; it was `HOME_MAX_GB`, world #240 and #242). Over it even at 720p (about 4.4 h) it is still built at home at
+720p, unless `HOME_ITEM_TOO_BIG=tunelio` (then Tunelio, which fails on most such videos, #577; the owner is deciding). It streams, so 1080p starts about as fast as 720p (first segments 6.2 s vs 2.9 s on the
 Optiplex, 2026-10-23). The worker runs up to `RELAY_MEDIA_MAX` (4) streams at once and answers "busy" beyond that;
 four 1080p plays need about 1.1 MB/s of the home connection's ~12 MB/s upload.
 

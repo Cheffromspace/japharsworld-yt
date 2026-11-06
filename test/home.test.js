@@ -1347,3 +1347,28 @@ test('ticket → home: HOME_ITEM_TOO_BIG=tunelio keeps a video over HOME_ITEM_MA
   assert.match((await on.play(PC, '')).headers.get('location') ?? '', /\/home\//);
   assert.deepEqual(on.jobs.map((j) => j.quality), ['720p']);
 });
+
+test('ticket → home (#577): a PC player of a video over HOME_STAY_HOURS stays on its growing home session unless Tunelio is already built', async (t) => {
+  const { Adaptive } = await import('../src/adaptive.js');
+  const make = (state) => {
+    const job = { id: 'aaaaaaaaaaa', quality: '1080p', state, url: 'https://tunelio.dev/t?id=x' };
+    let asked = 0;
+    const playback = { jobs: new Map(), peek: () => job, status: () => ({ state }), start() {},
+      async location() { asked++; return { location: job.url, via: 'tunelio', ready: true }; }, asked: () => asked };
+    const adaptive = new Adaptive({ playback, base: 'http://pub/hls' });
+    adaptive.pacer = { check: () => ({ ok: true }) };
+    // The test video is 600 s; 0.1 h is 360 s.
+    return { playback, adaptive, tunelio: { enabled: true }, config: { homeLongMinutes: 5, homeStayHours: 0.1 } };
+  };
+  const PC = 'NSPlayer/12.00.26100 WMFSDK/12.00';
+  const building = make('building');
+  const stay = await homeApp(t, building);
+  const t0 = Date.now();
+  assert.match((await stay.play(PC, '')).headers.get('location'), /\/home\/[a-f0-9]{18}\/index\.m3u8$/);
+  assert.ok(Date.now() - t0 < 3000, 'answered at home-ready time');
+  assert.equal(building.playback.asked(), 0, 'Tunelio was never waited on');
+  const built = await homeApp(t, make('ready'));
+  assert.doesNotMatch((await built.play(PC, '')).headers.get('location'), /\/home\//, 'Tunelio already built: the seekable build');
+  const off = await homeApp(t, { ...make('building'), config: { homeLongMinutes: 5, homeStayHours: 0 } });
+  assert.doesNotMatch((await off.play(PC, '')).headers.get('location'), /\/home\//, 'HOME_STAY_HOURS=0: as before (#127 a)');
+});

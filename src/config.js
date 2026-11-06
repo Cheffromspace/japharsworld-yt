@@ -203,6 +203,12 @@ export const config = {
   // play their ALLOWANCE_HOME_MB_PER_IP (60,000) of long mixes. The Linode's transfer (each home MB goes to every viewer)
   // is bounded apart (a guard to come); today it sends at most ~15 GB a day.
   homeDailyMb: int('HOME_DAILY_MB', 120_000),
+  // Bursts (Everything-is-OK#576, owner 2026-11-06: "prevent bursts to the home relay"; the defaults are the owner's
+  // pick): new home builds in a rolling hour, the MB they're expected to download in it, and the least time between two
+  // starts. Over any of them a play goes to Tunelio. 0 = off.
+  homeHourBuilds: int('HOME_HOUR_BUILDS', 8),
+  homeHourMb: int('HOME_HOUR_MB', 15_000),
+  homeStartGapMs: int('HOME_START_GAP_SECONDS', 45) * 1000,
   homeKeepHours: int('HOME_KEEP_HOURS', 12),
   homeMaxGb: int('HOME_MAX_GB', 8),
   // Free disk the home store never builds into (src/home.js #room): a build doesn't start when the disk's free space,
@@ -210,11 +216,11 @@ export const config = {
   // space drops under half of it. Prod 2026-10-30 00:58Z: two long 1080p plays (8.4 GB played, a 10.7 GB build) over a
   // 12 GB cap filled the Linode's 24.6 GB disk; Alloy's WAL broke and the build failed. 0 = off.
   homeFreeFloorGb: Number.parseFloat(process.env.HOME_FREE_FLOOR_GB ?? '3') || 0,
-  // A safety net: a home build expected to be larger than this (its length × 1080p's ~0.57 MB/s) is built at 720p
-  // instead. A 4 h 1080p mix came to 8.4 GB, over HOME_MAX_GB alone, so it was evicted minutes after each play and
-  // pushed every other finished session out with it (world #240, 2026-10-26). HOME_MAX_GB by default (owner, #242:
-  // only an item bigger than the whole cache steps down; near-static long videos are far smaller); 0 = off.
-  homeItemMaxGb: (() => { const v = Number.parseFloat(process.env.HOME_ITEM_MAX_GB ?? ''); return Number.isFinite(v) ? v : int('HOME_MAX_GB', 8); })(),
+  // The largest video home builds (its length × the quality's high-end MB/s, src/home.js MB_PER_SECOND_AT): over it at
+  // 1080p it is built at 720p (world #240), and over it at 720p it isn't built at home at all (Tunelio). It was
+  // HOME_MAX_GB by default (#242; prod 80, so a 20.6 GB video went home on 2026-11-06 before the first bot refusals);
+  // 6 GB since #576 (owner, 2026-11-06). 0 = off.
+  homeItemMaxGb: (() => { const v = Number.parseFloat(process.env.HOME_ITEM_MAX_GB ?? ''); return Number.isFinite(v) ? v : 6; })(),
   // How long a new session may take to its first playlist: yt-dlp ~3 s, then its stream URLs answer 403 for 0.1–2.6 s,
   // once 22 s, before they work (2026-10-23), then the first segments.
   homeReadyMs: int('HOME_READY_SECONDS', 40) * 1000,

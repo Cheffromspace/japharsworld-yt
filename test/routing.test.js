@@ -42,7 +42,7 @@ function fakeTunelio({ hang = () => false } = {}) {
 // The service with a home worker taking `mediaMax` streams, a real Playback over a fake Tunelio and the given spend gate.
 async function routeApp(t, { mediaMax = 4, spend = new SpendGate({ hourCredits: 0, dayCredits: 0, monthCredits: 0 }), tunelio = fakeTunelio(), config: c = {}, playbackOpts = {}, adaptive } = {}) {
   const dir = tmp(t);
-  const config = { ...base, shards: 2, pool: 200, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub',
+  const config = { ...base, shards: 2, pool: 200, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, homeStartGapMs: 0, homeHourBuilds: 0, homeHourMb: 0, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub',
     metricsPath: '', tunelioQuality: '720p', ticketPlayerHoldMs: 3000, adaptiveHls: false, lookupWarm: false, videoMaxSeconds: 43200, homeFreeFloorGb: 0, ...c };
   const store = new Store({ path: ':memory:', shards: 2, pool: 200, pinHours: 24 });
   const relay = new Relay({ token: TOKEN, pollMs: 200 });

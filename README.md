@@ -80,6 +80,16 @@ the video for length or size and home took no build: the same for a `.m3u8` tick
 youtube.com link, status `state: "youtube"`, `reason: "too_long"`; world #420); the world shows its own
 localized text per code.
 
+### A `.m3u8` ticket (Quest) and a ready mp4 (Everything-is-OK#584)
+
+A `.m3u8` ticket is answered with HLS (a plain Tunelio HLS build, or home). Tunelio's HLS build answers only once the
+whole file is built and is cut off at ~125 s, so a long video's build can fail while the mp4 (progressive) build of
+the same video, which streams while it builds, was ready in ~20 s. With `QUEST_MP4` on (the default), a `.m3u8`
+player whose HLS build isn't ready, failed, or ran past the hold gets a ready mp4 build of the same video and quality
+instead of a wait and youtube.com (counted as `adaptive`/`quest_mp4`; the tablet's status then reports that build,
+`format: "progressive"`, `plan: "quest_mp4"`). Not for an answer no build would change (`too_long`, `restricted`, the
+visitor's own limits). `QUEST_MP4=off`: as before.
+
 ### A YouTube link played straight from the search address (world #136)
 
 The tablet's YouTube field can hand its own search address (`/v1/<shard>/s?l=…&q=<prompt> → <link>`, or the compact

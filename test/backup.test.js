@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync, writeFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { DatabaseSync } from 'node:sqlite';
-import { sigV4, makeS3, dayWindow, daysToBackUp, addDays, scrub, eventsJsonl, promSummary, snapshotDb, run, readState, configFrom } from '../metrics/backup.js';
+import { sigV4, makeS3, makeLocal, dayWindow, daysToBackUp, addDays, scrub, eventsJsonl, journalArgs, promSummary, snapshotDb, run, readState, configFrom } from '../metrics/backup.js';
 import { dayOf } from '../src/metrics.js';
 
 const tmp = () => { const dir = mkdtempSync(join(tmpdir(), 'eiok-backup-test-')); return { dir, done: () => rmSync(dir, { recursive: true, force: true }) }; };
@@ -132,32 +132,39 @@ test('snapshotDb: a consistent gzipped copy of a WAL database while a writer has
   assert.deepEqual(readdirSync(f.dir).filter((x) => x.startsWith('snap-')), [], 'the temporary copy is removed');
 });
 
-function fakeRun(f, { failOn = null, tickets = false } = {}) {
+function fakeRun(f, { failOn = null, tickets = false, journal = 'full' } = {}) {
   const puts = [];
-  const metricsDb = join(f.dir, 'metrics.db'), ticketsDb = join(f.dir, 'tickets.db');
+  const metricsDb = join(f.dir, 'metrics.db'), ticketsDb = join(f.dir, 'tickets.db'), deploysLog = join(f.dir, 'deploys.log');
   for (const p of [metricsDb, ticketsDb]) { const d = new DatabaseSync(p); d.exec('CREATE TABLE IF NOT EXISTS t (x); INSERT INTO t VALUES (1);'); d.close(); }
-  const cfg = { ...configFrom({}), prefix: 'eiok', state: join(f.dir, 'state.json'), metricsDb, ticketsDb, tickets, tmpDir: f.dir };
+  writeFileSync(deploysLog, '1762400000 60cf3d0 restarted\n');
+  const cfg = { ...configFrom({}), prefix: 'eiok', state: join(f.dir, 'state.json'), metricsDb, ticketsDb, deploysLog, tickets, tmpDir: f.dir };
   const put = async (key, body) => { if (failOn && key.includes(failOn)) throw new Error('S3 PUT: HTTP 403 AccessDenied'); puts.push({ key, body }); return { key, bytes: body.length, sha256: 'h' }; };
-  const events = async ({ start, end, counts }) => eventsJsonl([JSON.stringify({ at: new Date(start).toISOString(), event: 'play', id: 'dQw4w9WgXcQ', via: 'home' })], counts);
+  // full: an event at the day's start; empty: the journal unreadable; late: it starts 5 h into the day (rotated).
+  const events = async ({ start, counts }) => eventsJsonl(journal === 'empty' ? [] : [
+    'Started japharsworld-yt.service',
+    JSON.stringify({ at: new Date(start + (journal === 'late' ? 5 * 3600_000 : 60_000)).toISOString(), event: 'play', id: 'dQw4w9WgXcQ', via: 'home' }),
+  ], counts);
   const logs = [], alerts = [];
   return { cfg, puts, put, events, logs, alerts, log: (o) => logs.push(o), alert: (k, text) => alerts.push({ k, text }) };
 }
+const go = (r, extra = {}) => run({ cfg: r.cfg, put: r.put, events: r.events, prom: null, log: r.log, alert: r.alert, ...extra });
 
-test('run: uploads each due day by date, DB snapshots with the newest only, manifest last; tickets.db off by default', async (t) => {
+test('run: uploads each due day by date, deploys and DB snapshot with the newest only, manifest last; tickets.db off by default', async (t) => {
   const f = tmp();
   t.after(f.done);
   const r = fakeRun(f);
   writeFileSync(r.cfg.state, JSON.stringify({ lastDay: '2026-11-03' }));
-  const out = await run({ cfg: r.cfg, now: Date.parse('2026-11-06T07:30:00Z'), put: r.put, events: r.events, prom: null, log: r.log, alert: r.alert });
+  const out = await go(r, { now: Date.parse('2026-11-06T07:30:00Z') });
   assert.deepEqual(out, { ok: true, days: ['2026-11-04', '2026-11-05'] });
   assert.deepEqual(r.puts.map((p) => p.key), [
-    'eiok/2026/11/04/events.jsonl.gz', 'eiok/2026/11/04/manifest.json',
-    'eiok/2026/11/05/events.jsonl.gz', 'eiok/2026/11/05/metrics.db.gz', 'eiok/2026/11/05/manifest.json',
+    'eiok/2026/11/04/events.jsonl.gz', 'eiok/2026/11/04/deploys.log', 'eiok/2026/11/04/manifest.json',
+    'eiok/2026/11/05/events.jsonl.gz', 'eiok/2026/11/05/deploys.log', 'eiok/2026/11/05/metrics.db.gz', 'eiok/2026/11/05/manifest.json',
   ]);
+  assert.equal(r.puts[1].body.toString(), '1762400000 60cf3d0 restarted\n');
   const manifest = JSON.parse(r.puts.at(-1).body.toString());
   assert.equal(manifest.day, '2026-11-05');
   assert.deepEqual(manifest.notes, ['grafana: no BACKUP_PROM_TOKEN, skipped', 'tickets.db.gz: off']);
-  assert.equal(manifest.events.events, 1);
+  assert.deepEqual(manifest.events, { lines: 2, events: 1, ip: 0, secret: 0, id: 0 });
   const ev = gunzipSync(r.puts[0].body).toString();
   assert.ok(!ev.includes('dQw4w9WgXcQ'));
   assert.equal(JSON.parse(ev).event, 'play');
@@ -165,9 +172,9 @@ test('run: uploads each due day by date, DB snapshots with the newest only, mani
   assert.equal(state.lastDay, '2026-11-05');
   assert.ok(Date.now() - state.lastSuccessMs < 10_000);
   // The same night again: nothing due, nothing uploaded.
-  const again = await run({ cfg: r.cfg, now: Date.parse('2026-11-06T09:00:00Z'), put: r.put, events: r.events, prom: null, log: r.log, alert: r.alert });
+  const again = await go(r, { now: Date.parse('2026-11-06T09:00:00Z') });
   assert.deepEqual(again.days, []);
-  assert.equal(r.puts.length, 5);
+  assert.equal(r.puts.length, 7);
   assert.deepEqual(r.alerts, []);
 });
 
@@ -176,7 +183,7 @@ test('run: BACKUP_TICKETS=on adds tickets.db; a failed upload alerts, keeps the 
   t.after(f.done);
   const r = fakeRun(f, { tickets: true, failOn: '2026/11/05/metrics' });
   writeFileSync(r.cfg.state, JSON.stringify({ lastDay: '2026-11-03', lastSuccessMs: 1 }));
-  const out = await run({ cfg: r.cfg, now: Date.parse('2026-11-06T07:30:00Z'), put: r.put, events: r.events, prom: null, log: r.log, alert: r.alert });
+  const out = await go(r, { now: Date.parse('2026-11-06T07:30:00Z') });
   assert.deepEqual(out, { ok: false, days: ['2026-11-04'], failed: '2026-11-05' });
   assert.equal(readState(r.cfg.state).lastDay, '2026-11-04');
   assert.equal(r.alerts.length, 1);
@@ -185,21 +192,94 @@ test('run: BACKUP_TICKETS=on adds tickets.db; a failed upload alerts, keeps the 
   assert.ok(r.logs.some((l) => l.event === 'backup_failed' && l.day === '2026-11-05'));
   // Next run, S3 fine: 11-05 again, with both snapshots.
   const ok = fakeRun(f, { tickets: true });
-  const again = await run({ cfg: ok.cfg, now: Date.parse('2026-11-06T09:00:00Z'), put: ok.put, events: ok.events, prom: null, log: ok.log, alert: ok.alert });
+  const again = await go(ok, { now: Date.parse('2026-11-06T09:00:00Z') });
   assert.deepEqual(again.days, ['2026-11-05']);
-  assert.deepEqual(ok.puts.map((p) => p.key.split('/').pop()), ['events.jsonl.gz', 'metrics.db.gz', 'tickets.db.gz', 'manifest.json']);
+  assert.deepEqual(ok.puts.map((p) => p.key.split('/').pop()), ['events.jsonl.gz', 'deploys.log', 'metrics.db.gz', 'tickets.db.gz', 'manifest.json']);
 });
 
-test('run --day: a manual re-run of an older day does not move the last day back', async (t) => {
+test('run: an unreadable or empty journal is a failure, never an empty backup marked done', async (t) => {
+  const f = tmp();
+  t.after(f.done);
+  const r = fakeRun(f, { journal: 'empty' });
+  const out = await go(r, { now: Date.parse('2026-11-06T07:30:00Z') });
+  assert.deepEqual(out, { ok: false, days: [], failed: '2026-11-05' });
+  assert.deepEqual(r.puts, [], 'nothing uploaded');
+  assert.deepEqual(readState(r.cfg.state), {}, 'no state');
+  assert.match(r.alerts[0].text, /no events in the journal for 2026-11-05/);
+});
+
+test('run --day: an ended day only; no snapshots; the last day never moves back; a rotated day is not overwritten without --force', async (t) => {
   const f = tmp();
   t.after(f.done);
   const r = fakeRun(f);
   writeFileSync(r.cfg.state, JSON.stringify({ lastDay: '2026-11-05' }));
-  const out = await run({ cfg: r.cfg, onlyDay: '2026-11-01', now: Date.parse('2026-11-06T12:00:00Z'), put: r.put, events: r.events, prom: null, log: r.log, alert: r.alert });
+  const now = Date.parse('2026-11-06T12:00:00Z'); // 06:00 Chicago on 11-06
+  const out = await go(r, { onlyDay: '2026-11-01', now });
   assert.deepEqual(out.days, ['2026-11-01']);
   assert.equal(readState(r.cfg.state).lastDay, '2026-11-05');
-  assert.ok(existsSync(r.cfg.state));
-  assert.ok(r.puts.some((p) => p.key === 'eiok/2026/11/01/manifest.json'));
+  assert.deepEqual(r.puts.map((p) => p.key.split('/').pop()), ['events.jsonl.gz', 'deploys.log', 'manifest.json']);
+  assert.ok(JSON.parse(r.puts.at(-1).body.toString()).notes.includes('snapshots: not on a --day re-run'));
+  for (const day of ['2026-11-06', '2027-01-01']) {
+    const bad = await go(r, { onlyDay: day, now });
+    assert.equal(bad.ok, false);
+    assert.match(bad.error, /only a day that has ended/);
+  }
+  assert.equal(readState(r.cfg.state).lastDay, '2026-11-05');
+  const late = fakeRun(f, { journal: 'late' });
+  const refused = await go(late, { onlyDay: '2026-11-02', now });
+  assert.equal(refused.ok, false);
+  assert.match(late.alerts[0].text, /the journal starts at .* after 2026-11-02 began: not overwriting \(--force\)/);
+  assert.deepEqual(late.puts, []);
+  const forced = await go(late, { onlyDay: '2026-11-02', now, force: true });
+  assert.equal(forced.ok, true);
+  assert.ok(JSON.parse(late.puts.at(-1).body.toString()).notes.some((n) => /^events: the journal starts at/.test(n)));
+  // A nightly run with a rotated start notes it and goes on.
+  const nightly = fakeRun(f, { journal: 'late' });
+  writeFileSync(nightly.cfg.state, JSON.stringify({ lastDay: '2026-11-04' }));
+  assert.equal((await go(nightly, { now: Date.parse('2026-11-06T07:30:00Z') })).ok, true);
+});
+
+
+test('run: a failure outside a day (the temp folder) is logged and alerted too', async (t) => {
+  const f = tmp();
+  t.after(f.done);
+  const r = fakeRun(f);
+  r.cfg.tmpDir = join(f.dir, 'missing', 'deeper');
+  const out = await go(r, { now: Date.parse('2026-11-06T07:30:00Z') });
+  assert.equal(out.ok, false);
+  assert.equal(r.alerts.length, 1);
+  assert.ok(r.logs.some((l) => l.event === 'backup_failed' && l.day === null));
+});
+
+test('journalArgs: both units, the day from its first second to the next day\'s first (inclusive), message text only', () => {
+  const [start, end] = dayWindow('2026-11-05');
+  assert.deepEqual(journalArgs({ units: ['japharsworld-yt', 'japharsworld-yt-metrics'], start, end }),
+    ['-u', 'japharsworld-yt', '-u', 'japharsworld-yt-metrics', '--since', '@1793858400', '--until', '@1793944800', '-o', 'cat', '--no-pager', '-q']);
+  assert.deepEqual(configFrom({}).units, ['japharsworld-yt', 'japharsworld-yt-metrics']);
+  assert.deepEqual(configFrom({ BACKUP_UNITS: 'a, b;rm -rf /,c' }).units, ['a', 'c']);
+});
+
+test('makeLocal: the same keys under a folder, never outside it', async (t) => {
+  const f = tmp();
+  t.after(f.done);
+  const put = makeLocal(join(f.dir, 'out'));
+  const r = await put('eiok/2026/11/05/manifest.json', Buffer.from('{}'));
+  assert.equal(r.bytes, 2);
+  assert.equal(readFileSync(join(f.dir, 'out', 'eiok', '2026', '11', '05', 'manifest.json'), 'utf8'), '{}');
+  await assert.rejects(put('../escape.txt', Buffer.from('x')), /bad key/);
+});
+
+test('scrub: glued video IDs, name: value and JSON tokens, AWS key IDs and padded IPs go; error codes stay', () => {
+  const c = {};
+  const s = (m) => scrub({ m }, c).m;
+  assert.equal(s('dQw4w9WgXcQ_720.mp4'), '….mp4');
+  assert.equal(s('/home/dQw4w9WgXcQ-720/'), '/home/…/');
+  assert.equal(s('token: abc'), 'token: …');
+  assert.equal(s('{"token":"xyz"}'), '{"token":"…"}');
+  assert.equal(s('Cookie: SID=x'), 'Cookie: …');
+  assert.equal(s('key AKIAIOSFODNN7EXAMPLE'), 'key …');
+  assert.equal(s('from 010.001.002.003'), 'from …ip');
+  for (const keep of ['ERR_STREAM_PREMATURE_CLOSE', 'S3 PUT: HTTP 403 AccessDenied', 'SignatureDoesNotMatch', 'tunelio_create_timeout', 'fetch failed: ECONNRESET', 'seg_00012.m4s', 'ses 3fa9c1d2e4b5a6c7d8']) assert.equal(s(keep), keep);
 });
 
 test('configFrom: off without a bucket, prefix trimmed, BACKUP_MAX_DAYS bounded, tickets only when on', () => {

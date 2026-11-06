@@ -1,26 +1,29 @@
 // Daily backup to a private S3 bucket (Everything-is-OK#585; owner 2026-11-06: Grafana Cloud free keeps 14 days, "can we
-// back everything up so we can run analysis over time?", "s3 is perfect"). Run by japharsworld-yt-backup.timer at 01:30
-// America/Chicago, as jyt. For each reporting day not yet backed up (at most BACKUP_MAX_DAYS, oldest first) it uploads
-//   s3://<bucket>/<prefix>/<yyyy>/<mm>/<dd>/events.jsonl.gz    the service's log events that day, redacted (below)
-//   s3://<bucket>/<prefix>/<yyyy>/<mm>/<dd>/grafana.json.gz    hourly avg/max of the Grafana-only series (needs a read token)
-//   s3://<bucket>/<prefix>/<yyyy>/<mm>/<dd>/manifest.json      what was written, sizes, sha256, counts; written last
-// and, with the newest day only (a snapshot is taken now, not as of that day):
-//   .../metrics.db.gz (always), .../tickets.db.gz (only with BACKUP_TICKETS=on: see the privacy note)
+// back everything up so we can run analysis over time?", "s3 is perfect"; the goal, #591: "service metrics, deploys, VRC
+// trends; compare releases to usage, errors"). Run by japharsworld-yt-backup.timer at 01:30 America/Chicago, as jyt.
+// For each reporting day not yet backed up (at most BACKUP_MAX_DAYS, oldest first) it uploads
+//   <prefix>/<yyyy>/<mm>/<dd>/events.jsonl.gz   the search service's and the poller's log events that day, redacted
+//   <prefix>/<yyyy>/<mm>/<dd>/deploys.log       the Linode's deploy record (deploy/deploy-record.sh, its last 200)
+//   <prefix>/<yyyy>/<mm>/<dd>/grafana.json.gz   hourly avg/max of the Grafana-only series (only with a read token)
+//   <prefix>/<yyyy>/<mm>/<dd>/manifest.json     what was written, sizes, sha256, counts; written last
+// and, with the newest day of a nightly run only (a snapshot is taken now, not as of that day; never on a --day re-run):
+//   .../metrics.db.gz (always: counters, poller rows, releases), .../tickets.db.gz (only with BACKUP_TICKETS=on)
 //
-// Privacy (CLAUDE.md, public/privacy.html): the events pass the same field allowlist as /ops/events (src/ops.js redact:
-// no video IDs, ticket numbers, shards or User-Agents, IDs inside messages masked), then scrub() replaces anything shaped
-// like an IP address or a token. 24 h of prod events (14,252, 2026-11-06) held none before either step. tickets.db holds
-// search results (video IDs, titles) the privacy page promises to keep "for up to a day", so it is off by default.
-// metrics.db holds counts only.
+// Privacy (CLAUDE.md, public/privacy.html; owner's defaults on #591): the events pass the same field allowlist as
+// /ops/events (src/ops.js redact: no video IDs, ticket numbers, shards or User-Agents, IDs inside messages masked), then
+// scrub() replaces anything shaped like an IP address, a token or a glued video ID. 24 h of prod events (14,252,
+// 2026-11-06) held no IP or token before either step. tickets.db holds search results (video IDs, titles) the privacy page
+// keeps "for up to a day", so it is off. metrics.db holds counts only.
 //
 // Upload: plain HTTPS PUTs signed with AWS Signature V4 (no SDK; the repo keeps two dependencies). The IAM user can only
 // PutObject under the prefix, so the job keeps its own record of what landed (STATE file), which the exporter reports
 // (eiok_backup_last_success_timestamp_seconds) for the Grafana rule eiok-backup-missing. A failure also posts to Discord.
+// BACKUP_LOCAL_DIR writes the same objects to a folder instead of S3 (no key needed; staging's test).
 import { createHash, createHmac } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, renameSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
@@ -61,22 +64,33 @@ export function daysToBackUp(lastDay, now, { tz = 'America/Chicago', max = 3 } =
 
 // ---- events -----------------------------------------------------------------------------------------------------
 
-const IPV4 = /(?<![\d.])(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?![\d.])/g;
+// Any four dot-separated 1-3 digit groups, zero-padded too (a four-part version number is masked as well; fine here).
+const IPV4 = /(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])/g;
 // Eight groups, or fewer around a "::" (with at least two groups or a group on each side); not times such as 12:34:56.
 const IPV6 = /(?<![\w:])(?:(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?=[0-9a-f:]*::)(?:[0-9a-f]{1,4}:){0,6}:?(?::[0-9a-f]{1,4}){1,7}(?=[^\w:]|$)|(?:[0-9a-f]{1,4}:){2,7}:)(?![\w:])/gi;
-const SECRET = /\b(token|key|secret|sig|signature|password|passwd|auth|authorization|cookie|session)=[^\s&"']+|\bBearer\s+\S+|[A-Za-z0-9_\-+/]{32,}={0,2}/gi;
+// name=value, name: value and JSON "name":"value" for secret-ish names; Bearer tokens; long base64/hex-like runs.
+const SECRET = /\b(token|key|secret|sig|signature|password|passwd|auth|authorization|cookie|session)("?\s*[=:]\s*"?)(?!…)[^\s&"',;}]+|\bBearer\s+\S+|[A-Za-z0-9_\-+/]{32,}={0,2}/gi;
+// A run of the YouTube ID alphabet of 11+ characters with a lower-case letter, a capital and a digit, "_" or "-": a video
+// ID glued to "_720" or "-" (src/ops.js mask() leaves those). Error codes (ERR_STREAM_PREMATURE_CLOSE, AccessDenied,
+// SignatureDoesNotMatch) stay readable, as the owner wants errors over time (#591). All-lowercase IDs can't be told from
+// words and stay. AWS access key IDs are matched on their own.
+const ID_RUN = /(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]{11})(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*[\d_-])[A-Za-z0-9_-]+(?![A-Za-z0-9_-])|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g;
 // Strings only; counts what it replaced so the manifest can say so (never what).
-export function scrub(o, counts = { ip: 0, secret: 0 }) {
+export function scrub(o, counts = {}) {
+  const n = (k) => { counts[k] = (counts[k] ?? 0) + 1; };
   const out = {};
   for (const [k, v] of Object.entries(o)) {
     if (typeof v !== 'string' || k === 'event' || k === 'at') { out[k] = v; continue; }
-    out[k] = v.replace(IPV4, () => { counts.ip++; return '…ip'; }).replace(IPV6, () => { counts.ip++; return '…ip'; })
-      .replace(SECRET, (m, name) => { counts.secret++; return name ? `${name}=…` : '…'; });
+    out[k] = v.replace(IPV4, () => { n('ip'); return '…ip'; }).replace(IPV6, () => { n('ip'); return '…ip'; })
+      .replace(SECRET, (m, name, sep) => { n('secret'); return name ? `${name}${sep}…` : '…'; })
+      .replace(ID_RUN, () => { n('id'); return '…'; });
   }
   return out;
 }
-// Journal lines (the service's stdout) → redacted, scrubbed JSONL. Only lines that are JSON objects with an `event`.
-export async function eventsJsonl(lines, counts = { lines: 0, events: 0, ip: 0, secret: 0 }) {
+// Journal lines (the services' stdout) → redacted, scrubbed JSONL. Only lines that are JSON objects with an `event`.
+// counts.firstAt: the earliest event time seen, to tell a day the journal holds only part of.
+export async function eventsJsonl(lines, counts = {}) {
+  for (const k of ['lines', 'events', 'ip', 'secret', 'id']) counts[k] ??= 0;
   const out = [];
   for await (const line of lines) {
     counts.lines++;
@@ -84,12 +98,19 @@ export async function eventsJsonl(lines, counts = { lines: 0, events: 0, ip: 0, 
     try { o = JSON.parse(line); } catch { continue; }
     if (!o || typeof o !== 'object' || Array.isArray(o) || typeof o.event !== 'string') continue;
     counts.events++;
+    const at = Date.parse(o.at);
+    if (Number.isFinite(at) && !(at >= (counts.firstAt ?? Infinity))) counts.firstAt = at;
     out.push(JSON.stringify(scrub(redact(o), counts)));
   }
   return out.length ? `${out.join('\n')}\n` : '';
 }
-export function journalLines({ unit, start, end, spawnImpl = spawn }) {
-  const p = spawnImpl('journalctl', ['-u', unit, '--since', `@${Math.floor(start / 1000)}`, '--until', `@${Math.floor((end - 1) / 1000)}`, '-o', 'cat', '--no-pager', '-q'], { stdio: ['ignore', 'pipe', 'pipe'] });
+// --until is inclusive and in whole seconds: the next day's 00:00:00 (an event in its first microsecond lands in both
+// days) rather than 23:59:59, which dropped the day's last second.
+export function journalArgs({ units, start, end }) {
+  return [...units.flatMap((u) => ['-u', u]), '--since', `@${Math.floor(start / 1000)}`, '--until', `@${Math.ceil(end / 1000)}`, '-o', 'cat', '--no-pager', '-q'];
+}
+export function journalLines({ units, start, end, spawnImpl = spawn }) {
+  const p = spawnImpl('journalctl', journalArgs({ units, start, end }), { stdio: ['ignore', 'pipe', 'pipe'] });
   let err = '';
   p.stderr.on('data', (c) => { err += c; });
   const done = new Promise((resolve, reject) => {
@@ -103,6 +124,7 @@ export function journalLines({ unit, start, end, spawnImpl = spawn }) {
 
 // What Grafana Cloud keeps for 14 days only (the poller's numbers and the counters are in metrics.db): the Alloy host
 // series of both hosts, the public probes and the exporter's live gauges. Each is summarized per hour (avg and max).
+// Off until BACKUP_PROM_TOKEN is set (owner, #591: skipped for now).
 export const PROM_SERIES = {
   cpu_busy: '1 - avg by (host) (rate(node_cpu_seconds_total{mode="idle"}[5m]))',
   load1: 'max by (host) (node_load1)',
@@ -137,14 +159,13 @@ export async function promSummary({ url, user, token, start, end, fetchImpl = fe
   return out;
 }
 
-// ---- S3 ---------------------------------------------------------------------------------------------------------
+// ---- S3 (or a local folder) -------------------------------------------------------------------------------------
 
 const sha256 = (b) => createHash('sha256').update(b).digest('hex');
 const hmac = (k, s) => createHmac('sha256', k).update(s).digest();
 // RFC 3986 per path segment, as SigV4 wants it for S3 (no double encoding).
 const encodePath = (p) => p.split('/').map((s) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)).join('/');
-// AWS Signature Version 4 for one request. headers: lower-case names → values (host included). Returns the
-// Authorization header value.
+// AWS Signature Version 4 for one request. headers: names → values (host included). Returns the Authorization value.
 export function sigV4({ method, path, query = '', headers, payloadHash, region, service = 's3', accessKeyId, secretAccessKey, amzDate }) {
   const date = amzDate.slice(0, 8);
   const names = Object.keys(headers).map((h) => h.toLowerCase()).sort();
@@ -174,6 +195,17 @@ export function makeS3({ bucket, region, accessKeyId, secretAccessKey, sessionTo
     return { key, bytes: body.length, sha256: payloadHash };
   };
 }
+// The same objects under a local folder (BACKUP_LOCAL_DIR): staging's keyless test, and restore drills.
+export function makeLocal(dir) {
+  const root = resolve(dir);
+  return async function put(key, body) {
+    const path = resolve(root, key);
+    if (!path.startsWith(root)) throw new Error(`bad key ${key}`);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, body);
+    return { key, bytes: body.length, sha256: sha256(body) };
+  };
+}
 
 // ---- the job ----------------------------------------------------------------------------------------------------
 
@@ -184,6 +216,10 @@ export function snapshotDb(path, dir) {
   try { db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`); } finally { db.close(); }
   try { return gzipSync(readFileSync(dest), { level: 9 }); } finally { rmSync(dest, { force: true }); }
 }
+// The Linode's deploy record: "<unix seconds> <short commit> <outcome>" per line (deploy/deploy-record.sh).
+export function readDeploysLog(path) {
+  try { return readFileSync(path); } catch { return null; }
+}
 
 export function readState(path) {
   try { const s = JSON.parse(readFileSync(path, 'utf8')); return s && typeof s === 'object' ? s : {}; } catch { return {}; }
@@ -193,15 +229,27 @@ function writeState(path, s) {
   renameSync(`${path}.tmp`, path);
 }
 
-export async function backupDay(day, { cfg, put, events, prom, snapshot, newest, log }) {
+export async function backupDay(day, { cfg, put, events, prom, snapshot, newest, log, manual = false, force = false, readDeploys = readDeploysLog }) {
   const [start, end] = dayWindow(day, cfg.tz);
   const prefix = `${cfg.prefix}/${day.slice(0, 4)}/${day.slice(5, 7)}/${day.slice(8, 10)}`;
   const files = [];
   const manifest = { day, tz: cfg.tz, start: new Date(start).toISOString(), end: new Date(end).toISOString(), at: null, files, notes: [] };
-  const counts = { lines: 0, events: 0, ip: 0, secret: 0 };
+  const counts = { lines: 0, events: 0, ip: 0, secret: 0, id: 0 };
   const jsonl = await events({ start, end, counts });
-  files.push({ name: 'events.jsonl.gz', ...(await put(`${prefix}/events.jsonl.gz`, gzipSync(jsonl, { level: 9 }), 'application/gzip')) });
+  // The service logs thousands of events a day (14,252 on 2026-11-05), so none means the journal could not be read (no
+  // systemd-journal group) or no longer holds the day: a failure, never an empty backup marked done.
+  if (!counts.events) throw new Error(`no events in the journal for ${day} (${counts.lines} lines): not readable, or rotated away`);
+  // A day the journal holds only part of (rotated): a nightly run notes it; a --day re-run would overwrite a good copy.
+  if (counts.firstAt - start > 2 * 3600_000) {
+    if (manual && !force) throw new Error(`the journal starts at ${new Date(counts.firstAt).toISOString()}, after ${day} began: not overwriting (--force)`);
+    manifest.notes.push(`events: the journal starts at ${new Date(counts.firstAt).toISOString()}`);
+  }
+  delete counts.firstAt;
   manifest.events = counts;
+  files.push({ name: 'events.jsonl.gz', ...(await put(`${prefix}/events.jsonl.gz`, gzipSync(jsonl, { level: 9 }), 'application/gzip')) });
+  const deploys = readDeploys(cfg.deploysLog);
+  if (deploys != null) files.push({ name: 'deploys.log', ...(await put(`${prefix}/deploys.log`, deploys, 'text/plain')) });
+  else manifest.notes.push('deploys.log: missing');
   if (prom) {
     const summary = await prom({ start, end });
     const errors = Object.keys(summary.errors).length;
@@ -215,10 +263,10 @@ export async function backupDay(day, { cfg, put, events, prom, snapshot, newest,
       manifest.snapshotAt = new Date().toISOString();
       files.push({ name, ...(await put(`${prefix}/${name}`, snapshot(path), 'application/gzip')) });
     }
-  }
+  } else if (manual) manifest.notes.push('snapshots: not on a --day re-run');
   manifest.at = new Date().toISOString();
   files.push({ name: 'manifest.json', ...(await put(`${prefix}/manifest.json`, Buffer.from(`${JSON.stringify(manifest, null, 1)}\n`), 'application/json')) });
-  log({ event: 'backup_day', day, files: files.length, bytes: files.reduce((a, f) => a + f.bytes, 0), events: counts.events, scrubbed: counts.ip + counts.secret, notes: manifest.notes.length });
+  log({ event: 'backup_day', day, files: files.length, bytes: files.reduce((a, f) => a + f.bytes, 0), events: counts.events, scrubbed: counts.ip + counts.secret + counts.id, notes: manifest.notes.length });
   return manifest;
 }
 
@@ -226,20 +274,34 @@ export function configFrom(e = process.env) {
   return {
     bucket: e.BACKUP_S3_BUCKET ?? '', region: e.BACKUP_S3_REGION || 'us-east-1', prefix: (e.BACKUP_S3_PREFIX || 'eiok').replace(/^\/+|\/+$/g, ''),
     accessKeyId: e.BACKUP_AWS_ACCESS_KEY_ID ?? '', secretAccessKey: e.BACKUP_AWS_SECRET_ACCESS_KEY ?? '',
+    localDir: e.BACKUP_LOCAL_DIR ?? '',
     promUrl: e.BACKUP_PROM_URL ?? '', promUser: e.BACKUP_PROM_USER ?? '', promToken: e.BACKUP_PROM_TOKEN ?? '',
     tickets: e.BACKUP_TICKETS === 'on',
     maxDays: Math.max(1, Math.min(7, Number.parseInt(e.BACKUP_MAX_DAYS ?? '3', 10) || 3)),
     metricsDb: e.METRICS_DB || '/var/lib/japharsworld-yt/metrics.db',
     ticketsDb: e.DB_PATH || '/var/lib/japharsworld-yt/tickets.db',
     state: e.BACKUP_STATE || '/var/lib/japharsworld-yt/backup-state.json',
-    unit: e.BACKUP_UNIT || 'japharsworld-yt',
+    // The search service and the metrics poller (releases, VRChat and Tunelio polls, their errors).
+    units: (e.BACKUP_UNITS || 'japharsworld-yt,japharsworld-yt-metrics').split(',').map((u) => u.trim()).filter((u) => /^[\w@.-]+$/.test(u)),
+    deploysLog: e.BACKUP_DEPLOYS_LOG || '/var/lib/japharsworld-yt-deploy/deploys.log',
     tz: e.METRICS_TZ || 'America/Chicago',
     webhook: e.DISCORD_WEBHOOK || e.ALERT_WEBHOOK || '',
   };
 }
 
-// One run: every day due (or `onlyDay`, for a manual re-run), state written after each day that landed.
-export async function run({ cfg, now = Date.now(), onlyDay = null, put, events, prom, snapshot = snapshotDb, log = (o) => console.log(JSON.stringify(o)), alert = () => {} }) {
+// One run: every day due (or `onlyDay`, a manual re-run), the state written after each day that landed. Any failure
+// is logged and posted to Discord; the day is tried again at the next run.
+export async function run(opts) {
+  const { log = (o) => console.log(JSON.stringify(o)), alert = () => {} } = opts;
+  try { return await runDays({ ...opts, log, alert }); } catch (err) {
+    const message = String(err?.message ?? err).slice(0, 300);
+    log({ event: 'backup_failed', day: null, message });
+    alert('backup_failed', `Backup failed: ${message}. \`journalctl -u japharsworld-yt-backup\` on the Linode.`);
+    return { ok: false, days: [], error: message };
+  }
+}
+async function runDays({ cfg, now = Date.now(), onlyDay = null, force = false, put, events, prom, snapshot = snapshotDb, readDeploys, log, alert }) {
+  if (onlyDay && !(DAY_RE.test(onlyDay) && onlyDay < dayOf(now, cfg.tz))) throw new Error(`--day ${onlyDay}: only a day that has ended`);
   const state = readState(cfg.state);
   let days;
   if (onlyDay) days = [onlyDay];
@@ -254,16 +316,17 @@ export async function run({ cfg, now = Date.now(), onlyDay = null, put, events, 
   try {
     for (const day of days) {
       try {
-        await backupDay(day, { cfg, put, events, prom, newest: day === days[days.length - 1], snapshot: (p) => snapshot(p, tmp), log });
+        await backupDay(day, { cfg, put, events, prom, newest: !onlyDay && day === days[days.length - 1], manual: Boolean(onlyDay), force,
+          snapshot: (p) => snapshot(p, tmp), log, ...(readDeploys ? { readDeploys } : {}) });
       } catch (err) {
         const message = String(err?.message ?? err).slice(0, 300);
         log({ event: 'backup_failed', day, message });
-        alert('backup_failed', `Backup to S3 failed for ${day}: ${message}. It retries at the next run (01:30 Chicago); \`journalctl -u japharsworld-yt-backup\` on the Linode.`);
+        alert('backup_failed', `Backup failed for ${day}: ${message}. It retries at the next run (01:30 Chicago); \`journalctl -u japharsworld-yt-backup\` on the Linode.`);
         return { ok: false, days: done, failed: day };
       }
       done.push(day);
       if (!onlyDay || !state.lastDay || day > state.lastDay) {
-        Object.assign(state, { lastDay: onlyDay && state.lastDay > day ? state.lastDay : day, lastSuccessAt: new Date().toISOString(), lastSuccessMs: Date.now() });
+        Object.assign(state, { lastDay: day, lastSuccessAt: new Date().toISOString(), lastSuccessMs: Date.now() });
         writeState(cfg.state, state);
       }
     }
@@ -275,23 +338,27 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const cfg = configFrom();
   const dayArg = process.argv.indexOf('--day');
   const onlyDay = dayArg > 0 ? process.argv[dayArg + 1] : null;
-  if (onlyDay && !DAY_RE.test(onlyDay)) { console.error('usage: backup.js [--day YYYY-MM-DD]'); process.exit(2); }
-  if (!cfg.bucket || !cfg.accessKeyId || !cfg.secretAccessKey) {
-    console.log(JSON.stringify({ event: 'backup_off', reason: 'BACKUP_S3_BUCKET and the BACKUP_AWS_* key are not all set' }));
+  if (onlyDay && !DAY_RE.test(onlyDay)) { console.error('usage: backup.js [--day YYYY-MM-DD [--force]]'); process.exit(2); }
+  const force = process.argv.includes('--force');
+  const s3 = cfg.bucket && cfg.accessKeyId && cfg.secretAccessKey;
+  if (!s3 && !cfg.localDir) {
+    console.log(JSON.stringify({ event: 'backup_off', reason: 'neither BACKUP_S3_BUCKET with the BACKUP_AWS_* key nor BACKUP_LOCAL_DIR is set' }));
     process.exit(0);
   }
   const log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
-  const put = makeS3(cfg);
+  // A local folder wins, so a test on a host that also has a key never writes to the bucket; its state file is separate.
+  const put = cfg.localDir ? makeLocal(cfg.localDir) : makeS3(cfg);
+  if (cfg.localDir) { cfg.state = join(resolve(cfg.localDir), 'backup-state.json'); log({ event: 'backup_local', dir: resolve(cfg.localDir) }); }
   const events = async ({ start, end, counts }) => {
-    const j = journalLines({ unit: cfg.unit, start, end });
+    const j = journalLines({ units: cfg.units, start, end });
     const [text] = await Promise.all([eventsJsonl(j.lines, counts), j.done]);
     return text;
   };
   const prom = cfg.promUrl && cfg.promUser && cfg.promToken
     ? ({ start, end }) => promSummary({ url: cfg.promUrl, user: cfg.promUser, token: cfg.promToken, start, end }) : null;
-  const alert = makeAlert({ webhook: cfg.webhook, username: 'Everything is OK backup', log });
-  const r = await run({ cfg, onlyDay, put, events, prom, log, alert });
+  const alert = cfg.localDir ? () => {} : makeAlert({ webhook: cfg.webhook, username: 'Everything is OK backup', log });
+  const r = await run({ cfg, onlyDay, force, put, events, prom, log, alert });
   // Give the Discord post a moment; it is fire-and-forget in makeAlert.
-  if (!r.ok) await new Promise((res) => setTimeout(res, 3000));
+  if (!r.ok && !cfg.localDir) await new Promise((res) => setTimeout(res, 3000));
   process.exitCode = r.ok ? 0 : 1;
 }

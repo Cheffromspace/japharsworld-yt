@@ -154,6 +154,9 @@ export const config = {
   // as a PC player, and for an AV1 Tunelio build, which the Quest 2 can't decode (home is always H.264). Off until
   // verified on the Quest (2026-10-23).
   homeAndroid: (process.env.HOME_ANDROID ?? 'off') === 'on',
+  // A .m3u8 ticket (Quest) whose Tunelio HLS build isn't ready, failed or ran past the hold gets a ready mp4 build of
+  // the same video and quality instead of youtube.com (src/server.js, Everything-is-OK#584). off: as before.
+  questMp4: (process.env.QUEST_MP4 ?? 'on') !== 'off',
   // A .m3u8 ticket (Quest) keeps its home session while the playlist still grows, instead of the give-up to Tunelio
   // for uneven keyframes, which exists for PC Media Foundation (#127); such a playlist then also starts at 0 exactly
   // (EXT-X-START PRECISE=YES), since ExoPlayer starts a playlist without ENDLIST at the live edge. Off: being tested on

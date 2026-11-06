@@ -698,3 +698,13 @@ test('#584: the mp4 /create failing (404 "Video not found or unavailable") ends 
   const a = await s.get(`/v1/0/${n}.m3u8`, QUEST);
   assert.equal(a.headers.get('location'), 'https://www.youtube.com/watch?v=AbCdEfGh1jK', 'then the old answer, not "not a video" again');
 });
+
+test('#584: AVPro\'s HLS file refused for size (413) in its first hold: "not a video" and the mp4, not too_long', async (t) => {
+  const probe = async (url) => (/hls=1/.test(url) ? { ok: false, refused: true, status: 413 } : { ok: true, refused: false });
+  const s = await server({ sizes: { '720p': 4500e6, '1080p': 9000e6 }, pbOpts: { probe } });
+  t.after(() => s.srv.close());
+  const n = await s.ticket(0); // 20 minutes, size unknown before the first /create
+  assert.ok(await isPreparing(await s.get(`/v1/0/${n}.m3u8`, QUEST)), 'AVPro: not too_long');
+  await settle();
+  assert.equal((await s.get(`/v1/0/${n}.m3u8`, UNITY)).headers.get('location'), MP4_720, 'Unity\'s player: the mp4');
+});

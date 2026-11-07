@@ -792,6 +792,21 @@ test('ticket → home on Quest: an AV1 Tunelio pin yields to the home copy once 
   assert.equal((await app.play(PC, '')).headers.get('location'), pc, "the PC's pin still holds");
 });
 
+test('ticket → home on Quest: an AV1 Tunelio pin stays when home refuses the video, without being dropped on every retry (#625 verifier)', async (t) => {
+  const { Adaptive } = await import('../src/adaptive.js');
+  const { playback, fetcher } = av1Fakes({ holdMs: 0 });
+  const logs = [];
+  // The 600 s test video is ~342 MB at 1080p and ~170 MB at 720p: over 0.1 GB at both, and HOME_ITEM_TOO_BIG=tunelio.
+  const app = await homeApp(t, { config: { homeAndroid: true, homeItemMaxGb: 0.1, homeItemTooBig: 'tunelio', ticketPin: true, ticketPinMarginMs: 60_000 },
+    playback, adaptive: new Adaptive({ playback, fetcher, base: 'http://pub/hls' }), tunelio: { enabled: true }, log: (line) => logs.push(JSON.parse(line)) });
+  const first = (await app.play(QUEST)).headers.get('location');
+  assert.doesNotMatch(first, /\/home\//);
+  for (let i = 0; i < 3; i++) assert.equal((await app.play(QUEST)).headers.get('location'), first);
+  assert.equal(app.jobs.length, 0);
+  assert.equal(logs.filter((e) => e.event === 'ticket_unpin').length, 0, 'the pin is not dropped and set again');
+  assert.equal(logs.filter((e) => e.event === 'android_av1').length, 1, 'AV1 counted once for the ticket');
+});
+
 test('media cache: a finished stream is kept and the next job for it uploads from disk, marked cached, without yt-dlp', async (t) => {
   const { MediaCache } = await import('../relay/cache.js');
   const dir = tmp(t);

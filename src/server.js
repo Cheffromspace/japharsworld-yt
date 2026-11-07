@@ -774,7 +774,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   function av1HomeFor(data, hq) {
     const s = home.peek(data, hq) ?? home.other?.(data, hq);
     if (s) return s.state !== 'failed';
-    return Boolean(home.worker());
+    // No session: a new one must get a worker and not be one home refuses anyway (size or hour, a recent no-room), else
+    // the pin would be dropped and set again on every retry for the same Tunelio answer (#625 verifier).
+    return Boolean(home.worker()) && !home.blocks?.(data, hq) && !(homeRefused.get(data.id) > Date.now());
   }
   // A home session for this play, counted once by why it went home (a session that is already there is just used),
   // and once as `stepdown` when it is 720p only for its length.
@@ -874,7 +876,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // waits, 17 with a hold over 20 s, 7 over 40 s, up to 97 s; home ready p50 6.6 s, max 15.2 s. Age, not this hold's own
   // time, so that a build warmed from the tablet counts, players of a room change over together and a player's retry
   // doesn't start the clock again. The build carries on: its credits are spent, and the next play can use the link.
-  async function raceHome(req, shard, data, c, hq, key) {
+  // waited: set when this request held on a home session, so the AV1 switch after it doesn't hold a second time (#625).
+  async function raceHome(req, shard, data, c, hq, key, waited = {}) {
     const hold = playback.location(data, { holdMs: config.ticketPlayerHoldMs, quality: c.quality, hls: c.hls });
     const job = playback.peek?.(data, c.quality, { hls: c.hls });
     if (job?.state !== 'building') return hold;
@@ -886,6 +889,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (req.socket.destroyed) return hold; // the player left: no download from home for nobody
     const s = homeKeep(data, hq, startHome(shard, data, hq, 'slow_build'));
     if (!s || s.state === 'failed') return hold;
+    waited.home = true;
     const tunelio = await Promise.race([hold, home.wait(s, config.homeReadyMs).then(() => null)]);
     if (tunelio) return tunelio;
     if (s.state !== 'ready') return hold; // home failed or missed its time: Tunelio's hold goes on
@@ -1156,6 +1160,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const android = isAndroidPlayer(req.headers['user-agent']);
       const started = Date.now();
       const key = pinKey(shard, n, hlsTicket, kind);
+      const waited = { home: false }; // this request held on a home session already (hs, slow or the race)
       const answerPin = (pin, held = 0) => {
         if (resolver && pin.playlist) {
           // A playlist behind the ticket: sent on at once, as when it was first answered, so AVPro asks itself.
@@ -1200,6 +1205,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           return res.end(body);
         }
         holding++;
+        waited.home = true;
         try { await home.wait(hs, config.homeReadyMs); } finally { holding--; }
         // Another player of this ticket was answered during the wait, say by Tunelio from raceHome: one source per ticket (#293).
         const answered = pinned(key, t.data);
@@ -1226,6 +1232,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
             return res.end(body);
           }
           holding++;
+          waited.home = true;
           try { await home.wait(slow, config.homeReadyMs); } finally { holding--; }
           if (slow.state === 'ready') where = await homeWhere(slow);
         }
@@ -1273,7 +1280,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         if (unityPlayer) metrics.inc('adaptive', 'quest_mp4');
         holding++;
         try {
-          if (config.homeRaceMs > 0 && hlsTicket && homeOk && c.hls) where = await raceHome(req, shard, t.data, c, hq, key);
+          if (config.homeRaceMs > 0 && hlsTicket && homeOk && c.hls) where = await raceHome(req, shard, t.data, c, hq, key, waited);
           else where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs,
             quality: c.quality, hls: c.hls });
         } finally { holding--; }
@@ -1301,9 +1308,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
             logJson({ event: 'android_av1', shard, n, id: t.data.id, quality: c.quality, home: homeOk && home.enabled });
             if (homeOk && home.enabled) {
               av1Play = true;
-              // Not when this request already waited for a home session above (it missed HOME_READY_SECONDS): one hold, not
-              // two. Its Tunelio answer is pinned as AV1, so the next request goes home.
-              if (av1HomeFor(t.data, hq) && !(hs && hs.state !== 'failed')) homeFor = 'av1';
+              // Not when this request already held on a home session (hs, slow or the race; it missed HOME_READY_SECONDS):
+              // one hold, not two. Its Tunelio answer is pinned as AV1, so the next request goes home.
+              if (av1HomeFor(t.data, hq) && !waited.home) homeFor = 'av1';
             }
           }
         }
@@ -1312,6 +1319,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         if (homeFor) {
           // homeKeep: the video's session at another quality when this one can't be had (av1HomeFor counted it).
           const fallback = homeKeep(t.data, hq, startHome(shard, t.data, hq, homeFor));
+          // Refused (allowance, caps, no room): home can't help this play, so its Tunelio pin stays as it is (#625 verifier).
+          if (homeFor === 'av1' && !fallback) av1Play = false;
           if (fallback && fallback.state !== 'failed') {
             holding++;
             try { await home.wait(fallback, config.homeReadyMs); } finally { holding--; }

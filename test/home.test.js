@@ -563,6 +563,57 @@ test('ticket → home on Quest: an AV1 Tunelio build on a .m3u8 ticket goes home
   assert.match((await flagOff.play(QUEST)).headers.get('location'), /\/hls\//, 'AV1 counted but not sent home while HOME_ANDROID is off');
 });
 
+// Everything-is-OK#625 (staging 2026-11-06 23:53Z): three AVPro requests held on the same Tunelio build all saw AV1. The
+// first started the home copy, which set home's start gap, so the other two found no worker, got Tunelio's AV1 build
+// and pinned it, and the first, back from home_ready, was handed that pin. A Quest 2 can't decode AV1 (#101).
+function av1Fakes({ holdMs = 50 } = {}) {
+  const job = { id: 'aaaaaaaaaaa', quality: '720p', state: 'ready', url: 'https://tunelio.dev/t?id=x&hls=1' };
+  const playback = { jobs: new Map(), peek: () => job, status: () => ({ state: 'ready' }), start() {},
+    async location() { await new Promise((r) => setTimeout(r, holdMs)); return { location: job.url, via: 'tunelio', ready: true }; } };
+  const fetcher = async (u) => (u.includes('init')
+    ? { status: 206, arrayBuffer: async () => new TextEncoder().encode('....ftyp....moov....stsd....av01....').buffer }
+    : { status: 200, text: async () => '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4,\nseg1.m4s\n' });
+  return { playback, fetcher, job };
+}
+
+test('ticket → home on Quest: concurrent AVPro requests of an AV1 build all get home, not a Tunelio pin, under the start gap (#625)', async (t) => {
+  const { Adaptive } = await import('../src/adaptive.js');
+  const { playback, fetcher } = av1Fakes();
+  const app = await homeApp(t, { config: { homeAndroid: true, homeStartGapMs: 45_000, ticketPin: true, ticketPinMarginMs: 60_000 },
+    media: () => new Promise((r) => setTimeout(r, 300)), // home_ready after the other requests are answered, as on staging
+    playback, adaptive: new Adaptive({ playback, fetcher, base: 'http://pub/hls' }), tunelio: { enabled: true } });
+  const answers = await Promise.all([app.play(QUEST), app.play(QUEST), app.play(QUEST)]);
+  for (const r of answers) assert.match(r.headers.get('location'), /\/home\/[a-f0-9]{18}\/index\.m3u8$/, 'every AVPro request gets home');
+  assert.equal(app.jobs.length, 1, 'one home build for all three');
+  // A request after the home copy is ready: the home pin.
+  assert.match((await app.play(QUEST)).headers.get('location'), /\/home\//);
+});
+
+test('ticket → home on Quest: an AV1 Tunelio pin yields to the home copy once home can build it (#625)', async (t) => {
+  const { Adaptive } = await import('../src/adaptive.js');
+  const { playback, fetcher } = av1Fakes({ holdMs: 0 });
+  const app = await homeApp(t, { config: { homeAndroid: true, homeStartGapMs: 400, ticketPin: true, ticketPinMarginMs: 60_000 },
+    playback, adaptive: new Adaptive({ playback, fetcher, base: 'http://pub/hls' }), tunelio: { enabled: true } });
+  const PC = 'NSPlayer/12.00.26100 WMFSDK/12.00';
+  // Another video's home build just started, so home's start gap leaves no worker: Tunelio's AV1 build is all there is
+  // for this play, and it is pinned.
+  const [other] = app.store.allocate(0, [{ kind: 'video', data: { id: 'bbbbbbbbbbb', title: 'U', seconds: 600, live: false } }]);
+  const quest = (n) => fetch(`${app.url}/v1/0/${n}.m3u8`, { redirect: 'manual', headers: { 'user-agent': QUEST } });
+  assert.match((await quest(other)).headers.get('location'), /\/home\//);
+  const first = await app.play(QUEST);
+  assert.doesNotMatch(first.headers.get('location'), /\/home\//, 'no worker and no session: Tunelio, as before');
+  assert.equal((await app.play(QUEST)).headers.get('location'), first.headers.get('location'), 'still no worker: the pin holds');
+  // The PC's plain ticket is unchanged by any of this: Tunelio.
+  const pc = (await app.play(PC, '')).headers.get('location');
+  assert.doesNotMatch(pc, /\/home\//);
+  // The Quest asks again once a worker is free: the AV1 pin gives way and the play goes home.
+  await new Promise((r) => setTimeout(r, 450));
+  assert.match((await app.play(QUEST)).headers.get('location'), /\/home\//, 'the AV1 pin gave way to home');
+  assert.equal(app.jobs.length, 2, 'one home build per video');
+  assert.match((await app.play(QUEST)).headers.get('location'), /\/home\//, 'and home is the pin now');
+  assert.equal((await app.play(PC, '')).headers.get('location'), pc, "the PC's pin still holds");
+});
+
 test('media cache: a finished stream is kept and the next job for it uploads from disk, marked cached, without yt-dlp', async (t) => {
   const { MediaCache } = await import('../relay/cache.js');
   const dir = tmp(t);

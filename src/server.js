@@ -754,13 +754,27 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const job = playback.peek?.(data, p.quality, { hls: p.hls });
       alive = job?.state === 'ready' && job.url === p.jobUrl && !(job.expiresMs - now < 60_000);
     }
-    if (!alive) {
+    // A Quest's pin to Tunelio's AV1 build (#625) gives way once home can serve the video: the Quest 2 can't decode AV1
+    // (#101), so that pin is a source that doesn't play. It is kept only when home can't help (its session failed, or
+    // none and no worker free), as there is nothing better then. The request goes on to the home copy (waiting for it if
+    // it is still building), and the home answer becomes the pin.
+    const av1 = alive && p.av1 && av1HomeFor(data, p.hq);
+    if (!alive || av1) {
       pins.delete(key);
-      if (p.id === data.id) logJson({ event: 'ticket_unpin', id: data.id, via: p.via, reason: now >= p.until ? 'window' : 'dead' });
+      if (p.id === data.id) logJson({ event: 'ticket_unpin', id: data.id, via: p.via, reason: av1 ? 'av1' : now >= p.until ? 'window' : 'dead' });
       return null;
     }
     if (touch) p.until = now + pinWindow(data);
     return p;
+  }
+  // Whether home can take an AV1 play of this video at quality hq: its session there (or at another quality) is building
+  // or ready, or a worker is free to start one. A session already there needs no free worker: home.start reuses it, and
+  // home's start gap (HOME_START_GAP_SECONDS) is about new downloads (#625, staging 2026-11-06: the first of three AVPro
+  // requests started the home copy, the gap it set left the other two with "no worker", and they pinned Tunelio's AV1).
+  function av1HomeFor(data, hq) {
+    const s = home.peek(data, hq) ?? home.other?.(data, hq);
+    if (s) return s.state !== 'failed';
+    return Boolean(home.worker());
   }
   // A home session for this play, counted once by why it went home (a session that is already there is just used),
   // and once as `stepdown` when it is 720p only for its length.
@@ -1197,6 +1211,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       }
       let c = null;
       let hlsQ = null; // the HLS build's quality of a .m3u8 ticket's Tunelio play (#584)
+      let av1Play = false; // a Quest answered with Tunelio's AV1 build while home is on: its pin gives way to home (#625)
       if (!where) {
         c = await choice(shard, t.data);
         // The plan's own /create (or another play's) just timed out: home now, not another /create that would likely
@@ -1284,13 +1299,19 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           if (codec === 'av1') {
             metrics.inc('adaptive', 'android_av1');
             logJson({ event: 'android_av1', shard, n, id: t.data.id, quality: c.quality, home: homeOk && home.enabled });
-            if (homeOk && home.enabled && home.worker()) homeFor = 'av1';
+            if (homeOk && home.enabled) {
+              av1Play = true;
+              // Not when this request already waited for a home session above (it missed HOME_READY_SECONDS): one hold, not
+              // two. Its Tunelio answer is pinned as AV1, so the next request goes home.
+              if (av1HomeFor(t.data, hq) && !(hs && hs.state !== 'failed')) homeFor = 'av1';
+            }
           }
         }
         // Tunelio's build failed: home before youtube.com's 360p, for a player that can take home's HLS, when a worker is free.
         if (!homeFor && !resolver && homeOk && where.ready && where.via === 'youtube' && /^(tunelio_failed|build_failed|too_long|budget)$/.test(where.reason ?? '') && home.worker()) homeFor = 'tunelio_failed';
         if (homeFor) {
-          const fallback = startHome(shard, t.data, hq, homeFor);
+          // homeKeep: the video's session at another quality when this one can't be had (av1HomeFor counted it).
+          const fallback = homeKeep(t.data, hq, startHome(shard, t.data, hq, homeFor));
           if (fallback && fallback.state !== 'failed') {
             holding++;
             try { await home.wait(fallback, config.homeReadyMs); } finally { holding--; }
@@ -1351,7 +1372,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         const job = !session && c ? playback.peek?.(t.data, c.quality, { hls: c.hls }) : null;
         if (session || job?.url) {
           pins.set(key, { id: t.data.id, via, reason, location, playlist: session ? true : Boolean(c.hls), session,
-            quality: c?.quality, hls: c?.hls, jobUrl: job?.url, mode: c?.mode ?? null, until: Date.now() + pinWindow(t.data) });
+            quality: c?.quality, hls: c?.hls, jobUrl: job?.url, mode: c?.mode ?? null, until: Date.now() + pinWindow(t.data),
+            ...(av1Play && via === 'tunelio' ? { av1: true, hq } : {}) });
         }
       }
       res.writeHead(302, { location, 'cache-control': 'no-store' });

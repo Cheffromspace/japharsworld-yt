@@ -246,6 +246,39 @@ test('#652: an Android player on a plain ticket: a large build that failed is to
   assert.equal((await small.get(`/v1/0/${m}`, QUEST)).headers.get('location'), 'https://www.youtube.com/watch?v=AbCdEfGh1jK', 'a small file\'s failure: the old answer');
 });
 
+// #652 verifier (2026-11-08): the Quest's resolver is Chrome-like with Android in its UA, so not isAndroidPlayer. On a
+// plain ticket it shared the PC resolver's pin and had no 720p cap, so a PC resolver's 1080p mp4 reached the Quest.
+const QUEST_YTDLP = 'Mozilla/5.0 (Linux; Android 12; Quest 3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36';
+test('#652: the Quest\'s resolver on a plain ticket gets the 720p mp4 and its own pin, whichever resolver asks first', async (t) => {
+  for (const questFirst of [false, true]) {
+    const s = await server({}, {}, { cfg: { ticketPin: true } });
+    t.after(() => s.srv.close());
+    s.releaseUpper();
+    const n = await s.ticket(3); // fast: plan direct, 1080p
+    const quest = () => s.get(`/v1/3/${n}`, QUEST_YTDLP), pc = () => s.get(`/v1/3/${n}`, YTDLP);
+    const [a, b] = questFirst ? [await quest(), await pc()] : [await pc(), await quest()];
+    const [q, p] = questFirst ? [a, b] : [b, a];
+    assert.match(q.headers.get('location'), /-720p&.*progressive=1$/, `the Quest resolver: 720p (${questFirst ? 'first' : 'after the PC'})`);
+    assert.match(p.headers.get('location'), /-1080p&.*progressive=1$/, 'the PC resolver: 1080p');
+    assert.match((await quest()).headers.get('location'), /-720p&/, 'pinned on its own');
+    assert.match((await pc()).headers.get('location'), /-1080p&/);
+  }
+});
+
+test('#652: where the Quest\'s player gets too_long on a plain ticket, its resolver is sent on (an HLS-only mp4, a large failed build)', async (t) => {
+  const s = await server({ sizes: { '720p': 7000e6, '1080p': 9000e6 } }, {}, { seconds: 6 * 3600 });
+  t.after(() => s.srv.close());
+  const n = await s.ticket(0);
+  assert.ok(await isPreparing(await s.get(`/v1/0/${n}`, QUEST_YTDLP)), 'HLS only: sent on, not the playlist');
+  assert.equal((await s.get(`/v1/0/${n}`, QUEST)).status, 403, 'then its player: too_long');
+  const probe = async () => ({ ok: false, refused: false, status: 524 });
+  const f = await server({ sizes: { '720p': 5000e6, '1080p': 9000e6 }, pbOpts: { probe, progressiveRetries: 0 } }, {}, { seconds: 6 * 3600 });
+  t.after(() => f.srv.close());
+  const m = await f.ticket(0);
+  assert.ok(await isPreparing(await f.get(`/v1/0/${m}`, QUEST_YTDLP)), 'a large failed build: sent on, not youtube.com');
+  assert.equal((await f.get(`/v1/0/${m}`, YTDLP)).headers.get('location'), 'https://www.youtube.com/watch?v=AbCdEfGh1jK', 'the PC resolver: youtube.com as before');
+});
+
 test('.m3u8 ticket (the world\'s Android build): always HLS, the plan\'s quality as a plain playlist', async (t) => {
   const s = await server();
   t.after(() => s.srv.close());

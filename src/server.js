@@ -969,6 +969,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // six failed loads (2026-10-31). Under it, too long or too big for Tunelio with no home build, for a .m3u8 ticket or an
   // Android player only (world #420): a Quest can't open that link and retried it every 6 s. A PC keeps the link, status
   // state "youtube", reason "too_long" (src/playback.js tooLongIds). The same shape as restrictedAnswer.
+  // "Not a video" for the Quest's resolver on a plain ticket where its player gets too_long (#652): VRChat then hands the
+  // ticket to AVPro, which asks itself and gets that answer, as the world handles it from the player.
+  function sendOn(res, shard, n, t, started, kind) {
+    logJson({ event: 'play_defer', shard, n, id: t.data.id, held: Date.now() - started, quest: 'resolver', client: kind });
+    const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+    return res.end(body);
+  }
   function tooLongAnswer(res, kind, shard, n, t) {
     metrics.inc('ticket_too_long');
     if (kind === 'string') return json(res, 200, { v: API, shard, t: n, room: roomQuality(shard), state: 'failed', reason: 'too_long', error: 'too_long', ...meta(t.data) });
@@ -1161,8 +1169,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // then told "this is not a video" (a plain page), which makes VRChat hand the URL straight to AVPro.
       const resolver = kind === 'ytdlp';
       const android = isAndroidPlayer(req.headers['user-agent']);
+      // The Quest's resolver on a plain ticket: a Chrome-like UA with Android in it, so not isAndroidPlayer, but the link it
+      // gets goes to the Quest's AVPro (playPlatform counts it android). It has its own pin, skips home and gets the 720p cap
+      // as the Quest's player does, and is sent on where that player gets too_long (Everything-is-OK#652 verifier, 2026-11-08:
+      // a PC resolver's pinned 1080p mp4 reached the Quest resolver on the same ticket).
+      const questResolver = resolver && !hlsTicket && /Android/i.test(String(req.headers['user-agent'] ?? ''));
       const started = Date.now();
-      const key = pinKey(shard, n, hlsTicket, kind, android);
+      const key = pinKey(shard, n, hlsTicket, kind, android || questResolver);
       const waited = { home: false }; // this request held on a home session already (hs, slow or the race)
       const answerPin = (pin, held = 0) => {
         if (resolver && pin.playlist) {
@@ -1196,7 +1209,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const hq = homeQuality(shard, t.data);
       // Unity's Android player on a .m3u8 ticket (#584): it plays only files, so never home's HLS; always the mp4 below.
       const unityPlayer = config.questMp4 && hlsTicket && android && kind === 'other' && !t.data.live;
-      const homeOk = hlsTicket ? config.homeAndroid && !unityPlayer : !android;
+      const homeOk = hlsTicket ? config.homeAndroid && !unityPlayer : !android && !questResolver;
       const why = homeOk ? homeWhy(t.data, hq, hlsTicket) : null;
       let hs = why ? homeKeep(t.data, hq, startHome(shard, t.data, hq, why)) : null;
       if (hs && hs.state !== 'failed') {
@@ -1261,7 +1274,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         } else if (c.hls && !resolver && android) {
           c = { quality: adaptive.lower, hls: false, mode: 'android' };
           metrics.inc('adaptive', 'android_progressive');
-        } else if (android && parseInt(c.quality, 10) > parseInt(adaptive.lower, 10)) {
+        } else if ((android || questResolver) && parseInt(c.quality, 10) > parseInt(adaptive.lower, 10)) {
           // A progressive plan above the lower rung (direct's 1080p, or a room's 1080p pick) is capped there for an Android
           // player, as questMp4Of does: a 1080p file may be AV1, which the Quest 2 can't decode (#101). The plain ticket is
           // the Quest's for long videos since #590 (Everything-is-OK#652, owner 2026-11-08).
@@ -1296,9 +1309,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         // on the mp4): it can't open HLS behind that ticket, and neither can Unity's player after it, so too_long's answer
         // ("can't be played here") instead of a playlist both fail on (Everything-is-OK#652, owner 2026-11-08: since #590 a
         // Quest gets the plain ticket for long videos). No pin: the answer is never kept.
-        if (android && !hlsTicket && !resolver && where.via === 'tunelio' && /[?&]hls=1$/.test(where.location ?? '')) {
+        if ((android || questResolver) && !hlsTicket && where.via === 'tunelio' && /[?&]hls=1$/.test(where.location ?? '')) {
           logJson({ event: 'quest_no_source', shard, n, id: t.data.id, client: kind, reason: 'hls_only' });
-          return tooLongAnswer(res, kind, shard, n, t);
+          return questResolver ? sendOn(res, shard, n, t, started, kind) : tooLongAnswer(res, kind, shard, n, t);
         }
         // The mp4 build turned HLS while Unity's player held on it: no use to that player either (see above).
         if (unityPlayer && where.via === 'tunelio' && /[?&]hls=1$/.test(where.location ?? '')) {
@@ -1371,11 +1384,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // too_long instead of youtube.com, which a Quest can't open and retried (prod 2026-10-26 to 11-08: three 720p builds of
       // 4.4-6.0 GB failed this way, as Tunelio refuses 720p files from about 5.2-5.5 GB). A small file's failure keeps the
       // old answer, so one stray failure doesn't mark a video unplayable. Played again after the 30 s retry: a new build.
-      if (android && !hlsTicket && !resolver && where.via === 'youtube' && where.reason === 'build_failed' && c) {
+      if ((android || questResolver) && !hlsTicket && where.via === 'youtube' && where.reason === 'build_failed' && c) {
         const job = playback.peek?.(t.data, c.quality);
         if (job?.state === 'failed' && job.mb >= SIZE_REFUSAL_MIN_MB && !playback.wouldBuild?.(t.data, c.quality)) {
           logJson({ event: 'quest_no_source', shard, n, id: t.data.id, client: kind, reason: 'build_failed', mb: job.mb });
-          return tooLongAnswer(res, kind, shard, n, t);
+          return questResolver ? sendOn(res, shard, n, t, started, kind) : tooLongAnswer(res, kind, shard, n, t);
         }
       }
       if (where.via === 'youtube' && where.reason === 'too_long' && (hlsTicket || android)) return tooLongAnswer(res, kind, shard, n, t);

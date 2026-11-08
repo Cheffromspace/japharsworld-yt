@@ -215,6 +215,37 @@ test('#652: an Android player on a plain ticket gets at most the 720p mp4 (direc
   assert.match((await s.get(`/v1/0/${n0}`)).headers.get('location'), /-1080p&.*progressive=1$/);
 });
 
+// Everything-is-OK#652 (caveat 3): on a plain ticket an Android player gets too_long, not a source it can't open, when its
+// mp4 turned HLS (over PROGRESSIVE_MAX_MB) or a large build (SIZE_REFUSAL_MIN_MB or more) failed. A PC keeps its answer.
+test('#652: an Android player on a plain ticket: an mp4 that turned HLS is too_long, not a playlist; a PC still gets it', async (t) => {
+  const s = await server({ sizes: { '720p': 7000e6, '1080p': 9000e6 } }, {}, { seconds: 6 * 3600 });
+  t.after(() => s.srv.close());
+  const n = await s.ticket(0);
+  const q = await s.get(`/v1/0/${n}`, QUEST);
+  assert.equal(q.status, 403, 'the Quest: too_long');
+  assert.equal((await q.json()).error, 'too_long');
+  assert.equal(s.playback.peek({ id: 'AbCdEfGh1jK' }, '720p').format, 'hls', 'the job turned HLS (7000 MB)');
+  assert.equal((await s.get(`/v1/0/${n}`, 'stagefright/1.2 (Linux;Android 14)')).status, 403, 'Unity\'s player too');
+  const pc = await s.get(`/v1/0/${n}`);
+  assert.equal(pc.status, 302, 'the PC plays the HLS as before');
+  assert.equal((await s.get(`/v1/0/${n}`, QUEST)).status, 403, 'not pinned from the PC');
+});
+
+test('#652: an Android player on a plain ticket: a large build that failed is too_long, a small one keeps youtube.com; a PC keeps youtube.com', async (t) => {
+  const probe = async () => ({ ok: false, refused: false, status: 524 });
+  const s = await server({ sizes: { '720p': 5000e6, '1080p': 9000e6 }, pbOpts: { probe, progressiveRetries: 0 } }, {}, { seconds: 6 * 3600 });
+  t.after(() => s.srv.close());
+  const n = await s.ticket(0);
+  const q = await s.get(`/v1/0/${n}`, QUEST);
+  assert.equal(q.status, 403, 'the Quest: too_long, not youtube.com');
+  assert.equal((await q.json()).error, 'too_long');
+  assert.equal((await s.get(`/v1/0/${n}`)).headers.get('location'), 'https://www.youtube.com/watch?v=AbCdEfGh1jK', 'the PC: youtube.com as before');
+  const small = await server({ pbOpts: { probe, progressiveRetries: 0 } }, {}, { seconds: 6 * 3600 }); // 200 MB
+  t.after(() => small.srv.close());
+  const m = await small.ticket(0);
+  assert.equal((await small.get(`/v1/0/${m}`, QUEST)).headers.get('location'), 'https://www.youtube.com/watch?v=AbCdEfGh1jK', 'a small file\'s failure: the old answer');
+});
+
 test('.m3u8 ticket (the world\'s Android build): always HLS, the plan\'s quality as a plain playlist', async (t) => {
   const s = await server();
   t.after(() => s.srv.close());

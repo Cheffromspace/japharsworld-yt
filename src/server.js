@@ -44,7 +44,7 @@ import { youtube as defaultYoutube } from './youtube.js';
 import { cachedSheet } from './sheet.js';
 import { Captions, errorLine } from './captions.js';
 import { Tunelio } from './tunelio.js';
-import { Playback, linkProbe, clientKind, isAndroidPlayer, playPlatform } from './playback.js';
+import { Playback, linkProbe, clientKind, isAndroidPlayer, playPlatform, SIZE_REFUSAL_MIN_MB } from './playback.js';
 import { TunelioCaptions } from './transcripts.js';
 import { CaptionChain } from './captionchain.js';
 import { makeAlert } from './alert.js';
@@ -1292,6 +1292,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           else where = await playback.location(t.data, { holdMs: resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs,
             quality: c.quality, hls: c.hls });
         } finally { holding--; }
+        // An Android player on a plain ticket whose progressive build turned HLS (a file over PROGRESSIVE_MAX_MB, or a 413
+        // on the mp4): it can't open HLS behind that ticket, and neither can Unity's player after it, so too_long's answer
+        // ("can't be played here") instead of a playlist both fail on (Everything-is-OK#652, owner 2026-11-08: since #590 a
+        // Quest gets the plain ticket for long videos). No pin: the answer is never kept.
+        if (android && !hlsTicket && !resolver && where.via === 'tunelio' && /[?&]hls=1$/.test(where.location ?? '')) {
+          logJson({ event: 'quest_no_source', shard, n, id: t.data.id, client: kind, reason: 'hls_only' });
+          return tooLongAnswer(res, kind, shard, n, t);
+        }
         // The mp4 build turned HLS while Unity's player held on it: no use to that player either (see above).
         if (unityPlayer && where.via === 'tunelio' && /[?&]hls=1$/.test(where.location ?? '')) {
           logJson({ event: 'play_defer', shard, n, id: t.data.id, held: Date.now() - started, quest: 'hls_only', client: kind });
@@ -1357,6 +1365,17 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
           return res.end(body);
+        }
+      }
+      // #652: an Android player on a plain ticket whose large build failed (SIZE_REFUSAL_MIN_MB or more, not due for a retry):
+      // too_long instead of youtube.com, which a Quest can't open and retried (prod 2026-10-26 to 11-08: three 720p builds of
+      // 4.4-6.0 GB failed this way, as Tunelio refuses 720p files from about 5.2-5.5 GB). A small file's failure keeps the
+      // old answer, so one stray failure doesn't mark a video unplayable. Played again after the 30 s retry: a new build.
+      if (android && !hlsTicket && !resolver && where.via === 'youtube' && where.reason === 'build_failed' && c) {
+        const job = playback.peek?.(t.data, c.quality);
+        if (job?.state === 'failed' && job.mb >= SIZE_REFUSAL_MIN_MB && !playback.wouldBuild?.(t.data, c.quality)) {
+          logJson({ event: 'quest_no_source', shard, n, id: t.data.id, client: kind, reason: 'build_failed', mb: job.mb });
+          return tooLongAnswer(res, kind, shard, n, t);
         }
       }
       if (where.via === 'youtube' && where.reason === 'too_long' && (hlsTicket || android)) return tooLongAnswer(res, kind, shard, n, t);

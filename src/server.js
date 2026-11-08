@@ -1261,6 +1261,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         } else if (c.hls && !resolver && android) {
           c = { quality: adaptive.lower, hls: false, mode: 'android' };
           metrics.inc('adaptive', 'android_progressive');
+        } else if (android && parseInt(c.quality, 10) > parseInt(adaptive.lower, 10)) {
+          // A progressive plan above the lower rung (direct's 1080p, or a room's 1080p pick) is capped there for an Android
+          // player, as questMp4Of does: a 1080p file may be AV1, which the Quest 2 can't decode (#101). The plain ticket is
+          // the Quest's for long videos since #590 (Everything-is-OK#652, owner 2026-11-08).
+          c = { ...c, quality: adaptive.lower };
         }
         if ((c.hls && resolver) || questSkip) {
           // yt-dlp would pick one variant of the master and hand AVPro only that: send it on at once, start the build.

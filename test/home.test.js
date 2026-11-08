@@ -923,6 +923,24 @@ test('TICKET_PIN (#293): a dead pinned source is chosen again: a Tunelio link re
   assert.ok(even.lines.some((e) => e.event === 'ticket_unpin' && e.reason === 'dead' && e.via === 'home'));
 });
 
+// Everything-is-OK#651: the PC player and the Quest's AVPro are both clientKind 'avpro', so on a plain ticket they shared
+// one pin. A PC first pinned home's HLS, and the Quest on that ticket (#590 gives it the plain ticket for long videos)
+// got HLS behind an extensionless URL, which it can't open, instead of android_progressive's mp4. Each has its own pin now.
+test('TICKET_PIN (#651): on a plain ticket a PC\'s home pin never reaches a Quest (it gets the mp4), and the reverse', async (t) => {
+  const app = await pinApp(t, { homeAndroidGrowing: false }, { playlist: ENDED.replace('EVENT', 'VOD') });
+  assert.equal(await app.pc(), 'home', 'the PC goes home and is pinned there');
+  const quest = await app.play(QUEST, '');
+  assert.equal(quest.headers.get('location'), app.job.url, 'the Quest on the same plain ticket: Tunelio\'s mp4, not the PC\'s HLS');
+  assert.ok(app.lines.some((e) => e.event === 'play' && e.client === 'avpro' && e.via === 'tunelio' && !e.pinned));
+  assert.equal((await app.play(QUEST, '')).headers.get('location'), app.job.url, 'and that is the Quest\'s own pin');
+  assert.equal(await app.pc(), 'home', 'the PC keeps home');
+  // Quest first: the PC isn't handed the Quest's mp4.
+  const rev = await pinApp(t, { homeAndroidGrowing: false }, { playlist: ENDED.replace('EVENT', 'VOD') });
+  assert.equal((await rev.play(QUEST, '')).headers.get('location'), rev.job.url);
+  assert.equal(await rev.pc(), 'home', 'the PC decides on its own: home');
+  assert.equal(rev.jobs.length, 1);
+});
+
 test('TICKET_PIN (#293): a youtube.com fallback is not kept: the next play gets the ready build, which is then kept', async (t) => {
   const job = { id: 'aaaaaaaaaaa', quality: '720p', state: 'building', url: null };
   let calls = 0;

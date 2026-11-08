@@ -753,12 +753,15 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // runs out (the video's length plus the margin after its last play: a later play gets the best source then) or when
   // its source died (home session failed or stale, Tunelio link gone or expiring). youtube.com fallbacks aren't kept, so
   // a ready build replaces them.
-  const pins = new Map(); // "shard:n:plain|m3u8:kind" → { id, via, reason, location, playlist, session, quality, hls, jobUrl, mode, until }
+  // An Android player on a plain ticket has its own pin ("plain-android"): the PC player and the Quest's AVPro are both
+  // kind 'avpro', and a PC's home or HLS answer reached the Quest on the same ticket, which can't open HLS there and failed
+  // (Everything-is-OK#651, found 2026-11-08 for #590's plain ticket on Quest). A .m3u8 ticket is Android's alone.
+  const pins = new Map(); // "shard:n:plain|plain-android|m3u8:kind" → { id, via, reason, location, playlist, session, quality, hls, jobUrl, mode, until }
   // What each shard's last play was answered with, for its video report: a youtube.com fallback has no pin, so a report
   // after one showed nothing (world #374, staging 2026-10-30: a 9.5 h video, home refused, Tunelio 413). In memory, like
   // the pins, so a restart still empties both.
   const lastAnswer = new Map(); // shard → { n, via, reason, quality, hls, mode }
-  const pinKey = (shard, n, hlsTicket, kind) => `${shard}:${n}:${hlsTicket ? 'm3u8' : 'plain'}:${kind}`;
+  const pinKey = (shard, n, hlsTicket, kind, android = false) => `${shard}:${n}:${hlsTicket ? 'm3u8' : android ? 'plain-android' : 'plain'}:${kind}`;
   const pinWindow = (data) => (data.seconds ?? 0) * 1000 + config.ticketPinMarginMs;
   function pinned(key, data, { touch = true } = {}) {
     if (!config.ticketPin) return null;
@@ -1159,7 +1162,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const resolver = kind === 'ytdlp';
       const android = isAndroidPlayer(req.headers['user-agent']);
       const started = Date.now();
-      const key = pinKey(shard, n, hlsTicket, kind);
+      const key = pinKey(shard, n, hlsTicket, kind, android);
       const waited = { home: false }; // this request held on a home session already (hs, slow or the race)
       const answerPin = (pin, held = 0) => {
         if (resolver && pin.playlist) {

@@ -199,6 +199,22 @@ test('direct and off: a fast 1080p plays progressive; other shards keep the old 
 
 const QUEST = 'AVProMobileVideo/2026.3.3p2-1921-15c4a824b2-Release (Linux;Android 14) ExoPlayer';
 
+// Everything-is-OK#652: on a plain ticket an Android player's progressive plan above 720p (direct, or a room's 1080p
+// pick) is capped at 720p, since a 1080p file may be AV1 (#101). A PC player keeps 1080p.
+test('#652: an Android player on a plain ticket gets at most the 720p mp4 (direct plan, room 1080p pick); a PC keeps 1080p', async (t) => {
+  const s = await server();
+  t.after(() => s.srv.close());
+  s.releaseUpper();
+  const n = await s.ticket(3); // fast: plan direct, 1080p
+  assert.equal((await (await s.get(`/v1/3/${n}`, 'UnityPlayer/2022')).json()).plan, 'direct');
+  assert.match((await s.get(`/v1/3/${n}`, QUEST)).headers.get('location'), /-720p&.*progressive=1$/, 'the Quest: 720p');
+  assert.match((await s.get(`/v1/3/${n}`)).headers.get('location'), /-1080p&.*progressive=1$/, 'the PC: 1080p as before');
+  assert.equal((await s.get('/v1/0/q/1080', 'UnityPlayer/2022')).status, 200);
+  const n0 = await s.ticket(0); // plans off, the room picked 1080p
+  assert.match((await s.get(`/v1/0/${n0}`, QUEST)).headers.get('location'), /-720p&.*progressive=1$/);
+  assert.match((await s.get(`/v1/0/${n0}`)).headers.get('location'), /-1080p&.*progressive=1$/);
+});
+
 test('.m3u8 ticket (the world\'s Android build): always HLS, the plan\'s quality as a plain playlist', async (t) => {
   const s = await server();
   t.after(() => s.srv.close());

@@ -1674,11 +1674,34 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   }
   // kept(): everything that remembers a visitor past the request, for the tests that check no raw IP is in it.
   const kept = () => ({ hits, ticketHits, playerHits, lookupWarms, allowance, spend, adaptive, playback });
-  return Object.assign(handler, { relay, checkWorkers, sweep, metrics, probe, refusals, home, kept });
+  return Object.assign(handler, { relay, checkWorkers, sweep, metrics, probe, refusals, home, kept, logJson });
+}
+
+// A promise rejected with nobody waiting on it ends a Node process by default, and with this one every held player and
+// build in flight. Installed by the entry point below (not by createApp, so tests keep Node's default): the service
+// logs one `unhandled_rejection` line, counts it (metric unhandled_rejection, src/metrics.js) and carries on.
+// The line says what kind of error and where in the code, never its message: a message can quote a URL, a query or a
+// video ID. `where` is the first stack frames as dir/file:line. An uncaught exception still ends the process.
+export function rejectionShape(reason) {
+  if (!(reason instanceof Error)) return { error: reason === null ? 'null' : typeof reason };
+  const code = [reason.code, reason.cause?.code].find((c) => typeof c === 'string' && /^[A-Z][A-Z0-9_]{0,40}$/.test(c));
+  const where = String(reason.stack ?? '').split(/\r?\n/)
+    .map((l) => /^\s+at .*?([\w.@-]+[\\/])?([\w.@-]+):(\d+):\d+\)?$/.exec(l)).filter(Boolean).slice(0, 4)
+    .map((m) => `${m[1] ? `${m[1].slice(0, -1)}/` : ''}${m[2]}:${m[3]}`).join(' < ');
+  return { error: /^[A-Za-z][A-Za-z0-9_]{0,40}$/.test(reason.name ?? '') ? reason.name : 'Error', ...(code ? { code } : {}), where };
+}
+export function catchRejections(proc, { log, metrics } = {}) {
+  const onRejection = (reason) => {
+    try { metrics?.inc?.('unhandled_rejection'); } catch { /* counting must not end the process either */ }
+    try { log?.({ event: 'unhandled_rejection', ...rejectionShape(reason) }); } catch { /* nor logging */ }
+  };
+  proc.on('unhandledRejection', onRejection);
+  return onRejection;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const app = createApp();
+  catchRejections(process, { log: app.logJson, metrics: app.metrics });
   // Write the last minute's counts before systemd stops us (deploys restart the service), and answer the relay
   // workers' held polls first; the short wait lets those 204s reach Caddy before the process exits.
   let server;

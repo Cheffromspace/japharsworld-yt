@@ -144,6 +144,7 @@ export const METRICS = {
   // YouTube refused a lookup (src/refusal.js): '<where>:<class>', the class only, never the message, query or video.
   yt_refusal: ['daily', oneOf(...REFUSAL_WHERE.flatMap((w) => REFUSAL_CLASSES.map((c) => `${w}:${c}`)))],
   video_report: ['daily', oneOf(...REPORT_WHO.flatMap((w) => REPORT_KINDS.map((k) => `${w}:${k}`)))], // '<who>:<kind>'
+  unhandled_rejection: ['daily', none], // a promise rejected with nobody waiting on it; the service carried on (src/server.js catchRejections)
   join: ['daily', none],
   join_lang: ['daily', isLang],
   credits_remaining: ['gauge', none],

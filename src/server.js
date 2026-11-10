@@ -288,12 +288,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return !touch(ticketHits, ip, list, config.rateKeysMax ?? 10_000, now);
   }
 
+  // Searches a minute per IP (SEARCHES_PER_MINUTE). Bounded like the ticket limit, without dropping an active IP's count
+  // (src/spend.js touch): past RATE_KEYS_MAX the least recently active go first, and a new IP is refused while every
+  // kept one was active in the last minute. Until 2026-11-10 the map was cleared past its bound, every count with it.
   function rateLimited(ip) {
     const now = Date.now();
     const list = (hits.get(ip) ?? []).filter((t) => now - t < 60_000);
     list.push(now);
-    hits.set(ip, list);
-    if (hits.size > 10_000) hits.clear();
+    if (!touch(hits, ip, list, config.rateKeysMax ?? 10_000, now)) return true;
     return list.length > perIp(config.searchesPerMinutePerIp, ip);
   }
 

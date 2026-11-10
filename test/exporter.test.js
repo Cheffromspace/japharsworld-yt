@@ -177,3 +177,17 @@ test('exporter: missing databases and a down search service still answer', async
   assert.match(text, /^eiok_exporter_db_ok\{db="metrics"\} 0$/m);
   assert.match(text, /^eiok_search_up 0$/m);
 });
+
+test('exporter: the backup gauge from the backup job\'s state file, left out before the first backup (#585)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'backup-state-'));
+  try {
+    const path = join(dir, 'backup-state.json');
+    assert.doesNotMatch(await render({ metricsDb: '', monitorDb: '', backupState: path }), /eiok_backup/, 'no file: left out');
+    writeFileSync(path, '{not json');
+    assert.doesNotMatch(await render({ metricsDb: '', monitorDb: '', backupState: path }), /eiok_backup/, 'unreadable: left out');
+    writeFileSync(path, JSON.stringify({ lastDay: '2026-11-05', lastSuccessAt: '2026-11-06T07:31:02.500Z', lastSuccessMs: Date.parse('2026-11-06T07:31:02.500Z') }));
+    const text = await render({ metricsDb: '', monitorDb: '', backupState: path });
+    assert.match(text, /^eiok_backup_last_success_timestamp_seconds 1793950262$/m);
+    assert.doesNotMatch(text, /2026-11-05/, 'the day is not a label');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

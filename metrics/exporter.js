@@ -200,7 +200,16 @@ export function serviceMemorySeries(dir, o) {
   o.add('eiok_service_memory_limit_bytes', 'gauge', 'The search service\'s memory.max (MemoryMax), bytes.', {}, read('memory.max').match(/^\d+/)?.[0]);
 }
 
-export async function render({ metricsDb, monitorDb, healthUrl, opsUrl, statsToken, cgroupDir, now = Date.now(), fetchImpl = fetch }) {
+// The daily S3 backup's own record (metrics/backup.js, Everything-is-OK#585): when a day last landed. Left out until the
+// first backup, so Grafana's eiok-backup-missing stays quiet where backups are off.
+export function backupSeries(path, o) {
+  let s;
+  try { s = JSON.parse(readFileSync(path, 'utf8')); } catch { return; }
+  if (!Number.isFinite(s?.lastSuccessMs)) return;
+  o.add('eiok_backup_last_success_timestamp_seconds', 'gauge', 'When the daily S3 backup last uploaded a day (metrics/backup.js).', {}, Math.floor(s.lastSuccessMs / 1000));
+}
+
+export async function render({ metricsDb, monitorDb, healthUrl, opsUrl, statsToken, cgroupDir, backupState, now = Date.now(), fetchImpl = fetch }) {
   const o = new Out();
   for (const [name, path, fn] of [['metrics', metricsDb, metricsDbSeries], ['monitor', monitorDb, monitorDbSeries]]) {
     let db, ok = false;
@@ -224,6 +233,7 @@ export async function render({ metricsDb, monitorDb, healthUrl, opsUrl, statsTok
     } catch { /* left out; eiok-alert-inputs-missing fires if it stays out */ }
   }
   if (cgroupDir) serviceMemorySeries(cgroupDir, o);
+  if (backupState) backupSeries(backupState, o);
   return o.text();
 }
 
@@ -237,6 +247,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     opsUrl: `http://127.0.0.1:${e.PORT ?? 8790}/ops/state`,
     statsToken: e.STATS_TOKEN ?? '',
     cgroupDir: '/sys/fs/cgroup/system.slice/japharsworld-yt.service',
+    backupState: e.BACKUP_STATE ?? '/var/lib/japharsworld-yt/backup-state.json',
   };
   http.createServer(async (req, res) => {
     if (req.url !== '/metrics') { res.writeHead(404).end(); return; }

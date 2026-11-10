@@ -541,6 +541,9 @@ export function alertRules(dsUid, { critical = false } = {}) {
     // It posts to the warning channel (owner, 2026-10-29: fine there for now). Its own channel later: a third contact
     // point from its own webhook env var, pushed like DISCORD_CRITICAL_WEBHOOK's, and this rule's receiver set to it.
     rule('eiok-tester-report', 'Tester video report', 'sum by (kind) (increase(eiok_video_report_total{kind=~"frozen|stutter|sync|sound|load|quality"}[15m]))', { forM: 0, summary: 'A tester reported "{{ $labels.kind }}" from the world in the last 15 minutes. The play behind it: `node tools/ops.mjs events --event video_report`.' }),
+    // The daily S3 backup (metrics/backup.js, Everything-is-OK#585) runs at 01:30 Chicago: over 30 h since a day landed
+    // means a night was missed. No data (backups not set up) is OK.
+    rule('eiok-backup-missing', 'Daily backup missing', 'time() - max(eiok_backup_last_success_timestamp_seconds) - 30 * 3600', { forM: 60, summary: 'No day has reached the S3 backup for over 30 hours (it runs at 01:30 Chicago and catches up to 3 missed days). See `journalctl -u japharsworld-yt-backup` on the Linode.' }),
     rule('eiok-disk-low', 'Disk almost full', 'max by (host) (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) > 0.9', { forM: 15, summary: 'Under 10 % free on / of {{ $labels.host }}.' }),
   ]);
 }

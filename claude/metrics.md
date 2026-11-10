@@ -121,6 +121,8 @@ The service's journal logs (`journalctl -u japharsworld-yt`) are separate and un
   (`VRCHAT_AUTH_COOKIE`, `VRCHAT_2FA_COOKIE`, kept current by the poller), `VRCHAT_GROUP_ID`, `METRICS_CONTACT`, `GITHUB_TOKEN`.
 - `/var/lib/japharsworld-yt-metrics/state.json` (root, 0700 dir): VRChat back-off and login-failure times.
 - `/etc/japharsworld-yt.env`: `METRICS_DB`, `STATS_TOKEN` (added by `deploy/metrics-setup.sh`).
+- Off the host: a daily snapshot of `metrics.db` and the day's redacted events in a private S3 bucket (`metrics/backup.js`,
+  claude/backup.md, Everything-is-OK#585); `/etc/japharsworld-yt-backup.env` (root, 0600) holds its write-only key.
 
 The poller starts as root only to read and refresh the VRChat session in the root-only file, then drops to `jyt` before
 it opens any database (`CapabilityBoundingSet=CAP_SETUID CAP_SETGID`, `ProtectSystem=strict`).

@@ -157,6 +157,7 @@ export const METRICS = {
   video_report: ['daily', oneOf(...REPORT_WHO.flatMap((w) => REPORT_KINDS.map((k) => `${w}:${k}`)))], // '<who>:<kind>'
   // '<who>:<platform>:<plan>:<outcome>', fixed sets, no shard, ticket or video (world #274).
   play_outcome: ['daily', oneOf(...OUTCOME_WHO.flatMap((w) => OUTCOME_PLATFORMS.flatMap((p) => OUTCOME_PLANS.flatMap((l) => OUTCOMES.map((o) => `${w}:${p}:${l}:${o}`)))))],
+  unhandled_rejection: ['daily', none], // a promise rejected with nobody waiting on it; the service carried on (src/server.js catchRejections)
   join: ['daily', none],
   join_lang: ['daily', isLang],
   credits_remaining: ['gauge', none],

@@ -250,21 +250,32 @@ test('#478: many IPs can\'t reset another IP\'s lookup warm count', async (t) =>
   const youtube = { async search(q) { return { videos: [{ id: q, title: 't', channel: 'c', length: '1:00', seconds: 60, views: '', age: '', live: false, cc: false }], more: null }; }, thumbnailUrl: (id) => id };
   const tunelio = fakeTunelio();
   const playback = new Playback({ tunelio, quality: '720p', probe: async () => ({ ok: true, refused: false }) });
-  // RATE_KEYS_MAX 2: the old map cleared itself past its bound, and every IP's count with it.
+  // The old map cleared itself past its bound, and every IP's count with it. RATE_KEYS_MAX bounds the search limit's map
+  // too (Everything-is-OK#679), so with a bound as small as the IPs used here the search limit's 429 would come first
+  // and the lookup-warm map would never be asked (verifier, 2026-11-10). So: a bound far above the three IPs that search,
+  // and the lookup-warm map filled to it directly with IPs active just now.
+  const MAX = 50;
   const a = createApp({ config: { ...base, shards: 1, pool: 100, tunelioQuality: '720p', searchesPerMinutePerIp: 50, videoMaxSeconds: 43200,
-    lookupWarm: true, lookupWarmsPerMinutePerIp: 2, lookupWarmsPerMinute: 100, rateKeysMax: 2 },
+    lookupWarm: true, lookupWarmsPerMinutePerIp: 2, lookupWarmsPerMinute: 100, rateKeysMax: MAX },
     store, youtube, playback, tunelio, captions: { async get() { return { available: false }; } }, log: () => {} });
   const server = http.createServer(a);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
   const look = async (i, from) => {
     const q = encodeURIComponent(`Paste a link → https://youtu.be/${vid(i)}`);
-    await fetch(`http://127.0.0.1:${server.address().port}/v1/0/s?l=en&q=${q}`, { headers: { 'user-agent': UNITY, 'x-forwarded-for': from } });
+    const r = await fetch(`http://127.0.0.1:${server.address().port}/v1/0/s?l=en&q=${q}`, { headers: { 'user-agent': UNITY, 'x-forwarded-for': from } });
+    assert.equal(r.status, 200, 'the search itself is answered: the search limit is not what holds the warm back');
     await new Promise((r) => setTimeout(r, 20));
   };
+  const { lookupWarms, hits } = a.kept();
   await look(0, '9.9.9.9'); await look(1, '9.9.9.9'); // at its 2
-  await look(2, '8.8.8.1'); // fills the map
+  await look(2, '8.8.8.1'); // another IP, with room: warmed
+  assert.equal(lookupWarms.size, 2);
+  for (let i = 0; lookupWarms.size < MAX; i++) lookupWarms.set(`active-${i}`, [Date.now()]); // full of active IPs
   await look(3, '8.8.8.2'); // a new IP with the map full of active ones: no warm
   await look(4, '9.9.9.9'); // still at its 2
   assert.deepEqual(tunelio.created.map(([id]) => id), [vid(0), vid(1), vid(2)]);
+  assert.equal(lookupWarms.size, MAX, 'nobody was dropped and the new IP was not added');
+  assert.ok(lookupWarms.get([...lookupWarms.keys()][0]).length === 2, 'the first IP still has its two');
+  assert.equal(hits.size, 3, 'the map of the search limit was nowhere near its bound');
 });

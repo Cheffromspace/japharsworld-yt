@@ -123,7 +123,8 @@ export class Store {
     return JSON.parse(row.json);
   }
   captionPut(videoId, key, value) { this.q.capPut.run(videoId, key, JSON.stringify(value), this.now()); }
-  pruneCaptions(maxAgeMs) { this.q.capPrune.run(this.now() - maxAgeMs); }
+  // Rows captionGet(…, maxAgeMs) would no longer return; the number removed. Called from the server's sweep (src/server.js).
+  pruneCaptions(maxAgeMs) { return Number(this.q.capPrune.run(this.now() - maxAgeMs).changes); }
 
   close() { this.db.close(); }
 }

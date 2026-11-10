@@ -51,3 +51,21 @@ test('caption cache respects max age', () => {
   s.tick(2000);
   assert.equal(s.captionGet('abc', 'en', 1000), null);
 });
+
+test('pruneCaptions removes exactly the rows captionGet would no longer return, and counts them', () => {
+  const s = mk();
+  s.captionPut('old', 'en', { ok: 1 });
+  s.tick(1000);
+  s.captionPut('edge', 'en', { ok: 2 });
+  s.tick(1000);
+  s.captionPut('new', 'en', { ok: 3 });
+  // max age 1000: 'old' is 2000 old (gone), 'edge' exactly 1000 (still returned, so kept), 'new' 0.
+  assert.equal(s.captionGet('old', 'en', 1000), null);
+  assert.deepEqual(s.captionGet('edge', 'en', 1000), { ok: 2 });
+  assert.equal(s.pruneCaptions(1000), 1);
+  assert.deepEqual(s.db.prepare('SELECT video_id FROM captions ORDER BY video_id').all().map((r) => r.video_id), ['edge', 'new']);
+  assert.deepEqual(s.captionGet('edge', 'en', 1000), { ok: 2 });
+  s.captionPut('old', 'en', { ok: 4 });
+  assert.deepEqual(s.captionGet('old', 'en', 1000), { ok: 4 });
+  assert.equal(s.pruneCaptions(1000), 0);
+});

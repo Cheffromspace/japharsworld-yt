@@ -10,7 +10,9 @@ This service works within that rule:
   the service reads it as the raw rest of the address, so a pasted link's own `&` and `+` stay in it.
 - **Tickets.** The world bakes `https://yt.japharsworld.com/v1/<shard>/<n>` for every shard and `n < POOL`.
   A search binds the next free tickets to its videos, its thumbnail sheet and its next page, and answers with
-  ticket numbers. Loading a video ticket is a 302 to the video; no video passes through this server.
+  ticket numbers. Loading a video ticket is a 302 to the video. A Tunelio or youtube.com video never passes through
+  this server; a home relay play does (*Home relay playback* below): the home worker uploads its segments here and
+  players fetch them from this server.
 - **HD playback (Tunelio).** With `TUNELIO_API_KEY` set, an ordinary video's ticket redirects to a
   [Tunelio](https://tunelio.dev) tunnel link (720p/1080p): a progressive mp4 (full seeking) up to
   `TUNELIO_PROGRESSIVE_MAX_MINUTES` (720) and `TUNELIO_PROGRESSIVE_MAX_MB` (6000), Tunelio's HLS playlist for longer

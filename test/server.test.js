@@ -48,7 +48,7 @@ async function start(over = {}) {
     const body = type.includes('json') ? await res.json() : Buffer.from(await res.arrayBuffer());
     return { status: res.status, headers: res.headers, body };
   };
-  return { server, get, youtube, captionCalls, store, base: `http://127.0.0.1:${port}` };
+  return { app, server, get, youtube, captionCalls, store, base: `http://127.0.0.1:${port}` };
 }
 
 test('search → tickets → redirect, sheet, next page, captions', async (t) => {
@@ -362,6 +362,32 @@ test('rate limits searches per IP', async (t) => {
   t.after(() => s.server.close());
   for (let i = 0; i < 5; i++) assert.equal((await s.get('/v1/0/s?q=a' + i)).status, 200);
   assert.equal((await s.get('/v1/0/s?q=again')).body.error, 'rate_limited');
+});
+
+test('the search limit stays bounded and an IP over its limit keeps its count', async (t) => {
+  const s = await start();
+  t.after(() => s.server.close());
+  const max = config.rateKeysMax;
+  const hits = s.app.kept().hits;
+  const from = async (ip) => (await fetch(`${s.base}/v1/0/s?q=`, { headers: { 'x-forwarded-for': ip } })).status;
+  // Almost full of IPs that have been quiet for over a minute.
+  const fillers = Array.from({ length: max - 1 }, (_, i) => `quiet-${i}`);
+  for (const k of fillers) hits.set(k, [Date.now() - 120_000]);
+  // The bare search address (the world's join ping) counts as a search: 400 empty_query, then 429 over the limit of 5.
+  for (let i = 0; i < 5; i++) assert.equal(await from('192.0.2.1'), 400);
+  assert.equal(await from('192.0.2.1'), 429);
+  assert.equal(hits.size, max);
+  // One more IP: the least recently active quiet one makes room; nobody else's count goes.
+  const fresh = await from('192.0.2.2');
+  assert.equal(await from('192.0.2.1'), 429, 'the IP over its limit is still over it');
+  assert.equal(fresh, 400, 'a new IP gets its search while quiet IPs can make room');
+  assert.equal(hits.size, max);
+  assert.ok(!hits.has(fillers[0]) && hits.has(fillers[1]), 'the oldest went, only that one');
+  // Every kept IP active in the last minute: a new one is refused instead of anyone being dropped.
+  for (const k of fillers) if (hits.has(k)) hits.set(k, [Date.now()]);
+  assert.equal(await from('192.0.2.3'), 429, 'no room among active IPs');
+  assert.equal(await from('192.0.2.1'), 429);
+  assert.equal(hits.size, max);
 });
 
 test('the default search limit leaves room for the next video after a restricted play from two clients (world #450)', async (t) => {

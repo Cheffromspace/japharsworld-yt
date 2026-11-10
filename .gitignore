@@ -7,3 +7,9 @@ data/
 monitor/data/
 monitor/.deps/
 __pycache__/
+
+# local agent and test-client wiring (machine paths, world IDs): never tracked
+vrchat-client-mcp.json
+.mcp.json
+.codex/
+AGENTS.md

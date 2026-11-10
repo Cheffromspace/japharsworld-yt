@@ -263,14 +263,30 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const routed = new Map(); // "via:videoId" → when its build_route was last counted
   // Every minute: per-minute IP counts older than a minute go (here, in the spend gate, the lookup-warm cap), and the
   // day's allowance at the day's end, so the privacy page's "about a minute" and "the end of the day" hold.
-  setInterval(() => {
+  function sweep() {
     const now = Date.now();
     for (const map of [hits, ticketHits, playerHits, lookupWarms]) for (const [k, l] of map) if (!l.some((at) => now - at < 60_000)) map.delete(k);
     spend?.sweep?.();
     allowance.sweep?.();
     adaptive.sweep?.();
     ipKeys.sweep(); // a new day's key even with no request
-  }, 60_000).unref();
+    pruneCaptions(now);
+  }
+  setInterval(sweep, 60_000).unref();
+  // Caption rows no reader would answer from any more go: older than CAPTION_CACHE_DAYS, the age every caption source
+  // reads its cache with (or CAPTION_EMPTY_MINUTES, were that set longer). Until 2026-11-10 nothing called the prune, so
+  // tickets.db kept every track ever fetched. On the sweep's first run after a start and then hourly, not every minute:
+  // `fetched` has no index, so a pass reads the whole table (~130 ms for 300 MB on a dev PC, 2026-11-10), and the first
+  // one after this change removes the whole backlog in one statement. The file doesn't shrink; freed pages are reused.
+  let captionsPrunedAt = -Infinity;
+  function pruneCaptions(now) {
+    if (!store.pruneCaptions || now - captionsPrunedAt < 3600_000) return;
+    captionsPrunedAt = now;
+    try {
+      const rows = store.pruneCaptions(Math.max((config.captionCacheDays ?? 7) * 86400_000, (config.captionEmptyMinutes ?? 30) * 60_000));
+      if (rows) logJson({ event: 'captions_pruned', rows, ms: Date.now() - now });
+    } catch (err) { logJson({ event: 'captions_prune_failed', message: String(err?.message ?? err).slice(0, 200) }); }
+  }
   const ticketHits = new Map(); // ip → timestamps
   const playerHits = new Map(); // the same for video players' loads (their own limit)
   function ticketLimited(ip, hits = ticketHits, perMinute = config.ticketsPerMinutePerIp, kind = 'ticket') {
@@ -290,12 +306,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return !touch(ticketHits, ip, list, config.rateKeysMax ?? 10_000, now);
   }
 
+  // Searches a minute per IP (SEARCHES_PER_MINUTE). Bounded like the ticket limit, without dropping an active IP's count
+  // (src/spend.js touch): past RATE_KEYS_MAX the least recently active go first, and a new IP is refused while every
+  // kept one was active in the last minute. Until 2026-11-10 the map was cleared past its bound, every count with it.
   function rateLimited(ip) {
     const now = Date.now();
     const list = (hits.get(ip) ?? []).filter((t) => now - t < 60_000);
     list.push(now);
-    hits.set(ip, list);
-    if (hits.size > 10_000) hits.clear();
+    if (!touch(hits, ip, list, config.rateKeysMax ?? 10_000, now)) return true;
     return list.length > perIp(config.searchesPerMinutePerIp, ip);
   }
 
@@ -1687,7 +1705,46 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   }
   // kept(): everything that remembers a visitor past the request, for the tests that check no raw IP is in it.
   const kept = () => ({ hits, ticketHits, playerHits, lookupWarms, allowance, spend, adaptive, playback });
-  return Object.assign(handler, { relay, checkWorkers, metrics, probe, refusals, home, kept });
+  return Object.assign(handler, { relay, checkWorkers, sweep, metrics, probe, refusals, home, kept, logJson });
+}
+
+// A promise rejected with nobody waiting on it ends a Node process by default, and with this one every held player and
+// build in flight. Installed by the entry point below (not by createApp, so tests keep Node's default): the service
+// logs one `unhandled_rejection` line, counts it (metric unhandled_rejection, src/metrics.js) and carries on.
+// The line says what kind of error and where in the code, never its message: a message can quote a URL, a query or a
+// video ID. `where` is the first stack frames as dir/file:line. An uncaught exception still ends the process.
+// A stack begins with the error's name and message, and a message can hold lines shaped like frames, so only the lines
+// after the message are read; when the message can't be found in the stack, none are.
+function stackFrames(err) {
+  let stack = '', message = '';
+  try { stack = String(err.stack ?? ''); message = String(err.message ?? ''); } catch { return ''; }
+  let frames = null;
+  if (!message) frames = stack.slice(stack.search(/\r?\n|$/));
+  else for (let i = stack.indexOf(message); i >= 0 && frames === null; i = stack.indexOf(message, i + 1)) {
+    const after = stack.slice(i + message.length);
+    if (/^(\r?\n\s+at |$)/.test(after)) frames = after;
+  }
+  return (frames ?? '').split(/\r?\n/)
+    .map((l) => /^\s+at .*?([\w.@-]+[\\/])?([\w.@-]+):(\d+):\d+\)?$/.exec(l)).filter(Boolean).slice(0, 4)
+    .map((m) => `${m[1] ? `${m[1].slice(0, -1)}/` : ''}${m[2]}:${m[3]}`).join(' < ');
+}
+// A failed fetch is a TypeError with no frames and no code of its own (Node 24, 2026-11-10); what failed is in its
+// `cause`. So the code and, when the error has no frames, `where` come from the cause (or its cause): codes and code
+// locations only, never a cause's message either.
+export function rejectionShape(reason) {
+  if (!(reason instanceof Error)) return { error: reason === null ? 'null' : typeof reason };
+  const chain = [reason, reason.cause, reason.cause?.cause];
+  const code = chain.map((e) => e?.code).find((c) => typeof c === 'string' && /^[A-Z][A-Z0-9_]{0,40}$/.test(c));
+  const where = chain.filter((e) => e instanceof Error).map(stackFrames).find(Boolean) ?? '';
+  return { error: /^[A-Za-z][A-Za-z0-9_]{0,40}$/.test(reason.name ?? '') ? reason.name : 'Error', ...(code ? { code } : {}), where };
+}
+export function catchRejections(proc, { log, metrics } = {}) {
+  const onRejection = (reason) => {
+    try { metrics?.inc?.('unhandled_rejection'); } catch { /* counting must not end the process either */ }
+    try { log?.({ event: 'unhandled_rejection', ...rejectionShape(reason) }); } catch { /* nor logging */ }
+  };
+  proc.on('unhandledRejection', onRejection);
+  return onRejection;
 }
 
 // What SIGTERM/SIGINT do (deploys restart the service): answer the relay workers' held polls first, write the last
@@ -1704,6 +1761,7 @@ export function shutdown(app, server, { exit = (code) => process.exit(code), wai
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const app = createApp();
+  catchRejections(process, { log: app.logJson, metrics: app.metrics });
   let server;
   for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => shutdown(app, server));
   server = http.createServer(app).listen(defaults.port, defaults.host, () => {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 // The update scripts are shared by production and staging (#160): unset switches must mean production, exactly as before.
 const script = (f) => readFileSync(new URL(`../deploy/${f}`, import.meta.url), 'utf8');
@@ -64,4 +64,26 @@ test('security unit: /run/ufw.lock is made at boot by a tmpfiles entry the setup
   assert.ok(new RegExp(/service_changed=\$\(echo "\$changed" \| grep -v -E '(.*)' \|\| true\)/.exec(u)[1]).test(file), 'does not restart the search service');
   assert.ok(new RegExp(/metrics_setup_changed=\$\(echo "\$changed" \| grep -E '(.*)' \|\| true\)/.exec(u)[1]).test(file), 'a change runs the setup');
   assert.match(/metrics_missing\(\) \{.*/.exec(u)[0], /\/etc\/tmpfiles\.d\/japharsworld-yt-security\.conf/, 'a host without it gets it on the next pass');
+});
+
+// Everything-is-OK#682: six settings the service reads were missing from the example (seven with MONITOR_DB), so nobody
+// setting up or auditing a server could see them. Every environment variable src/ reads must have its `NAME=` line in
+// deploy/japharsworld-yt.env.example, commented out or not; a mention in another setting's note doesn't count. The relay
+// worker, the metrics poller and exporter, the monitor and tools/ read their own env files and are not checked here.
+test('env example: every setting src/ reads has its NAME= line', () => {
+  // Read on purpose and left out of the example: none today. Add a name here only with the reason beside it.
+  const UNDOCUMENTED = new Set([]);
+  const dir = new URL('../src/', import.meta.url);
+  const read = new Set();
+  for (const f of readdirSync(dir).filter((n) => n.endsWith('.js'))) {
+    const src = readFileSync(new URL(f, dir), 'utf8');
+    for (const m of src.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)|process\.env\[['"]([A-Z][A-Z0-9_]*)['"]\]/g)) read.add(m[1] ?? m[2]);
+    if (f === 'config.js') for (const m of src.matchAll(/\bint\('([A-Z][A-Z0-9_]*)'/g)) read.add(m[1]);
+  }
+  assert.ok(read.size > 100, `found ${read.size} settings: the scan still understands src/config.js`);
+  for (const name of ['PORT', 'CAPTION_CACHE_DAYS', 'SEARCHES_PER_MINUTE', 'TUNELIO_API_KEY', 'HOME_STAY_HOURS']) assert.ok(read.has(name), name);
+  const example = script('japharsworld-yt.env.example');
+  const listed = new Set([...example.matchAll(/^#? ?([A-Z][A-Z0-9_]*)=/gm)].map((m) => m[1]));
+  assert.deepEqual([...read].filter((n) => !listed.has(n) && !UNDOCUMENTED.has(n)).sort(), [], 'read by src/ but not in the example');
+  assert.deepEqual([...UNDOCUMENTED].filter((n) => listed.has(n) || !read.has(n)), [], 'an exclusion that is no longer one');
 });

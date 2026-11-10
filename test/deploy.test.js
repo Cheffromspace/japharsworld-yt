@@ -18,6 +18,7 @@ test('update.sh: the shell setup script does not restart the search service; src
   const re = new RegExp(/service_changed=\$\(echo "\$changed" \| grep -v -E '(.*)' \|\| true\)/.exec(script('update.sh'))[1]);
   assert.ok(re.test('deploy/shell-setup.sh'), 'deploy/shell-setup.sh is on the no-restart list');
   assert.ok(re.test('README.md'));
+  assert.ok(re.test('.github/workflows/test.yml'), 'the CI workflow (Everything-is-OK#712) is on the no-restart list');
   assert.ok(!re.test('src/server.js'), 'src/ restarts');
   assert.ok(!/^(relay\/|src\/|package(-lock)?\.json$|deploy\/japharsworld-yt-relay)/.test('deploy/shell-setup.sh'), 'nor the relay worker (relay-update.sh)');
 });

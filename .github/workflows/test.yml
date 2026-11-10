@@ -1,0 +1,26 @@
+# The test gate (owner's pick 2A on Everything-is-OK#712, 2026-11-10): npm test on every push to main and staging and on
+# every pull request into them. It reports only; deploy/update.sh does not read it yet (#700 item 3). Node 24: the
+# version the suite runs on locally (v24.19.0); package.json's engines asks for >= 22.13 and there is no .nvmrc.
+name: test
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm test

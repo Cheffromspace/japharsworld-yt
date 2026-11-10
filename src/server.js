@@ -261,14 +261,30 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const routed = new Map(); // "via:videoId" → when its build_route was last counted
   // Every minute: per-minute IP counts older than a minute go (here, in the spend gate, the lookup-warm cap), and the
   // day's allowance at the day's end, so the privacy page's "about a minute" and "the end of the day" hold.
-  setInterval(() => {
+  function sweep() {
     const now = Date.now();
     for (const map of [hits, ticketHits, playerHits, lookupWarms]) for (const [k, l] of map) if (!l.some((at) => now - at < 60_000)) map.delete(k);
     spend?.sweep?.();
     allowance.sweep?.();
     adaptive.sweep?.();
     ipKeys.sweep(); // a new day's key even with no request
-  }, 60_000).unref();
+    pruneCaptions(now);
+  }
+  setInterval(sweep, 60_000).unref();
+  // Caption rows no reader would answer from any more go: older than CAPTION_CACHE_DAYS, the age every caption source
+  // reads its cache with (or CAPTION_EMPTY_MINUTES, were that set longer). Until 2026-11-10 nothing called the prune, so
+  // tickets.db kept every track ever fetched. On the sweep's first run after a start and then hourly, not every minute:
+  // `fetched` has no index, so a pass reads the whole table (~130 ms for 300 MB on a dev PC, 2026-11-10), and the first
+  // one after this change removes the whole backlog in one statement. The file doesn't shrink; freed pages are reused.
+  let captionsPrunedAt = -Infinity;
+  function pruneCaptions(now) {
+    if (!store.pruneCaptions || now - captionsPrunedAt < 3600_000) return;
+    captionsPrunedAt = now;
+    try {
+      const rows = store.pruneCaptions(Math.max((config.captionCacheDays ?? 7) * 86400_000, (config.captionEmptyMinutes ?? 30) * 60_000));
+      if (rows) logJson({ event: 'captions_pruned', rows, ms: Date.now() - now });
+    } catch (err) { logJson({ event: 'captions_prune_failed', message: String(err?.message ?? err).slice(0, 200) }); }
+  }
   const ticketHits = new Map(); // ip → timestamps
   const playerHits = new Map(); // the same for video players' loads (their own limit)
   function ticketLimited(ip, hits = ticketHits, perMinute = config.ticketsPerMinutePerIp, kind = 'ticket') {
@@ -1658,7 +1674,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   }
   // kept(): everything that remembers a visitor past the request, for the tests that check no raw IP is in it.
   const kept = () => ({ hits, ticketHits, playerHits, lookupWarms, allowance, spend, adaptive, playback });
-  return Object.assign(handler, { relay, checkWorkers, metrics, probe, refusals, home, kept });
+  return Object.assign(handler, { relay, checkWorkers, sweep, metrics, probe, refusals, home, kept });
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

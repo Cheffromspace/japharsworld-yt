@@ -7,10 +7,12 @@ Wants=network-online.target
 Type=oneshot
 User=jyt
 Group=jyt
-# Reads the search service's journal (its events) without root.
+# Reads the search service's and the poller's journal (their events) without root.
 SupplementaryGroups=systemd-journal
 EnvironmentFile=/etc/japharsworld-yt.env
-# The S3 key and the Grafana read token: root only (mode 600), read by systemd, never by the search service.
+# The S3 key (write-only: PutObject under the prefix) and the Grafana read token: a root-only file (mode 600) that only
+# this unit loads, not the search service's. The job runs as jyt, so jyt processes could read them from its environment
+# while it runs; acceptable for a key that can only add objects.
 EnvironmentFile=-/etc/japharsworld-yt-backup.env
 ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning /opt/japharsworld-yt/metrics/backup.js
 TimeoutStartSec=30min

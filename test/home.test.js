@@ -341,16 +341,15 @@ test('mediaJob: a listed segment that can\'t go up closes the playlist after the
 });
 
 // Main's repro of the verifier's case (60cf3d0, 2026-11-05), kept through the #700 merge: seg10 answers 503 through every
-// retry. This server has the cut_short rule (b817f55), so the playlist is closed after the last segment sent, and the
-// short copy must still never reach the cache (a cached short copy stopped every replay at 40 s).
-test('mediaJob: a segment upload that keeps failing closes the playlist short and caches no short copy (#553)', async (t) => {
-  const { MediaCache } = await import('../relay/cache.js');
-  const cache = new MediaCache({ dir: tmp(t), maxGb: 1 });
+// retry. This server has the cut_short rule (b817f55), so the playlist is closed after the last segment sent. Main's
+// test also asserted that no short copy is cached; on this code that assertion passed with every cache guard removed
+// (media.js's and cache.js's), so it is left out rather than kept as a check that can't fail.
+test('mediaJob: a segment upload that keeps failing closes the playlist after the last segment sent (#553)', async () => {
   const ff = fakeFfmpeg({ steps: [[SHORT.first, ['seg0.ts']], [SHORT.whole, SHORT.names.slice(1)]] });
   const uploads = [];
   const logs = [];
   const first = await mediaJob({ videoId: 'aaaaaaaaaaa', quality: '720p', token: 'x', seconds: 94 }, { ytdlp: 'yt-dlp', runner, spawnFn: ff.spawnFn,
-    pollMs: 10, retryMs: 1, cache, log: (o) => logs.push(o),
+    pollMs: 10, retryMs: 1, log: (o) => logs.push(o),
     upload: async (file, body) => {
       if (file === 'seg0.ts') await new Promise((r) => setTimeout(r, 200));
       if (file === 'seg10.ts') return 503;
@@ -358,14 +357,10 @@ test('mediaJob: a segment upload that keeps failing closes the playlist short an
       return 204;
     } });
   await first.done;
-  await new Promise((r) => setTimeout(r, 20)); // the finally block's put
   assert.deepEqual(uploads.map(([f]) => f).filter((f) => f !== 'index.m3u8'), SHORT.names.slice(0, 10));
   const last = uploads.filter(([f]) => f === 'index.m3u8').at(-1);
   assert.match(last[1], /seg9\.ts\n#EXT-X-ENDLIST\n$/, 'closed after the last segment sent');
   assert.ok(logs.some((l) => l.event === 'media_failed'));
-  assert.equal(logs.some((l) => l.event === 'media_cached' && l.segments < 24), false);
-  const hit = cache.get('aaaaaaaaaaa', '720p');
-  assert.ok(hit === null || hit.segments.length === 24, `no short copy cached (got ${hit?.segments.length})`);
 });
 
 test('mediaJob: ffmpeg dying part way closes the playlist where it got to; a 410 stops it', async () => {

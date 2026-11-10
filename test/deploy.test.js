@@ -80,8 +80,10 @@ test('env example: every setting src/ reads has its NAME= line', () => {
     for (const m of src.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)|process\.env\[['"]([A-Z][A-Z0-9_]*)['"]\]/g)) read.add(m[1] ?? m[2]);
     if (f === 'config.js') for (const m of src.matchAll(/\bint\('([A-Z][A-Z0-9_]*)'/g)) read.add(m[1]);
   }
-  assert.ok(read.size > 100, `found ${read.size} settings: the scan still understands src/config.js`);
-  for (const name of ['PORT', 'CAPTION_CACHE_DAYS', 'SEARCHES_PER_MINUTE', 'TUNELIO_API_KEY', 'HOME_STAY_HOURS']) assert.ok(read.has(name), name);
+  // The scan still understands src/config.js: long-lived settings read in each of its forms, int('X') (PORT, SHARDS,
+  // POOL), process.env.X (HOST, DB_PATH, TUNELIO_API_KEY, RELAY_TOKEN). Named, not counted (105 found on 2026-11-10):
+  // a count near today's would fail when settings are removed.
+  for (const name of ['PORT', 'SHARDS', 'POOL', 'HOST', 'DB_PATH', 'TUNELIO_API_KEY', 'RELAY_TOKEN']) assert.ok(read.has(name), `the scan missed ${name}`);
   const example = script('japharsworld-yt.env.example');
   const listed = new Set([...example.matchAll(/^#? ?([A-Z][A-Z0-9_]*)=/gm)].map((m) => m[1]));
   assert.deepEqual([...read].filter((n) => !listed.has(n) && !UNDOCUMENTED.has(n)).sort(), [], 'read by src/ but not in the example');

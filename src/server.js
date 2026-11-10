@@ -1682,12 +1682,29 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
 // logs one `unhandled_rejection` line, counts it (metric unhandled_rejection, src/metrics.js) and carries on.
 // The line says what kind of error and where in the code, never its message: a message can quote a URL, a query or a
 // video ID. `where` is the first stack frames as dir/file:line. An uncaught exception still ends the process.
-export function rejectionShape(reason) {
-  if (!(reason instanceof Error)) return { error: reason === null ? 'null' : typeof reason };
-  const code = [reason.code, reason.cause?.code].find((c) => typeof c === 'string' && /^[A-Z][A-Z0-9_]{0,40}$/.test(c));
-  const where = String(reason.stack ?? '').split(/\r?\n/)
+// A stack begins with the error's name and message, and a message can hold lines shaped like frames, so only the lines
+// after the message are read; when the message can't be found in the stack, none are.
+function stackFrames(err) {
+  let stack = '', message = '';
+  try { stack = String(err.stack ?? ''); message = String(err.message ?? ''); } catch { return ''; }
+  let frames = null;
+  if (!message) frames = stack.slice(stack.search(/\r?\n|$/));
+  else for (let i = stack.indexOf(message); i >= 0 && frames === null; i = stack.indexOf(message, i + 1)) {
+    const after = stack.slice(i + message.length);
+    if (/^(\r?\n\s+at |$)/.test(after)) frames = after;
+  }
+  return (frames ?? '').split(/\r?\n/)
     .map((l) => /^\s+at .*?([\w.@-]+[\\/])?([\w.@-]+):(\d+):\d+\)?$/.exec(l)).filter(Boolean).slice(0, 4)
     .map((m) => `${m[1] ? `${m[1].slice(0, -1)}/` : ''}${m[2]}:${m[3]}`).join(' < ');
+}
+// A failed fetch is a TypeError with no frames and no code of its own (Node 24, 2026-11-10); what failed is in its
+// `cause`. So the code and, when the error has no frames, `where` come from the cause (or its cause): codes and code
+// locations only, never a cause's message either.
+export function rejectionShape(reason) {
+  if (!(reason instanceof Error)) return { error: reason === null ? 'null' : typeof reason };
+  const chain = [reason, reason.cause, reason.cause?.cause];
+  const code = chain.map((e) => e?.code).find((c) => typeof c === 'string' && /^[A-Z][A-Z0-9_]{0,40}$/.test(c));
+  const where = chain.filter((e) => e instanceof Error).map(stackFrames).find(Boolean) ?? '';
   return { error: /^[A-Za-z][A-Za-z0-9_]{0,40}$/.test(reason.name ?? '') ? reason.name : 'Error', ...(code ? { code } : {}), where };
 }
 export function catchRejections(proc, { log, metrics } = {}) {

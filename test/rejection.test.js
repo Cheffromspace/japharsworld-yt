@@ -99,3 +99,37 @@ test('unhandled rejection: wired at the entry point to the service\'s own log (t
   assert.match(entry, /const app = createApp\(\);\s+catchRejections\(process, \{ log: app\.logJson, metrics: app\.metrics \}\);/);
   assert.equal(src.split('catchRejections(process').length, 2, 'installed once, at the entry point');
 });
+
+// Verifier, 2026-11-10: a stack starts with the message, and a message line shaped like a stack frame reached `where`.
+test('unhandled rejection: a message with lines shaped like stack frames never reaches `where`', () => {
+  const hostile = `boom\n    at https://example.invalid/?q=secret (x:1:1)\n    at fetch https://example.invalid/watch/${VIDEO}:12:3\n    at secretquery:1:2`;
+  const shape = rejectionShape(new Error(hostile));
+  assert.match(shape.where, /^test\/rejection\.test\.js:\d+/, 'the real frames, from after the message');
+  for (const secret of ['secret', 'example', 'watch', VIDEO]) assert.ok(!JSON.stringify(shape).includes(secret), secret);
+  assert.ok(!shape.where.split(' < ').some((f) => f === 'x:1' || f.startsWith('watch/')), 'none of the message\'s three lines');
+  // The same with no real frames after it, and with a stack the message can't be found in: nothing is guessed.
+  assert.equal(rejectionShape(Object.assign(new Error(hostile), { stack: `Error: ${hostile}` })).where, '');
+  const moved = new Error(hostile);
+  assert.ok(moved.stack.includes('secret')); // the stack is made with the message it has when first read
+  moved.message = 'something else';
+  assert.equal(rejectionShape(moved).where, '');
+  // An ordinary error keeps its frames: no message, a one-line message, a message that is part of the header.
+  for (const e of [new Error(), new Error('plain'), new TypeError('Type'), new Error('E')]) assert.match(rejectionShape(e).where, /^test\/rejection\.test\.js:\d+/, e.message);
+});
+
+// Verifier, 2026-11-10: on Node 24 a failed fetch is "TypeError: fetch failed" with no frames; what failed is its cause.
+test('unhandled rejection: a failed fetch is told by its cause\'s code and frames, never the cause\'s message', () => {
+  const cause = Object.assign(new Error(`connect ECONNREFUSED ${QUERY}`), { code: 'ECONNREFUSED' });
+  const failed = Object.assign(new TypeError('fetch failed', { cause }), { stack: 'TypeError: fetch failed' });
+  const shape = rejectionShape(failed);
+  assert.deepEqual([shape.error, shape.code], ['TypeError', 'ECONNREFUSED']);
+  assert.match(shape.where, /^test\/rejection\.test\.js:\d+/, 'the cause\'s frames when the error has none');
+  assert.ok(!JSON.stringify(shape).includes('rain') && !JSON.stringify(shape).includes('connect'));
+  // One level further (undici wraps twice for some failures); the error's own code and frames win when it has them.
+  const outer = Object.assign(new TypeError('fetch failed', { cause: new Error('wrapped', { cause }) }), { stack: 'TypeError: fetch failed' });
+  assert.equal(rejectionShape(outer).code, 'ECONNREFUSED');
+  const own = Object.assign(new Error('x', { cause }), { code: 'ERR_OWN' });
+  assert.equal(rejectionShape(own).code, 'ERR_OWN');
+  // A cause that is not an error, or has no usable code: nothing from it.
+  assert.deepEqual(rejectionShape(Object.assign(new TypeError('fetch failed', { cause: { code: QUERY, message: QUERY } }), { stack: 'TypeError: fetch failed' })), { error: 'TypeError', where: '' });
+});

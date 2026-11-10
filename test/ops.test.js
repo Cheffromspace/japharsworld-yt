@@ -26,6 +26,14 @@ test('ops redaction: allowlisted fields only, IDs and query strings masked', () 
   assert.deepEqual(redact({ event: 'video_report', shard: 1, n: 67, kind: 'frozen', who: 'tester', device: 'android', ago: 42, via: 'tunelio', mode: 'adaptive', rung: '720p', top: 'pending', quality: '1080p', hls: true, counted: true }),
     { event: 'video_report', kind: 'frozen', who: 'tester', device: 'android', ago: 42, via: 'tunelio', mode: 'adaptive', rung: '720p', top: 'pending', quality: '1080p', hls: true, counted: true },
     'a video report keeps what it says about the play, never its shard or ticket (#353)');
+  // The housekeeping events of 2026-11-10 (Everything-is-OK#680, #681) keep their own fields and nothing else: rows
+  // (a count) and where (code locations) are on the list; table columns, the error's text and objects are not.
+  assert.deepEqual(redact({ event: 'captions_pruned', rows: 1234, ms: 40, video_id: 'dQw4w9WgXcQ', key: 'c:en:auto', json: '{"cues":[]}', fetched: 1, maxAgeMs: 604800000 }),
+    { event: 'captions_pruned', rows: 1234, ms: 40 }, 'the count of pruned rows reaches /ops/events');
+  assert.deepEqual(redact({ event: 'captions_pruned', rows: { video_id: 'dQw4w9WgXcQ' } }), { event: 'captions_pruned', rows: undefined }, 'never an object');
+  assert.equal(redact({ event: 'captions_pruned', rows: 'dQw4w9WgXcQ' }).rows, '…', 'a string there is masked like any other');
+  assert.deepEqual(redact({ event: 'unhandled_rejection', error: 'TypeError', code: 'ECONNRESET', where: 'src/server.js:120 < src/relay.js:44', stack: 'x', cause: 'y', reason: undefined, query: 'rain', q: 'rain', name: 'x', id: 'dQw4w9WgXcQ', shard: 1, n: 5, ua: 'Mozilla/5.0', url: 'https://example.invalid/' }),
+    { event: 'unhandled_rejection', error: 'TypeError', code: 'ECONNRESET', where: 'src/server.js:120 < src/relay.js:44', reason: undefined });
   const ring = new EventRing(3);
   for (let i = 0; i < 5; i++) ring.push(JSON.stringify({ at: new Date(1000 + i).toISOString(), event: i % 2 ? 'a' : 'b', i }));
   ring.push('{"route":"ticket","status":302}'); // request lines are not events

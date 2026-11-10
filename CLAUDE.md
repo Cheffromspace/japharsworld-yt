@@ -70,8 +70,8 @@ Search service (`src/`):
 Elsewhere:
 - `metrics/`: `poll.js` (systemd timer: VRChat, Tunelio, GitHub numbers; daily/weekly Discord reports via `report.js`)
   and `exporter.js` (Prometheus endpoint on 127.0.0.1:9464 reading `metrics.db` and the monitor's DB, scraped by
-  Grafana Alloy, `deploy/alloy/*.alloy`), and `backup.js` (daily timer: redacted events, `metrics.db` and Grafana-only
-  series to a private S3 bucket; claude/backup.md). Dashboard and alert rules are generated in code by `tools/grafana.mjs`;
+  Grafana Alloy, `deploy/alloy/*.alloy`), and `backup.js` (daily timer: redacted events, the deploy record and a
+  `metrics.db` snapshot to a private S3 bucket; claude/backup.md). Dashboard and alert rules are generated in code by `tools/grafana.mjs`;
   `grafana/*.json` are build outputs, never edit them or the Grafana UI by hand.
 - `monitor/`: separate Python service (`slotmon`) for the world's Channels tab; see `monitor/README.md`.
   `monitor/channels.json` is a copy from the world repo.

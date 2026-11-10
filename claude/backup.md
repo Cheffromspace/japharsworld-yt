@@ -43,7 +43,7 @@ journal could not be read or no longer holds it.
 ## AWS setup
 
 Done 2026-11-06 with the owner's go (#591), in the owner's account:
-- Bucket `eiok-backup-<random>` (the name is in the Linode's env file, not here), us-east-1: SSE-S3 default
+- Bucket `eiok-backup-<random>` (the name goes in the Linode's `/etc/japharsworld-yt-backup.env`, not here), us-east-1: SSE-S3 default
   encryption; all four public-access blocks; object ownership "bucket owner enforced" (ACLs off); a bucket policy
   denying requests without TLS (`aws:SecureTransport`); versioning on.
 - Lifecycle: `eiok/` to Glacier Instant Retrieval after 90 days (objects under 128 KB stay in Standard, S3's default
@@ -54,7 +54,10 @@ The owner's part (a Do card): IAM user `eiok-backup-writer` with one inline poli
 add objects, and versioning keeps what it overwrites for 30 days. The job therefore keeps its own record of what landed
 (`/var/lib/japharsworld-yt/backup-state.json`). The owner creates its access key and pastes it into
 `/etc/japharsworld-yt-backup.env` (root, 600; `deploy/backup-setup.sh` writes the empty file), so the secret never
-passes through a Claude session, the repo or a log. The key lives on prod only.
+passes through a Claude session, the repo or a log. **Not done yet** (observed 2026-11-10: no IAM user
+`eiok-backup-writer` in the account, the bucket empty under `eiok/`, no backup env file on prod; the owner's server card
+does it). Re-check: IAM console → Users, and `ssh linode 'test -s /etc/japharsworld-yt-backup.env && journalctl -u
+japharsworld-yt-backup -n 5 --no-pager'`. Once done, the key lives on prod only (the coordinator updates these lines then).
 
 ## Running it
 
@@ -78,7 +81,7 @@ A `--day` re-run never uploads DB snapshots (they are taken now, not as of that 
 refuses a day that hasn't ended, and a day whose journal starts more than 2 h late (rotated: it would overwrite a good
 copy) unless `--force` is added.
 
-Keyless test (staging; the key lives on prod only): `BACKUP_LOCAL_DIR=<folder>` writes the same objects under that folder
+Keyless test (any host, no key needed): `BACKUP_LOCAL_DIR=<folder>` writes the same objects under that folder
 instead of S3, with its own state file there, and no Discord post. Add `-p Environment=BACKUP_LOCAL_DIR=/var/lib/japharsworld-yt/backup-test`
 to the `systemd-run` line above (drop the backup env file), then check the folder as in *Restore* below.
 

@@ -59,7 +59,7 @@ This service works within that rule:
 
 | Path | Returns |
 |---|---|
-| `GET /v1/<shard>/s?l=<lang>&q=<…> → <query>` | JSON: `results[]` (`t`, `id`, `title`, `channel`, `length`, `seconds`, `views`, `age`, `live`, `cc`, `desc` = up to 240 characters of the description), `sheet`, `sheetCols`, `sheetRows`, `cellW`, `cellH`, `next` (`-1` = none) |
+| `GET /v1/<shard>/s?l=<lang>&q=<…> → <query>` | JSON: `results[]` (`t`, `id`, `title`, `channel`, `length`, `seconds`, `views`, `age`, `live`, `cc`, `desc` = up to 240 characters of the description), `sheet`, `sheetCols`, `sheetRows`, `cellW`, `cellH`, `next` (`-1` = none). Videos over `VIDEO_MAX_HOURS` aren't listed, so a page can hold fewer rows than asked (a page with none left carries on to the next, up to 3 fetches; off at `VIDEO_MAX_HOURS=0`; live and unknown lengths stay; a pasted link keeps its row and answers `too_long`; Everything-is-OK#455) |
 | `GET /s/<shard><letter>?q=<query>` | the same search, in a shorter address for Quest (see *Compact search address* below). The query may still carry a `<prompt> → ` before it. From a video player with a YouTube link: that video's ticket answer (see *A YouTube link played straight from the search address*) |
 | `GET /v1/<shard>/<n>` | video: 302 to a Tunelio link or YouTube (from a `UnityPlayer` UA: JSON `t`, `state` = `building`/`ready`/`failed`/`live`/`youtube`, `format`, `quality`, `mb`, `elapsed`, `eta`, `progress`, on a home session `growing` (true while the playlist listed so far has no end marker; a hint about the next player to open it, not exact: the settle hold can still hand that player the end marker, and a Quest already playing probably stays on an infinite duration after it turns false (inferred, not yet seen in a client); Everything-is-OK#393), and the video's `title`, `channel`, `desc`, `seconds` as stored when the results were published, `""` and `0` for older tickets, `seconds` also `0` when the length isn't known; Everything-is-OK#114) · sheet: JPEG, cell *i* = result *i*, row-major · page: JSON like a search |
 | `GET /v1/<shard>/q` · `/v1/<shard>/q/<720|1080|auto>` | JSON `quality` (the room's playback quality for search videos), `pick` (`720p`/`1080p`/`auto`), `default`, `options`; the second form picks it (kept `QUALITY_HOURS`, 12; `auto` clears it: with playback plans on, 1080p when Tunelio is fast, else 720p). The tablet's ticket status carries it as `room` |
@@ -387,6 +387,11 @@ After that, `japharsworld-yt-update.timer` deploys `main` every 5 minutes, rolls
 fails its health check, and updates yt-dlp daily.
 
 Settings live in `/etc/japharsworld-yt.env`. Logs: `journalctl -u japharsworld-yt -f`.
+
+The login shell (each server, and the Optiplex): `bash deploy/shell-setup.sh prod|staging|optiplex` as root, from the
+checkout, installs stock neovim and bash-completion and writes `/etc/profile.d/eiok-shell.sh`: a prompt
+`user@<label>:path` with the host's label coloured (Tokyo Night: prod orange, staging magenta, Optiplex green),
+`EDITOR=nvim`, `vi` → nvim, coloured `ls`. Run it again after a rebuild; it is safe to repeat.
 
 Without SSH: `GET /ops/state` (builds in flight and recently finished, holds, relay workers, the speed probe, the
 deployed commit) and `GET /ops/events?event=a,b&minutes=&limit=` (the service's recent log events, kept in memory

@@ -343,6 +343,12 @@ test('play_outcome keys: fixed sets only, nothing free-form reaches the database
   for (const k of ['visitor:android:home', 'visitor:android:home:f7', 'owner:pc:home:f5', 'visitor:pc:abcdefghijk:f5', '3:visitor:pc:home:f5']) assert.equal(checkedKey('play_outcome', k), 'other', k);
 });
 
+test('privacy: cc_outcome takes its two keys only, never a video ID', () => {
+  assert.equal(checkedKey('cc_outcome', 'tracks'), 'tracks');
+  assert.equal(checkedKey('cc_outcome', 'none'), 'none');
+  assert.equal(checkedKey('cc_outcome', 'dQw4w9WgXcQ'), 'other');
+});
+
 test('world #420: the too-long keys pass their checks', () => {
   assert.equal(checkedKey('play_fallback', 'too_long'), 'too_long');
   assert.equal(checkedKey('ticket_too_long', ''), '');

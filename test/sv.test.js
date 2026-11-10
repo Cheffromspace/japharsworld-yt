@@ -235,7 +235,7 @@ test('SV-093 alert thresholds are pinned (a change has to change this table)', (
     'eiok-linode-disk-80': ['> 0.8', '15m'],
     'eiok-linode-disk-88': ['> 0.88', '15m'],
     'eiok-disk-low': ['> 0.9', '15m'],
-    'eiok-home-cap': ['>= 0.9', '5m'],
+    'eiok-home-cap': ['>= 0.75', '5m'],            // 0.9 until main's 4142445 (2026-10-31), taken in the #700 merge
     'eiok-ssh-failed-spike': ['> 20', '0m'],
     'eiok-cert-expiry': ['14 - ', '60m'],
     'eiok-domain-expiry': ['30 - ', '60m'],

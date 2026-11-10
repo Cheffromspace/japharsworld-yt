@@ -74,6 +74,21 @@ test('alert rules: every expression is positive when it fires (no trailing < or 
   }
 });
 
+// Capacity alerts (2026-10-31): limits come from what the service reports, never a number written into a rule.
+test('alert rules: capacity rules are ratios of reported limits, and the credit pace uses the renewal the poller reports', () => {
+  const expr = Object.fromEntries(alertRules('ds').map((r) => [r.uid, r.data[0].model.expr]));
+  const summary = Object.fromEntries(alertRules('ds').map((r) => [r.uid, r.annotations.summary]));
+  assert.match(expr['eiok-home-builds'], /key="builds"\}\) \/ max\(eiok_home_today\{env!="staging",key="cap_builds"\}\) >= 0\.9$/);
+  assert.match(expr['eiok-home-cap'], /key="mb"\}\) \/ max\(eiok_home_today\{env!="staging",key="cap_mb"\}\) >= 0\.75$/);
+  assert.match(expr['eiok-service-memory'], /kind=~"anon\|swap"\}\) \/ max\(eiok_service_memory_limit_bytes\{env!="staging"\}\) > 0\.9$/);
+  assert.match(expr['eiok-credits-pace'], /metric="days_to_renewal"/);
+  assert.doesNotMatch(expr['eiok-credits-pace'], /days_in_month|day_of_month/);
+  assert.doesNotMatch(summary['eiok-credits-pace'], /on the 1st/);
+  assert.match(expr['eiok-linode-cpu'], /host="linode",mode="idle"/);
+  assert.match(expr['eiok-search-502'], /metric="search_fail",key="502"/);
+  for (const need of ['key="cap_builds"', 'eiok_service_memory_limit_bytes', 'metric="days_to_renewal"']) assert.ok(expr['eiok-alert-inputs-missing'].includes(need), need);
+});
+
 // World #248: the "Tonight" board, its own dashboard, soft colours, counts only.
 test('tonight: its own dashboard, refresh 1 min, the last 12 h in Chicago time, no alarm red', () => {
   const d = tonight();
@@ -160,6 +175,28 @@ test('release and deploy markers are off by default, with their toggles availabl
   const list = dashboard().annotations.list.filter((a) => !a.builtIn);
   assert.deepEqual(list.map((a) => a.name), ['World uploads', 'GitHub releases', 'Deploys']);
   assert.ok(list.every((a) => a.enable === false && !a.hide));
+});
+
+// World #428: both rules are positive when they fire (the condition is A > 0), and neither sees staging.
+test('eiok-captions-empty and eiok-poller-stale: the thresholds, the input check, prod only', () => {
+  const rules = Object.fromEntries(alertRules('ds').map((r) => [r.uid, r]));
+  const expr = (uid) => rules[uid].data[0].model.expr;
+  const cap = expr('eiok-captions-empty');
+  assert.match(cap, /key="none"\}\[6h\]\)\) >= 5 unless on\(\) /);
+  assert.match(cap, /key="tracks"\}\[6h\]\)\) >= 0\.5$/);
+  assert.equal(rules['eiok-captions-empty'].labels.severity, 'warning');
+  assert.match(expr('eiok-poller-stale'), /^time\(\) - max\(eiok_poll_timestamp_seconds\{env!="staging",source="tunelio_plan"\}\) - 3600$/);
+  assert.equal(rules['eiok-poller-stale'].for, '5m');
+  assert.ok(expr('eiok-alert-inputs-missing').includes('metric="cc_outcome",key="none"'));
+});
+
+// The sources all throwing never reaches cc_outcome (test/captionchain.test.js pins the reason this reads).
+test('eiok-captions-failing: 3 in 6 h of the two keys that mean a failure, not list_unavailable or no_captions', () => {
+  const r = alertRules('ds').find((x) => x.uid === 'eiok-captions-failing');
+  const e = r.data[0].model.expr;
+  assert.match(e, /key=~"temporarily_unavailable\|failed"\}\[6h\]\)\) >= 3$/);
+  assert.doesNotMatch(e, /list_unavailable|no_captions/);
+  assert.equal(r.labels.severity, 'warning');
 });
 
 // push-rule (2026-11-03): one alert rule only, never the dashboards, contact points or other rules.

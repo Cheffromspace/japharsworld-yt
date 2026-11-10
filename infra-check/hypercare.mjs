@@ -33,7 +33,18 @@ const OPTIPLEX_UNITS = ['japharsworld-yt-relay', 'bgutil-pot-relay', 'japharswor
 
 // Limits per hour, overridable in ~/yt-infra-check/.env as HYPERCARE_<NAME>. Set from the 48 h before 2026-10-26 19:30
 // UTC: no 5xx, no backoff, no evictions, 3 home_failed, 1 of 17 captions with zero tracks, 39 % disk, 0 banned.
-export const LIMITS = { DISK: 80, S5: 3, ERRORS: 5, YT: 3, BACKOFF: 1, CAP0: 3, EVICT: 20, OVERCAP: 1, BANNED: 20 };
+// DISK is Grafana's critical level, not its 80 % warning: this is one df reading at :17, and on 2026-10-27 22:17 it
+// caught the one minute the Linode stood at 80 % before the home cache evicted 2.4 GB (Grafana's 15-minute rule
+// stayed quiet). The sustained 80 % warning is Grafana's eiok-linode-disk-80; this stays a check if Grafana is down.
+// CAP0 counts distinct videos over CAP_HOURS, and only when no video in that time had tracks (world #401, owner
+// 2026-10-31). The old rule, 3 lookups in an hour outnumbering those with tracks, fired 5 times in 121 runs (2026-10-26
+// to 10-31), none from a seen failure: of the 17 videos behind them, 16 play and show no captionTracks on their YouTube
+// page (2026-10-31; 5 of 5 controls that prod listed tracks for show them) and 1 is age-gated, so its page can't say.
+// 5 is above the most seen with none having tracks (4, a run of music on 10-27). Replaying a failure where every lookup
+// comes back empty over those runs, 1 h takes a median of 8 h and at most 52 h to fire, 6 h a median of 6 h and at most
+// 20 h, with no false firing in either. This is the only detector of that silent failure: see claude/monitoring.md.
+export const CAP_HOURS = 6;
+export const LIMITS = { DISK: 88, S5: 3, ERRORS: 5, YT: 3, BACKOFF: 1, CAP0: 5, EVICT: 20, OVERCAP: 1, BANNED: 20 };
 export function limits(env = process.env) {
   return Object.fromEntries(Object.entries(LIMITS).map(([k, v]) => {
     const n = Number(env[`HYPERCARE_${k}`]);
@@ -42,19 +53,24 @@ export function limits(env = process.env) {
 }
 
 // Runs on the Linode as ytcheck (systemd-journal group; sudo only for fail2ban-client status sshd). Prints counts only.
+// A refused Tunelio /create logs tunelio_error and then build_failed (reason tunelio_failed) for the same build, so the
+// second is not counted (2026-10-27: one video Tunelio said "not found" for, played 3 times, was 6 of 10 errors).
 export const LINODE_PROBE = `
 for u in ${LINODE_UNITS.join(' ')}; do echo "unit:$u $(systemctl is-active $u)"; done
 echo "disk $(df --output=pcent / | tail -1 | tr -dc 0-9)"
 echo "banned $(sudo -n fail2ban-client status sshd 2>/dev/null | sed -n 's/.*Currently banned:[[:space:]]*//p')"
 journalctl -u japharsworld-yt --since -60min -o cat --no-pager | awk '
 /"status":5[0-9][0-9]/ { s5++ }
-/"event":"(error|[a-z_]*_error|[a-z_]*_failed)"/ { errors++ }
+/"event":"(error|[a-z_]*_error|[a-z_]*_failed)"/ && !(/"event":"build_failed"/ && /"reason":"tunelio_failed"/) { errors++ }
 /"event":"youtube_error"/ { yt++ }
 /"event":"backoff"/ { backoff++ }
 /"event":"captions_via"/ { if (/"tracks":0[,}]/) cap0++; else if (/"tracks":[1-9]/) cap1++ }
 /"event":"home_evict"/ { evict++ }
 /"event":"home_over_cap"/ { overcap++ }
 END { printf "s5 %d\\nerrors %d\\nyt %d\\nbackoff %d\\ncap0 %d\\ncap1 %d\\nevict %d\\novercap %d\\njournal ok\\n", s5, errors, yt, backoff, cap0, cap1, evict, overcap }'
+journalctl -u japharsworld-yt --since -${CAP_HOURS * 60}min -o cat --no-pager | awk '
+/"event":"captions_via"/ { vid = match($0, /"id":"[^"]*"/) ? substr($0, RSTART, RLENGTH) : "none"; if (/"tracks":0[,}]/) v0[vid] = 1; else if (/"tracks":[1-9]/) v1[vid] = 1 }
+END { for (v in v0) if (!(v in v1)) capv0++; for (v in v1) capv1++; printf "capv0 %d\\ncapv1 %d\\n", capv0, capv1 }'
 `;
 
 // "key value" lines → { key: value }, numbers as numbers.
@@ -96,7 +112,7 @@ export function evaluate(m, lim) {
     if (over(l.errors, lim.ERRORS)) add('linode:errors', false, 'Error events in the search service\'s journal', `${l.errors} error or *_failed events in the last hour (limit ${lim.ERRORS}).`);
     if (over(l.yt, lim.YT)) add('linode:youtube', false, 'YouTube is refusing the search service', `${l.yt} youtube_error events in the last hour (limit ${lim.YT}).`);
     if (over(l.backoff, lim.BACKOFF)) add('linode:backoff', false, 'The search service backed off from YouTube', `${l.backoff} backoff events in the last hour (limit ${lim.BACKOFF}).`);
-    if (over(l.cap0, lim.CAP0) && Number(l.cap0) > Number(l.cap1)) add('linode:captions', false, 'Most captions came back with no tracks', `${l.cap0} with no tracks against ${l.cap1} with tracks in the last hour (limit ${lim.CAP0}).`);
+    if (over(l.capv0, lim.CAP0) && Number(l.capv1) === 0) add('linode:captions', false, 'No video had caption tracks', `${l.capv0} distinct videos with no tracks and none with tracks in the last ${CAP_HOURS} hours (limit ${lim.CAP0} videos).`);
     if (over(l.evict, lim.EVICT)) add('linode:evict', false, 'The home cache is evicting a lot', `${l.evict} home_evict in the last hour (limit ${lim.EVICT}).`);
     if (over(l.overcap, lim.OVERCAP)) add('linode:overcap', false, 'The home cache is over its cap', `${l.overcap} home_over_cap in the last hour.`);
     if (over(l.banned, lim.BANNED)) add('linode:banned', false, 'fail2ban is banning many SSH clients', `${l.banned} currently banned for sshd (limit ${lim.BANNED}).`);
@@ -114,7 +130,7 @@ export function logLine(m, findings, at = new Date().toISOString()) {
   return JSON.stringify({ at, event: 'hypercare', ok: findings.length === 0, findings: findings.map((x) => x.key),
     healthz: m.healthz?.ok ?? null, units,
     disk: l.disk ?? null, s5: l.s5 ?? null, errors: l.errors ?? null, yt: l.yt ?? null, backoff: l.backoff ?? null,
-    cap0: l.cap0 ?? null, cap1: l.cap1 ?? null, evict: l.evict ?? null, overcap: l.overcap ?? null, banned: l.banned ?? null });
+    cap0: l.cap0 ?? null, cap1: l.cap1 ?? null, capv0: l.capv0 ?? null, capv1: l.capv1 ?? null, evict: l.evict ?? null, overcap: l.overcap ?? null, banned: l.banned ?? null });
 }
 
 // New findings get an issue and an alert; open ones are re-alerted after REPEAT_MS; gone ones are recovered.

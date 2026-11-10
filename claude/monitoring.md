@@ -31,6 +31,8 @@ Linode                                                  Optiplex
 | Metric | From |
 |---|---|
 | `eiok_events_total`, `eiok_*_seconds_bucket`, `eiok_credits_remaining`, `eiok_home_today{key}` | metrics.db `daily` / `gauges` |
+| `eiok_home_today{key="cap_builds"}` | the running service's `/ops/state` (`home.cap.builds`), with `STATS_TOKEN` from the exporter's env; only that number |
+| `eiok_service_memory_bytes{kind=anon\|swap}`, `eiok_service_memory_limit_bytes` | the search service's cgroup (`memory.stat`, `memory.swap.current`, `memory.max`), read at scrape time |
 | `eiok_shard_active_hours_total{shard}` (8 series) | metrics.db `hourly` (one row per hour a shard saw a request) |
 | `eiok_poll{source,metric}`, `eiok_poll_timestamp_seconds`, `eiok_release_timestamp_seconds{source,version}` (latest 50, value = when) | metrics.db `polls`, `releases` |
 | `eiok_deploy_timestamp_seconds{host,commit,outcome}` (value = when) | `deploy/deploy-record.sh`, run by `update.sh` / `relay-update.sh`, via Alloy's textfile collector (`/var/lib/japharsworld-yt-deploy`) on each host |
@@ -51,11 +53,16 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
 
 | Alert | Fires when |
 |---|---|
-| Home relay near its daily cap | today's home relay MB ≥ 90 % of `HOME_DAILY_MB`, 5 min |
+| Home relay MB near its daily cap | today's home relay MB ≥ 75 % of `HOME_DAILY_MB` as the service reports it, 5 min |
+| Home relay builds near their daily cap | today's home builds ≥ 90 % of `HOME_DAILY_BUILDS` as the service reports it, 5 min |
+| Linode CPU over 80 % | under 20 % idle across its vCPUs, 15 min |
+| Search service memory near its limit | anon + swap > 90 % of the live `memory.max`, page cache not counted, 15 min |
+| Searches failing (502) | 2 or more `search_fail` 502 in 15 min |
+| Alert inputs missing | `cap_builds`, the memory limit, `days_to_renewal` or `cc_outcome` absent for 30 min, so those alerts would be silently blind |
 | Home relay has no worker | no media worker connected for 15 min (only while `HOME_RELAY=on`; the gauge isn't set otherwise) |
 | Home sent over 100 GB today / 2,000 GB this month (no ISP cap, owner 2026-10-27: unusual volume, not a limit) | `eiok_transfer_bytes{host="home"}`: the Optiplex's bytes sent (every interface but `lo`), reported on each relay poll and counted in metrics.db (`transfer`), Chicago days and months, 5 min |
 | Linode sent over 700 GB this month | `eiok_transfer_bytes{host="linode",period="month"}`: the Linode's bytes sent, of its 1 TB monthly transfer, 5 min |
-| Credits run out before renewal | the last 3 days' credit spend per day × days to the 1st > credits left, for 1 h |
+| Credits run out before renewal | the last 3 days' credit spend per day × `eiok_poll{source="tunelio_plan",metric="days_to_renewal"}` (from `TUNELIO_RENEWS_DAY`) > credits left, for 1 h. Prod's counted spend only |
 | Linode sends nothing | no `eiok_search_up` from the Linode for 10 min (server, Alloy or exporter down) |
 | Optiplex sends nothing | no host metrics from the Optiplex for 15 min |
 | Search service down | `/healthz` unanswered on the Linode for 5 min |
@@ -68,6 +75,9 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
 | Searches not served by the home relay | the home worker is online (`eiok_relay_workers_online > 0`), but over half of the last 30 min's searches (at least 3) came from the Linode or the Data API, 5 min: a worker that answers but is refused, which `no_worker` misses (owner, 2026-10-25) |
 | Captions falling back to Tunelio | over 6 h, Tunelio answered more caption fetches (at least 3) than the home relay and local yt-dlp together, 30 min. Not "estimated timing above real": manual tracks never carry word timing, and that held on normal days (10-24: 104 estimated, 71 real) |
 | Tunelio open or reopen failed | `increase(eiok_tunelio_probe_reopen_fail_total[6h]) + increase(eiok_tunelio_probe_open_fail_total[6h]) > 0`, at once: the speed probe could not resume a cut link at the byte reached (another status, the wrong offset, or no first byte in 10 s), which would turn a reset into a visible freeze, or all three first opens of a read failed that way, which can mean Tunelio stopped honouring Range. The cause can be the Linode's own network, because any fetch error counts. The cut rate is only a panel until there is a baseline (Everything-is-OK#361) |
+| No video has caption tracks | over 6 h, 5 or more distinct videos had no tracks and none had any (`cc_outcome`, world #428), at once: a silent total failure. Stays after hypercare's own check of this ends. A partial failure, with some tracks still coming through, doesn't fire |
+| Caption lookups failing | 3 or more caption requests in 6 h answered `temporarily_unavailable` or `failed`, at once: every source threw, which `cc_outcome` never sees. Moves only when someone asks for captions, about 12 times a day |
+| Metrics poller stale | no pass reached the `tunelio_plan` write for over an hour, 5 min; the timer is 15 min, the widest gap seen 18 min. That write is mid-pass, so a pass failing after it (daily sources, domains, reports) doesn't show |
 | Disk almost full | under 10 % free on `/`, 15 min |
 
 **eiok.cc** (owner, 2026-10-25) is the short domain for the Quest search box (README, "Compact search address"). Caddy
@@ -199,11 +209,22 @@ rule above forbids those either way; the owner reinstalls the narrowed files.
 coordinator's 30-minute loop). Every hour at :17, read only and without Claude, it checks the last hour: the search
 service and Caddy active on the Linode and the public `/healthz` answering 200; the Linode's `/` use; in the search
 service's journal the 5xx answers, error and `*_failed` events, `youtube_error` and `backoff` events, `captions_via`
-with zero tracks against with tracks, `home_evict` and `home_over_cap`; fail2ban's currently banned sshd count; on the
+(lookups in the hour, and distinct videos with and without tracks over 6 hours), `home_evict` and `home_over_cap`; fail2ban's currently banned sshd count; on the
 Optiplex the relay worker, `bgutil-pot-relay` and the flash worker's timer active and its last run successful.
 MediaMTX is its own project (media-mtx) and not checked here (owner, 2026-10-28, #38). The journal is counted on the Linode with `awk` over `ssh linode-check`, so no log line,
 video ID or address reaches the Optiplex. Limits per hour are in `LIMITS` (from the 48 h before 2026-10-26: no 5xx
-or backoff at all), each overridable as `HYPERCARE_<NAME>` in the same `.env`.
+or backoff at all), each overridable as `HYPERCARE_<NAME>` in the same `.env`. The disk limit is 88 %, Grafana's
+critical level: hypercare reads `df` once an hour, so a passing minute at 80 % (2026-10-27 22:17, before a home cache
+eviction) is left to Grafana's 15-minute 80 % warning. Captions fire only at 5 or more distinct videos with no tracks and no
+video with tracks over 6 hours (world #401): many videos have no captions, and replays ask again.
+
+Grafana's `eiok-captions-empty` (world #428) has the same rule, so a silent failure, where every lookup answers
+`no_captions` with no error, stays watched after hypercare ends, and `eiok-captions-failing` covers every source throwing. It is a slow one: replayed over 121 runs of real
+traffic (2026-10-26 to 10-31) such a failure takes a median of 6 h and at most 20 h to fire, and a run of quiet hours
+longer. A partial failure, with some tracks still coming through, never fires. `captions_source_failed` is seen only
+through hypercare's errors check, among all error events at 5 an hour; the exporter doesn't count it. If the worker
+fails and Tunelio answers instead, Grafana's `eiok-captions-paid` can fire. Hypercare ends itself after 7 clean days
+(below), and the rest of its detection ends with it.
 
 All normal: one JSON log line (`"event":"hypercare"`, counts only) in its user journal, nothing else. Something new:
 one Discord post to the weekly check's webhook, pinging `DISCORD_MENTION_ID`, and one issue per finding in the private

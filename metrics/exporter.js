@@ -6,6 +6,7 @@
 // the privacy checks in src/metrics.js; never video IDs, queries or addresses.
 import http from 'node:http';
 import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { METRICS, MS_BUCKETS, S_BUCKETS, REPORT_WHO, REPORT_KINDS, OUTCOME_WHO, OUTCOME_PLATFORMS, OUTCOME_FRAME_SECONDS, dayOf } from '../src/metrics.js';
@@ -67,6 +68,23 @@ export function metricsDbSeries(db, o, now = Date.now()) {
       o.add(`${name}_bucket`, 'histogram', `${metric} from the daily buckets.`, { le: le === Infinity ? '+Inf' : String(le / perSecond) }, seen);
     }
     o.add(`${name}_count`, 'histogram', `${metric} from the daily buckets.`, {}, seen);
+  }
+  // From 0, so increase() sees the first one: no search has ever failed on prod (2026-10-31), so this series didn't
+  // exist, and a counter that first appears at 1 shows no increase, which would hide the first 502s from eiok-search-502.
+  if (!totals.some((r) => r.metric === 'search_fail' && r.key === '502')) {
+    o.add('eiok_events_total', 'counter', 'Usage counts from the search service, all days summed (claude/metrics.md).', { metric: 'search_fail', key: '502' }, 0);
+  }
+  // The same for eiok-captions-empty: a result first seen on a new series would show no increase.
+  for (const key of ['none', 'tracks']) {
+    if (!totals.some((r) => r.metric === 'cc_outcome' && r.key === key)) {
+      o.add('eiok_events_total', 'counter', 'Usage counts from the search service, all days summed (claude/metrics.md).', { metric: 'cc_outcome', key }, 0);
+    }
+  }
+  // And for eiok-captions-failing: neither of these had ever counted by 2026-10-31.
+  for (const key of ['temporarily_unavailable', 'failed']) {
+    if (!totals.some((r) => r.metric === 'cc_unavailable' && r.key === key)) {
+      o.add('eiok_events_total', 'counter', 'Usage counts from the search service, all days summed (claude/metrics.md).', { metric: 'cc_unavailable', key }, 0);
+    }
   }
   // The world's video reports (world #353), by who and kind, every pair from 0 so increase() sees the first report.
   const reports = Object.fromEntries(totals.filter((r) => r.metric === 'video_report').map((r) => [r.key, r.v]));
@@ -196,7 +214,26 @@ export function backupSeries(path, o) {
   o.add('eiok_backup_last_success_timestamp_seconds', 'gauge', 'When the daily S3 backup last uploaded a day (metrics/backup.js).', {}, Math.floor(s.lastSuccessMs / 1000));
 }
 
-export async function render({ metricsDb, monitorDb, healthUrl, backupState, now = Date.now(), fetchImpl = fetch }) {
+// The cap the running service enforces, asked of the service itself, so it follows HOME_DAILY_BUILDS across an env edit
+// and restart with no change here and no restart of the service to start reporting it (the env file as the exporter
+// loaded it would go stale: an edit restarts only the search service). Only this number leaves the answer.
+export function homeCapSeries(state, o) {
+  o.add('eiok_home_today', 'gauge', 'Home relay today (mb, builds, cap_mb) and media workers connected, set every minute.', { key: 'cap_builds' }, state?.home?.cap?.builds);
+}
+
+// The search service's own memory from its cgroup. memory.current is no use for pressure: it is mostly page cache,
+// which the kernel reclaims at the limit (2026-10-31: 296 MB current, 175 MB of it file; anon 107 + swap 150 = 257 MB;
+// 160,904 "max" events and no OOM kill). memory.max is read live, so it follows MemoryMax and `systemctl set-property`.
+// A cgroup that is missing (service restarting) or has no limit ("max") leaves its series out.
+export function serviceMemorySeries(dir, o) {
+  const read = (file) => { try { return readFileSync(join(dir, file), 'utf8'); } catch { return ''; } };
+  const help = 'Search service memory that cannot be dropped: anon in RAM and swapped out (its cgroup, bytes).';
+  o.add('eiok_service_memory_bytes', 'gauge', help, { kind: 'anon' }, read('memory.stat').match(/^anon (\d+)$/m)?.[1]);
+  o.add('eiok_service_memory_bytes', 'gauge', help, { kind: 'swap' }, read('memory.swap.current').match(/^\d+/)?.[0]);
+  o.add('eiok_service_memory_limit_bytes', 'gauge', 'The search service\'s memory.max (MemoryMax), bytes.', {}, read('memory.max').match(/^\d+/)?.[0]);
+}
+
+export async function render({ metricsDb, monitorDb, healthUrl, opsUrl, statsToken, cgroupDir, backupState, now = Date.now(), fetchImpl = fetch }) {
   const o = new Out();
   for (const [name, path, fn] of [['metrics', metricsDb, metricsDbSeries], ['monitor', monitorDb, monitorDbSeries]]) {
     let db, ok = false;
@@ -214,6 +251,13 @@ export async function render({ metricsDb, monitorDb, healthUrl, backupState, now
   }
   healthSeries(health, o);
   if (backupState) backupSeries(backupState, o);
+  if (health?.ok && opsUrl && statsToken) {
+    try {
+      const r = await fetchImpl(opsUrl, { headers: { authorization: `Bearer ${statsToken}` }, signal: AbortSignal.timeout(3000) });
+      if (r.ok) homeCapSeries(await r.json(), o);
+    } catch { /* left out; eiok-alert-inputs-missing fires if it stays out */ }
+  }
+  if (cgroupDir) serviceMemorySeries(cgroupDir, o);
   return o.text();
 }
 
@@ -225,6 +269,9 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     monitorDb: e.MONITOR_DB ?? '/var/lib/japharsworld-yt-monitor/monitor.db',
     healthUrl: `http://127.0.0.1:${e.PORT ?? 8790}/healthz`,
     backupState: e.BACKUP_STATE ?? '/var/lib/japharsworld-yt/backup-state.json',
+    opsUrl: `http://127.0.0.1:${e.PORT ?? 8790}/ops/state`,
+    statsToken: e.STATS_TOKEN ?? '',
+    cgroupDir: '/sys/fs/cgroup/system.slice/japharsworld-yt.service',
   };
   http.createServer(async (req, res) => {
     if (req.url !== '/metrics') { res.writeHead(404).end(); return; }

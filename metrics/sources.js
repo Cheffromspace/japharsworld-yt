@@ -11,6 +11,26 @@ export async function tunelioCredits({ key, base = 'https://tunelio.dev', fetche
 
 const REPO = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 
+// Release tags as the world's release script makes them (vYYYY.MM.DD[.N]), with when they were published.
+const releaseTags = (releases) => releases.filter((r) => !r.draft && /^v\d{4}\.\d\d\.\d\d(\.\d+)?$/.test(r.tag_name ?? '') && r.published_at)
+  .map((r) => ({ tag: r.tag_name, at: Date.parse(r.published_at) }));
+
+// One API call for every poll (world #413): → { repo, tags }, or null when the repo can't be read (private without a
+// token). The latest 10 are plenty between polls 15 minutes apart. Throws on anything else, which the caller logs.
+export async function githubReleases({ repo, token = '', userAgent, fetcher = fetch }) {
+  if (!REPO.test(repo)) throw new Error(`bad repo name ${repo}`);
+  const res = await fetcher(`https://api.github.com/repos/${repo}/releases?per_page=10`, {
+    headers: { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': userAgent,
+      ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`github /releases ${res.status}`);
+  const list = await res.json();
+  if (!Array.isArray(list)) throw new Error('github /releases: not a list');
+  return { repo: repo.split('/')[1], tags: releaseTags(list) };
+}
+
 // → { repo, values: { stars, forks, watchers, release_downloads }, traffic: [{ day, metric, value }] }
 export async function githubRepo({ repo, token = '', userAgent, fetcher = fetch }) {
   if (!REPO.test(repo)) throw new Error(`bad repo name ${repo}`);
@@ -27,9 +47,7 @@ export async function githubRepo({ repo, token = '', userAgent, fetcher = fetch 
   const info = await get('');
   if (!info) return null;
   const releases = (await get('/releases?per_page=100')) ?? [];
-  // Release tags as the world's release script makes them (vYYYY.MM.DD[.N]), with when they were published.
-  const tags = releases.filter((r) => !r.draft && /^v\d{4}\.\d\d\.\d\d(\.\d+)?$/.test(r.tag_name ?? '') && r.published_at)
-    .map((r) => ({ tag: r.tag_name, at: Date.parse(r.published_at) }));
+  const tags = releaseTags(releases);
   const values = {
     stars: info.stargazers_count, forks: info.forks_count, watchers: info.subscribers_count,
     release_downloads: releases.reduce((s, r) => s + (r.assets ?? []).reduce((a, x) => a + (x.download_count ?? 0), 0), 0),

@@ -283,3 +283,46 @@ test('the CC list waits for the play\'s warm-up instead of a second lookup (2026
   assert.ok(!relay.calls.includes(null), 'the list did not look up on its own');
   assert.deepEqual(relay.calls[0], { lang: 'native' });
 });
+
+// World #428: distinct videos over 6 h, as two counts, for eiok-captions-empty.
+test('cc_outcome: once per video and result per 6 h, nothing for a lookup with no list, no ID in the count', () => {
+  const incs = [];
+  const chain = new CaptionChain({ store: {}, metrics: { inc: (m, k) => incs.push([m, k]) } });
+  const H = 3600_000;
+  chain.countOutcome('vidA', 0, 0);
+  chain.countOutcome('vidA', 0, H);
+  chain.countOutcome('vidB', 0, H);
+  chain.countOutcome('vidA', 3, H);
+  chain.countOutcome('vidA', 5, 2 * H);
+  chain.countOutcome('vidC', null, H);
+  chain.countOutcome('vidC', undefined, H);
+  assert.deepEqual(incs, [['cc_outcome', 'none'], ['cc_outcome', 'none'], ['cc_outcome', 'tracks']]);
+  chain.countOutcome('vidA', 0, 6 * H - 1);
+  assert.equal(incs.length, 3, 'still inside the window');
+  chain.countOutcome('vidA', 0, 6 * H);
+  assert.equal(incs.length, 4, 'counts again once the window has passed');
+  chain.countOutcome('vidZ', 0, 100 * H);
+  assert.deepEqual([...chain.outcomes.keys()], ['vidZ:none'], 'old IDs are dropped');
+});
+
+test('cc_outcome: a real list lookup through the chain counts its result', async () => {
+  const incs = [];
+  const store = { captionGet: () => null, captionPut: () => {} };
+  const chain = new CaptionChain({ store, metrics: { inc: (m, k) => { if (m === 'cc_outcome') incs.push(k); } } });
+  chain.sources = () => [['worker', async () => ({ tracks: [], cues: null })]];
+  await chain.resolve('vidA', null);
+  chain.sources = () => [['worker', async () => ({ tracks: [{ code: 'en', auto: true }], cues: null })]];
+  await chain.resolve('vidB', null);
+  assert.deepEqual(incs, ['none', 'tracks']);
+});
+
+// World #428: what eiok-captions-failing reads. Every source throwing counts nothing in cc_outcome.
+test('every source throwing: temporarily_unavailable from get and tracks, no cc_outcome', async () => {
+  const incs = [];
+  const store = { captionGet: () => null, captionPut: () => {} };
+  const chain = new CaptionChain({ store, local: { blocked: false }, metrics: { inc: (m, k) => incs.push([m, k]) } });
+  chain.sources = () => [['worker', async () => { throw new Error('a'); }], ['local', async () => { throw new Error('b'); }]];
+  assert.equal((await chain.get('vidA', 'en')).reason, 'temporarily_unavailable');
+  assert.equal((await chain.tracks('vidA', 'en')).reason, 'temporarily_unavailable');
+  assert.deepEqual(incs, []);
+});

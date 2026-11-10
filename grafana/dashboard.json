@@ -2097,12 +2097,22 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
+     "expr": "max(eiok_home_today{env!=\"staging\",key=\"cap_builds\"})",
+     "legendFormat": "cap videos",
+     "instant": true
+    },
+    {
+     "refId": "E",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
      "expr": "max(eiok_home_today{env!=\"staging\",key=\"workers\"})",
      "legendFormat": "workers",
      "instant": true
     },
     {
-     "refId": "E",
+     "refId": "F",
      "datasource": {
       "type": "prometheus",
       "uid": "${ds}"
@@ -2421,7 +2431,7 @@
    "type": "timeseries",
    "id": 41,
    "title": "Captions (per 6 h)",
-   "description": "Per 6 h: caption lists and picked tracks served, which source answered (home relay, Linode yt-dlp, Tunelio), real or estimated word timing, and why none was available.",
+   "description": "Per 6 h: caption lists and picked tracks served, which source answered (home relay, Linode yt-dlp, Tunelio), real or estimated word timing, distinct videos whose list had tracks or none, and why none was available.",
    "datasource": {
     "type": "prometheus",
     "uid": "${ds}"
@@ -2457,11 +2467,20 @@
       "type": "prometheus",
       "uid": "${ds}"
      },
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"cc_outcome\"}[6h]))",
+     "legendFormat": "videos: {{key}}"
+    },
+    {
+     "refId": "D",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "${ds}"
+     },
      "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"cc_words\"}[6h]))",
      "legendFormat": "words {{key}}"
     },
     {
-     "refId": "D",
+     "refId": "E",
      "datasource": {
       "type": "prometheus",
       "uid": "${ds}"

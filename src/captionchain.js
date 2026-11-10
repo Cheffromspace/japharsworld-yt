@@ -27,6 +27,7 @@ const matches = (a, b) => Boolean(a.auto) === Boolean(b.auto) && (lower(a.code) 
 // and a second empty answer is kept for emptyMs. (2026-10-25 01:27: the retry ran 27 s after the first try and got the
 // same empty answer that a lookup 2 minutes later didn't, so the second try waits 3 minutes.)
 const EMPTY_KEY = 'tracks-empty';
+const OUTCOME_WINDOW_MS = 6 * 3600_000;
 
 export class CaptionChain {
   constructor({ store, relay = null, local = null, tunelio = null, cacheDays = 7, emptyMinutes = 30, emptyRetryMinutes = 3, scripts = DEFAULT_SCRIPTS,
@@ -45,6 +46,7 @@ export class CaptionChain {
     this.metrics = metrics;
     this.log = log;
     this.inflight = new Map();
+    this.outcomes = new Map(); // `<video id>:<result>` → when it was counted; memory only (countOutcome)
   }
 
   once(key, fn) {
@@ -170,6 +172,20 @@ export class CaptionChain {
     if (want?.code != null && !same(want, got.track)) this.store.captionPut(videoId, cueKey(want), value);
   }
 
+  // Counts a video once per result per OUTCOME_WINDOW_MS, so Grafana's increase() over that window reads as distinct
+  // videos (world #428). Replayed over prod's 279 list lookups of 2026-10-26 to 10-31, the rule fires as often as with true
+  // distinct counts (never), with the same peak of 4 videos with no tracks while none had tracks. A lookup for one track
+  // may carry no list (tracks null) and says nothing. A restart forgets the IDs, so a repeat can count twice then.
+  countOutcome(videoId, tracks, now = Date.now()) {
+    if (typeof tracks !== 'number') return;
+    for (const [k, at] of this.outcomes) if (now - at >= OUTCOME_WINDOW_MS) this.outcomes.delete(k);
+    const result = tracks > 0 ? 'tracks' : 'none';
+    const k = `${videoId}:${result}`;
+    if (this.outcomes.has(k)) return;
+    this.outcomes.set(k, now);
+    this.metrics?.inc('cc_outcome', result);
+  }
+
   // ---- the chain ----
   // want: { lang } | { code, auto } | null. Returns { tracks, track, cues, via, reason } from the first source that
   // answers, or null when none can right now. Whatever a source returns is cached before it is returned.
@@ -187,6 +203,7 @@ export class CaptionChain {
           this.metrics?.inc('cc_via', via);
           this.log({ event: 'captions_via', id: videoId, via, ms: Date.now() - t0, tracks: got.tracks?.length ?? null, cues: got.cues?.length ?? null, reason: got.reason,
             ...(got.retried ? { retried: true } : {}), ...(got.warnings != null ? { warnings: got.warnings } : {}) });
+          this.countOutcome(videoId, got.tracks?.length);
           return got;
         } catch (err) {
           this.log({ event: 'captions_source_failed', id: videoId, via, ms: Date.now() - t0, message: short(err) });

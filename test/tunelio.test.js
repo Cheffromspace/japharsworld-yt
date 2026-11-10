@@ -502,7 +502,8 @@ async function tooLongApp(t, { home = undefined, config = {}, video = {}, playba
   t.after(() => server.close());
   const get = (p, ua) => fetch('http://127.0.0.1:' + server.address().port + p, { redirect: 'manual', headers: { 'user-agent': ua } });
   const r = await (await get('/v1/0/s?q=x', UNITY)).json();
-  return { get, calls, metrics, ticket: '/v1/0/' + r.results[0].t, t: r.results[0].t };
+  // Over the cap the search lists nothing (world #455), so results[0] is absent there.
+  return { get, calls, metrics, store, ticket: '/v1/0/' + r.results[0]?.t, t: r.results[0]?.t };
 }
 const UNITY = 'UnityPlayer/2022.3.22f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)';
 const CHROME = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -607,12 +608,14 @@ test('over the cap, a pasted link: too_long on PC and Quest, no /create, no home
 test('over the cap: too_long for every client, no /create and no home build (world #420)', async (t) => {
   const home = refusingHome();
   const a = await tooLongApp(t, { home, config: { videoMaxSeconds: 43200 }, video: { seconds: 43201 } });
-  for (const [path, ua] of [[a.ticket, WMF], [a.ticket, CHROME], [a.ticket + '.m3u8', AVPRO_QUEST], [a.ticket + '.m3u8', CHROME]]) {
+  // Search no longer lists one (world #455); a ticket bound before that, or by a pasted link, still gets here.
+  const ticket = '/v1/0/' + a.store.allocate(0, [{ kind: 'video', data: { id: 'AAAAAAAAAAA', live: false, seconds: 43201 } }])[0];
+  for (const [path, ua] of [[ticket, WMF], [ticket, CHROME], [ticket + '.m3u8', AVPRO_QUEST], [ticket + '.m3u8', CHROME]]) {
     const play = await a.get(path, ua);
     assert.equal(play.status, 403, path + ' ' + ua);
     assert.equal((await play.json()).error, 'too_long');
   }
-  for (const path of [a.ticket, a.ticket + '.m3u8']) {
+  for (const path of [ticket, ticket + '.m3u8']) {
     const st = await (await a.get(path, UNITY)).json();
     assert.deepEqual([st.state, st.reason, st.error], ['failed', 'too_long', 'too_long']);
   }

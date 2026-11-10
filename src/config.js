@@ -19,8 +19,12 @@ export const config = {
   // A video ticket that has been played stays bound to its video this long (late joiners).
   pinHours: int('PIN_HOURS', 24),
   resultsPerPage: int('RESULTS_PER_PAGE', 20),
-  // Searches and More pages a minute per client IP (429 rate_limited over it).
-  searchesPerMinutePerIp: int('SEARCHES_PER_MINUTE', 20),
+  // Every /s request, text searches and a pasted link's player loads alike. One age-restricted play is about 20 from one
+  // client (about 10 an attempt, tried twice); at 20 a minute two clients on one IP got 429 on the next good video
+  // (TEST, 2026-11-01, world #450). This never bounded Tunelio credits, because tickets aren't counted; a pasted link's /s
+  // also plays through ticket(), so it can spend credits and start home yt-dlp jobs too.
+  // More pages count against it too (429 rate_limited).
+  searchesPerMinutePerIp: int('SEARCHES_PER_MINUTE', 60),
   // Ticket requests a minute per client IP (status, player, sheet, More; 429 rate_limited over it). VRChat lets a
   // client load one string and one image per 5 s (24 a minute) plus a few loads per play, so 120 is ~5x a real one.
   ticketsPerMinutePerIp: int('TICKETS_PER_MINUTE_PER_IP', 120),

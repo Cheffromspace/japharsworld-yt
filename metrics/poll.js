@@ -1,5 +1,6 @@
 // Metrics poller (claude/metrics.md), run by japharsworld-yt-metrics.timer about every 15 minutes.
-//   node metrics/poll.js                    one pass: VRChat; once a day Tunelio + GitHub; the reports when due
+//   node metrics/poll.js                    one pass: VRChat, Tunelio, the world repo's releases; once a day GitHub's
+//                                           numbers; the reports when due
 //   node metrics/poll.js occupants          the per-minute pass (japharsworld-yt-occupants.timer): production world counts
 //   node metrics/poll.js report [--day D] [--weekly] [--send]   print (or send) a report now
 //
@@ -12,7 +13,7 @@ import { openMetricsDb, recordPoll, getMeta, setMeta, dayOf } from '../src/metri
 import { makeAlert } from '../src/alert.js';
 import { addDays, billingPeriod, daysBetween } from '../src/stats.js';
 import { VRChat, worldValues, groupValues } from './vrchat.js';
-import { tunelioCredits, githubRepo, domainExpiry, DOMAINS } from './sources.js';
+import { tunelioCredits, githubRepo, githubReleases, domainExpiry, DOMAINS } from './sources.js';
 import { dailyReport, weeklyReport, testWorld, chunks } from './report.js';
 
 const env = process.env;
@@ -36,6 +37,7 @@ export const settings = (e = env) => ({
   groupId: /^grp_[0-9a-f-]{36}$/.test(e.VRCHAT_GROUP_ID ?? '') ? e.VRCHAT_GROUP_ID : '',
   userAgent: `EverythingIsOK-metrics/1.0 ${e.METRICS_CONTACT || 'https://github.com/Cheffromspace/japharsworld-yt'}`,
   githubToken: e.GITHUB_TOKEN ?? '',
+  githubReleaseRepo: e.GITHUB_RELEASE_REPO ?? 'Cheffromspace/Everything-is-OK',
   githubRepos: (e.GITHUB_REPOS ?? 'Cheffromspace/japharsworld-yt,Cheffromspace/Everything-is-OK').split(',').map((s) => s.trim()).filter(Boolean),
   secretsFile: e.METRICS_SECRETS ?? '/etc/japharsworld-yt-metrics.env',
   stateFile: e.METRICS_STATE ?? '/var/lib/japharsworld-yt-metrics/state.json',
@@ -168,12 +170,36 @@ export function renewalReminders(db, cfg, { today }) {
   return out;
 }
 
+// Days to the renewal, for Grafana's eiok-credits-pace: PromQL knows neither TUNELIO_RENEWS_DAY nor short months. Read
+// from the env on every pass, so changing the day needs no change to the rule. Same date logic as the reminders above.
+export function renewalPass(db, cfg, { now = Date.now() } = {}) {
+  if (!cfg.tunelioKey) return null;
+  const today = dayOf(now, cfg.tz);
+  const days = daysBetween(today, billingPeriod(today, cfg.tunelioRenewsDay).renews);
+  recordPoll(db, { ts: now, source: 'tunelio_plan', values: { days_to_renewal: days }, tz: cfg.tz });
+  return days;
+}
+
 // World versions (at = VRChat's updated_at, the upload time) and GitHub release tags, recorded the first time they are seen.
 export function recordReleases(db, list, now = Date.now()) {
   const put = db.prepare('INSERT OR IGNORE INTO releases (source, version, at, detected) VALUES (?, ?, ?, ?)');
   let added = 0;
   for (const r of list) if (Number.isFinite(r.at) && r.at > 0 && r.version != null) added += Number(put.run(r.source, String(r.version), r.at, now).changes);
   return added;
+}
+
+// The world repo's release tags on every pass (world #413, owner 2026-10-31: markers within a poll, not a day), under the
+// same source as the daily read, so a tag is one row. → how many were new. A failure is logged and waits for the next
+// pass; nothing else in the pass depends on it, and the daily read stays as it was.
+export async function releasePass(db, cfg, { now = Date.now(), fetcher = fetch } = {}) {
+  try {
+    const g = await githubReleases({ repo: cfg.githubReleaseRepo, token: cfg.githubToken, userAgent: cfg.userAgent, fetcher });
+    if (!g) { log({ event: 'github_releases_skipped' }); return 0; }
+    return recordReleases(db, g.tags.map((t) => ({ source: `github:${g.repo}`, version: t.tag, at: t.at })), now);
+  } catch (err) {
+    log({ event: 'github_releases_error', message: String(err.message).slice(0, 200) });
+    return 0;
+  }
 }
 
 export async function dailySources(db, cfg, { now = Date.now(), fetcher = fetch } = {}) {
@@ -222,8 +248,10 @@ export async function run(cfg = settings(), { now = Date.now() } = {}) {
       .map((r) => ({ source: r.source, version: r.values.version, at: (r.values.updatedAt ?? 0) * 1000 })), now);
     const notes = [];
     const tc = await tunelioPass(db, cfg, { now, alert: (kind, text) => notes.push([kind, text]) });
+    renewalPass(db, cfg, { now });
+    const tags = await releasePass(db, cfg, { now });
     for (const [kind, text] of notes) await send(cfg, kind, text).catch((err) => log({ event: 'alert_failed', kind, message: String(err.message) }));
-    log({ event: 'metrics_poll', vrchat: vr.skipped ?? vr.rows.length, releases: fresh, credits: tc?.credits ?? null });
+    log({ event: 'metrics_poll', vrchat: vr.skipped ?? vr.rows.length, releases: fresh, tags, credits: tc?.credits ?? null });
     const today = dayOf(now, cfg.tz);
     if (getMeta(db, 'daily_sources') !== today) {
       await dailySources(db, cfg, { now });

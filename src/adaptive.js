@@ -398,7 +398,11 @@ export class Adaptive {
     const t0 = Date.now();
     try {
       const res = await this.fetch(job.url, { headers: { range: 'bytes=0-65535' }, signal: AbortSignal.timeout(this.mp4CodecMs) });
-      if (res.status !== 200 && res.status !== 206) { try { await res.body?.cancel(); } catch { /* ignore */ } return null; }
+      if (res.status !== 200 && res.status !== 206) {
+        try { await res.body?.cancel(); } catch { /* ignore */ }
+        this.log({ event: 'adaptive_codec_error', id: job.id, quality: job.quality, status: res.status, ms: Date.now() - t0 });
+        return null; // not kept: the next play asks again
+      }
       const chunks = [];
       let size = 0;
       const reader = res.body?.getReader?.();

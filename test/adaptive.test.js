@@ -819,3 +819,14 @@ test('codec of an mp4 build (#741): the stsd entry decides, not ftyp brands; rea
   mode = 'vp09';
   assert.equal(await a.codec(f), 'vp9', 'a failed read is asked again');
 });
+
+test('codec of an mp4 build (#741): a non-200/206 answer logs adaptive_codec_error and is not kept', async () => {
+  let status = 503;
+  const logs = [];
+  const a = new Adaptive({ playback: {}, fetcher: async () => new Response(status === 503 ? 'busy' : '\0\0\0\x10moov....stsd....avc1', { status }), log: (o) => logs.push(o) });
+  const job = { id: 'x', quality: '1080p', format: 'progressive', state: 'ready', url: 'https://tunelio.dev/t?q=1080p&progressive=1' };
+  assert.equal(await a.codec(job), null);
+  assert.deepEqual(logs.filter((e) => e.event === 'adaptive_codec_error').map((e) => e.status), [503]);
+  status = 206;
+  assert.equal(await a.codec(job), 'h264', 'asked again');
+});

@@ -2146,10 +2146,15 @@ test('#741: home refuses (no worker free): the 720p rung', async (t) => {
 
 test('#741: a PC whose home session missed HOME_READY_SECONDS is not held on home a second time: the 720p rung', async (t) => {
   // A 600 s video at HOME_LONG_MINUTES 5 goes home for being long; the build takes longer than the hold.
-  const app = await pcAv1App(t, { config: { homeLongMinutes: 5, homeReadyMs: 150 }, media: () => new Promise((r) => setTimeout(r, 1000)) });
+  const app = await pcAv1App(t, { config: { homeLongMinutes: 5, homeReadyMs: 400 }, media: () => new Promise((r) => setTimeout(r, 2500)) });
   const r = await app.play(PC_PLAYER, '');
   assert.match(r.headers.get('location'), /q=720p&progressive=1$/);
   assert.equal(app.logs.filter((e) => e.event === 'build_route' && e.why === 'av1').length, 0);
+  // One home hold of HOME_READY_SECONDS (400 ms), not two: a second would put held past 800 ms. Home itself fails a
+  // session that misses that time (home_failed timeout), so this holds even without the waited.home guard; the
+  // HOME_ANDROID_GROWING test below is the one that needs the guard (a ready session marked uneven).
+  const held = app.logs.find((e) => e.event === 'play')?.held;
+  assert.ok(held >= 400 && held < 750, `held ${held} ms`);
 });
 
 test('#741: the 720p rung AV1 too: youtube.com, not pinned', async (t) => {

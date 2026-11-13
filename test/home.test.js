@@ -1395,11 +1395,13 @@ test('home want end to end: a far seek on a cached copy is answered in about one
 // player's segment comes only when the in-order upload reaches it.
 test('HOME_SEEK_WANT off: a far seek on a cached copy leaves the upload in order; no x-media-want, no home_want, no jump', async (t) => {
   const { url, path, lines, wlogs, answers, SEGS } = await cachedSeekApp(t, { seekWant: false });
-  const seg = await fetch(url + path.replace('index.m3u8', 'seg250.ts'));
+  // Asked again after each hold, as a player would: under load the in-order upload can take longer than one hold.
+  let seg;
+  while ((seg = await fetch(url + path.replace('index.m3u8', 'seg250.ts'))).status !== 200) await seg.arrayBuffer();
   assert.equal(await seg.text(), 'ts250');
   assert.ok(answers.filter(([n]) => n < 250).length >= 240, `seg250 came after the ones before it (${answers.length} uploads by then)`);
-  const t1 = Date.now();
-  while (!lines.some((l) => l.includes('"event":"home_done"')) && Date.now() - t1 < 15_000) await new Promise((r) => setTimeout(r, 50));
+  // The rest: waited for (the test runner's own timeout is the limit), not for a fixed time.
+  while (!lines.some((l) => l.includes('"event":"home_done"'))) await new Promise((r) => setTimeout(r, 50));
   assert.ok(lines.some((l) => l.includes('"event":"home_done"') && l.includes(`"segments":${SEGS}`)));
   assert.deepEqual(answers.map(([n]) => n), Array.from({ length: SEGS }, (_, i) => i), 'seg0..seg299 in order, each once');
   assert.ok(answers.every(([, w]) => w === null), 'no answer names a want');
@@ -1543,7 +1545,9 @@ test('home want: a segment past the end of the playlist or never listed is not w
 
 // Phase 2 (Everything-is-OK#367): a fresh build's runs. A fake ffmpeg that makes one 4 s segment every `everyMs` from
 // -start_number, lists them in its own playlist (ENDLIST at the end), stops when killed, and can end early (endAt).
-function runFfmpeg({ total, everyMs = 10, endAt = {}, failAt = {} } = {}) {
+// hold(start, i) → true: the run that started at `start` makes no segment i yet (checked every everyMs), so a test can
+// wait for a state (a jump decided) instead of racing the fake's speed against the job's.
+function runFfmpeg({ total, everyMs = 10, endAt = {}, failAt = {}, hold = () => false } = {}) {
   const spawns = [];
   const ff = { spawns, closes: 0 };
   ff.spawnFn = (cmd, args) => {
@@ -1559,6 +1563,7 @@ function runFfmpeg({ total, everyMs = 10, endAt = {}, failAt = {} } = {}) {
     let i = start;
     const close = (code) => { clearInterval(timer); setTimeout(() => { ff.closes++; p.emit('close', code); }, 1); };
     const timer = setInterval(() => {
+      if (hold(start, i)) return;
       writeFileSync(join(dir, `seg${i}.ts`), `ts${i}`);
       lines.push('#EXTINF:4.000000,', `seg${i}.ts`);
       const end = i === total - 1;
@@ -1572,6 +1577,11 @@ function runFfmpeg({ total, everyMs = 10, endAt = {}, failAt = {} } = {}) {
   };
   return ff;
 }
+// Run 0 stops at seg12 until `until()`: a want for seg80 set when seg10 goes up then always meets a run 0 too far back
+// to reach it soon (comingAnyway: 12 + 13 a second × LEAD_S < 80), however loaded the machine is. Before this the fake
+// ran at full speed and, under a parallel full suite, run 0 sometimes got near seg80 first and no jump started
+// (verifier, 2026-11-13: "1 runs").
+const holdRun0 = (until) => (start, i) => start === 0 && i > 12 && !until();
 const runnerDur = (s) => async (cmd, args) => (cmd === 'yt-dlp'
   ? `https://v.example/video?clen=100&dur=${s}\nhttps://v.example/audio?clen=100&dur=${s}\n`
   : framecrc(args.includes('-ss') ? Math.round(Number(args[args.indexOf('-ss') + 1]) * 90000) : 0));
@@ -1595,7 +1605,7 @@ test('parseProbe: seconds from framecrc, NaN from anything else', () => {
 test('mediaJob jump: a player waiting far ahead of a fresh build gets a run started there; each segment goes up once, the copy is whole', async (t) => {
   const { MediaCache } = await import('../relay/cache.js');
   const cache = new MediaCache({ dir: tmp(t), maxGb: 1 });
-  const ff = runFfmpeg({ total: 100, everyMs: 15 });
+  const ff = runFfmpeg({ total: 100, everyMs: 15, hold: holdRun0(() => ff.spawns.some((r) => r.start === 80)) });
   const order = [];
   const logs = [];
   let want = null;
@@ -1621,7 +1631,7 @@ test('mediaJob jump: a player waiting far ahead of a fresh build gets a run star
 test('mediaJob fill: segments a stopped or short run left out are made by a fill run afterwards', async (t) => {
   const { MediaCache } = await import('../relay/cache.js');
   const cache = new MediaCache({ dir: tmp(t), maxGb: 1 });
-  const ff = runFfmpeg({ total: 100, everyMs: 15, endAt: { 80: 90 } }); // the run from 80 ends at 90 on its own
+  const ff = runFfmpeg({ total: 100, everyMs: 15, endAt: { 80: 90 }, hold: holdRun0(() => ff.spawns.some((r) => r.start === 80)) }); // the run from 80 ends at 90 on its own
   const order = [];
   const logs = [];
   let want = null;
@@ -1653,7 +1663,7 @@ const runnerProbe = runnerDur;
 test('mediaJob jump, last segment: one more segment than predicted is kept and listed, not dropped from the copy', async (t) => {
   const { MediaCache } = await import('../relay/cache.js');
   const cache = new MediaCache({ dir: tmp(t), maxGb: 1 });
-  const ff = runFfmpeg({ total: 101, everyMs: 15 }); // 400 s predicts seg0–99; the source has a seg100
+  const ff = runFfmpeg({ total: 101, everyMs: 15, hold: holdRun0(() => ff.spawns.some((r) => r.start === 80)) }); // 400 s predicts seg0–99; the source has a seg100
   let want = null;
   const job = await mediaJob({ videoId: 'ddddddddddd', quality: '1080p', token: 'x' }, { ytdlp: 'yt-dlp', runner: runnerProbe(400), spawnFn: ff.spawnFn, splitByTime: true,
     pollMs: 10, cache, wanted: () => want,
@@ -1720,7 +1730,7 @@ for (const hours of [12, 24, 111]) { // 111 h: the most segments SEGMENT can nam
 test('mediaJob jump: a run past the end of its cut list stops there and a fill run carries on; the copy is whole', async (t) => {
   const { MediaCache } = await import('../relay/cache.js');
   const cache = new MediaCache({ dir: tmp(t), maxGb: 1 });
-  const ff = runFfmpeg({ total: 100, everyMs: 5 });
+  const ff = runFfmpeg({ total: 100, everyMs: 5, hold: holdRun0(() => ff.spawns.some((r) => r.start === 80)) });
   const order = [];
   let want = null;
   const job = await mediaJob({ videoId: 'iiiiiiiiiii', quality: '1080p', token: 'x' }, { ytdlp: 'yt-dlp', runner: runnerDur(400), spawnFn: ff.spawnFn, splitByTime: true,
@@ -1735,8 +1745,8 @@ test('mediaJob jump: a run past the end of its cut list stops there and a fill r
 test('mediaJob jump: a seek whose run can\'t be started waits for the in-order build; nothing is closed', async (t) => {
   const { MediaCache } = await import('../relay/cache.js');
   const cache = new MediaCache({ dir: tmp(t), maxGb: 1 });
-  const ff = runFfmpeg({ total: 100, everyMs: 5 });
   const logs = [];
+  const ff = runFfmpeg({ total: 100, everyMs: 5, hold: holdRun0(() => logs.some((l) => l.event === 'media_seek_unplaced')) });
   const playlists = [];
   let want = null;
   const spawnFn = (cmd, args, o) => {
@@ -2168,11 +2178,13 @@ function pcAv1Fakes({ codecs = { '1080p': 'av01', '720p': 'avc1' }, holdMs = 0, 
   const playback = { jobs: new Map(), peek: (d, q = '720p', { hls = false } = {}) => (hls ? null : job(q)), status: () => ({ state: 'ready' }), start() {},
     async location(d, { quality = '720p' } = {}) {
       asked.push(quality); await new Promise((r) => setTimeout(r, holdMs)); const j = job(quality);
-      // answers[q]: a build that is not a ready mp4 (#749): 'failed', 'building', 'hls' (turned HLS), 'allowance'.
-      if (answers[quality] === 'failed') return { location: `https://www.youtube.com/watch?v=${d.id}`, via: 'youtube', reason: 'build_failed', ready: true };
-      if (answers[quality] === 'allowance') return { location: `https://www.youtube.com/watch?v=${d.id}`, via: 'youtube', reason: 'allowance', ready: true };
-      if (answers[quality] === 'building') return { location: j.url, via: 'tunelio', reason: 'building', ready: false };
-      if (answers[quality] === 'hls') { j.url = j.url.replace(/&progressive=1$/, '&hls=1'); return { location: j.url, via: 'tunelio', quality, ready: true }; }
+      // answers[q]: a build that is not a ready mp4 (#749): 'failed', 'building', 'hls' (turned HLS), 'allowance'; or a
+      // function returning one of them (or nothing), asked per request (it can read spendScope's client key).
+      const answer = typeof answers[quality] === 'function' ? answers[quality]() : answers[quality];
+      if (answer === 'failed') return { location: `https://www.youtube.com/watch?v=${d.id}`, via: 'youtube', reason: 'build_failed', ready: true };
+      if (answer === 'allowance') return { location: `https://www.youtube.com/watch?v=${d.id}`, via: 'youtube', reason: 'allowance', ready: true };
+      if (answer === 'building') return { location: j.url, via: 'tunelio', reason: 'building', ready: false };
+      if (answer === 'hls') { j.url = j.url.replace(/&progressive=1$/, '&hls=1'); return { location: j.url, via: 'tunelio', quality, ready: true }; }
       return { location: j.url, via: 'tunelio', quality, ready: true };
     } };
   const reads = [];
@@ -2541,6 +2553,71 @@ test('#749 (B): a long video: the resolver is sent on without starting home; a Q
   // Once the session is there, the resolver defers to it as before (reuse).
   assert.equal((await app.play(QUEST_YTDLP, '')).status, 200);
   assert.equal(app.logs.filter((e) => e.event === 'play_defer' && e.home && !e.reason).length, 1);
+});
+
+// Verifier round 5 (N1, N2): the youtube.com mirror is per client (the resolver and the player of one PC share an address),
+// and its id check, expiry, build_timeout exclusion and the tunelio_slow branch's homeCanStart each have a test.
+const playAs = (app, ua, ip) => fetch(`${app.url}/v1/0/${app.n}`, { redirect: 'manual', headers: { 'user-agent': ua, 'x-forwarded-for': ip } });
+const YT = 'https://www.youtube.com/watch?v=aaaaaaaaaaa';
+// The first client to ask for the build is over its own allowance (youtube.com, reason allowance); later ones are not.
+async function ownLimitFirst() {
+  const { spendScope } = await import('../src/spend.js');
+  let over = null;
+  return () => { const ip = spendScope.getStore()?.ip; over ??= ip; return ip === over ? 'allowance' : undefined; };
+}
+
+test('#749 (N1, Q2): PCs only: PC A over its own limit gets youtube.com and so does A\'s resolver; PC C\'s resolver and player get the file', async (t) => {
+  const app = await pcAv1App(t, { config: { homeRelay: false }, fakes: { codecs: { '720p': 'avc1' }, answers: { '720p': await ownLimitFirst() } } });
+  app.store.setQuality(0, '720p');
+  assert.equal((await playAs(app, PC_PLAYER, '203.0.113.1')).headers.get('location'), YT);
+  assert.equal((await playAs(app, PC_RESOLVER, '203.0.113.1')).headers.get('location'), YT, 'A\'s own resolver mirrors it');
+  assert.match((await playAs(app, PC_RESOLVER, '203.0.113.3')).headers.get('location'), /q=720p&progressive=1$/, 'C\'s resolver: its own answer');
+  assert.match((await playAs(app, PC_PLAYER, '203.0.113.3')).headers.get('location'), /q=720p&progressive=1$/);
+  assert.deepEqual(app.logs.filter((e) => e.event === 'play').map((e) => e.reason ?? null), ['allowance', 'allowance', null, null], 'no bystander carries A\'s reason');
+});
+
+test('#749 (N1, Q1): a mixed room: after PC A\'s own-limit youtube.com, a Quest\'s resolver (a PC UA, its own address) and player get the file', async (t) => {
+  const app = await pcAv1App(t, { config: { homeRelay: false }, fakes: { codecs: { '720p': 'avc1' }, answers: { '720p': await ownLimitFirst() } } });
+  app.store.setQuality(0, '720p');
+  assert.equal((await playAs(app, PC_PLAYER, '203.0.113.1')).headers.get('location'), YT);
+  assert.match((await playAs(app, QUEST_YTDLP, '198.51.100.7')).headers.get('location'), /q=720p&progressive=1$/);
+  assert.match((await playAs(app, QUEST, '198.51.100.7')).headers.get('location'), /q=720p&progressive=1$/);
+});
+
+test('#749 (N2): the mirror is for its video only: the same ticket holding another video gets its own answer', async (t) => {
+  let first = true;
+  const app = await pcAv1App(t, { config: { homeRelay: false }, fakes: { codecs: { '720p': 'avc1' }, answers: { '720p': () => (first ? (first = false, 'failed') : undefined) } } });
+  app.store.setQuality(0, '720p');
+  assert.equal((await playAs(app, PC_PLAYER, '203.0.113.1')).headers.get('location'), YT);
+  const get = app.store.get.bind(app.store);
+  app.store.get = (s, k) => { const tk = get(s, k); return k === app.n && tk ? { ...tk, data: { ...tk.data, id: 'bbbbbbbbbbb' } } : tk; };
+  assert.match((await playAs(app, PC_RESOLVER, '203.0.113.1')).headers.get('location'), /q=720p&progressive=1$/);
+});
+
+test('#749 (N2): the mirror lapses with the pin window', async (t) => {
+  let first = true;
+  // A margin of minus the video's length and a bit: every window has ended by the next request.
+  const app = await pcAv1App(t, { config: { homeRelay: false, ticketPinMarginMs: -601_000 },
+    fakes: { codecs: { '720p': 'avc1' }, answers: { '720p': () => (first ? (first = false, 'failed') : undefined) } } });
+  app.store.setQuality(0, '720p');
+  assert.equal((await playAs(app, PC_PLAYER, '203.0.113.1')).headers.get('location'), YT);
+  assert.match((await playAs(app, PC_RESOLVER, '203.0.113.1')).headers.get('location'), /q=720p&progressive=1$/);
+});
+
+test('#749 (N2): build_timeout\'s youtube.com isn\'t mirrored: the build is still coming, the resolver gets the usual quick answer', async (t) => {
+  const app = await pcAv1App(t, { config: { homeRelay: false, ticketPlayerHoldMs: 0 }, fakes: { codecs: { '720p': 'avc1' }, answers: { '720p': 'building' } } });
+  app.store.setQuality(0, '720p');
+  assert.equal((await playAs(app, PC_PLAYER, '203.0.113.1')).headers.get('location'), YT);
+  assert.equal(app.logs.find((e) => e.event === 'play')?.reason, 'build_timeout');
+  assert.equal((await playAs(app, PC_RESOLVER, '203.0.113.1')).status, 200, 'sent on while it builds, not youtube.com');
+});
+
+test('#749 (N2): Tunelio slow during the plan and the visitor over their home allowance: the resolver isn\'t sent on, it gets the file', async (t) => {
+  let checks = 0;
+  const tunelio = { enabled: true, get timedOutAt() { return checks++ === 0 ? 0 : Date.now(); } };
+  const app = await pcAv1App(t, { tunelio, allowance: OVER_HOME, fakes: { codecs: { '1080p': 'avc1' } } });
+  assert.match((await app.play(PC_RESOLVER, '')).headers.get('location'), /q=1080p&progressive=1$/);
+  assert.equal(app.logs.filter((e) => e.event === 'play_defer').length, 0);
 });
 
 test('#749: QUEST_AV1_QUALITIES empty: an AV1 720p goes straight to "can\'t be played here", no 360p build', async (t) => {

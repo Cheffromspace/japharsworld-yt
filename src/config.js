@@ -164,10 +164,10 @@ export const config = {
   // (else the 720p rung, else youtube.com) instead of to the player (src/server.js, Everything-is-OK#741, staging
   // 2026-11-13: a PC alone got the AV1 1080p mp4 and never showed a frame). off: as before, no read.
   pcAv1: (process.env.PC_AV1 ?? 'on') !== 'off',
-  // Everything-is-OK#749: the same read for a Quest on a plain ticket; AV1 gets QUEST_AV1_QUALITY's mp4 (read too), else
-  // "can't be played here". QUEST_AV1_QUALITY empty: straight to that answer.
+  // Everything-is-OK#749: the same read for a Quest on a plain ticket; AV1 gets the first of QUEST_AV1_QUALITIES (each read)
+  // that isn't AV1, else "can't be played here". QUEST_AV1_QUALITIES empty: straight to that answer.
   questAv1: (process.env.QUEST_AV1 ?? 'on') !== 'off',
-  questAv1Quality: /^\d{3,4}p$/.test(process.env.QUEST_AV1_QUALITY ?? '360p') ? (process.env.QUEST_AV1_QUALITY ?? '360p') : null,
+  questAv1Qualities: (process.env.QUEST_AV1_QUALITIES ?? '480p,360p').split(',').map((q) => q.trim()).filter((q) => /^\d{3,4}p$/.test(q)),
   // A .m3u8 ticket (Quest): Unity's Android player gets the mp4, and a long or HLS-failed play sends AVPro on at once so
   // VizVid reaches that player (src/server.js questMp4, Everything-is-OK#584). off: as before. Long: this many minutes,
   // or a file at the ticket's quality of this many MB once its size is known (0 = by length only).

@@ -20,11 +20,16 @@ caddy_fail() { printf '\033[1;31mXX  %s\033[0m\n' "$*" >&2; exit 1; }
 caddy_check() { ( if [ -f /etc/caddy/cloudflare.env ]; then set -a; . /etc/caddy/cloudflare.env; set +a; fi
   caddy validate --config "$1" --adapter caddyfile >/dev/null ); }
 caddy_log_filter() {
-  local file=$1 code adapted
+  local file=$1 code global adapted enc
   caddy_filter_added=0
   # Comments don't count: one mentioning "request delete" must not pass for the filter.
   code=$(sed -e 's/^[[:space:]]*#.*//' -e 's/[[:space:]]#.*//' "$file")
-  if ! { grep -qE '^[[:space:]]*request[[:space:]]+delete[[:space:]]*$' <<<"$code" && grep -qF 'error regexp "->[^ ]+" "->client"' <<<"$code"; }; then
+  # Only the global block counts: the same two lines in a site's own log block leave the default logger, which writes
+  # the error lines, unfiltered. The global block is a lone "{" before anything else, up to its matching "}".
+  global=$(awk 's == 0 && /^[[:space:]]*$/ { next }
+    s == 0 { if ($0 ~ /^[[:space:]]*[{][[:space:]]*$/) s = 1; else exit }
+    { print; d += gsub(/[{]/, "{") - gsub(/[}]/, "}"); if (d <= 0) exit }' <<<"$code")
+  if ! { grep -qE '^[[:space:]]*request[[:space:]]+delete[[:space:]]*$' <<<"$global" && grep -qF 'error regexp "->[^ ]+" "->client"' <<<"$global"; }; then
     # Two global blocks aren't allowed and merging one here is guesswork, so this stops before anything changes.
     if grep -qE '^[[:space:]]*[{]' <<<"$code"; then
       caddy_fail "$file has a line starting with { (a global block?) and not the log filter. Nothing changed: add the filter by hand (deploy/bootstrap.sh has it), then run this again."
@@ -49,7 +54,12 @@ CADDY
     caddy_filter_added=1
   fi
   adapted=$(caddy adapt --config "$file" --adapter caddyfile 2>/dev/null) || caddy_fail "$file does not adapt."
-  grep -qF '"request":{"filter":"delete"}' <<<"$adapted" || caddy_fail "$file does not apply the log filter."
+  # Both filters, on the default logger: its encoder object, whatever the key order (2.11.7 adapts it as fields, format,
+  # wrap, staging 2026-11-13; 2.6.2's FilterEncoder struct lists wrap first) and with ">" escaped as backslash-u003e (2.11.7) or not.
+  enc=$(grep -oE '"logs":\{"default":\{("writer":\{[^{}]*\},)?"encoder":\{([^{}]|\{([^{}]|\{[^{}]*\})*\})*\}' <<<"$adapted") || true
+  { grep -qF '"request":{"filter":"delete"}' <<<"$enc" \
+    && grep -qE '"error":\{"filter":"regexp","regexp":"-(\\u003e|>)\[\^ \]\+","value":"-(\\u003e|>)client"\}' <<<"$enc"; } \
+    || caddy_fail "$file does not apply the log filter to the default logger."
 }
 # <<< caddy-log-filter
 

@@ -96,14 +96,20 @@ test('env example: every setting src/ reads has its NAME= line', () => {
 
 // The guard from bootstrap.sh, run for real in bash against a stand-in caddy (#399). A wrong guard here would leave
 // request details in the log while the setup reports success.
-function runGuard(caddyfile, { validate = 0, adaptOk = true } = {}) {
+// The stand-in's adapt writes each filter line it finds (anywhere in the file) into the named logger's encoder, in
+// 2.11.7's form (fields first, ">" escaped, as staging adapts it, 2026-11-13) or with wrap first (2.6.2's struct order).
+function runGuard(caddyfile, { validate = 0, adaptOk = true, logger = 'default', wrapFirst = false, errorOk = true } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'caddy-guard-'));
   try {
     mkdirSync(join(dir, 'bin'));
-    writeFileSync(join(dir, 'bin', 'caddy'), `#!/usr/bin/env bash
+    const enc = wrapFirst ? `{"wrap":{"format":"json"},"fields":{'"$f"'},"format":"filter"}` : `{"fields":{'"$f"'},"format":"filter","wrap":{"format":"json"}}`;
+    writeFileSync(join(dir, 'bin', 'caddy'), String.raw`#!/usr/bin/env bash
 if [ "$1" = validate ]; then exit ${validate}; fi
-${adaptOk ? `if grep -q '^[[:space:]]*request delete' "$3"; then echo '{"request":{"filter":"delete"}}'; else echo '{}'; fi` : 'echo "{}"'}
-`, { mode: 0o755 });
+gt=$(printf '\134u003e')
+f=''
+if ${errorOk ? '' : 'false && '}grep -q '^[[:space:]]*error regexp' "$3"; then f='"error":{"filter":"regexp","regexp":"-'$gt'[^ ]+","value":"-'$gt'client"}'; fi
+if grep -q '^[[:space:]]*request delete' "$3"; then [ -z "$f" ] || f="$f,"; f="$f"'"request":{"filter":"delete"}'; fi
+` + (adaptOk ? `echo '{"logging":{"logs":{"${logger}":{"encoder":${enc}}}},"apps":{}}'\n` : `echo '{}'\n`), { mode: 0o755 });
     writeFileSync(join(dir, 'Caddyfile'), caddyfile);
     const part = script('bootstrap.sh').match(/# >>> caddy-log-filter[\s\S]*# <<< caddy-log-filter/)[0];
     writeFileSync(join(dir, 'run.sh'), `set -euo pipefail\nPATH="$PWD/bin:$PATH"\n${part}\ncaddy_log_filter Caddyfile\necho "added=$caddy_filter_added"\n`);
@@ -134,8 +140,36 @@ test('bootstrap.sh Caddy guard: a comment naming the filter does not pass for it
   assert.ok(r.file.startsWith('{\n\tlog {'));
 });
 
+test('bootstrap.sh Caddy guard: a commented-out filter line inside the global block does not count', () => {
+  // Read with its comments, the error line would complete the filter, and the guard would go on to adapt.
+  const text = '{\n\tlog {\n\t\tformat filter {\n\t\t\twrap json\n\t\t\tfields {\n\t\t\t\trequest delete\n\t\t\t\t# error regexp "->[^ ]+" "->client"\n\t\t\t}\n\t\t}\n\t}\n}\n';
+  const r = runGuard(text);
+  assert.notEqual(r.status, 0);
+  assert.match(r.err, /Nothing changed/);
+  assert.equal(r.file, text);
+});
+
+test('bootstrap.sh Caddy guard: the filter in a site log block only does not count, so the global one is added', () => {
+  const text = 'example.com {\n\tlog {\n\t\tformat filter {\n\t\t\twrap json\n\t\t\tfields {\n\t\t\t\trequest delete\n\t\t\t\terror regexp "->[^ ]+" "->client"\n\t\t\t}\n\t\t}\n\t}\n}\n';
+  const r = runGuard(text);
+  assert.equal(r.status, 0, r.err);
+  assert.match(r.out, /added=1/);
+  assert.ok(r.file.startsWith('{\n\tlog {'));
+  assert.ok(r.file.endsWith(`\n\n${text}`));
+});
+
+test('bootstrap.sh Caddy guard: the adapted config must carry both filters on the default logger', () => {
+  assert.equal(runGuard('import sites/*\n', { wrapFirst: true }).status, 0, '2.6.2 key order passes');
+  const other = runGuard('import sites/*\n', { logger: 'log0' });
+  assert.notEqual(other.status, 0);
+  assert.match(other.err, /does not apply the log filter to the default logger/);
+  const noError = runGuard('import sites/*\n', { errorOk: false });
+  assert.notEqual(noError.status, 0);
+  assert.match(noError.err, /does not apply the log filter to the default logger/);
+});
+
 for (const [name, text] of [
-  ['a global block', '{\n\temail a@b.c\n}\nimport sites/*\n'],
+  ['a global block','{\n\temail a@b.c\n}\nimport sites/*\n'],
   ['a lone { line', 'import sites/*\nexample.com\n{\n}\n'],
   ['half a filter', '{\n\tlog {\n\t\tformat filter {\n\t\t\tfields {\n\t\t\t\trequest delete\n\t\t\t}\n\t\t}\n\t}\n}\n'],
 ]) {

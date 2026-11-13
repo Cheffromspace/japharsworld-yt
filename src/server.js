@@ -789,6 +789,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // ticket's mp4, so without this the world never hears too_long and VizVid retries the 403 until it gives up. Kept for
   // the pin's window; the same ticket number asked for another video doesn't match.
   const questRefused = new Map();
+  // #749: a plain ticket whose PC player got youtube.com for AV1 ("shard:n" → { id, until }): its resolver is then given
+  // youtube.com too instead of being sent on (server.js #741 gate).
+  const pcAv1Youtube = new Map();
   function pinned(key, data, { touch = true } = {}) {
     if (!config.ticketPin) return null;
     const p = pins.get(key);
@@ -1256,6 +1259,19 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const unityPlayer = config.questMp4 && hlsTicket && android && kind === 'other' && !t.data.live;
       const homeOk = hlsTicket ? config.homeAndroid && !unityPlayer : !android && !questResolver;
       const why = homeOk ? homeWhy(t.data, hq, hlsTicket) : null;
+      // Everything-is-OK#749: on a plain ticket VRChat's resolver can't be told apart: a Quest's sends the same Windows
+      // Chrome UA as a PC's (staging 2026-11-13 18:26Z), and only the player that asks next shows which it is
+      // (AVProMobileVideo vs NSPlayer). So the resolver never starts a new home session there: it is sent on, and the
+      // player starts it (a PC about 1 s later than before) or, a Quest, takes its mp4. An existing session still answers
+      // (reuse). Prod 2026-11-06..13: 2 resolver-started long-video sessions got only Android players and no home play.
+      const resolverPlain = resolver && !hlsTicket;
+      if (resolverPlain && why && why !== 'reuse') {
+        metrics.inc('home', 'defer');
+        logJson({ event: 'play_defer', shard, n, id: t.data.id, held: 0, home: true, reason: 'player' });
+        const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+        return res.end(body);
+      }
       let hs = why ? homeKeep(t.data, hq, startHome(shard, t.data, hq, why)) : null;
       if (hs && hs.state !== 'failed') {
         if (resolver) {
@@ -1293,6 +1309,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         c = await choice(shard, t.data);
         // The plan's own /create (or another play's) just timed out: home now, not another /create that would likely
         // time out too (2026-10-23: two 12 s timeouts in a row, 48 s from pick to picture).
+        if (resolverPlain && homeOk && !hs && tunelioSlow() && home.worker()) {
+          // As above (#749): the player starts home, the resolver is sent on.
+          metrics.inc('home', 'defer');
+          logJson({ event: 'play_defer', shard, n, id: t.data.id, held: Date.now() - started, home: true, reason: 'player' });
+          const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+          return res.end(body);
+        }
         const slow = homeOk && !hs && tunelioSlow() && home.worker() ? startHome(shard, t.data, hq, 'tunelio_slow') : null;
         if (slow && slow.state !== 'failed') {
           if (resolver) {
@@ -1413,19 +1437,24 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
             metrics.inc('adaptive', 'pc_av1');
             // Not when this request already held on a home session (one hold, not two, as for the Quest above): that is a
             // session that missed HOME_READY_SECONDS, or one leaveHome gave up (uneven keyframes), so the 720p rung instead.
-            if (homeOk && home.enabled && av1HomeFor(t.data, hq) && !waited.home) {
-              if (resolver) {
-                const s = homeKeep(t.data, hq, startHome(shard, t.data, hq, 'av1'));
-                if (s && s.state !== 'failed') {
-                  metrics.inc('home', 'defer');
-                  logJson({ event: 'pc_av1', shard, n, id: t.data.id, quality: pcAv1, client: kind, to: 'home' });
-                  logJson({ event: 'play_defer', shard, n, id: t.data.id, held: Date.now() - started, home: true });
-                  const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
-                  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
-                  return res.end(body);
-                }
-              } else homeFor = 'av1';
-            }
+            // #749: the resolver may be a Quest's (the same Windows UA), whose answer differs (480p/360p, never home), so it
+            // is sent on and the player decides by its own UA; the player starts home. Once a PC player of this ticket got
+            // youtube.com (720p AV1 too, home unable), the resolver gets it as well: VRChat's resolver is what plays the
+            // watch link after AVPro fails on it (#741 T2 run 3, 2026-11-13).
+            if (resolver) {
+              const yt = pcAv1Youtube.get(`${shard}:${n}`);
+              if (yt?.id === t.data.id && yt.until > Date.now()) {
+                where = { location: `https://www.youtube.com/watch?v=${t.data.id}`, via: 'youtube', reason: 'av1', ready: true };
+                logJson({ event: 'pc_av1', shard, n, id: t.data.id, quality: pcAv1, client: kind, to: 'youtube' });
+                pcAv1 = null;
+              } else {
+                logJson({ event: 'pc_av1', shard, n, id: t.data.id, quality: pcAv1, client: kind, to: 'player' });
+                logJson({ event: 'play_defer', shard, n, id: t.data.id, held: Date.now() - started, reason: 'av1' });
+                const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+                res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+                return res.end(body);
+              }
+            } else if (homeOk && home.enabled && av1HomeFor(t.data, hq) && !waited.home) homeFor = 'av1';
           }
         }
         // Tunelio's build failed: home before youtube.com's 360p, for a player that can take home's HLS, when a worker is free.
@@ -1456,6 +1485,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           if (job?.url === where.location && (c.quality === pcAv1 || await readCodec(job) === 'av1')) {
             where = { location: `https://www.youtube.com/watch?v=${t.data.id}`, via: 'youtube', reason: 'av1', ready: true };
             to = 'youtube';
+            // The resolver's next ask gets youtube.com too (see above); kept for the pin's window, lapsed ones pruned.
+            for (const [k, v] of pcAv1Youtube) if (v.until <= Date.now()) pcAv1Youtube.delete(k);
+            pcAv1Youtube.set(`${shard}:${n}`, { id: t.data.id, until: Date.now() + pinWindow(t.data) });
           }
           logJson({ event: 'pc_av1', shard, n, id: t.data.id, quality: pcAv1, client: kind, to, ...(where.ready === false ? { reason: 'building' } : {}) });
         } else if (pcAv1) logJson({ event: 'pc_av1', shard, n, id: t.data.id, quality: pcAv1, client: kind, to: where.via });
@@ -1475,7 +1507,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           if (job?.url === where.location && await readCodec(job, questRead) === 'av1') {
             const from = c.quality;
             metrics.inc('adaptive', 'quest_av1');
-            let to = 'none', rung = null;
+            let to = 'none', rung = null, unreadRung = false;
             // The rungs below it in order (QUEST_AV1_QUALITIES, 480p then 360p; owner 2026-11-13: "We can't do better than
             // 360p?"): each read, the first that isn't AV1 played and pinned. A failed, HLS or AV1 rung goes on to the next.
             for (const low of config.questAv1Qualities.filter((q) => parseInt(q, 10) < parseInt(from, 10))) {
@@ -1494,9 +1526,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
                 to = null;
                 break;
               }
-              if (lowJob?.url === where.location && !/[?&]hls=1$/.test(where.location) && await readCodec(lowJob, questRead) !== 'av1') { to = 'lower'; rung = low; break; }
+              if (lowJob?.url === where.location && !/[?&]hls=1$/.test(where.location) && await readCodec(lowJob, questRead) !== 'av1') {
+                // A rung whose read failed plays unread (most rungs below an AV1 720p were H.264, 2026-11-13) and unpinned,
+                // so the next ask reads it again; logged reason 'unread' so the count shows it.
+                to = 'lower'; rung = low; unreadRung = lowJob.codec === undefined; break;
+              }
             }
-            if (to) logJson({ event: 'quest_av1', shard, n, id: t.data.id, quality: from, ...(rung ? { rung } : {}), client: kind, to });
+            if (to) logJson({ event: 'quest_av1', shard, n, id: t.data.id, quality: from, ...(rung ? { rung } : {}), client: kind, to, ...(unreadRung ? { reason: 'unread' } : {}) });
             if (to === 'none') {
               logJson({ event: 'quest_no_source', shard, n, id: t.data.id, client: kind, reason: 'av1' });
               for (const [k, v] of questRefused) if (v.until <= Date.now()) questRefused.delete(k); // lapsed ones, when a new one comes

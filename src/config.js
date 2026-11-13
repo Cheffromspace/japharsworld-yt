@@ -168,7 +168,8 @@ export const config = {
   // that isn't AV1, else "can't be played here". QUEST_AV1_QUALITIES empty: straight to that answer.
   questAv1: (process.env.QUEST_AV1 ?? 'on') !== 'off',
   questAv1Qualities: (process.env.QUEST_AV1_QUALITIES ?? '480p,360p').split(',').map((q) => q.trim()).filter((q) => /^\d{3,4}p$/.test(q)),
-  questAv1ReadMs: int('QUEST_AV1_READ_SECONDS', 10) * 1000, // the Quest player's mp4 codec read limit (#749)
+  // The Quest player's mp4 codec read limit (#749); 0 or less would fail every read, so it counts as the default.
+  questAv1ReadMs: (int('QUEST_AV1_READ_SECONDS', 10) > 0 ? int('QUEST_AV1_READ_SECONDS', 10) : 10) * 1000,
   // A .m3u8 ticket (Quest): Unity's Android player gets the mp4, and a long or HLS-failed play sends AVPro on at once so
   // VizVid reaches that player (src/server.js questMp4, Everything-is-OK#584). off: as before. Long: this many minutes,
   // or a file at the ticket's quality of this many MB once its size is known (0 = by length only).

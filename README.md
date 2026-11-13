@@ -265,10 +265,17 @@ one, f331bcc) and never for live streams:
    on; the ticket's `.m3u8` status, which the Quest's tablet asks, says `too_long` too for the pin's window). The world
    then stops only the Quest when someone else picked the video, and skips it for the room on the Quest's own pick, as it
    does for too_long and restricted (world #420). Each Quest plain-ticket build's first play waits on that read, up to
-   3 s, once per build (cached); an AV1 video's first play can read three builds (720p, 480p, 360p), up to ~9 s of reads
-   plus the lower rungs' builds. The Quest player's reads may take `QUEST_AV1_READ_SECONDS` (10; resolvers 3 s): a cold
+   3 s, once per build (cached); an AV1 video's first play can read three builds (720p, 480p, 360p): for the Quest's
+   player up to 10 s each, so up to ~30 s of reads plus the lower rungs' builds, which the reads don't count against the
+   90 s hold. The Quest player's reads may take `QUEST_AV1_READ_SECONDS` (10; resolvers 3 s; 0 counts as 10): a cold
    720p read took over 3 s on staging (2026-11-13). A read that fails or times out (Quest or PC) leaves the answer as
    before but not pinned, so the next ask reads again. Counted as `adaptive`/`quest_av1`.
+   **The resolver on a plain ticket** can't be told apart: a Quest's sends the same Windows Chrome UA as a PC's (staging
+   2026-11-13). So there it never starts a new home session and is sent on when #741's read finds AV1 (`pc_av1`
+   `to=player`); the player that asks next decides by its own UA (PC: home, 720p, youtube.com; Quest: 480p, 360p,
+   "can't be played here"). A PC's home start therefore comes from its player, about 1 s later than before. An existing
+   home session still answers the resolver, and once a PC player of the ticket got youtube.com for AV1, its resolver
+   gets youtube.com too (VRChat's resolver is what plays the watch link).
 7. on a `.m3u8` ticket with `HOME_ANDROID=on`, `HOME_ANDROID_GROWING=on` and `HOME_RACE_SECONDS` above 0 (default 0, off): Tunelio's build is still
    running after that many seconds (`slow_build`). Home starts beside it and the player gets whichever is ready first
    (`home`/`race_won` when home wins). The build carries on for the next play. With `TICKET_PIN` all players of the ticket

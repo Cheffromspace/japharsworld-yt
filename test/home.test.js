@@ -2182,11 +2182,13 @@ test('#741: a PC alone with an AV1 1080p mp4: the resolver is sent on and AVPro 
   const r = await app.play(PC_RESOLVER, '');
   assert.equal(r.status, 200, 'the resolver is sent on ("not a video"), not handed the AV1 mp4');
   assert.match(await r.text(), /being prepared/);
+  // #749 (B): the resolver starts no home session (it may be a Quest's); the PC's player starts it (PC guard).
+  assert.equal(app.jobs.length, 0, 'the resolver started no home build');
   const p = await app.play(PC_PLAYER, '');
   assert.equal(p.status, 302);
-  assert.match(p.headers.get('location'), /\/home\/[a-f0-9]{18}\/index\.m3u8$/, 'AVPro reuses the home session');
+  assert.match(p.headers.get('location'), /\/home\/[a-f0-9]{18}\/index\.m3u8$/, 'AVPro gets home');
   assert.equal(app.jobs.length, 1, 'one home build');
-  assert.deepEqual(app.logs.filter((e) => e.event === 'pc_av1').map((e) => [e.quality, e.client, e.to]), [['1080p', 'ytdlp', 'home']]);
+  assert.deepEqual(app.logs.filter((e) => e.event === 'pc_av1').map((e) => [e.quality, e.client, e.to]), [['1080p', 'ytdlp', 'player'], ['1080p', 'avpro', 'home']]);
   assert.equal(app.logs.find((e) => e.event === 'build_route' && e.via === 'home')?.why, 'av1');
   // Later requests: the home pin, with no new codec read.
   const reads = app.reads.length;
@@ -2203,13 +2205,10 @@ test('#741: AVPro first on a PC with an AV1 1080p mp4 gets home too', async (t) 
 
 test('#741: home off: a PC with an AV1 1080p mp4 gets the 720p H.264 rung, and that is its pin', async (t) => {
   const app = await pcAv1App(t, { config: { homeRelay: false } });
-  for (const ua of [PC_RESOLVER, PC_PLAYER]) {
-    const r = await app.play(ua, '');
-    assert.equal(r.status, 302, ua);
-    assert.match(r.headers.get('location'), /q=720p&progressive=1$/, ua);
-  }
-  // Pins are per client kind, so the player decides again, from the codecs already read.
-  assert.deepEqual(app.logs.filter((e) => e.event === 'pc_av1').map((e) => [e.quality, e.client, e.to]), [['1080p', 'ytdlp', 'lower'], ['1080p', 'avpro', 'lower']]);
+  // #749 (B): the resolver is sent on (it may be a Quest's); the player gets the 720p rung.
+  assert.equal((await app.play(PC_RESOLVER, '')).status, 200);
+  for (let i = 0; i < 2; i++) assert.match((await app.play(PC_PLAYER, '')).headers.get('location'), /q=720p&progressive=1$/, `ask ${i + 1}`);
+  assert.deepEqual(app.logs.filter((e) => e.event === 'pc_av1').map((e) => [e.quality, e.client, e.to]), [['1080p', 'ytdlp', 'player'], ['1080p', 'avpro', 'lower']]);
   assert.equal(app.reads.length, 2, 'each build read once');
 });
 
@@ -2270,7 +2269,9 @@ test('#741: a Quest on the plain ticket keeps its 720p cap, and an H.264 720p mp
 });
 
 // Everything-is-OK#749: a Quest on a plain ticket (a pasted link, #590's long rows) whose 720p mp4 is AV1.
-const QUEST_YTDLP = 'Mozilla/5.0 (Linux; Android 12; Quest 3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36';
+// A real Quest's resolver sends the same Windows Chrome UA as a PC's (staging 2026-11-13 18:26:21Z, verifier round 3),
+// so these tests use that UA: the server can't tell it from a PC's, and the player that asks next decides.
+const QUEST_YTDLP = PC_RESOLVER;
 // 480p AV1 too, so these reach the 360p rung; the 480p rung's own tests are below.
 const AV1_720 = { codecs: { '1080p': 'av01', '720p': 'av01', '480p': 'av01', '360p': 'avc1' } };
 
@@ -2290,12 +2291,15 @@ test('#749: a Quest player on a plain ticket with an AV1 720p mp4 gets the 360p 
   assert.equal(checkedKey('adaptive', 'quest_av1'), 'quest_av1');
 });
 
-test('#749: the Quest\'s resolver on a plain ticket gets the 360p rung too', async (t) => {
+test('#749 (B): the Quest\'s resolver (a PC UA) with an AV1 build is sent on without starting home; the Quest\'s player then gets its rung', async (t) => {
   const app = await pcAv1App(t, { fakes: AV1_720 });
   const r = await app.play(QUEST_YTDLP, '');
-  assert.equal(r.status, 302);
-  assert.match(r.headers.get('location'), /q=360p&progressive=1$/);
-  assert.deepEqual(app.logs.filter((e) => e.event === 'quest_av1').map((e) => [e.client, e.to]), [['ytdlp', 'lower']]);
+  assert.equal(r.status, 200, 'sent on: the player decides');
+  assert.equal(app.jobs.length, 0, 'no home session the Quest could not use');
+  assert.match((await app.play(QUEST, '')).headers.get('location'), /q=360p&progressive=1$/);
+  assert.equal(app.jobs.length, 0);
+  assert.deepEqual(app.logs.filter((e) => e.event === 'pc_av1').map((e) => [e.client, e.to]), [['ytdlp', 'player']]);
+  assert.deepEqual(app.logs.filter((e) => e.event === 'quest_av1').map((e) => [e.client, e.to]), [['avpro', 'lower']]);
 });
 
 test('#749: the 360p rung AV1 too: the player gets "can\'t be played here" (403 too_long), the resolver is sent on, nothing pinned', async (t) => {
@@ -2308,9 +2312,9 @@ test('#749: the 360p rung AV1 too: the player gets "can\'t be played here" (403 
     assert.equal(p.status, 403, `ask ${i + 1}`);
     assert.equal((await p.json()).error, 'too_long');
   }
-  assert.deepEqual(app.logs.filter((e) => e.event === 'quest_no_source').map((e) => [e.client, e.reason]), [['ytdlp', 'av1'], ['avpro', 'av1'], ['avpro', 'av1']]);
+  assert.deepEqual(app.logs.filter((e) => e.event === 'quest_no_source').map((e) => [e.client, e.reason]), [['avpro', 'av1'], ['avpro', 'av1']]);
   assert.equal(app.logs.filter((e) => e.event === 'play').length, 0, 'no youtube.com or AV1 answer');
-  assert.equal(app.reads.length, 3, 'each build read once; a second ask decides from the cached codecs');
+  assert.equal(app.reads.length, 4, 'each build read once (the resolver read 1080p); a second ask decides from the cached codecs');
 });
 
 test(`#749: after the AV1 refusal the ticket's .m3u8 status (where the Quest's world asks) says too_long; the plain status doesn't`, async (t) => {
@@ -2353,15 +2357,16 @@ test(`#749: the 360p rung over the visitor's own limits: the player gets daily_l
   const p = await app.play(QUEST, '');
   assert.equal(p.status, 403);
   assert.equal((await p.json()).error, 'daily_limit');
-  assert.deepEqual(app.logs.filter((e) => e.event === 'quest_av1').map((e) => [e.client, e.to]), [['ytdlp', 'limit'], ['avpro', 'limit']]);
+  assert.deepEqual(app.logs.filter((e) => e.event === 'quest_av1').map((e) => [e.client, e.to]), [['avpro', 'limit']]);
   assert.equal(app.logs.filter((e) => e.event === 'quest_no_source').length, 0);
 });
 
-test('#749: the 360p rung still building at the end of the hold: the resolver is sent on (the usual answer)', async (t) => {
-  const app = await pcAv1App(t, { fakes: { ...AV1_720, answers: { '360p': 'building' } } });
-  const r = await app.play(QUEST_YTDLP, '');
-  assert.equal(r.status, 200);
+test('#749: the 360p rung still building at the end of the hold: the player gets the usual build_timeout answer', async (t) => {
+  const app = await pcAv1App(t, { config: { ticketPlayerHoldMs: 0 }, fakes: { ...AV1_720, answers: { '360p': 'building' } } });
+  const r = await app.play(QUEST, '');
+  assert.equal(r.status, 302);
   assert.deepEqual(app.logs.filter((e) => e.event === 'quest_av1').map((e) => e.to), ['building']);
+  assert.equal(app.logs.find((e) => e.event === 'play')?.reason, 'build_timeout');
 });
 
 test(`#749: Unity's Android player (stagefright) on the plain ticket gets the 360p rung too`, async (t) => {
@@ -2384,8 +2389,8 @@ test('#749: a failed 480p build goes on to the 360p rung', async (t) => {
   assert.deepEqual(app.logs.filter((e) => e.event === 'quest_av1').map((e) => [e.rung, e.to]), [['360p', 'lower']]);
 });
 
-// The resolver for building (sent on), the player for the limit (the resolver returns before the ladder's break).
-for (const [answer, to, ua, status, why] of [['building', 'building', QUEST_YTDLP, 200, 'still building at the end of the hold'],
+// The player in both: building ends on build_timeout's youtube.com (302), the limit on daily_limit (403).
+for (const [answer, to, ua, status, why] of [['building', 'building', QUEST, 302, 'still building at the end of the hold'],
   ['allowance', 'limit', QUEST, 403, 'over the visitor\'s own limits']]) {
   test(`#749: a 480p rung ${why} stops the ladder: no 360p build`, async (t) => {
     const app = await pcAv1App(t, { fakes: { codecs: { '1080p': 'av01', '720p': 'av01', '480p': 'avc1', '360p': 'avc1' }, answers: { '480p': answer } } });
@@ -2415,6 +2420,16 @@ test('#749: a Quest read that times out keeps the old answer unpinned, and the n
   assert.deepEqual(app.logs.filter((e) => e.event === 'mp4_codec').map((e) => [e.quality, e.found]), [['720p', 'av1'], ['480p', 'h264']]);
 });
 
+test('#749: a lower rung whose read times out plays unread (reason unread), unpinned, and the next ask reads it', async (t) => {
+  const delays = { '480p': 500 };
+  const app = await pcAv1App(t, { config: { questAv1ReadMs: 200 }, fakes: { codecs: { '1080p': 'av01', '720p': 'av01', '480p': 'avc1' }, delays } });
+  assert.match((await app.play(QUEST, '')).headers.get('location'), /q=480p&progressive=1$/);
+  assert.deepEqual(app.logs.filter((e) => e.event === 'quest_av1').map((e) => [e.rung, e.to, e.reason]), [['480p', 'lower', 'unread']]);
+  delete delays['480p'];
+  assert.match((await app.play(QUEST, '')).headers.get('location'), /q=480p&progressive=1$/);
+  assert.deepEqual(app.logs.filter((e) => e.event === 'mp4_codec').map((e) => [e.quality, e.found]), [['720p', 'av1'], ['480p', 'h264']], 'read again: not pinned');
+});
+
 test('#749 (#741\'s gap): a PC read that times out keeps the old answer unpinned, and the next ask reads again', async (t) => {
   const delays = { '1080p': 500 };
   const app = await pcAv1App(t, { mp4CodecMs: 200, config: { homeRelay: false }, fakes: { delays } });
@@ -2423,11 +2438,41 @@ test('#749 (#741\'s gap): a PC read that times out keeps the old answer unpinned
   assert.match((await app.play(PC_PLAYER, '')).headers.get('location'), /q=720p&progressive=1$/, 'not pinned: read again, AV1, the 720p rung');
 });
 
-test('#749: the Quest\'s resolver keeps the short read limit', async (t) => {
-  const app = await pcAv1App(t, { mp4CodecMs: 200, config: { questAv1ReadMs: 1000 },
-    fakes: { codecs: { '1080p': 'av01', '720p': 'av01', '480p': 'avc1' }, delays: { '720p': 500 } } });
-  assert.match((await app.play(QUEST_YTDLP, '')).headers.get('location'), /q=720p&progressive=1$/);
+test('#749: the resolver keeps the short read limit: a 500 ms read times out at 200 ms, the old answer, unpinned', async (t) => {
+  const delays = { '1080p': 500 };
+  const app = await pcAv1App(t, { mp4CodecMs: 200, config: { questAv1ReadMs: 1000 }, fakes: { codecs: { '1080p': 'av01', '720p': 'av01' }, delays } });
+  assert.match((await app.play(QUEST_YTDLP, '')).headers.get('location'), /q=1080p&progressive=1$/);
   assert.equal(app.logs.filter((e) => e.event === 'adaptive_codec_error').length, 1);
+  delete delays['1080p'];
+  assert.equal((await app.play(QUEST_YTDLP, '')).status, 200, 'not pinned: read again, AV1, sent on');
+});
+
+// Verifier round 3's case: a lower plan (the room's 720p) whose 720p is AV1, and home can't take it.
+test('#749 (B): a lower-plan AV1 720p with home off: the resolver is sent on, the Quest gets 480p, the PC youtube.com, and the resolver then youtube.com too', async (t) => {
+  const app = await pcAv1App(t, { config: { homeRelay: false }, fakes: { codecs: { '720p': 'av01', '480p': 'avc1' } } });
+  app.store.setQuality(0, '720p');
+  assert.equal((await app.play(QUEST_YTDLP, '')).status, 200, 'sent on, not the AV1 720p');
+  assert.match((await app.play(QUEST, '')).headers.get('location'), /q=480p&progressive=1$/);
+  assert.equal((await app.play(PC_PLAYER, '')).headers.get('location'), 'https://www.youtube.com/watch?v=aaaaaaaaaaa');
+  assert.equal((await app.play(QUEST_YTDLP, '')).headers.get('location'), 'https://www.youtube.com/watch?v=aaaaaaaaaaa', 'after the PC got youtube.com');
+  assert.deepEqual(app.logs.filter((e) => e.event === 'pc_av1').map((e) => [e.client, e.to]), [['ytdlp', 'player'], ['avpro', 'youtube'], ['ytdlp', 'youtube']]);
+});
+
+// A long video on a plain ticket (#590's rows; HOME_LONG_MINUTES 5 for the 600 s test video), all H.264.
+test('#749 (B): a long video: the resolver is sent on without starting home; a Quest player takes its mp4 (no home), a PC player starts home', async (t) => {
+  // ENDED: a finished home playlist, so leaveHome keeps it (the growing PL1 is given up as uneven).
+  const app = await pcAv1App(t, { config: { homeLongMinutes: 5 }, playlist: ENDED, fakes: { codecs: { '1080p': 'avc1', '720p': 'avc1' } } });
+  const r = await app.play(QUEST_YTDLP, '');
+  assert.equal(r.status, 200);
+  assert.equal(app.logs.find((e) => e.event === 'play_defer')?.reason, 'player');
+  assert.equal(app.jobs.length, 0, 'the resolver started no home session');
+  assert.match((await app.play(QUEST, '')).headers.get('location'), /q=720p&progressive=1$/);
+  assert.equal(app.jobs.length, 0, 'nor did the Quest');
+  assert.match((await app.play(PC_PLAYER, '')).headers.get('location'), /\/home\//, 'PC guard: a long video still goes home, via the player');
+  assert.equal(app.jobs.length, 1);
+  // Once the session is there, the resolver defers to it as before (reuse).
+  assert.equal((await app.play(QUEST_YTDLP, '')).status, 200);
+  assert.equal(app.logs.filter((e) => e.event === 'play_defer' && e.home && !e.reason).length, 1);
 });
 
 test('#749: QUEST_AV1_QUALITIES empty: an AV1 720p goes straight to "can\'t be played here", no 360p build', async (t) => {

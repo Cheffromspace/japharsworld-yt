@@ -335,7 +335,8 @@ first, `home_evict` why `disk`; otherwise `home_no_room` and the play goes elsew
 space falls under half of it (2026-10-30: two long 1080p plays filled the Linode's disk).
 
 **Seeking ahead** (Everything-is-OK#367; `HOME_SEEK_WANT=on`, default off, so production keeps the in-order upload while
-Everything-is-OK#727, a black screen after far seeks on staging, is open): a segment a player waits for that isn't next in line (a seek past the upload)
+Everything-is-OK#727, a black screen after far seeks on staging, is open; off is the pre-#367 upload on a keyframe-cut
+worker, while one with `RELAY_SPLIT_BY_TIME=on` still starts the fill runs below when run 0 stops short): a segment a player waits for that isn't next in line (a seek past the upload)
 is the session's want (`home_want`), named in every answer to the worker's uploads (`x-media-want`) until it is here. A
 copy from the worker's cache jumps there and sends the skipped segments at the end (`media_jump`). With players at
 different points, the newest want goes first, then any other segment a player is still held for; only segments the

@@ -30,7 +30,9 @@
 // Behind HOME_SEEK_WANT (seekWant, default off; Everything-is-OK#727, coordinator 2026-11-13): the owner saw a black
 // screen after far seeks on staging (2026-11-12 00:46Z) with every segment the player asked for answered 200 within
 // 3.8 s, so the cause wasn't found on the service side; off keeps the release on the old in-order upload (no want, no
-// x-media-want, so no cache jump, no wanted-first upload and no seek run on the worker) until that is understood.
+// x-media-want, so no cache jump, no wanted-first upload and no seek run on the worker) until that is understood. That
+// is the pre-phase-1 upload on a keyframe-cut worker (prod's). A worker with RELAY_SPLIT_BY_TIME=on still starts phase
+// 2's fill runs when run 0 stops short, wants or not (relay/media.js fill; the #727 play went through one at seg415).
 //
 // The disk itself (freeFloorGb, HOME_FREE_FLOOR_GB): maxGb is a target, not a limit, since a session being played or
 // built stays. Prod, 2026-10-30 00:58Z: an 8.4 GB played session and a 10.7 GB build over a 12 GB cap filled the

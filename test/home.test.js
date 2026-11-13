@@ -1407,6 +1407,32 @@ test('HOME_SEEK_WANT off: a far seek on a cached copy leaves the upload in order
   assert.ok(!lines.some((l) => l.includes('"event":"home_want"')));
 });
 
+// The release relies on the default (verifier round 1, 2026-11-13: the suite was green with HOME_SEEK_WANT=on in the
+// environment), so the parse is read in a child node with the variable unset and set; only the exact lower-case "on"
+// turns it on, like the file's other switches (fails closed).
+test('HOME_SEEK_WANT: off unless exactly "on" (config parse in a child node), and Home without seekWant wants nothing', async (t) => {
+  const read = (v) => {
+    const env = { ...process.env };
+    delete env.HOME_SEEK_WANT;
+    if (v !== undefined) env.HOME_SEEK_WANT = v;
+    return execFileSync(process.execPath, ['--input-type=module', '-e',
+      `const { config } = await import(${JSON.stringify(new URL('../src/config.js', import.meta.url).href)}); process.stdout.write(JSON.stringify(config.homeSeekWant));`],
+    { env, encoding: 'utf8' }).trim();
+  };
+  assert.equal(read(undefined), 'false', 'unset: off');
+  assert.equal(read('on'), 'true');
+  for (const v of ['off', 'ON', 'On', '1', 'true', ' on', '']) assert.equal(read(v), 'false', `"${v}": off`);
+  const logs = [];
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, segmentHoldMs: 50, log: (o) => logs.push(o) });
+  const s = home.start({ id: 'aaaaaaaaaaa' }, '720p');
+  home.put(s.token, 'seg0.ts', Buffer.from('ts0'));
+  home.put(s.token, 'index.m3u8', Buffer.from(vodPlaylist(600)));
+  const far = home.file(s.token, 'seg550.ts');
+  assert.equal(home.want(s.token), null, 'Home\'s own default is off');
+  assert.ok(!logs.some((l) => l.event === 'home_want'));
+  await far;
+});
+
 test('HOME_SEEK_WANT off: a player held far ahead of a fresh build is not wanted; the switch on names it (control)', async (t) => {
   for (const seekWant of [false, true]) {
     const logs = [];
@@ -2513,4 +2539,18 @@ test('#741: with HOME_ANDROID_GROWING (staging and prod), a session marked uneve
   assert.equal(app.logs.filter((e) => e.event === 'build_route' && e.why === 'av1').length, 0);
   assert.deepEqual(app.logs.filter((e) => e.event === 'pc_av1').map((e) => e.to), ['lower']);
   assert.deepEqual(app.logs.filter((e) => e.event === 'mp4_codec').map((e) => [e.quality, e.found]), [['1080p', 'av1'], ['720p', 'h264']]);
+});
+
+test('mediaJob on keyframe cuts: a run 0 that ends short makes no source probe and no fill run (verifier 2026-11-13)', async (t) => {
+  const ff = runFfmpeg({ total: 100, everyMs: 2, endAt: { 0: 50 } }); // run 0 exits 0 after 50 of the 100 predicted
+  const probes = [];
+  const logs = [];
+  const runner = async (cmd, args) => { if (cmd !== 'yt-dlp') probes.push(args); return runnerDur(400)(cmd, args); };
+  const job = await mediaJob({ videoId: 'aaaaaaaaaaa', quality: '1080p', token: 'x' }, { ytdlp: 'yt-dlp', runner, spawnFn: ff.spawnFn,
+    pollMs: 10, log: (o) => logs.push(o), upload: async () => 204 });
+  await job.done;
+  assert.equal(probes.length, 0, 'no ffmpeg probe of the home source');
+  assert.equal(ff.spawns.length, 1, 'no fill run');
+  assert.ok(logs.some((l) => l.event === 'media_seek_unplaced' && l.cuts === 0));
+  assert.ok(logs.some((l) => l.event === 'media_failed' && l.reason === 'short'), 'the short build still ends as short');
 });

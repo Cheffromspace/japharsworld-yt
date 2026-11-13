@@ -2071,12 +2071,20 @@ test('ticket → home (#577): a PC player of a video over HOME_STAY_HOURS stays 
 
 // Everything-is-OK#741: a PC player on a plain ticket whose Tunelio mp4 is AV1. Progressive jobs per quality; the
 // codec is read from the mp4's head, with ftyp naming both avc1 and av01 so only the stsd entry decides.
-function pcAv1Fakes({ codecs = { '1080p': 'av01', '720p': 'avc1' }, holdMs = 0 } = {}) {
+function pcAv1Fakes({ codecs = { '1080p': 'av01', '720p': 'avc1' }, holdMs = 0, answers = {} } = {}) {
   const jobs = {};
   const job = (q) => (jobs[q] ??= { id: 'aaaaaaaaaaa', quality: q, format: 'progressive', state: 'ready', url: `https://tunelio.dev/t?q=${q}&progressive=1` });
   const asked = [];
   const playback = { jobs: new Map(), peek: (d, q = '720p', { hls = false } = {}) => (hls ? null : job(q)), status: () => ({ state: 'ready' }), start() {},
-    async location(d, { quality = '720p' } = {}) { asked.push(quality); await new Promise((r) => setTimeout(r, holdMs)); const j = job(quality); return { location: j.url, via: 'tunelio', quality, ready: true }; } };
+    async location(d, { quality = '720p' } = {}) {
+      asked.push(quality); await new Promise((r) => setTimeout(r, holdMs)); const j = job(quality);
+      // answers[q]: a build that is not a ready mp4 (#749): 'failed', 'building', 'hls' (turned HLS), 'allowance'.
+      if (answers[quality] === 'failed') return { location: `https://www.youtube.com/watch?v=${d.id}`, via: 'youtube', reason: 'build_failed', ready: true };
+      if (answers[quality] === 'allowance') return { location: `https://www.youtube.com/watch?v=${d.id}`, via: 'youtube', reason: 'allowance', ready: true };
+      if (answers[quality] === 'building') return { location: j.url, via: 'tunelio', reason: 'building', ready: false };
+      if (answers[quality] === 'hls') { j.url = j.url.replace(/&progressive=1$/, '&hls=1'); return { location: j.url, via: 'tunelio', quality, ready: true }; }
+      return { location: j.url, via: 'tunelio', quality, ready: true };
+    } };
   const reads = [];
   const fetcher = async (u) => {
     reads.push(u);
@@ -2231,6 +2239,51 @@ test('#749: the 360p rung AV1 too: the player gets "can\'t be played here" (403 
   assert.deepEqual(app.logs.filter((e) => e.event === 'quest_no_source').map((e) => [e.client, e.reason]), [['ytdlp', 'av1'], ['avpro', 'av1'], ['avpro', 'av1']]);
   assert.equal(app.logs.filter((e) => e.event === 'play').length, 0, 'no youtube.com or AV1 answer');
   assert.equal(app.reads.length, 2, 'each build read once; a second ask decides from the cached codecs');
+});
+
+test(`#749: after the AV1 refusal the ticket's .m3u8 status (where the Quest's world asks) says too_long; the plain status doesn't`, async (t) => {
+  const app = await pcAv1App(t, { fakes: { codecs: { '1080p': 'av01', '720p': 'av01', '360p': 'av01' } } });
+  const TABLET = 'UnityPlayer/6000.0.67f1-DWR (UnityWebRequest/1.0, libcurl/8.10.1-DEV) Android';
+  const before = await (await app.play(TABLET, '.m3u8')).json();
+  assert.notEqual(before.reason, 'too_long', 'not before any refusal');
+  assert.equal((await app.play(QUEST, '')).status, 403);
+  const after = await (await app.play(TABLET, '.m3u8')).json();
+  assert.deepEqual([after.state, after.reason, after.error], ['failed', 'too_long', 'too_long']);
+  assert.notEqual((await (await app.play(TABLET, '')).json()).reason, 'too_long', 'the plain status (PC tablets) is unchanged');
+});
+
+for (const [answer, why] of [['failed', 'a failed 360p build'], ['hls', 'a 360p build that turned HLS']]) {
+  test(`#749: ${why}: "can't be played here", not youtube.com or a playlist`, async (t) => {
+    const app = await pcAv1App(t, { fakes: { ...AV1_720, answers: { '360p': answer } } });
+    const p = await app.play(QUEST, '');
+    assert.equal(p.status, 403);
+    assert.equal((await p.json()).error, 'too_long');
+    assert.deepEqual(app.logs.filter((e) => e.event === 'quest_av1').map((e) => e.to), ['none']);
+  });
+}
+
+test(`#749: the 360p rung over the visitor's own limits: the player gets daily_limit, the resolver is sent on`, async (t) => {
+  const app = await pcAv1App(t, { fakes: { ...AV1_720, answers: { '360p': 'allowance' } } });
+  const r = await app.play(QUEST_YTDLP, '');
+  assert.equal(r.status, 200);
+  const p = await app.play(QUEST, '');
+  assert.equal(p.status, 403);
+  assert.equal((await p.json()).error, 'daily_limit');
+  assert.deepEqual(app.logs.filter((e) => e.event === 'quest_av1').map((e) => [e.client, e.to]), [['ytdlp', 'limit'], ['avpro', 'limit']]);
+  assert.equal(app.logs.filter((e) => e.event === 'quest_no_source').length, 0);
+});
+
+test('#749: the 360p rung still building at the end of the hold: the resolver is sent on (the usual answer)', async (t) => {
+  const app = await pcAv1App(t, { fakes: { ...AV1_720, answers: { '360p': 'building' } } });
+  const r = await app.play(QUEST_YTDLP, '');
+  assert.equal(r.status, 200);
+  assert.deepEqual(app.logs.filter((e) => e.event === 'quest_av1').map((e) => e.to), ['building']);
+});
+
+test(`#749: Unity's Android player (stagefright) on the plain ticket gets the 360p rung too`, async (t) => {
+  const app = await pcAv1App(t, { fakes: AV1_720 });
+  assert.match((await app.play('stagefright/1.2 (Linux;Android 14)', '')).headers.get('location'), /q=360p&progressive=1$/);
+  assert.deepEqual(app.logs.filter((e) => e.event === 'quest_av1').map((e) => [e.client, e.to]), [['other', 'lower']]);
 });
 
 test('#749: QUEST_AV1_QUALITY empty: an AV1 720p goes straight to "can\'t be played here", no 360p build', async (t) => {

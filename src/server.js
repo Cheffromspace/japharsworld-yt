@@ -784,6 +784,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const lastAnswer = new Map(); // shard → { n, via, reason, quality, hls, mode }
   const pinKey = (shard, n, hlsTicket, kind, android = false) => `${shard}:${n}:${hlsTicket ? 'm3u8' : android ? 'plain-android' : 'plain'}:${kind}`;
   const pinWindow = (data) => (data.seconds ?? 0) * 1000 + config.ticketPinMarginMs;
+  // Everything-is-OK#749: a Quest refused on a plain ticket for AV1 ("shard:n" → { id, until }). The Quest's tablet asks the
+  // ticket's status on its .m3u8 address (the Android build's own loads, urls.Ticket), which knows nothing of the plain
+  // ticket's mp4, so without this the world never hears too_long and VizVid retries the 403 until it gives up. Kept for
+  // the pin's window; the same ticket number asked for another video doesn't match.
+  const questRefused = new Map();
   function pinned(key, data, { touch = true } = {}) {
     if (!config.ticketPin) return null;
     const p = pins.get(key);
@@ -1103,6 +1108,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // link's search, Everything-is-OK#449). A cached build is no warm and costs nothing.
   // `gate` (lookups only): asked before a new Tunelio build starts; false skips it and the answer is 'cap'.
   async function tabletStatus(shard, n, t, hlsTicket, reason, gate = null) {
+    const refused = hlsTicket ? questRefused.get(`${shard}:${n}`) : null;
+    if (refused?.id === t.data.id && refused.until > Date.now()) return 'too_long';
     // A ticket being played reports the source its players were given (TICKET_PIN), not a new decision.
     const pin = pinned(pinKey(shard, n, hlsTicket, 'avpro'), t.data, { touch: false });
     if (pin?.session) return { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(pin.session), ...meta(t.data) };
@@ -1447,7 +1454,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         // ladder has no step it can take: home is HLS, which it can't open behind a plain ticket (f331bcc); 720p is already
         // its cap; youtube.com it can't open and re-asks every ~6 s (#420). So the 360p rung (QUEST_AV1_QUALITY), read as
         // well: staging 2026-11-13, the 360p mp4 of the 15:43Z video, whose 720p read AV1, read avc1. Else "can't be played
-        // here" (too_long's answer, which stops this client alone; the PC in the room keeps its own source), not pinned.
+        // here" (too_long's answer, which stops this client alone; the PC in the room keeps its own source), not pinned, and
+        // the ticket's .m3u8 status says too_long too (questRefused), as that is where the Quest's world hears it.
         if (config.questAv1 && !hlsTicket && (android || questResolver) && !c.hls && where.ready && where.via === 'tunelio') {
           const job = playback.peek?.(t.data, c.quality);
           if (job?.url === where.location && await adaptive.codec?.(job) === 'av1') {
@@ -1461,13 +1469,21 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
               holding++;
               try { where = await playback.location(t.data, { holdMs: left, quality: low, hls: false }); } finally { holding--; }
               const lowJob = where.ready && where.via === 'tunelio' ? playback.peek?.(t.data, low) : null;
-              if (where.ready === false) to = 'building'; // the usual answers below: the resolver sent on, the player re-asks
-              else if (where.via === 'youtube' && overOwnLimit(where.reason)) to = 'limit'; // daily_limit's answer below
+              // Still building at the end of the hold (90 s for the player; a 360p mp4 took 3.5 s, 2026-11-13): the usual answers
+              // below, the resolver sent on and the player build_timeout's youtube.com, after which its retry finds the 360p.
+              if (where.ready === false) to = 'building';
+              else if (where.via === 'youtube' && overOwnLimit(where.reason)) {
+                // Over the visitor's own limits: the player gets daily_limit's answer below; the resolver is sent on to it.
+                logJson({ event: 'quest_av1', shard, n, id: t.data.id, quality: from, client: kind, to: 'limit' });
+                if (questResolver) return sendOn(res, shard, n, t, started, kind);
+                to = null;
+              }
               else if (lowJob?.url === where.location && !/[?&]hls=1$/.test(where.location) && await adaptive.codec?.(lowJob) !== 'av1') to = 'lower';
             }
-            logJson({ event: 'quest_av1', shard, n, id: t.data.id, quality: from, client: kind, to });
+            if (to) logJson({ event: 'quest_av1', shard, n, id: t.data.id, quality: from, client: kind, to });
             if (to === 'none') {
               logJson({ event: 'quest_no_source', shard, n, id: t.data.id, client: kind, reason: 'av1' });
+              questRefused.set(`${shard}:${n}`, { id: t.data.id, until: Date.now() + pinWindow(t.data) });
               return questResolver ? sendOn(res, shard, n, t, started, kind) : tooLongAnswer(res, kind, shard, n, t);
             }
           }

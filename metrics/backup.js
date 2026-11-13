@@ -12,8 +12,9 @@
 // Privacy (CLAUDE.md, public/privacy.html; owner's defaults on #591): the events pass the same field allowlist as
 // /ops/events (src/ops.js redact: no video IDs, ticket numbers, shards or User-Agents, IDs inside messages masked), then
 // scrub() replaces anything shaped like an IP address, a token or a glued video ID. 24 h of prod events (14,252,
-// 2026-11-06) held no IP or token before either step. tickets.db holds search results (video IDs, titles) the privacy page
-// keeps "for up to a day", so it is off. metrics.db holds counts only.
+// 2026-11-06) held no IP or token before either step. tickets.db holds search results (video IDs, titles, under room
+// numbers) with no time limit, and the privacy page doesn't list them for S3, so it is off. metrics.db holds counts, plus
+// the room numbers active each hour (the hourly table's shard rows, as Grafana gets them; the page's S3 row says so).
 //
 // Upload: plain HTTPS PUTs signed with AWS Signature V4 (no SDK; the repo keeps two dependencies). The IAM user can only
 // PutObject under the prefix, so the job keeps its own record of what landed (STATE file), which the exporter reports

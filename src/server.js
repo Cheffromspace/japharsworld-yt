@@ -262,7 +262,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // without dropping an active IP's count (src/spend.js touch). Logged once per IP and minute when it starts refusing.
   const routed = new Map(); // "via:videoId" → when its build_route was last counted
   // Every minute: per-minute IP counts older than a minute go (here, in the spend gate, the lookup-warm cap), and the
-  // day's allowance at the day's end, so the privacy page's "about a minute" and "the end of the day" hold.
+  // day's allowance at the day's end, so the privacy page's "up to two minutes" (a minute of counts plus up to a minute to the next sweep) and "until
+  // the end of the day" hold.
   function sweep() {
     const now = Date.now();
     for (const map of [hits, ticketHits, playerHits, lookupWarms, outcomeHits]) for (const [k, l] of map) if (!l.some((at) => now - at < 60_000)) map.delete(k);

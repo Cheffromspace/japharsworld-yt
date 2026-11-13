@@ -2092,7 +2092,7 @@ async function pcAv1App(t, { config = {}, fakes = {}, ...over } = {}) {
   const f = pcAv1Fakes(fakes);
   const logs = [];
   const app = await homeApp(t, { config: { ticketPin: true, ticketPinMarginMs: 60_000, ...config }, playback: f.playback,
-    adaptive: new Adaptive({ playback: f.playback, fetcher: f.fetcher, base: 'http://pub/hls' }), tunelio: { enabled: true },
+    adaptive: new Adaptive({ playback: f.playback, fetcher: f.fetcher, base: 'http://pub/hls', log: (o) => logs.push(o) }), tunelio: { enabled: true },
     log: (line) => logs.push(JSON.parse(line)), ...over });
   app.store.setQuality(0, '1080p'); // the room's 1080p pick: a direct progressive 1080p play, as staging's direct plan
   return { ...app, ...f, logs };
@@ -2191,4 +2191,13 @@ test('#741: a PC whose home session was given up (uneven keyframes) is not sent 
   assert.ok(app.logs.some((e) => e.event === 'home_failed' && e.reason === 'uneven'));
   assert.equal(app.logs.filter((e) => e.event === 'build_route' && e.why === 'av1').length, 0);
   assert.equal(app.jobs.length, 1, 'no second home build');
+});
+
+test('#741: with HOME_ANDROID_GROWING (staging and prod), a session marked uneven stays ready, and the PC is still not sent back to it: the 720p rung', async (t) => {
+  const app = await pcAv1App(t, { config: { homeLongMinutes: 5, homeStayHours: 0, homeAndroidGrowing: true } });
+  const r = await app.play(PC_PLAYER, '');
+  assert.match(r.headers.get('location'), /q=720p&progressive=1$/);
+  assert.equal(app.logs.filter((e) => e.event === 'build_route' && e.why === 'av1').length, 0);
+  assert.deepEqual(app.logs.filter((e) => e.event === 'pc_av1').map((e) => e.to), ['lower']);
+  assert.deepEqual(app.logs.filter((e) => e.event === 'mp4_codec').map((e) => [e.quality, e.found]), [['1080p', 'av1'], ['720p', 'h264']]);
 });

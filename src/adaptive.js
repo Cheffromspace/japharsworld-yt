@@ -395,6 +395,7 @@ export class Adaptive {
   // kept (the file doesn't change); a failed read is null and not kept, so the next play asks again. Short timeout: a
   // player is held while this reads, and unknown keeps the answer as before.
   async #mp4Codec(job) {
+    const t0 = Date.now();
     try {
       const res = await this.fetch(job.url, { headers: { range: 'bytes=0-65535' }, signal: AbortSignal.timeout(this.mp4CodecMs) });
       if (res.status !== 200 && res.status !== 206) { try { await res.body?.cancel(); } catch { /* ignore */ } return null; }
@@ -414,6 +415,8 @@ export class Adaptive {
       const at = head.indexOf('stsd');
       const box = at < 0 ? null : head.slice(at).match(/av01|avc[13]|hev1|hvc1|vp09/)?.[0];
       job.codec = box ? { av01: 'av1', avc1: 'h264', avc3: 'h264', hev1: 'hevc', hvc1: 'hevc', vp09: 'vp9' }[box] : null;
+      // Once per build (it is cached). found null: no stsd in the head, so the answer stays as before (#741).
+      this.log({ event: 'mp4_codec', id: job.id, quality: job.quality, found: job.codec, ms: Date.now() - t0 });
       return job.codec;
     } catch (err) {
       this.log({ event: 'adaptive_codec_error', id: job.id, quality: job.quality, message: String(err?.message ?? err).slice(0, 200) });

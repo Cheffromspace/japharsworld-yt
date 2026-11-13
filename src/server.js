@@ -265,7 +265,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // day's allowance at the day's end, so the privacy page's "about a minute" and "the end of the day" hold.
   function sweep() {
     const now = Date.now();
-    for (const map of [hits, ticketHits, playerHits, lookupWarms]) for (const [k, l] of map) if (!l.some((at) => now - at < 60_000)) map.delete(k);
+    for (const map of [hits, ticketHits, playerHits, lookupWarms, outcomeHits]) for (const [k, l] of map) if (!l.some((at) => now - at < 60_000)) map.delete(k);
     spend?.sweep?.();
     allowance.sweep?.();
     adaptive.sweep?.();
@@ -1820,7 +1820,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }
   }
   // kept(): everything that remembers a visitor past the request, for the tests that check no raw IP is in it.
-  const kept = () => ({ hits, ticketHits, playerHits, lookupWarms, allowance, spend, adaptive, playback });
+  const kept = () => ({ hits, ticketHits, playerHits, lookupWarms, outcomeHits, allowance, spend, adaptive, playback });
   return Object.assign(handler, { relay, checkWorkers, sweep, metrics, probe, refusals, home, kept, logJson });
 }
 

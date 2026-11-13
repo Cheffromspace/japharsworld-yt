@@ -607,4 +607,14 @@ test('play outcomes: a per-client limit (OUTCOME_PER_MINUTE_PER_IP) keeps one cl
   for (let i = 0; i < 2; i++) await from('198.51.100.9', '/v1/o/visitor/android/home/f10');
   assert.equal(counted(), 5, 'another client still counts: the first one took only 3 of the ceiling');
   assert.ok(!lines.some((l) => l.includes('203.0.113.7') || l.includes('198.51.100.9')), 'no address in any line');
+  // Kept by the day's code, never the address, and gone with the other per-minute counts once a minute has passed
+  // (the privacy page: "up to two minutes after your last request").
+  const kept = s.app.kept().outcomeHits;
+  assert.equal(kept.size, 2);
+  assert.ok(![...kept.keys()].some((k) => k.includes('203.0.113') || k.includes('198.51.100')), 'codes, not addresses');
+  s.app.sweep();
+  assert.equal(kept.size, 2, 'active this minute: kept');
+  for (const [k, l] of kept) kept.set(k, l.map((at) => at - 61_000));
+  s.app.sweep();
+  assert.equal(kept.size, 0, 'a minute idle: gone');
 });

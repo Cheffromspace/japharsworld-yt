@@ -185,6 +185,10 @@ export const config = {
   // it stays off until the fix for #393 is out.
   homeRaceMs: int('HOME_RACE_SECONDS', 0) * 1000,
   homeLongMinutes: int('HOME_LONG_MINUTES', 30),
+  // Segments on demand for far seeks (src/home.js "Segments on demand", Everything-is-OK#367): the server names the
+  // segment a player waits for in its upload answers (x-media-want), so the worker sends it next. Off (the default) is the
+  // in-order upload production had before it; on for staging while #727 (a black screen after far seeks) is open.
+  homeSeekWant: (process.env.HOME_SEEK_WANT ?? 'off') === 'on',
   // One source per ticket once playing (#293): a ticket's answer is kept per ticket and client kind while it is played
   // (until the video's length plus TICKET_PIN_MARGIN_MINUTES after its last play) instead of decided again on every
   // request, which sent one PC ticket home → Tunelio → home within a minute and its players reloaded from 0 (prod

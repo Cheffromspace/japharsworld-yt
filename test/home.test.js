@@ -1290,7 +1290,7 @@ seg${i}.ts
 `;
 test('home want: a segment a player waits for past the next in line is wanted until it arrives; the next ones are not', async (t) => {
   const logs = [];
-  const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, segmentHoldMs: 200, log: (o) => logs.push(o) });
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, segmentHoldMs: 200, seekWant: true, log: (o) => logs.push(o) });
   const s = home.start({ id: 'aaaaaaaaaaa' }, '720p');
   home.put(s.token, 'seg0.ts', Buffer.from('ts0'));
   home.put(s.token, 'index.m3u8', Buffer.from(vodPlaylist(600)));
@@ -1335,18 +1335,18 @@ test('media cache upload: jumps to the wanted segment, carries on from it, then 
   assert.equal(logs.find((l) => l.event === 'media_done').jumps, 1);
 });
 
-test('home want end to end: a far seek on a cached copy is answered in about one upload, not after the ones before it', async (t) => {
+// A cached copy on a real server and worker, and a PC player's playlist path: what the end-to-end want tests share.
+async function cachedSeekApp(t, { seekWant, SEGS = 300 }) {
   const { MediaCache } = await import('../relay/cache.js');
   const dir = tmp(t);
   const cache = new MediaCache({ dir: join(dir, 'cache'), maxGb: 1 });
-  const SEGS = 300;
   for (const q of ['720p', '1080p']) {
     const staging = cache.staging();
     const lines = ['#EXTM3U', '#EXT-X-TARGETDURATION:4', '#EXT-X-PLAYLIST-TYPE:VOD'];
     for (let i = 0; i < SEGS; i++) { writeFileSync(join(staging, `seg${i}.ts`), `ts${i}`); lines.push('#EXTINF:4.000000,', `seg${i}.ts`); }
     cache.put('aaaaaaaaaaa', q, staging, `${lines.join('\n')}\n#EXT-X-ENDLIST\n`);
   }
-  const config = { ...base, shards: 2, pool: 50, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub', metricsPath: '' };
+  const config = { ...base, shards: 2, pool: 50, relayToken: TOKEN, homeRelay: true, homeSeekWant: seekWant, homeReadyMs: 5000, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub', metricsPath: '' };
   const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
   const relay = new Relay({ token: TOKEN, pollMs: 200 });
   const lines = [];
@@ -1356,7 +1356,14 @@ test('home want end to end: a far seek on a cached copy is answered in about one
   t.after(() => server.close());
   const url = `http://127.0.0.1:${server.address().port}`;
   // Each segment upload takes 20 ms, so the in-order upload would reach seg250 after ~5 s.
-  const slow = async (u, o) => { if (o?.method === 'PUT' && /seg\d+\.ts$/.test(u)) await new Promise((r) => setTimeout(r, 20)); return fetch(u, o); };
+  const answers = []; // each segment upload: [segment, the x-media-want its answer named]
+  const slow = async (u, o) => {
+    const seg = o?.method === 'PUT' && /seg(\d+)\.ts$/.exec(u);
+    if (seg) await new Promise((r) => setTimeout(r, 20));
+    const res = await fetch(u, o);
+    if (seg) answers.push([Number(seg[1]), res.headers.get('x-media-want')]);
+    return res;
+  };
   const wlogs = [];
   const worker = createWorker({ url, token: TOKEN, name: 'home', polls: 1, caps: ['media'], ytdlp: 'yt-dlp', cache, fetcher: slow, txBytes: () => null, log: (o) => wlogs.push(o) });
   worker.start();
@@ -1365,6 +1372,11 @@ test('home want end to end: a far seek on a cached copy is answered in about one
   const [n] = store.allocate(0, [{ kind: 'video', data: { id: 'aaaaaaaaaaa', title: 'T', seconds: SEGS * 4, live: false } }]);
   const loc = (await fetch(`${url}/v1/0/${n}`, { redirect: 'manual', headers: { 'user-agent': 'NSPlayer/12.00.26100 WMFSDK/12.00' } })).headers.get('location');
   const path = loc.replace('http://pub', '');
+  return { url, path, lines, wlogs, answers, SEGS };
+}
+
+test('home want end to end: a far seek on a cached copy is answered in about one upload, not after the ones before it', async (t) => {
+  const { url, path, lines, wlogs, SEGS } = await cachedSeekApp(t, { seekWant: true });
   const t0 = Date.now();
   const seg = await fetch(url + path.replace('index.m3u8', 'seg250.ts'));
   const ms = Date.now() - t0;
@@ -1376,6 +1388,58 @@ test('home want end to end: a far seek on a cached copy is answered in about one
   const t1 = Date.now();
   while (!lines.some((l) => l.includes('"event":"home_done"')) && Date.now() - t1 < 15_000) await new Promise((r) => setTimeout(r, 50));
   assert.ok(lines.some((l) => l.includes('"event":"home_done"') && l.includes(`"segments":${SEGS}`)));
+});
+
+// HOME_SEEK_WANT off (the default, Everything-is-OK#727): production's in-order upload, as before #367 phase 1. The same
+// far seek as above: no answer names a want, the worker never jumps, every segment goes up in order from seg0, and the
+// player's segment comes only when the in-order upload reaches it.
+test('HOME_SEEK_WANT off: a far seek on a cached copy leaves the upload in order; no x-media-want, no home_want, no jump', async (t) => {
+  const { url, path, lines, wlogs, answers, SEGS } = await cachedSeekApp(t, { seekWant: false });
+  const seg = await fetch(url + path.replace('index.m3u8', 'seg250.ts'));
+  assert.equal(await seg.text(), 'ts250');
+  assert.ok(answers.filter(([n]) => n < 250).length >= 240, `seg250 came after the ones before it (${answers.length} uploads by then)`);
+  const t1 = Date.now();
+  while (!lines.some((l) => l.includes('"event":"home_done"')) && Date.now() - t1 < 15_000) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(lines.some((l) => l.includes('"event":"home_done"') && l.includes(`"segments":${SEGS}`)));
+  assert.deepEqual(answers.map(([n]) => n), Array.from({ length: SEGS }, (_, i) => i), 'seg0..seg299 in order, each once');
+  assert.ok(answers.every(([, w]) => w === null), 'no answer names a want');
+  assert.ok(!wlogs.some((l) => l.event === 'media_jump'));
+  assert.ok(!lines.some((l) => l.includes('"event":"home_want"')));
+});
+
+test('HOME_SEEK_WANT off: a player held far ahead of a fresh build is not wanted; the switch on names it (control)', async (t) => {
+  for (const seekWant of [false, true]) {
+    const logs = [];
+    const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, segmentHoldMs: 100, seekWant, log: (o) => logs.push(o) });
+    const s = home.start({ id: 'aaaaaaaaaaa' }, '720p');
+    home.put(s.token, 'seg0.ts', Buffer.from('ts0'));
+    home.put(s.token, 'index.m3u8', Buffer.from(vodPlaylist(600)));
+    const far = home.file(s.token, 'seg550.ts');
+    home.put(s.token, 'seg1.ts', Buffer.from('ts1')); // an upload while the player is held: its answer would name the want
+    assert.equal(home.want(s.token), seekWant ? 550 : null);
+    assert.equal(logs.filter((l) => l.event === 'home_want').length, seekWant ? 1 : 0);
+    assert.equal(await far, null, 'not here after the hold either way');
+  }
+});
+
+test('mediaJob with no want (what the worker has when no answer names one): a fresh build on keyframe cuts uploads in order', async (t) => {
+  const { MediaCache } = await import('../relay/cache.js');
+  for (const want of [null, 80]) {
+    const cache = new MediaCache({ dir: tmp(t), maxGb: 1 });
+    const ff = runFfmpeg({ total: 100, everyMs: 2 });
+    const order = [];
+    const job = await mediaJob({ videoId: 'aaaaaaaaaaa', quality: '1080p', token: 'x' }, { ytdlp: 'yt-dlp', runner: runnerDur(400), spawnFn: ff.spawnFn,
+      pollMs: 30, cache, wanted: () => (order.includes(80) ? null : want),
+      // 5 ms an upload, so ffmpeg (2 ms a segment) has made seg80 long before the in-order upload gets there.
+      upload: async (file) => { await new Promise((r) => setTimeout(r, 5)); if (file !== 'index.m3u8') order.push(Number(file.slice(3, -3))); return 204; } });
+    await job.done;
+    assert.equal(ff.spawns.length, 1, 'one run: keyframe cuts never start another');
+    assert.deepEqual([...order].sort((a, b) => a - b), Array.from({ length: 100 }, (_, i) => i));
+    // The control: a want reorders a keyframe-cut build too (the wanted-first upload has no split-by-time gate), which is
+    // why the switch sits on the server: with it off no answer names one.
+    if (want === null) assert.deepEqual(order, Array.from({ length: 100 }, (_, i) => i), 'in order');
+    else assert.notDeepEqual(order, Array.from({ length: 100 }, (_, i) => i), 'the want went first');
+  }
 });
 
 // The disk floor (HOME_FREE_FLOOR_GB): prod 2026-10-30 00:58Z, an 8.4 GB played session and a 10.7 GB build over a
@@ -1426,7 +1490,7 @@ test('home disk floor: a build is stopped (410, failed no_room) when free space 
 });
 
 test('home want: two players at different points; once the newer want is here, the older one held is wanted again (review D1)', async (t) => {
-  const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, segmentHoldMs: 500 });
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, segmentHoldMs: 500, seekWant: true });
   const s = home.start({ id: 'aaaaaaaaaaa' }, '720p');
   home.put(s.token, 'seg0.ts', Buffer.from('ts0'));
   home.put(s.token, 'index.m3u8', Buffer.from(vodPlaylist(600)));
@@ -1442,7 +1506,7 @@ test('home want: two players at different points; once the newer want is here, t
 });
 
 test('home want: a segment past the end of the playlist or never listed is not wanted (review D2)', async (t) => {
-  const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, segmentHoldMs: 50 });
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), enabled: true, segmentHoldMs: 50, seekWant: true });
   const s = home.start({ id: 'aaaaaaaaaaa' }, '720p');
   home.put(s.token, 'seg0.ts', Buffer.from('ts0'));
   home.put(s.token, 'index.m3u8', Buffer.from(vodPlaylist(20)));

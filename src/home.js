@@ -27,6 +27,10 @@
 // each request was held 20 s and the world reloaded every ~30 s, so it froze for good. Now a segment a player waits for
 // that isn't next in line becomes the session's want, and every answer to the worker's uploads names it (x-media-want,
 // server.js) until it is here; the worker sends it next (relay/media.js).
+// Behind HOME_SEEK_WANT (seekWant, default off; Everything-is-OK#727, coordinator 2026-11-13): the owner saw a black
+// screen after far seeks on staging (2026-11-12 00:46Z) with every segment the player asked for answered 200 within
+// 3.8 s, so the cause wasn't found on the service side; off keeps the release on the old in-order upload (no want, no
+// x-media-want, so no cache jump, no wanted-first upload and no seek run on the worker) until that is understood.
 //
 // The disk itself (freeFloorGb, HOME_FREE_FLOOR_GB): maxGb is a target, not a limit, since a session being played or
 // built stays. Prod, 2026-10-30 00:58Z: an 8.4 GB played session and a 10.7 GB build over a 12 GB cap filled the
@@ -65,9 +69,9 @@ const FREE_CHECK_MS = 5_000; // a build's uploads look at the disk's free space 
 
 export class Home {
   constructor({ relay, dir, base = 'https://yt.japharsworld.com/home', enabled = false, dailyBuilds = 40, dailyMb = 10_000,
-    hourBuilds = 0, hourMb = 0, hourMbExemptSeconds = 0, startGapMs = 0, itemMaxMb = 0, keepHours = 12, maxGb = 8, freeFloorGb = 0, freeMb = null, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, tz = 'America/Chicago',
+    hourBuilds = 0, hourMb = 0, hourMbExemptSeconds = 0, startGapMs = 0, itemMaxMb = 0, keepHours = 12, maxGb = 8, freeFloorGb = 0, freeMb = null, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, seekWant = false, tz = 'America/Chicago',
     now = () => Date.now(), log = () => {}, onEvent = () => {} }) {
-    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, hourBuilds, hourMb, hourMbExemptSeconds, startGapMs, itemMaxMb, keepHours, maxGb, freeFloorGb, readyMs, segmentHoldMs, startPrecise, tz, now, log, onEvent });
+    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, hourBuilds, hourMb, hourMbExemptSeconds, startGapMs, itemMaxMb, keepHours, maxGb, freeFloorGb, readyMs, segmentHoldMs, startPrecise, seekWant, tz, now, log, onEvent });
     // The disk's free MB where the sessions are (injectable for tests); Infinity when it can't be read.
     this.freeMb = freeMb ?? (() => { try { const f = statfsSync(this.dir); return (f.bavail * f.bsize) / 1e6; } catch { return Infinity; } });
     this.freeCheckedMs = 0;
@@ -365,7 +369,7 @@ export class Home {
   // the one whose want was overwritten would wait the full hold otherwise; phase 1 review, 2026-10-30).
   want(token) {
     const s = this.byToken.get(token);
-    if (!s) return null;
+    if (!s || !this.seekWant) return null;
     if (s.want != null && !s.stored.has(`seg${s.want}.ts`)) return s.want;
     let other = null;
     for (const file of s.segmentWaiters.keys()) if (!s.stored.has(file) && this.#far(s, segIndex(file)) && s.listed.includes(file)) other = segIndex(file);
@@ -495,7 +499,7 @@ export class Home {
     if (file !== 'index.m3u8' && !s.stored.has(file) && !s.ended && s.state !== 'failed') {
       const n = segIndex(file);
       // Only a segment the playlist lists: one past the end or never listed will not come.
-      if (this.#far(s, n) && s.want !== n && s.listed.includes(file)) {
+      if (this.seekWant && this.#far(s, n) && s.want !== n && s.listed.includes(file)) {
         s.want = n;
         this.log({ event: 'home_want', ses: s.token.slice(0, 4), quality: s.quality, seg: n, top: s.last });
       }

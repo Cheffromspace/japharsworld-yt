@@ -180,7 +180,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     hourMbExemptSeconds: config.homeHourMbExemptHours * 3600, startGapMs: config.homeStartGapMs,
     itemMaxMb: config.homeItemTooBig === 'tunelio' ? config.homeItemMaxGb * 1000 : 0, keepHours: config.homeKeepHours, maxGb: config.homeMaxGb, freeFloorGb: config.homeFreeFloorGb, readyMs: config.homeReadyMs,
     segmentHoldMs: config.homeSegmentHoldMs,
-    startPrecise: config.homeAndroidGrowing, tz: config.metricsTz, log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
+    startPrecise: config.homeAndroidGrowing, seekWant: config.homeSeekWant, tz: config.metricsTz, log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
   if (home.enabled) setInterval(() => home.sweep(), 10 * 60_000).unref();
   channels ??= new ChannelSlots({ monitorDb: config.monitorDb, baked: new URL('../monitor/channels.json', import.meta.url),
     upstream: config.channelsUpstream, log: logJson });

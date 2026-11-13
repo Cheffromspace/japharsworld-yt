@@ -1,11 +1,57 @@
 #!/usr/bin/env bash
 # japharsworld-yt bootstrap. Run once on the server, as root:
 #   curl -fsSL https://raw.githubusercontent.com/Cheffromspace/japharsworld-yt/main/deploy/bootstrap.sh | bash
-# Safe to re-run. Leaves anything else already running alone.
+# Re-runnable, but NOT for a live box in use: it resets the checkout to the deploy branch, runs npm ci and restarts the
+# service without waiting for plays to end (update.sh never runs it). A Caddy change on production goes by hand. A
+# Caddyfile it can't safely change stops it with an error. Leaves anything else already running alone.
 # Installs: Node 22 (if needed), the service (/opt/japharsworld-yt, runs as user "jyt"),
 # yt-dlp + bgutil PO-token provider (captions), HTTPS for $DOMAIN, and a 5-minute auto-update timer
 # that deploys whatever is on main (rolls back if the new version fails its health check).
 set -euo pipefail
+
+# >>> caddy-log-filter (test/deploy.test.js runs this part with a stand-in caddy)
+# No request details in Caddy's logs (Everything-is-OK#399): an error line carried the client's address and the URL with
+# its search text. request goes whole; a cut client's address is also inside "aborting with incomplete response"'s error
+# field ("write tcp <server>-><client>: ..."), so that part is replaced and the message stays. A global block must come
+# first in the Caddyfile. The block adapts on production's Caddy 2.6.2 (2026-10-31), and the same two changes applied
+# to production's journal left no foreign address in those lines; a real cut line under the filter is still to be seen.
+caddy_fail() { printf '\033[1;31mXX  %s\033[0m\n' "$*" >&2; exit 1; }
+# Validation provisions the cloudflare module on staging, which rejects an empty token (seen 2026-10-26, world #210).
+caddy_check() { ( if [ -f /etc/caddy/cloudflare.env ]; then set -a; . /etc/caddy/cloudflare.env; set +a; fi
+  caddy validate --config "$1" --adapter caddyfile >/dev/null ); }
+caddy_log_filter() {
+  local file=$1 code adapted
+  caddy_filter_added=0
+  # Comments don't count: one mentioning "request delete" must not pass for the filter.
+  code=$(sed -e 's/^[[:space:]]*#.*//' -e 's/[[:space:]]#.*//' "$file")
+  if ! { grep -qE '^[[:space:]]*request[[:space:]]+delete[[:space:]]*$' <<<"$code" && grep -qF 'error regexp "->[^ ]+" "->client"' <<<"$code"; }; then
+    # Two global blocks aren't allowed and merging one here is guesswork, so this stops before anything changes.
+    if grep -qE '^[[:space:]]*[{]' <<<"$code"; then
+      caddy_fail "$file has a line starting with { (a global block?) and not the log filter. Nothing changed: add the filter by hand (deploy/bootstrap.sh has it), then run this again."
+    fi
+    { cat <<'CADDY'
+{
+	log {
+		format filter {
+			wrap json
+			fields {
+				request delete
+				error regexp "->[^ ]+" "->client"
+			}
+		}
+	}
+}
+
+CADDY
+      cat "$file"; } > "$file.new"
+    caddy_check "$file.new" || { rm -f "$file.new"; caddy_fail "The Caddyfile with the log filter does not validate. Nothing changed."; }
+    mv "$file.new" "$file"
+    caddy_filter_added=1
+  fi
+  adapted=$(caddy adapt --config "$file" --adapter caddyfile 2>/dev/null) || caddy_fail "$file does not adapt."
+  grep -qF '"request":{"filter":"delete"}' <<<"$adapted" || caddy_fail "$file does not apply the log filter."
+}
+# <<< caddy-log-filter
 
 # Wrapped in main() so that "curl | bash" reads the whole script before running any of it.
 main() {
@@ -124,7 +170,9 @@ if [ -z "$on443" ] || [[ "$on443" == *caddy* ]]; then
   fi
   caddy version
   mkdir -p /etc/caddy/sites
-  echo "$site_block" > /etc/caddy/sites/japharsworld-yt.caddy
+  # A site file that already serves this name stays: production's also lists eiok.cc, and writing DOMAIN alone would
+  # drop it (a verifier's find, 2026-10-31).
+  grep -qF "$DOMAIN" /etc/caddy/sites/japharsworld-yt.caddy 2>/dev/null || echo "$site_block" > /etc/caddy/sites/japharsworld-yt.caddy
   grep -q 'import sites/\*' /etc/caddy/Caddyfile 2>/dev/null || {
     # Fresh Caddy ships a demo :80 site; keep whatever else is there, drop only the stock demo.
     if grep -q 'root \* /usr/share/caddy' /etc/caddy/Caddyfile 2>/dev/null && [ "$(grep -c '{' /etc/caddy/Caddyfile)" -le 2 ]; then
@@ -132,8 +180,12 @@ if [ -z "$on443" ] || [[ "$on443" == *caddy* ]]; then
     fi
     echo 'import sites/*' >> /etc/caddy/Caddyfile
   }
-  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
-  systemctl enable --now caddy && systemctl reload caddy
+  caddy_log_filter /etc/caddy/Caddyfile
+  caddy_check /etc/caddy/Caddyfile
+  systemctl enable --now caddy
+  # A reload leaves streams open across it on the old logger, whose lines keep the request details: only a restart
+  # ends them (a verifier's find, 2026-10-31). Without a new filter a reload stays enough, and drops nothing.
+  if [ "$caddy_filter_added" = 1 ]; then systemctl restart caddy; else systemctl reload caddy; fi
   echo "Caddy serves https://$DOMAIN"
 elif [[ "$on443" == *nginx* ]]; then
   apt-get install -y -qq certbot python3-certbot-nginx >/dev/null

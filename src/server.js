@@ -1488,6 +1488,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
             }
           }
         }
+        // A refusal can lift: it isn't pinned, and a failed 360p build may build on the next ask. A Quest answered with a
+        // ready Tunelio file here clears the mark, so the .m3u8 status no longer stops it.
+        if (!hlsTicket && (android || questResolver) && where.ready && where.via === 'tunelio') questRefused.delete(`${shard}:${n}`);
       }
       const held = Date.now() - started;
       metrics.latency('ticket_hold_ms', held);

@@ -2252,6 +2252,18 @@ test(`#749: after the AV1 refusal the ticket's .m3u8 status (where the Quest's w
   assert.notEqual((await (await app.play(TABLET, '')).json()).reason, 'too_long', 'the plain status (PC tablets) is unchanged');
 });
 
+test('#749: the mark wins over a home session the PC started, and lifts when a later ask plays (a failed 360p that then builds)', async (t) => {
+  const answers = { '360p': 'failed' };
+  const app = await pcAv1App(t, { fakes: { ...AV1_720, answers } });
+  const TABLET = 'UnityPlayer/6000.0.67f1-DWR (UnityWebRequest/1.0, libcurl/8.10.1-DEV) Android';
+  assert.match((await app.play(PC_PLAYER, '')).headers.get('location'), /\/home\//, 'the PC first: home');
+  assert.equal((await app.play(QUEST, '')).status, 403);
+  assert.equal((await (await app.play(TABLET, '.m3u8')).json()).reason, 'too_long', "over the home session's status");
+  delete answers['360p']; // the retry builds it
+  assert.match((await app.play(QUEST, '')).headers.get('location'), /q=360p&progressive=1$/);
+  assert.notEqual((await (await app.play(TABLET, '.m3u8')).json()).reason, 'too_long', 'the mark is gone');
+});
+
 for (const [answer, why] of [['failed', 'a failed 360p build'], ['hls', 'a 360p build that turned HLS']]) {
   test(`#749: ${why}: "can't be played here", not youtube.com or a playlist`, async (t) => {
     const app = await pcAv1App(t, { fakes: { ...AV1_720, answers: { '360p': answer } } });

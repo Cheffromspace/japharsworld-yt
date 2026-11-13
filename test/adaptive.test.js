@@ -788,3 +788,34 @@ test('#584: AVPro\'s HLS file refused for size (413) in its first hold: "not a v
   await settle();
   assert.equal((await s.get(`/v1/0/${n}.m3u8`, UNITY)).headers.get('location'), MP4_720, 'Unity\'s player: the mp4');
 });
+
+test('codec of an mp4 build (#741): the stsd entry decides, not ftyp brands; read once; moov at the end is null and kept; a failed read is not kept', async () => {
+  let reads = 0, mode = 'avc1';
+  const fetcher = async (u, opts) => {
+    reads++;
+    assert.equal(opts.headers.range, 'bytes=0-65535');
+    if (mode === 'fail') throw new Error('timeout');
+    if (mode === 'tail') return new Response('\0\0\0\x20ftypisomav01avc1\0\0\0\x08free\0\0\0\x10mdat....', { status: 206 });
+    return new Response(`\0\0\0\x20ftypisomav01iso6\0\0\x10\0moov....stsd\0\0\0\x01\0\0\0\xa0${mode}....`, { status: 206 });
+  };
+  const a = new Adaptive({ playback: {}, fetcher });
+  const job = (q) => ({ id: 'x', quality: q, format: 'progressive', state: 'ready', url: `https://tunelio.dev/t?q=${q}&progressive=1` });
+  const h = job('1080p');
+  const [c1, c2] = await Promise.all([a.codec(h), a.codec(h)]);
+  assert.equal(c1, 'h264', 'ftyp lists av01, the track is avc1');
+  assert.equal(c2, 'h264');
+  assert.equal(await a.codec(h), 'h264');
+  assert.equal(reads, 1, 'one read per build');
+  mode = 'av01';
+  assert.equal(await a.codec(job('720p')), 'av1');
+  mode = 'tail';
+  const t = job('480p');
+  assert.equal(await a.codec(t), null);
+  assert.equal(await a.codec(t), null);
+  assert.equal(reads, 3, 'no stsd in the head: unknown, kept');
+  mode = 'fail';
+  const f = job('360p');
+  assert.equal(await a.codec(f), null);
+  mode = 'vp09';
+  assert.equal(await a.codec(f), 'vp9', 'a failed read is asked again');
+});

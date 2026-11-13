@@ -1381,6 +1381,36 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
             }
           }
         }
+        // Everything-is-OK#741: an AV1 build for a PC player on a plain ticket (VRChat's resolver or AVPro). Tunelio's
+        // 1080p is sometimes AV1 (prod 2026-10-30 to 11-13: 18 Quest 1080p plays found it so), and a PC alone in the room
+        // got that mp4 and never showed a frame (staging 2026-11-13, the AV1 extension installed). With a Quest in the room
+        // it played, but only because the Quest's own AV1 check had started home first. So the PC's build is read too:
+        // home (always H.264) when it can take it, as for the Quest: the resolver is sent on at once and AVPro reuses the
+        // session; else the 720p rung, read as well; else youtube.com, which VRChat resolves itself. Before the pin's last
+        // check below, so the players of a ticket still end on one source.
+        let pcAv1 = null; // the AV1 build's quality
+        if (config.pcAv1 && !hlsTicket && !android && !questResolver && !c.hls && where.ready && where.via === 'tunelio') {
+          const job = playback.peek?.(t.data, c.quality);
+          if (job?.url === where.location && await adaptive.codec?.(job) === 'av1') {
+            pcAv1 = c.quality;
+            metrics.inc('adaptive', 'pc_av1');
+            // Not when this request already held on a home session (one hold, not two, as for the Quest above): that is a
+            // session that missed HOME_READY_SECONDS, or one leaveHome gave up (uneven keyframes), so the 720p rung instead.
+            if (homeOk && home.enabled && av1HomeFor(t.data, hq) && !waited.home) {
+              if (resolver) {
+                const s = homeKeep(t.data, hq, startHome(shard, t.data, hq, 'av1'));
+                if (s && s.state !== 'failed') {
+                  metrics.inc('home', 'defer');
+                  logJson({ event: 'pc_av1', shard, n, id: t.data.id, quality: pcAv1, client: kind, to: 'home' });
+                  logJson({ event: 'play_defer', shard, n, id: t.data.id, held: Date.now() - started, home: true });
+                  const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+                  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+                  return res.end(body);
+                }
+              } else homeFor = 'av1';
+            }
+          }
+        }
         // Tunelio's build failed: home before youtube.com's 360p, for a player that can take home's HLS, when a worker is free.
         if (!homeFor && !resolver && homeOk && where.ready && where.via === 'youtube' && /^(tunelio_failed|build_failed|too_long|budget)$/.test(where.reason ?? '') && home.worker()) homeFor = 'tunelio_failed';
         if (homeFor) {
@@ -1394,6 +1424,24 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
             if (fallback.state === 'ready') where = await homeWhere(fallback);
           }
         }
+        // #741: home didn't take the PC's AV1 play: the 720p rung within what is left of the hold, unless that is AV1 too
+        // (staging 2026-10-30 to 11-13: 4 of 30 Quest AV1 finds were 720p builds), then youtube.com. A 720p build that
+        // fails or is still building gets the usual answers below (360p, the resolver sent on).
+        if (pcAv1 && where.via === 'tunelio') {
+          if (c.quality !== adaptive.lower) {
+            c = { ...c, quality: adaptive.lower };
+            const left = Math.max(0, (resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs) - (Date.now() - started));
+            holding++;
+            try { where = await playback.location(t.data, { holdMs: left, quality: c.quality, hls: false }); } finally { holding--; }
+          }
+          let to = where.via === 'tunelio' ? 'lower' : where.via;
+          const job = where.ready && where.via === 'tunelio' ? playback.peek?.(t.data, c.quality) : null;
+          if (job?.url === where.location && (c.quality === pcAv1 || await adaptive.codec?.(job) === 'av1')) {
+            where = { location: `https://www.youtube.com/watch?v=${t.data.id}`, via: 'youtube', reason: 'av1', ready: true };
+            to = 'youtube';
+          }
+          logJson({ event: 'pc_av1', shard, n, id: t.data.id, quality: pcAv1, client: kind, to, ...(where.ready === false ? { reason: 'building' } : {}) });
+        } else if (pcAv1) logJson({ event: 'pc_av1', shard, n, id: t.data.id, quality: pcAv1, client: kind, to: where.via });
       }
       const held = Date.now() - started;
       metrics.latency('ticket_hold_ms', held);

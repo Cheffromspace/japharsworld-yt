@@ -255,6 +255,9 @@ one, f331bcc) and never for live streams:
    Quest 2 can't decode; home is always H.264 + AAC. Counted as `adaptive`/`android_av1` whether or not the flag is on.
    A higher rung of an adaptive master that turns out AV1 is answered, for a Quest player, with the best H.264 rung
    below it (`android_av1_rung`), so the play tops out lower instead of failing at the step up,
+   A PC player on a plain ticket (`PC_AV1=on`, the default; Everything-is-OK#741) has its Tunelio mp4 read too (64 KB of
+   the file's head, the `stsd` sample entry): an AV1 build goes home (`why=av1`; the resolver is sent on and AVPro
+   reuses the session), else to the 720p rung, else youtube.com when that is AV1 as well (`adaptive`/`pc_av1`),
 7. on a `.m3u8` ticket with `HOME_ANDROID=on`, `HOME_ANDROID_GROWING=on` and `HOME_RACE_SECONDS` above 0 (default 0, off): Tunelio's build is still
    running after that many seconds (`slow_build`). Home starts beside it and the player gets whichever is ready first
    (`home`/`race_won` when home wins). The build carries on for the next play. With `TICKET_PIN` all players of the ticket

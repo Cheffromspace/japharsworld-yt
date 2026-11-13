@@ -160,6 +160,10 @@ export const config = {
   // as a PC player, and for an AV1 Tunelio build, which the Quest 2 can't decode (home is always H.264). Off until
   // verified on the Quest (2026-10-23).
   homeAndroid: (process.env.HOME_ANDROID ?? 'off') === 'on',
+  // A PC player on a plain ticket: the codec of its progressive Tunelio build is read first, and an AV1 one goes home
+  // (else the 720p rung, else youtube.com) instead of to the player (src/server.js, Everything-is-OK#741, staging
+  // 2026-11-13: a PC alone got the AV1 1080p mp4 and never showed a frame). off: as before, no read.
+  pcAv1: (process.env.PC_AV1 ?? 'on') !== 'off',
   // A .m3u8 ticket (Quest): Unity's Android player gets the mp4, and a long or HLS-failed play sends AVPro on at once so
   // VizVid reaches that player (src/server.js questMp4, Everything-is-OK#584). off: as before. Long: this many minutes,
   // or a file at the ticket's quality of this many MB once its size is known (0 = by length only).

@@ -2068,3 +2068,127 @@ test('ticket → home (#577): a PC player of a video over HOME_STAY_HOURS stays 
   const off = await homeApp(t, { ...make('building'), config: { homeLongMinutes: 5, homeStayHours: 0 } });
   assert.doesNotMatch((await off.play(PC, '')).headers.get('location'), /\/home\//, 'HOME_STAY_HOURS=0: as before (#127 a)');
 });
+
+// Everything-is-OK#741: a PC player on a plain ticket whose Tunelio mp4 is AV1. Progressive jobs per quality; the
+// codec is read from the mp4's head, with ftyp naming both avc1 and av01 so only the stsd entry decides.
+function pcAv1Fakes({ codecs = { '1080p': 'av01', '720p': 'avc1' }, holdMs = 0 } = {}) {
+  const jobs = {};
+  const job = (q) => (jobs[q] ??= { id: 'aaaaaaaaaaa', quality: q, format: 'progressive', state: 'ready', url: `https://tunelio.dev/t?q=${q}&progressive=1` });
+  const asked = [];
+  const playback = { jobs: new Map(), peek: (d, q = '720p', { hls = false } = {}) => (hls ? null : job(q)), status: () => ({ state: 'ready' }), start() {},
+    async location(d, { quality = '720p' } = {}) { asked.push(quality); await new Promise((r) => setTimeout(r, holdMs)); const j = job(quality); return { location: j.url, via: 'tunelio', quality, ready: true }; } };
+  const reads = [];
+  const fetcher = async (u) => {
+    reads.push(u);
+    const q = /[?&]q=(\d+p)/.exec(u)?.[1];
+    return new Response(`\0\0\0\x20ftypisom\0\0\0\0isomavc1av01mp41\0\0\x10\0moov....trak....stsd\0\0\0\0\0\0\0\x01\0\0\0\xa0${codecs[q]}....`, { status: 206 });
+  };
+  return { playback, fetcher, asked, reads };
+}
+const PC_PLAYER = 'NSPlayer/12.00.26100 WMFSDK/12.00';
+const PC_RESOLVER = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+async function pcAv1App(t, { config = {}, fakes = {}, ...over } = {}) {
+  const { Adaptive } = await import('../src/adaptive.js');
+  const f = pcAv1Fakes(fakes);
+  const logs = [];
+  const app = await homeApp(t, { config: { ticketPin: true, ticketPinMarginMs: 60_000, ...config }, playback: f.playback,
+    adaptive: new Adaptive({ playback: f.playback, fetcher: f.fetcher, base: 'http://pub/hls' }), tunelio: { enabled: true },
+    log: (line) => logs.push(JSON.parse(line)), ...over });
+  app.store.setQuality(0, '1080p'); // the room's 1080p pick: a direct progressive 1080p play, as staging's direct plan
+  return { ...app, ...f, logs };
+}
+
+test('#741: a PC alone with an AV1 1080p mp4: the resolver is sent on and AVPro gets home (why=av1), not the AV1 file', async (t) => {
+  const app = await pcAv1App(t);
+  const r = await app.play(PC_RESOLVER, '');
+  assert.equal(r.status, 200, 'the resolver is sent on ("not a video"), not handed the AV1 mp4');
+  assert.match(await r.text(), /being prepared/);
+  const p = await app.play(PC_PLAYER, '');
+  assert.equal(p.status, 302);
+  assert.match(p.headers.get('location'), /\/home\/[a-f0-9]{18}\/index\.m3u8$/, 'AVPro reuses the home session');
+  assert.equal(app.jobs.length, 1, 'one home build');
+  assert.deepEqual(app.logs.filter((e) => e.event === 'pc_av1').map((e) => [e.quality, e.client, e.to]), [['1080p', 'ytdlp', 'home']]);
+  assert.equal(app.logs.find((e) => e.event === 'build_route' && e.via === 'home')?.why, 'av1');
+  // Later requests: the home pin, with no new codec read.
+  const reads = app.reads.length;
+  assert.match((await app.play(PC_PLAYER, '')).headers.get('location'), /\/home\//);
+  assert.equal(app.reads.length, reads);
+});
+
+test('#741: AVPro first on a PC with an AV1 1080p mp4 gets home too', async (t) => {
+  const app = await pcAv1App(t);
+  const p = await app.play(PC_PLAYER, '');
+  assert.match(p.headers.get('location'), /\/home\//);
+  assert.deepEqual(app.logs.filter((e) => e.event === 'pc_av1').map((e) => [e.client, e.to]), [['avpro', 'home']]);
+});
+
+test('#741: home off: a PC with an AV1 1080p mp4 gets the 720p H.264 rung, and that is its pin', async (t) => {
+  const app = await pcAv1App(t, { config: { homeRelay: false } });
+  for (const ua of [PC_RESOLVER, PC_PLAYER]) {
+    const r = await app.play(ua, '');
+    assert.equal(r.status, 302, ua);
+    assert.match(r.headers.get('location'), /q=720p&progressive=1$/, ua);
+  }
+  // Pins are per client kind, so the player decides again, from the codecs already read.
+  assert.deepEqual(app.logs.filter((e) => e.event === 'pc_av1').map((e) => [e.quality, e.client, e.to]), [['1080p', 'ytdlp', 'lower'], ['1080p', 'avpro', 'lower']]);
+  assert.equal(app.reads.length, 2, 'each build read once');
+});
+
+test('#741: home refuses (no worker free): the 720p rung', async (t) => {
+  const app = await pcAv1App(t, { config: { homeStartGapMs: 60_000, homeLongMinutes: 60 } });
+  // Another, long video's home build just started: the start gap leaves no worker for this one.
+  const [other] = app.store.allocate(0, [{ kind: 'video', data: { id: 'bbbbbbbbbbb', title: 'U', seconds: 6000, live: false } }]);
+  await fetch(`${app.url}/v1/0/${other}`, { redirect: 'manual', headers: { 'user-agent': PC_PLAYER } });
+  assert.equal(app.logs.find((e) => e.event === 'build_route' && e.via === 'home')?.id, 'bbbbbbbbbbb', 'the other video took home');
+  const r = await app.play(PC_PLAYER, '');
+  assert.match(r.headers.get('location'), /q=720p&progressive=1$/);
+});
+
+test('#741: a PC whose home session missed HOME_READY_SECONDS is not held on home a second time: the 720p rung', async (t) => {
+  // A 600 s video at HOME_LONG_MINUTES 5 goes home for being long; the build takes longer than the hold.
+  const app = await pcAv1App(t, { config: { homeLongMinutes: 5, homeReadyMs: 150 }, media: () => new Promise((r) => setTimeout(r, 1000)) });
+  const r = await app.play(PC_PLAYER, '');
+  assert.match(r.headers.get('location'), /q=720p&progressive=1$/);
+  assert.equal(app.logs.filter((e) => e.event === 'build_route' && e.why === 'av1').length, 0);
+});
+
+test('#741: the 720p rung AV1 too: youtube.com, not pinned', async (t) => {
+  const app = await pcAv1App(t, { config: { homeRelay: false }, fakes: { codecs: { '1080p': 'av01', '720p': 'av01' } } });
+  const r = await app.play(PC_PLAYER, '');
+  assert.equal(r.headers.get('location'), 'https://www.youtube.com/watch?v=aaaaaaaaaaa');
+  assert.deepEqual(app.logs.filter((e) => e.event === 'pc_av1').map((e) => e.to), ['youtube']);
+  assert.equal(app.logs.find((e) => e.event === 'play')?.reason, 'av1');
+  const { checkedKey } = await import('../src/metrics.js');
+  assert.equal(checkedKey('play_fallback', 'av1'), 'av1', 'counted under its own key, not other');
+  assert.equal(checkedKey('adaptive', 'pc_av1'), 'pc_av1');
+});
+
+test('#741: an H.264 1080p mp4 is answered as before, for the resolver and the player', async (t) => {
+  const app = await pcAv1App(t, { fakes: { codecs: { '1080p': 'avc1', '720p': 'avc1' } } });
+  for (const ua of [PC_RESOLVER, PC_PLAYER]) assert.match((await app.play(ua, '')).headers.get('location'), /q=1080p&progressive=1$/, ua);
+  assert.equal(app.jobs.length, 0);
+  assert.equal(app.logs.filter((e) => e.event === 'pc_av1').length, 0);
+});
+
+test('#741: PC_AV1=off: the AV1 1080p mp4 as before, no read', async (t) => {
+  const app = await pcAv1App(t, { config: { pcAv1: false } });
+  assert.match((await app.play(PC_RESOLVER, '')).headers.get('location'), /q=1080p&progressive=1$/);
+  assert.equal(app.reads.length, 0);
+});
+
+test('#741: a Quest on the plain ticket is unchanged: its 720p cap, no mp4 read', async (t) => {
+  const app = await pcAv1App(t);
+  assert.match((await app.play(QUEST, '')).headers.get('location'), /q=720p&progressive=1$/);
+  assert.equal(app.reads.length, 0);
+  assert.equal(app.jobs.length, 0);
+});
+
+test('#741: a PC whose home session was given up (uneven keyframes) is not sent back to it for AV1: the 720p rung', async (t) => {
+  // Long, so home first; its playlist grows with no end (PL1), so leaveHome gives it up for Tunelio, whose 1080p is AV1.
+  const app = await pcAv1App(t, { config: { homeLongMinutes: 5, homeStayHours: 0 } });
+  const r = await app.play(PC_PLAYER, '');
+  assert.match(r.headers.get('location'), /q=720p&progressive=1$/);
+  assert.ok(app.logs.some((e) => e.event === 'home_failed' && e.reason === 'uneven'));
+  assert.equal(app.logs.filter((e) => e.event === 'build_route' && e.why === 'av1').length, 0);
+  assert.equal(app.jobs.length, 1, 'no second home build');
+});

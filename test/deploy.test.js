@@ -97,8 +97,10 @@ test('env example: every setting src/ reads has its NAME= line', () => {
 // The guard from bootstrap.sh, run for real in bash against a stand-in caddy (#399). A wrong guard here would leave
 // request details in the log while the setup reports success.
 // The stand-in's adapt writes each filter line it finds (anywhere in the file) into the named logger's encoder, in
-// 2.11.7's form (fields first, ">" escaped, as staging adapts it, 2026-11-13) or with wrap first (2.6.2's struct order).
-function runGuard(caddyfile, { validate = 0, adaptOk = true, logger = 'default', wrapFirst = false, errorOk = true } = {}) {
+// the real form (fields, format, wrap, ">" escaped: 2.11.7 on staging and 2.6.2 on prod adapt it so, 2026-11-13) or
+// with wrap first (no version seen doing that; the guard must not depend on key order). `before` adds a named global
+// logger that sorts before "default".
+function runGuard(caddyfile, { validate = 0, adaptOk = true, logger = 'default', wrapFirst = false, errorOk = true, before = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'caddy-guard-'));
   try {
     mkdirSync(join(dir, 'bin'));
@@ -109,7 +111,7 @@ gt=$(printf '\134u003e')
 f=''
 if ${errorOk ? '' : 'false && '}grep -q '^[[:space:]]*error regexp' "$3"; then f='"error":{"filter":"regexp","regexp":"-'$gt'[^ ]+","value":"-'$gt'client"}'; fi
 if grep -q '^[[:space:]]*request delete' "$3"; then [ -z "$f" ] || f="$f,"; f="$f"'"request":{"filter":"delete"}'; fi
-` + (adaptOk ? `echo '{"logging":{"logs":{"${logger}":{"encoder":${enc}}}},"apps":{}}'\n` : `echo '{}'\n`), { mode: 0o755 });
+` + (adaptOk ? `echo '{"logging":{"logs":{${before ? '"access":{"encoder":{"format":"json"},"include":["http.log.access"]},' : ''}"${logger}":{"encoder":${enc}}}},"apps":{}}'\n` : `echo '{}'\n`), { mode: 0o755 });
     writeFileSync(join(dir, 'Caddyfile'), caddyfile);
     const part = script('bootstrap.sh').match(/# >>> caddy-log-filter[\s\S]*# <<< caddy-log-filter/)[0];
     writeFileSync(join(dir, 'run.sh'), `set -euo pipefail\nPATH="$PWD/bin:$PATH"\n${part}\ncaddy_log_filter Caddyfile\necho "added=$caddy_filter_added"\n`);
@@ -159,7 +161,8 @@ test('bootstrap.sh Caddy guard: the filter in a site log block only does not cou
 });
 
 test('bootstrap.sh Caddy guard: the adapted config must carry both filters on the default logger', () => {
-  assert.equal(runGuard('import sites/*\n', { wrapFirst: true }).status, 0, '2.6.2 key order passes');
+  assert.equal(runGuard('import sites/*\n', { wrapFirst: true }).status, 0, 'another key order passes');
+  assert.equal(runGuard('import sites/*\n', { before: true }).status, 0, 'a named logger sorting before default passes');
   const other = runGuard('import sites/*\n', { logger: 'log0' });
   assert.notEqual(other.status, 0);
   assert.match(other.err, /does not apply the log filter to the default logger/);

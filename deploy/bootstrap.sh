@@ -54,9 +54,10 @@ CADDY
     caddy_filter_added=1
   fi
   adapted=$(caddy adapt --config "$file" --adapter caddyfile 2>/dev/null) || caddy_fail "$file does not adapt."
-  # Both filters, on the default logger: its encoder object, whatever the key order (2.11.7 adapts it as fields, format,
-  # wrap, staging 2026-11-13; 2.6.2's FilterEncoder struct lists wrap first) and with ">" escaped as backslash-u003e (2.11.7) or not.
-  enc=$(grep -oE '"logs":\{"default":\{("writer":\{[^{}]*\},)?"encoder":\{([^{}]|\{([^{}]|\{[^{}]*\})*\})*\}' <<<"$adapted") || true
+  # Both filters, on the default logger: its encoder object, wherever "default" sorts among the named loggers. Both
+  # versions adapt the encoder as fields, format, wrap (2.11.7 on staging and 2.6.2 on prod, 2026-11-13; the keys are
+  # sorted), and either key order passes here. ">" may be escaped as backslash-u003e or not.
+  enc=$(grep -oE '[{,]"default":\{("writer":\{[^{}]*\},)?"encoder":\{([^{}]|\{([^{}]|\{[^{}]*\})*\})*\}' <<<"$adapted") || true
   { grep -qF '"request":{"filter":"delete"}' <<<"$enc" \
     && grep -qE '"error":\{"filter":"regexp","regexp":"-(\\u003e|>)\[\^ \]\+","value":"-(\\u003e|>)client"\}' <<<"$enc"; } \
     || caddy_fail "$file does not apply the log filter to the default logger."

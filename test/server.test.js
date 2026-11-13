@@ -586,3 +586,25 @@ test('play outcomes /v1/o/<who>/<platform>/<plan>/<outcome>: 200 at once, counte
   for (let i = 0; i < 6; i++) assert.equal((await s.get('/v1/o/visitor/pc/link/left')).status, 200);
   assert.ok(incs.filter((x) => x === 'play_outcome:visitor:pc:link:left').length <= 4);
 });
+
+// #274 verifier P2 (2026-10-31): `who` is the client's word, so one client must not use up the ceiling or write tester
+// lines without end. Over its own limit: the same answer, no count, no log line, and the ceiling is left for others.
+test('play outcomes: a per-client limit (OUTCOME_PER_MINUTE_PER_IP) keeps one client from the ceiling and the log', async (t) => {
+  const lines = [];
+  const incs = [];
+  const metrics = { inc: (m, k) => incs.push(`${m}:${k}`), gauge() {}, latency() {}, shard() {}, flush() { return 0; }, start() { return this; }, close() {} };
+  const s = await start({ log: (l) => lines.push(l), metrics, config: { ...config, outcomeCapPerMinute: 5, outcomePerMinutePerIp: 3 } });
+  t.after(() => s.server.close());
+  const from = (ip, p) => fetch(`${s.base}${p}`, { headers: { 'x-forwarded-for': ip } });
+  for (let i = 0; i < 6; i++) {
+    const r = await from('203.0.113.7', '/v1/o/tester/pc/link/f5');
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { ok: true });
+  }
+  const counted = () => incs.filter((x) => x.startsWith('play_outcome:')).length;
+  assert.equal(counted(), 3, 'one client: its own 3, not the ceiling of 5');
+  assert.equal(lines.map((l) => JSON.parse(l)).filter((e) => e.event === 'play_outcome').length, 3, 'no tester line past its limit');
+  for (let i = 0; i < 2; i++) await from('198.51.100.9', '/v1/o/visitor/android/home/f10');
+  assert.equal(counted(), 5, 'another client still counts: the first one took only 3 of the ceiling');
+  assert.ok(!lines.some((l) => l.includes('203.0.113.7') || l.includes('198.51.100.9')), 'no address in any line');
+});

@@ -31,6 +31,9 @@ export const config = {
   // A video player's ticket loads a minute per client IP, counted apart (429 rate_limited over it, which the world shows
   // as a load error): 6 players behind one NAT, each resolver + player + a Quest's retry every 6 s, is ~150, so 600.
   ticketPlayerPerMinutePerIp: int('TICKET_PLAYER_PER_MINUTE_PER_IP', 600),
+  // Play outcomes (/v1/o, world #274) a minute per client IP; over it the answer is the same and nothing is counted or
+  // logged. Each client sends one per play, so even several players behind one NAT stay far under 30. 0 = no per-IP limit.
+  outcomePerMinutePerIp: int('OUTCOME_PER_MINUTE_PER_IP', 30),
   // Each visitor's (client IP's) daily allowance for new builds, Tunelio and home together (src/allowance.js, where the
   // defaults are worked out from prod): Tunelio credits, home sessions, home MB (expected size). Any one used up: no new
   // build anywhere, the play gets youtube.com. 0 = no limit. Trusted IPs x TRUSTED_IP_FACTOR.

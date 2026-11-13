@@ -1088,14 +1088,29 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // load baked addresses, so the address is the whole message. A fixed ceiling per minute keeps a script from swamping the
   // rate on the dashboard; over it the answer is the same and nothing is counted. Only a tester's outcome gets a log line,
   // for lining up a test run: a visitor's leaves the plain request line alone.
+  // Per client too (OUTCOME_PER_MINUTE_PER_IP, on the keyed code): `who` is the client's own word, so without it one script
+  // could use up the ceiling and silence everyone's counts, or write tester log lines without end (verifier P2 on
+  // 9fbda4e, 2026-10-31). A client over its own limit gets the same answer, is not counted, takes nothing from the
+  // ceiling and writes no log line (src/config.js has the default's reasoning).
   const outcomeCap = config.outcomeCapPerMinute ?? 600;
   let outcomeMinute = 0, outcomeSeen = 0;
+  const outcomeHits = new Map(); // code(ip) → timestamps
+  function outcomeOverIp(ip) {
+    const limit = perIp(config.outcomePerMinutePerIp ?? 30, ip);
+    if (!(limit > 0)) return false;
+    const now = Date.now();
+    const list = (outcomeHits.get(ip) ?? []).filter((t) => now - t < 60_000);
+    if (list.length >= limit) return true;
+    return !touch(outcomeHits, ip, [...list, now], config.rateKeysMax ?? 10_000, now);
+  }
   function playOutcome(req, res, who, platform, plan, outcome) {
-    const minute = Math.floor(Date.now() / 60_000);
-    if (minute !== outcomeMinute) { outcomeMinute = minute; outcomeSeen = 0; }
-    const counted = ++outcomeSeen <= outcomeCap;
-    if (counted) metrics.inc('play_outcome', `${who}:${platform}:${plan}:${outcome}`);
-    if (who === 'tester') logJson({ event: 'play_outcome', who, platform, plan, outcome, counted });
+    if (!outcomeOverIp(clientKey(req))) {
+      const minute = Math.floor(Date.now() / 60_000);
+      if (minute !== outcomeMinute) { outcomeMinute = minute; outcomeSeen = 0; }
+      const counted = ++outcomeSeen <= outcomeCap;
+      if (counted) metrics.inc('play_outcome', `${who}:${platform}:${plan}:${outcome}`);
+      if (who === 'tester') logJson({ event: 'play_outcome', who, platform, plan, outcome, counted });
+    }
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     if (req.method === 'HEAD') return res.end();
     return res.end('{"ok":true}');

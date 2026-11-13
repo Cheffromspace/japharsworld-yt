@@ -380,10 +380,13 @@ export class Adaptive {
   // Only the playlist's head is read for the EXT-X-MAP line (2026-10-23, Quest: a fresh 1080p HLS playlist took over
   // 15 s to arrive whole, and the play waited for it), and concurrent asks for the same build share one read.
   // A progressive build (an mp4, format 'progressive') is read from the file's own head instead (#mp4Codec).
-  codec(job) {
+  // timeoutMs: the mp4 read's limit for this ask (Everything-is-OK#749: the Quest's player, held up to 90 s, waits longer
+  // than a resolver). A read already in flight is shared whatever its limit. After the read, job.codec still undefined
+  // means it failed (server.js then doesn't pin the answer, so the next ask reads again).
+  codec(job, { timeoutMs } = {}) {
     if (!job || job.state !== 'ready') return Promise.resolve(null);
     if (job.codec !== undefined) return Promise.resolve(job.codec);
-    job.codecRead ??= (job.format === 'progressive' ? this.#mp4Codec(job) : this.#readCodec(job)).finally(() => { job.codecRead = null; });
+    job.codecRead ??= (job.format === 'progressive' ? this.#mp4Codec(job, timeoutMs ?? this.mp4CodecMs) : this.#readCodec(job)).finally(() => { job.codecRead = null; });
     return job.codecRead;
   }
 
@@ -394,10 +397,10 @@ export class Adaptive {
   // and cancelled at 64 KB, in case Range is ignored. A file with moov at its end, or no stsd in the head, is null and
   // kept (the file doesn't change); a failed read is null and not kept, so the next play asks again. Short timeout: a
   // player is held while this reads, and unknown keeps the answer as before.
-  async #mp4Codec(job) {
+  async #mp4Codec(job, timeoutMs = this.mp4CodecMs) {
     const t0 = Date.now();
     try {
-      const res = await this.fetch(job.url, { headers: { range: 'bytes=0-65535' }, signal: AbortSignal.timeout(this.mp4CodecMs) });
+      const res = await this.fetch(job.url, { headers: { range: 'bytes=0-65535' }, signal: AbortSignal.timeout(timeoutMs) });
       if (res.status !== 200 && res.status !== 206) {
         try { await res.body?.cancel(); } catch { /* ignore */ }
         this.log({ event: 'adaptive_codec_error', id: job.id, quality: job.quality, status: res.status, ms: Date.now() - t0 });

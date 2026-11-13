@@ -1279,6 +1279,16 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       let c = null;
       let hlsQ = null; // the HLS build's quality of a .m3u8 ticket's Tunelio play (#584)
       let av1Play = false; // a Quest answered with Tunelio's AV1 build while home is on: its pin gives way to home (#625)
+      // Everything-is-OK#749: an mp4 codec read (#741's, or the Quest's below) that failed or timed out leaves job.codec
+      // undefined and the answer as before. That answer is not pinned, so the next ask reads again instead of keeping a
+      // possibly AV1 file for the pin's window (staging 2026-11-13 18:23Z: the Quest's 720p read timed out at 3 s, the AV1
+      // file was pinned, and the Quest sat on "Connecting").
+      let codecUnread = false;
+      const readCodec = async (job, opts) => {
+        const codec = await adaptive.codec?.(job, opts);
+        if (adaptive.codec && job?.state === 'ready' && job.format === 'progressive' && job.codec === undefined) codecUnread = true;
+        return codec;
+      };
       if (!where) {
         c = await choice(shard, t.data);
         // The plan's own /create (or another play's) just timed out: home now, not another /create that would likely
@@ -1398,7 +1408,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         let pcAv1 = null; // the AV1 build's quality
         if (config.pcAv1 && !hlsTicket && !android && !questResolver && !c.hls && where.ready && where.via === 'tunelio') {
           const job = playback.peek?.(t.data, c.quality);
-          if (job?.url === where.location && await adaptive.codec?.(job) === 'av1') {
+          if (job?.url === where.location && await readCodec(job) === 'av1') {
             pcAv1 = c.quality;
             metrics.inc('adaptive', 'pc_av1');
             // Not when this request already held on a home session (one hold, not two, as for the Quest above): that is a
@@ -1443,7 +1453,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           }
           let to = where.via === 'tunelio' ? 'lower' : where.via;
           const job = where.ready && where.via === 'tunelio' ? playback.peek?.(t.data, c.quality) : null;
-          if (job?.url === where.location && (c.quality === pcAv1 || await adaptive.codec?.(job) === 'av1')) {
+          if (job?.url === where.location && (c.quality === pcAv1 || await readCodec(job) === 'av1')) {
             where = { location: `https://www.youtube.com/watch?v=${t.data.id}`, via: 'youtube', reason: 'av1', ready: true };
             to = 'youtube';
           }
@@ -1458,8 +1468,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         // the room on the Quest's own pick, as for restricted; world #420), not pinned, and
         // the ticket's .m3u8 status says too_long too (questRefused), as that is where the Quest's world hears it.
         if (config.questAv1 && !hlsTicket && (android || questResolver) && !c.hls && where.ready && where.via === 'tunelio') {
+          // The Quest's player is held up to 90 s, so its read gets QUEST_AV1_READ_SECONDS (10) instead of 3 s: a 720p
+          // build first read cold took over 3 s (staging 2026-11-13 18:23Z). The resolver keeps 3 s (its 12 s hold).
+          const questRead = resolver ? {} : { timeoutMs: config.questAv1ReadMs };
           const job = playback.peek?.(t.data, c.quality);
-          if (job?.url === where.location && await adaptive.codec?.(job) === 'av1') {
+          if (job?.url === where.location && await readCodec(job, questRead) === 'av1') {
             const from = c.quality;
             metrics.inc('adaptive', 'quest_av1');
             let to = 'none', rung = null;
@@ -1481,7 +1494,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
                 to = null;
                 break;
               }
-              if (lowJob?.url === where.location && !/[?&]hls=1$/.test(where.location) && await adaptive.codec?.(lowJob) !== 'av1') { to = 'lower'; rung = low; break; }
+              if (lowJob?.url === where.location && !/[?&]hls=1$/.test(where.location) && await readCodec(lowJob, questRead) !== 'av1') { to = 'lower'; rung = low; break; }
             }
             if (to) logJson({ event: 'quest_av1', shard, n, id: t.data.id, quality: from, ...(rung ? { rung } : {}), client: kind, to });
             if (to === 'none') {
@@ -1555,7 +1568,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       countPlay(shard, t.data, { via, reason, location }, playPlatform(req.headers['user-agent'], hlsTicket));
       lastAnswer.set(shard, { n, via, reason, quality: where.session?.quality ?? c?.quality, hls: where.session ? true : c?.hls, mode: c?.mode });
       if (warmed.delete(`${shard}:${t.data.id}`)) metrics.inc('warm_played');
-      if (config.ticketPin && via !== 'youtube') {
+      if (config.ticketPin && via !== 'youtube' && !codecUnread) {
         const session = via === 'home' ? where.session ?? null : null;
         const job = !session && c ? playback.peek?.(t.data, c.quality, { hls: c.hls }) : null;
         if (session || job?.url) {

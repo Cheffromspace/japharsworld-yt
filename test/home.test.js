@@ -2071,7 +2071,7 @@ test('ticket → home (#577): a PC player of a video over HOME_STAY_HOURS stays 
 
 // Everything-is-OK#741: a PC player on a plain ticket whose Tunelio mp4 is AV1. Progressive jobs per quality; the
 // codec is read from the mp4's head, with ftyp naming both avc1 and av01 so only the stsd entry decides.
-function pcAv1Fakes({ codecs = { '1080p': 'av01', '720p': 'avc1' }, holdMs = 0, answers = {} } = {}) {
+function pcAv1Fakes({ codecs = { '1080p': 'av01', '720p': 'avc1' }, holdMs = 0, answers = {}, delays = {} } = {}) {
   const jobs = {};
   const job = (q) => (jobs[q] ??= { id: 'aaaaaaaaaaa', quality: q, format: 'progressive', state: 'ready', url: `https://tunelio.dev/t?q=${q}&progressive=1` });
   const asked = [];
@@ -2086,21 +2086,28 @@ function pcAv1Fakes({ codecs = { '1080p': 'av01', '720p': 'avc1' }, holdMs = 0, 
       return { location: j.url, via: 'tunelio', quality, ready: true };
     } };
   const reads = [];
-  const fetcher = async (u) => {
+  // delays[q]: ms before the read answers (#749), aborted by the read's own timeout signal as a real fetch is.
+  const fetcher = async (u, opts = {}) => {
     reads.push(u);
     const q = /[?&]q=(\d+p)/.exec(u)?.[1];
+    if (delays[q]) {
+      await new Promise((resolve, reject) => {
+        const tm = setTimeout(resolve, delays[q]);
+        opts.signal?.addEventListener('abort', () => { clearTimeout(tm); reject(opts.signal.reason ?? new Error('aborted')); });
+      });
+    }
     return new Response(`\0\0\0\x20ftypisom\0\0\0\0isomavc1av01mp41\0\0\x10\0moov....trak....stsd\0\0\0\0\0\0\0\x01\0\0\0\xa0${codecs[q]}....`, { status: 206 });
   };
   return { playback, fetcher, asked, reads };
 }
 const PC_PLAYER = 'NSPlayer/12.00.26100 WMFSDK/12.00';
 const PC_RESOLVER = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
-async function pcAv1App(t, { config = {}, fakes = {}, ...over } = {}) {
+async function pcAv1App(t, { config = {}, fakes = {}, mp4CodecMs, ...over } = {}) {
   const { Adaptive } = await import('../src/adaptive.js');
   const f = pcAv1Fakes(fakes);
   const logs = [];
   const app = await homeApp(t, { config: { ticketPin: true, ticketPinMarginMs: 60_000, ...config }, playback: f.playback,
-    adaptive: new Adaptive({ playback: f.playback, fetcher: f.fetcher, base: 'http://pub/hls', log: (o) => logs.push(o) }), tunelio: { enabled: true },
+    adaptive: new Adaptive({ playback: f.playback, fetcher: f.fetcher, base: 'http://pub/hls', log: (o) => logs.push(o), ...(mp4CodecMs ? { mp4CodecMs } : {}) }), tunelio: { enabled: true },
     log: (line) => logs.push(JSON.parse(line)), ...over });
   app.store.setQuality(0, '1080p'); // the room's 1080p pick: a direct progressive 1080p play, as staging's direct plan
   return { ...app, ...f, logs };
@@ -2323,6 +2330,41 @@ for (const [answer, to, ua, status, why] of [['building', 'building', QUEST_YTDL
     assert.deepEqual(app.logs.filter((e) => e.event === 'quest_av1').map((e) => [e.rung, e.to]), [['480p', to]]);
   });
 }
+
+// Staging 2026-11-13 18:23Z (T2 run 1): the Quest's 720p read timed out at 3 s and the AV1 file was pinned. Here the
+// resolver-style limit is 200 ms and the Quest player's 1000 ms; a read taking 500 ms fails the one and passes the other.
+test('#749: the Quest player\'s read gets QUEST_AV1_READ_SECONDS: a 500 ms read that a 200 ms limit drops still finds AV1, so 480p', async (t) => {
+  const app = await pcAv1App(t, { mp4CodecMs: 200, config: { questAv1ReadMs: 1000 },
+    fakes: { codecs: { '1080p': 'av01', '720p': 'av01', '480p': 'avc1' }, delays: { '720p': 500 } } });
+  assert.match((await app.play(QUEST, '')).headers.get('location'), /q=480p&progressive=1$/);
+  assert.equal(app.logs.filter((e) => e.event === 'adaptive_codec_error').length, 0);
+});
+
+test('#749: a Quest read that times out keeps the old answer unpinned, and the next ask reads again and takes the 480p', async (t) => {
+  const delays = { '720p': 500 };
+  const app = await pcAv1App(t, { mp4CodecMs: 200, config: { questAv1ReadMs: 300 },
+    fakes: { codecs: { '1080p': 'av01', '720p': 'av01', '480p': 'avc1' }, delays } });
+  assert.match((await app.play(QUEST, '')).headers.get('location'), /q=720p&progressive=1$/, 'unknown: the old answer');
+  assert.equal(app.logs.filter((e) => e.event === 'adaptive_codec_error').length, 1);
+  delete delays['720p']; // the file's first bytes now come at once
+  assert.match((await app.play(QUEST, '')).headers.get('location'), /q=480p&progressive=1$/, 'not pinned: read again');
+  assert.deepEqual(app.logs.filter((e) => e.event === 'mp4_codec').map((e) => [e.quality, e.found]), [['720p', 'av1'], ['480p', 'h264']]);
+});
+
+test('#749 (#741\'s gap): a PC read that times out keeps the old answer unpinned, and the next ask reads again', async (t) => {
+  const delays = { '1080p': 500 };
+  const app = await pcAv1App(t, { mp4CodecMs: 200, config: { homeRelay: false }, fakes: { delays } });
+  assert.match((await app.play(PC_PLAYER, '')).headers.get('location'), /q=1080p&progressive=1$/, 'unknown: the old answer');
+  delete delays['1080p'];
+  assert.match((await app.play(PC_PLAYER, '')).headers.get('location'), /q=720p&progressive=1$/, 'not pinned: read again, AV1, the 720p rung');
+});
+
+test('#749: the Quest\'s resolver keeps the short read limit', async (t) => {
+  const app = await pcAv1App(t, { mp4CodecMs: 200, config: { questAv1ReadMs: 1000 },
+    fakes: { codecs: { '1080p': 'av01', '720p': 'av01', '480p': 'avc1' }, delays: { '720p': 500 } } });
+  assert.match((await app.play(QUEST_YTDLP, '')).headers.get('location'), /q=720p&progressive=1$/);
+  assert.equal(app.logs.filter((e) => e.event === 'adaptive_codec_error').length, 1);
+});
 
 test('#749: QUEST_AV1_QUALITIES empty: an AV1 720p goes straight to "can\'t be played here", no 360p build', async (t) => {
   const app = await pcAv1App(t, { config: { questAv1Qualities: [] }, fakes: AV1_720 });

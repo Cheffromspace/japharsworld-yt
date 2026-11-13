@@ -363,7 +363,10 @@ test('server: tickets answer the tablet, the resolver and the player differently
   const playback = new Playback({ tunelio: fakeTunelio({ expires: Math.floor(Date.now() / 1000) + 3600 }), probe });
   const counted = [];
   const metrics = { inc: (m, k) => counted.push(k ? `${m}:${k}` : m), gauge() {}, latency(m) { counted.push(m); }, shard() {}, flush() {}, start() { return this; }, close() {} };
-  const app = createApp({ config: { ...base, shards: 1, pool: 50, ticketResolverHoldMs: 50, ticketPlayerHoldMs: 5000 }, store, youtube, playback, metrics, tunelio: { enabled: true }, log: () => {} });
+  // pcAv1 off: this test isn't about AV1, and with it on the PC codec read fetched the fake tunnel link over the network
+  // (a 422 from tunelio.dev, 2026-11-13); a failed read now sends the resolver on (Everything-is-OK#749), so line 399's 302
+  // depended on that network answer.
+  const app = createApp({ config: { ...base, shards: 1, pool: 50, ticketResolverHoldMs: 50, ticketPlayerHoldMs: 5000, pcAv1: false }, store, youtube, playback, metrics, tunelio: { enabled: true }, log: () => {} });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());

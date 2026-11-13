@@ -2464,13 +2464,54 @@ test('#749 (#741\'s gap): a PC read that times out keeps the old answer unpinned
   assert.match((await app.play(PC_PLAYER, '')).headers.get('location'), /q=720p&progressive=1$/, 'not pinned: read again, AV1, the 720p rung');
 });
 
-test('#749: the resolver keeps the short read limit: a 500 ms read times out at 200 ms, the old answer, unpinned', async (t) => {
-  const delays = { '1080p': 500 };
-  const app = await pcAv1App(t, { mp4CodecMs: 200, config: { questAv1ReadMs: 1000 }, fakes: { codecs: { '1080p': 'av01', '720p': 'av01' }, delays } });
-  assert.match((await app.play(QUEST_YTDLP, '')).headers.get('location'), /q=1080p&progressive=1$/);
-  assert.equal(app.logs.filter((e) => e.event === 'adaptive_codec_error').length, 1);
-  delete delays['1080p'];
-  assert.equal((await app.play(QUEST_YTDLP, '')).status, 200, 'not pinned: read again, AV1, sent on');
+// Verifier round 4 (M1): a resolver whose read times out may be a Quest's handed an AV1 file: sent on, and the player
+// reads with its own limit.
+test('#749: a resolver whose 3 s read times out is sent on (reason unread); the Quest player then reads with its own limit', async (t) => {
+  const app = await pcAv1App(t, { mp4CodecMs: 200, config: { questAv1ReadMs: 1000 },
+    fakes: { codecs: { '1080p': 'av01', '720p': 'av01', '480p': 'avc1' }, delays: { '1080p': 500, '720p': 500 } } });
+  assert.equal((await app.play(QUEST_YTDLP, '')).status, 200, 'not the unread 1080p file');
+  assert.equal(app.logs.find((e) => e.event === 'play_defer')?.reason, 'unread');
+  assert.match((await app.play(QUEST, '')).headers.get('location'), /q=480p&progressive=1$/);
+});
+
+// Verifier round 4 (H1, H2, M2): the resolver is sent on only when its player would get a session or a file; once a PC
+// player of the ticket got youtube.com, the resolver gets it too. OVER_HOME: a visitor over their daily home allowance.
+const OVER_HOME = { over: (ip, { home = false } = {}) => (home ? 'home_builds' : null), charge: () => () => {}, state: () => ({}), sweep() {} };
+
+test('#749 probe A: Tunelio off and the visitor over their home allowance: the resolver gets youtube.com every time, as before', async (t) => {
+  const app = await pcAv1App(t, { allowance: OVER_HOME, tunelio: { enabled: false }, fakes: { codecs: { '1080p': 'avc1' }, answers: { '1080p': 'failed' } } });
+  for (let i = 0; i < 3; i++) assert.equal((await app.play(PC_RESOLVER, '')).headers.get('location'), 'https://www.youtube.com/watch?v=aaaaaaaaaaa', `ask ${i + 1}`);
+  assert.equal(app.jobs.length, 0);
+});
+
+test('#749 probe C: a long video and the visitor over their home allowance: the resolver gets youtube.com every time, not sent on', async (t) => {
+  const app = await pcAv1App(t, { allowance: OVER_HOME, config: { homeLongMinutes: 5 }, fakes: { codecs: { '1080p': 'avc1' }, answers: { '1080p': 'allowance' } } });
+  for (let i = 0; i < 3; i++) assert.equal((await app.play(PC_RESOLVER, '')).headers.get('location'), 'https://www.youtube.com/watch?v=aaaaaaaaaaa', `ask ${i + 1}`);
+  assert.equal(app.logs.filter((e) => e.event === 'play_defer').length, 0);
+});
+
+test('#749 probe D: home off, an AV1 1080p and a failed 720p: the PC player gets youtube.com and then so does the resolver; a later 720p file clears that', async (t) => {
+  const answers = { '720p': 'failed' };
+  const app = await pcAv1App(t, { config: { homeRelay: false }, fakes: { codecs: { '1080p': 'av01', '720p': 'avc1' }, answers } });
+  assert.equal((await app.play(PC_RESOLVER, '')).status, 200, 'AV1: sent on to the player');
+  assert.equal((await app.play(PC_PLAYER, '')).headers.get('location'), 'https://www.youtube.com/watch?v=aaaaaaaaaaa');
+  for (let i = 0; i < 2; i++) assert.equal((await app.play(PC_RESOLVER, '')).headers.get('location'), 'https://www.youtube.com/watch?v=aaaaaaaaaaa', `resolver ask ${i + 2}`);
+  delete answers['720p']; // the 720p builds now
+  assert.match((await app.play(PC_PLAYER, '')).headers.get('location'), /q=720p&progressive=1$/);
+  assert.equal((await app.play(PC_RESOLVER, '')).status, 200, 'the mark is gone: sent on again (verifier L1)');
+});
+
+// homeWhy already answers tunelio_slow when Tunelio was slow before the request; the later branch is for a /create that
+// timed out during this request's plan (choice). The fake reads "not slow" on its first check and "slow" after.
+test('#749 (M2): Tunelio slow during the plan: the resolver on a plain ticket is sent on without starting home; the PC player starts it', async (t) => {
+  let checks = 0;
+  const tunelio = { enabled: true, get timedOutAt() { return checks++ === 0 ? 0 : Date.now(); } };
+  const app = await pcAv1App(t, { tunelio, fakes: { codecs: { '1080p': 'avc1' } } });
+  assert.equal((await app.play(PC_RESOLVER, '')).status, 200);
+  assert.equal(app.logs.find((e) => e.event === 'play_defer')?.reason, 'player');
+  assert.equal(app.jobs.length, 0, 'the resolver started no home session');
+  assert.match((await app.play(PC_PLAYER, '')).headers.get('location'), /\/home\//);
+  assert.equal(app.logs.find((e) => e.event === 'build_route' && e.via === 'home')?.why, 'tunelio_slow');
 });
 
 // Verifier round 3's case: a lower plan (the room's 720p) whose 720p is AV1, and home can't take it.
@@ -2481,7 +2522,8 @@ test('#749 (B): a lower-plan AV1 720p with home off: the resolver is sent on, th
   assert.match((await app.play(QUEST, '')).headers.get('location'), /q=480p&progressive=1$/);
   assert.equal((await app.play(PC_PLAYER, '')).headers.get('location'), 'https://www.youtube.com/watch?v=aaaaaaaaaaa');
   assert.equal((await app.play(QUEST_YTDLP, '')).headers.get('location'), 'https://www.youtube.com/watch?v=aaaaaaaaaaa', 'after the PC got youtube.com');
-  assert.deepEqual(app.logs.filter((e) => e.event === 'pc_av1').map((e) => [e.client, e.to]), [['ytdlp', 'player'], ['avpro', 'youtube'], ['ytdlp', 'youtube']]);
+  // The second resolver ask is answered from the PC player's youtube.com (pcYoutube) before the AV1 gate: no pc_av1 line.
+  assert.deepEqual(app.logs.filter((e) => e.event === 'pc_av1').map((e) => [e.client, e.to]), [['ytdlp', 'player'], ['avpro', 'youtube']]);
 });
 
 // A long video on a plain ticket (#590's rows; HOME_LONG_MINUTES 5 for the 600 s test video), all H.264.

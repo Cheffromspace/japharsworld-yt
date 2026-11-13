@@ -379,6 +379,10 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   async function seekRun(start) {
     const seconds = start * segLen - 1; // so the keyframe is at least 1 s before the first cut, never on it
     if (start < 1) return null;
+    // No seg0 time (keyframe cuts never probe it, see pass(); or its probe failed): no run can be placed, so give up before
+    // the two source probes (up to 30 s each). A keyframe-cut build whose run 0 ended short reached here from fill() and
+    // spent both on the home source before giving up (verifier, 2026-11-13).
+    if (seg0At == null) { log({ event: 'media_seek_unplaced', to: start, cuts: 0 }); return null; }
     sourceAt ??= await probe(proxy.urls[0]);
     const at = await probe(proxy.urls[0], seconds);
     const cuts = [];

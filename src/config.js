@@ -171,6 +171,8 @@ export const config = {
   // that isn't AV1, else "can't be played here". QUEST_AV1_QUALITIES empty: straight to that answer.
   questAv1: (process.env.QUEST_AV1 ?? 'on') !== 'off',
   questAv1Qualities: (process.env.QUEST_AV1_QUALITIES ?? '480p,360p').split(',').map((q) => q.trim()).filter((q) => /^\d{3,4}p$/.test(q)),
+  // The Quest player's mp4 codec read limit (#749); 0 or less would fail every read, so it counts as the default.
+  questAv1ReadMs: (int('QUEST_AV1_READ_SECONDS', 10) > 0 ? int('QUEST_AV1_READ_SECONDS', 10) : 10) * 1000,
   // A .m3u8 ticket (Quest): Unity's Android player gets the mp4, and a long or HLS-failed play sends AVPro on at once so
   // VizVid reaches that player (src/server.js questMp4, Everything-is-OK#584). off: as before. Long: this many minutes,
   // or a file at the ticket's quality of this many MB once its size is known (0 = by length only).
@@ -187,6 +189,10 @@ export const config = {
   // it stays off until the fix for #393 is out.
   homeRaceMs: int('HOME_RACE_SECONDS', 0) * 1000,
   homeLongMinutes: int('HOME_LONG_MINUTES', 30),
+  // Segments on demand for far seeks (src/home.js "Segments on demand", Everything-is-OK#367): the server names the
+  // segment a player waits for in its upload answers (x-media-want), so the worker sends it next. Off (the default) is the
+  // in-order upload production had before it; on for staging while #727 (a black screen after far seeks) is open.
+  homeSeekWant: (process.env.HOME_SEEK_WANT ?? 'off') === 'on',
   // One source per ticket once playing (#293): a ticket's answer is kept per ticket and client kind while it is played
   // (until the video's length plus TICKET_PIN_MARGIN_MINUTES after its last play) instead of decided again on every
   // request, which sent one PC ticket home → Tunelio → home within a minute and its players reloaded from 0 (prod

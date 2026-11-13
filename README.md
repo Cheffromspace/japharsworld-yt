@@ -258,15 +258,33 @@ one, f331bcc) and never for live streams:
    And on a plain ticket for a PC player (`PC_AV1=on`, the default; Everything-is-OK#741): Tunelio's mp4 build is AV1, read
    from 64 KB of the file's head (the `stsd` sample entry). The resolver is sent on and AVPro reuses the home session.
    When home can't take it: the 720p rung, or youtube.com when that is AV1 as well. Counted as `adaptive`/`pc_av1`.
-   A Quest on a plain ticket (a pasted link, the long rows of Everything-is-OK#590; player or resolver) has its 720p mp4
+   A Quest's player on a plain ticket (a pasted link, the long rows of Everything-is-OK#590) has its 720p mp4
    read the same way (`QUEST_AV1=on`, the default; Everything-is-OK#749), but home is no use to it (HLS behind a plain
    ticket, see above) and neither is youtube.com: an AV1 build gets the first of `QUEST_AV1_QUALITIES` (480p, then 360p)
    whose mp4 isn't AV1, each read as well, else "can't be played here" (too_long's answer, not pinned; the resolver is sent
    on; the ticket's `.m3u8` status, which the Quest's tablet asks, says `too_long` too for the pin's window). The world
    then stops only the Quest when someone else picked the video, and skips it for the room on the Quest's own pick, as it
    does for too_long and restricted (world #420). Each Quest plain-ticket build's first play waits on that read, up to
-   3 s, once per build (cached); an AV1 video's first play can read three builds (720p, 480p, 360p), up to ~9 s of reads
-   plus the lower rungs' builds. Counted as `adaptive`/`quest_av1`.
+   3 s, once per build (cached); an AV1 video's first play can read three builds (720p, 480p, 360p): for the Quest's
+   player up to 10 s each, so up to ~30 s of reads plus the lower rungs' builds, which the reads don't count against the
+   90 s hold. The Quest player's reads may take `QUEST_AV1_READ_SECONDS` (10; resolvers 3 s; 0 counts as 10): a cold
+   720p read took over 3 s on staging (2026-11-13). A read that fails or times out (Quest or PC) leaves the answer as
+   before but not pinned, so the next ask reads again. Counted as `adaptive`/`quest_av1`.
+   **The resolver on a plain ticket** can't be told apart: a Quest's sends the same Windows Chrome UA as a PC's (staging
+   2026-11-13). So there it never starts a new home session: where home would answer and could start (the same limits
+   `startHome` checks), it is sent on (`play_defer` reason `player`) and the player starts it; where home couldn't, it
+   takes the usual path. It is also sent on when #741's read finds AV1 (`pc_av1` `to=player`) or the read fails
+   (reason `unread`); the player that asks next decides by its own UA (PC: home, 720p, youtube.com; Quest: 480p,
+   360p, "can't be played here"). A PC whose resolver used to start home now has its player start it, up to about 1 s
+   later (inferred, not measured; the tablet's status poll often starts home before either asks). An existing home
+   session still answers the resolver. Once a PC player of the ticket was answered with youtube.com (for any reason),
+   its resolver gets youtube.com too, until a PC player gets a file or home again: VRChat's resolver is what plays the
+   watch link on a PC. This is per client (the daily IP code): a Quest behind the same address (a household, every desk
+   test) shares it, so after that PC's youtube.com its resolver gets youtube.com too, and VRChat on the Quest then
+   resolves the watch link itself (observed for live streams, world #270; inferred for videos). If that plays, the
+   Quest's player never asks the ticket. With
+   `PC_AV1=off` there is no read on that path, so a Quest's resolver (a PC UA) gets the plan's mp4, AV1 or not, as before
+   #749.
 7. on a `.m3u8` ticket with `HOME_ANDROID=on`, `HOME_ANDROID_GROWING=on` and `HOME_RACE_SECONDS` above 0 (default 0, off): Tunelio's build is still
    running after that many seconds (`slow_build`). Home starts beside it and the player gets whichever is ready first
    (`home`/`race_won` when home wins). The build carries on for the next play. With `TICKET_PIN` all players of the ticket
@@ -325,7 +343,9 @@ space, less what the unfinished builds and it will still grow, stays above it (f
 first, `home_evict` why `disk`; otherwise `home_no_room` and the play goes elsewhere), and a build is stopped when free
 space falls under half of it (2026-10-30: two long 1080p plays filled the Linode's disk).
 
-**Seeking ahead** (Everything-is-OK#367): a segment a player waits for that isn't next in line (a seek past the upload)
+**Seeking ahead** (Everything-is-OK#367; `HOME_SEEK_WANT=on`, default off, so production keeps the in-order upload while
+Everything-is-OK#727, a black screen after far seeks on staging, is open; off is the pre-#367 upload on a keyframe-cut
+worker, while one with `RELAY_SPLIT_BY_TIME=on` still starts the fill runs below when run 0 stops short): a segment a player waits for that isn't next in line (a seek past the upload)
 is the session's want (`home_want`), named in every answer to the worker's uploads (`x-media-want`) until it is here. A
 copy from the worker's cache jumps there and sends the skipped segments at the end (`media_jump`). With players at
 different points, the newest want goes first, then any other segment a player is still held for; only segments the

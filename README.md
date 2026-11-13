@@ -279,7 +279,10 @@ one, f331bcc) and never for live streams:
    later (inferred, not measured; the tablet's status poll often starts home before either asks). An existing home
    session still answers the resolver. Once a PC player of the ticket was answered with youtube.com (for any reason),
    its resolver gets youtube.com too, until a PC player gets a file or home again: VRChat's resolver is what plays the
-   watch link on a PC. This is per client (the daily IP code): a Quest behind the same address shares it. With
+   watch link on a PC. This is per client (the daily IP code): a Quest behind the same address (a household, every desk
+   test) shares it, so after that PC's youtube.com its resolver gets youtube.com too, and VRChat on the Quest then
+   resolves the watch link itself (observed for live streams, world #270; inferred for videos). If that plays, the
+   Quest's player never asks the ticket. With
    `PC_AV1=off` there is no read on that path, so a Quest's resolver (a PC UA) gets the plan's mp4, AV1 or not, as before
    #749.
 7. on a `.m3u8` ticket with `HOME_ANDROID=on`, `HOME_ANDROID_GROWING=on` and `HOME_RACE_SECONDS` above 0 (default 0, off): Tunelio's build is still

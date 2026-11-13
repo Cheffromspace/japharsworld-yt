@@ -1442,6 +1442,36 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           }
           logJson({ event: 'pc_av1', shard, n, id: t.data.id, quality: pcAv1, client: kind, to, ...(where.ready === false ? { reason: 'building' } : {}) });
         } else if (pcAv1) logJson({ event: 'pc_av1', shard, n, id: t.data.id, quality: pcAv1, client: kind, to: where.via });
+        // Everything-is-OK#749: the Quest on a plain ticket (a pasted link, #590's long rows), player or resolver, read the
+        // same way. Its 720p mp4 can be AV1 too (staging 2026-11-13 15:43Z: spinner, only an audio decoder made), and #741's
+        // ladder has no step it can take: home is HLS, which it can't open behind a plain ticket (f331bcc); 720p is already
+        // its cap; youtube.com it can't open and re-asks every ~6 s (#420). So the 360p rung (QUEST_AV1_QUALITY), read as
+        // well: staging 2026-11-13, the 360p mp4 of the 15:43Z video, whose 720p read AV1, read avc1. Else "can't be played
+        // here" (too_long's answer, which stops this client alone; the PC in the room keeps its own source), not pinned.
+        if (config.questAv1 && !hlsTicket && (android || questResolver) && !c.hls && where.ready && where.via === 'tunelio') {
+          const job = playback.peek?.(t.data, c.quality);
+          if (job?.url === where.location && await adaptive.codec?.(job) === 'av1') {
+            const from = c.quality;
+            metrics.inc('adaptive', 'quest_av1');
+            const low = config.questAv1Quality;
+            let to = 'none';
+            if (low && parseInt(low, 10) < parseInt(from, 10)) {
+              c = { ...c, quality: low };
+              const left = Math.max(0, (resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs) - (Date.now() - started));
+              holding++;
+              try { where = await playback.location(t.data, { holdMs: left, quality: low, hls: false }); } finally { holding--; }
+              const lowJob = where.ready && where.via === 'tunelio' ? playback.peek?.(t.data, low) : null;
+              if (where.ready === false) to = 'building'; // the usual answers below: the resolver sent on, the player re-asks
+              else if (where.via === 'youtube' && overOwnLimit(where.reason)) to = 'limit'; // daily_limit's answer below
+              else if (lowJob?.url === where.location && !/[?&]hls=1$/.test(where.location) && await adaptive.codec?.(lowJob) !== 'av1') to = 'lower';
+            }
+            logJson({ event: 'quest_av1', shard, n, id: t.data.id, quality: from, client: kind, to });
+            if (to === 'none') {
+              logJson({ event: 'quest_no_source', shard, n, id: t.data.id, client: kind, reason: 'av1' });
+              return questResolver ? sendOn(res, shard, n, t, started, kind) : tooLongAnswer(res, kind, shard, n, t);
+            }
+          }
+        }
       }
       const held = Date.now() - started;
       metrics.latency('ticket_hold_ms', held);

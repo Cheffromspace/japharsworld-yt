@@ -2313,6 +2313,17 @@ test('#749: a failed 480p build goes on to the 360p rung', async (t) => {
   assert.deepEqual(app.logs.filter((e) => e.event === 'quest_av1').map((e) => [e.rung, e.to]), [['360p', 'lower']]);
 });
 
+// The resolver for building (sent on), the player for the limit (the resolver returns before the ladder's break).
+for (const [answer, to, ua, status, why] of [['building', 'building', QUEST_YTDLP, 200, 'still building at the end of the hold'],
+  ['allowance', 'limit', QUEST, 403, 'over the visitor\'s own limits']]) {
+  test(`#749: a 480p rung ${why} stops the ladder: no 360p build`, async (t) => {
+    const app = await pcAv1App(t, { fakes: { codecs: { '1080p': 'av01', '720p': 'av01', '480p': 'avc1', '360p': 'avc1' }, answers: { '480p': answer } } });
+    assert.equal((await app.play(ua, '')).status, status);
+    assert.deepEqual(app.asked.filter((q) => q === '360p'), [], 'no 360p asked');
+    assert.deepEqual(app.logs.filter((e) => e.event === 'quest_av1').map((e) => [e.rung, e.to]), [['480p', to]]);
+  });
+}
+
 test('#749: QUEST_AV1_QUALITIES empty: an AV1 720p goes straight to "can\'t be played here", no 360p build', async (t) => {
   const app = await pcAv1App(t, { config: { questAv1Qualities: [] }, fakes: AV1_720 });
   const p = await app.play(QUEST, '');

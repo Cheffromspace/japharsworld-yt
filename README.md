@@ -265,7 +265,8 @@ one, f331bcc) and never for live streams:
    on; the ticket's `.m3u8` status, which the Quest's tablet asks, says `too_long` too for the pin's window). The world
    then stops only the Quest when someone else picked the video, and skips it for the room on the Quest's own pick, as it
    does for too_long and restricted (world #420). Each Quest plain-ticket build's first play waits on that read, up to
-   3 s, once per build (cached). Counted as `adaptive`/`quest_av1`.
+   3 s, once per build (cached); an AV1 video's first play can read three builds (720p, 480p, 360p), up to ~9 s of reads
+   plus the lower rungs' builds. Counted as `adaptive`/`quest_av1`.
 7. on a `.m3u8` ticket with `HOME_ANDROID=on`, `HOME_ANDROID_GROWING=on` and `HOME_RACE_SECONDS` above 0 (default 0, off): Tunelio's build is still
    running after that many seconds (`slow_build`). Home starts beside it and the player gets whichever is ready first
    (`home`/`race_won` when home wins). The build carries on for the next play. With `TICKET_PIN` all players of the ticket

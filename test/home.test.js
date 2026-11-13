@@ -1361,7 +1361,8 @@ async function cachedSeekApp(t, { seekWant, SEGS = 300 }) {
     const seg = o?.method === 'PUT' && /seg(\d+)\.ts$/.exec(u);
     if (seg) await new Promise((r) => setTimeout(r, 20));
     const res = await fetch(u, o);
-    if (seg) answers.push([Number(seg[1]), res.headers.get('x-media-want')]);
+    // Stored uploads only: one the server refused (a 503 under load) is sent again by the worker and counted then.
+    if (seg && res.status === 204) answers.push([Number(seg[1]), res.headers.get('x-media-want')]);
     return res;
   };
   const wlogs = [];
@@ -1400,8 +1401,10 @@ test('HOME_SEEK_WANT off: a far seek on a cached copy leaves the upload in order
   while ((seg = await fetch(url + path.replace('index.m3u8', 'seg250.ts'))).status !== 200) await seg.arrayBuffer();
   assert.equal(await seg.text(), 'ts250');
   assert.ok(answers.filter(([n]) => n < 250).length >= 240, `seg250 came after the ones before it (${answers.length} uploads by then)`);
-  // The rest: waited for (the test runner's own timeout is the limit), not for a fixed time.
-  while (!lines.some((l) => l.includes('"event":"home_done"'))) await new Promise((r) => setTimeout(r, 50));
+  // The rest: waited for (the test runner's own timeout is the limit), not for a fixed time. The server logs home_done
+  // while it stores the last segment, before that upload's answer reaches the recorder above, so both are waited for
+  // (av2's full run, 2026-11-13: seg299 missing from `answers` under load).
+  while (!lines.some((l) => l.includes('"event":"home_done"')) || answers.length < SEGS) await new Promise((r) => setTimeout(r, 50));
   assert.ok(lines.some((l) => l.includes('"event":"home_done"') && l.includes(`"segments":${SEGS}`)));
   assert.deepEqual(answers.map(([n]) => n), Array.from({ length: SEGS }, (_, i) => i), 'seg0..seg299 in order, each once');
   assert.ok(answers.every(([, w]) => w === null), 'no answer names a want');

@@ -838,6 +838,64 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     // An AV1 play may start inside the start gap unless home is hammering YouTube (src/home.js limit, #764).
     return Boolean(home.worker({ av1: true })) && !home.blocks?.(data, hq) && !(homeRefused.get(data.id) > Date.now());
   }
+  // Why av1HomeFor said no (#764, verifier L4: the log says why, not just whether home was hammering): 'hammering' (the
+  // start gap, held for an AV1 play only then), 'cap_day', 'cap_hour', 'slots' (every stream taken or no worker),
+  // 'size' or 'hour_mb' (blocks), 'no_room' (a recent no-room refusal), else 'other'.
+  function av1Declined(data, hq) {
+    const l = home.limit?.({ av1: true });
+    if (l) return l === 'gap' ? 'hammering' : l === 'day' ? 'cap_day' : 'cap_hour';
+    if (!home.worker({ av1: true })) return 'slots';
+    const b = home.blocks?.(data, hq);
+    if (b) return b === 'big' ? 'size' : 'hour_mb';
+    if (homeRefused.get(data.id) > Date.now()) return 'no_room';
+    return 'other';
+  }
+  // #764 E, round 2 (owner 2026-11-14, time to first frame): a Quest's AV1 HLS play's lower rungs, all started at once
+  // when the read says AV1 instead of one after another (a 720p HLS of 170 MB took 33 s, claude/play-latency.md; three in
+  // a row could pass the 90 s hold). Each is held within the play's hold, then its codec read is capped at
+  // QUEST_AV1_HLS_READ_SECONDS (4) and the hold: a read that times out or fails plays unread (most rungs below an AV1
+  // build are H.264, #749), the read carrying on for the next ask. -> [{ q, promise -> { ok, unread, where, job } |
+  // { pending } (still building at the hold's end) | {} (failed, refused or AV1) }], best first.
+  function questRungsStart(data, from, started) {
+    const deadline = started + config.ticketPlayerHoldMs;
+    const rungs = [...new Set([adaptive.lower, ...config.questAv1Qualities])].filter((q) => q && parseInt(q, 10) < parseInt(from, 10));
+    return rungs.map((q) => ({ q, promise: (async () => {
+      const w = await playback.location(data, { holdMs: Math.max(0, deadline - Date.now()), quality: q, hls: true });
+      if (w.ready === false) return { q, pending: true };
+      const job = w.via === 'tunelio' ? playback.peek(data, q, { hls: true }) : null;
+      if (!job || job.url !== w.location) return { q };
+      let timer;
+      const capMs = Math.max(0, Math.min(config.questAv1HlsReadMs, deadline - Date.now()));
+      const codec = await Promise.race([Promise.resolve(adaptive.codec?.(job) ?? null).catch(() => null), new Promise((r) => { timer = setTimeout(() => r('timeout'), capMs); })]).finally(() => clearTimeout(timer));
+      if (codec === 'av1') return { q };
+      return { q, ok: true, unread: !codec || codec === 'timeout', where: w, job };
+    })().catch((err) => { logJson({ event: 'quest_rung_error', id: data.id, quality: q, message: String(err?.message ?? err).slice(0, 200) }); return { q }; }) }));
+  }
+  // The rung to answer with: the highest ready and not AV1 once every rung above it has settled, or after
+  // QUEST_AV1_GRACE_SECONDS (5) from the first good one, the best good one by then (a lower rung builds faster, so the
+  // Quest needn't wait the whole 720p build for a small step up); at the hold's end, the best good one so far.
+  // -> { ok, q, where, job, unread } or { ok: false, pending } (pending: a rung was still building at the hold's end).
+  function questRungPick(rungs, deadline) {
+    const results = Array(rungs.length).fill(undefined); // filled, not sparse: every() skips holes
+    return new Promise((resolve) => {
+      let grace = null, hold = null, done = false;
+      const finish = () => {
+        if (done) return;
+        done = true; clearTimeout(grace); clearTimeout(hold);
+        const best = results.find((r) => r?.ok);
+        resolve(best ? { ...best, ok: true } : { ok: false, pending: results.some((r) => !r || r.pending) });
+      };
+      const check = () => {
+        const first = results.findIndex((r) => r?.ok);
+        if (first < 0) { if (results.every(Boolean)) finish(); return; }
+        if (results.slice(0, first).every(Boolean)) return finish();
+        grace ??= setTimeout(finish, config.questAv1GraceMs);
+      };
+      hold = setTimeout(finish, Math.max(0, deadline - Date.now()));
+      if (!rungs.length) return finish();
+      rungs.forEach((r, i) => r.promise.then((v) => { results[i] = v; check(); }));
+    });
+  }
   // A home session for this play, counted once by why it went home (a session that is already there is just used),
   // and once as `stepdown` when it is 720p only for its length.
   // A video home just refused for room is not asked about again for a while (world #420, staging 2026-10-31: 52
@@ -1348,6 +1406,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // possibly AV1 file for the pin's window (staging 2026-11-13 18:23Z: the Quest's 720p read timed out at 3 s, the AV1
       // file was pinned, and the Quest sat on "Connecting").
       let codecUnread = false;
+      let rungPending = false; // #764 E: a rung still building at the hold's end: the AV1 answer isn't pinned (verifier M1)
       const readCodec = async (job, opts) => {
         const codec = await adaptive.codec?.(job, opts);
         if (adaptive.codec && job?.state === 'ready' && job.format === 'progressive' && job.codec === undefined) codecUnread = true;
@@ -1458,17 +1517,27 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         // H.264 + AAC (relay/media.js). Counted whether or not HOME_ANDROID is on, to show how often it happens.
         let homeFor = null;
         let questHlsAv1 = null; // #764: the AV1 HLS build's quality, for E below when home doesn't take the play
+        let questRungs = null; // #764 round 2: E's rung builds, started the moment the read says AV1 (questRungsStart)
+        let declined = null; // #764: why home didn't take that play (logged with E's answer)
         if (hlsTicket && !resolver && where.ready && where.via === 'tunelio' && c.hls) {
           const codec = await adaptive.codec?.(playback.peek(t.data, c.quality, { hls: true }));
           if (codec === 'av1') {
             metrics.inc('adaptive', 'android_av1');
             logJson({ event: 'android_av1', shard, n, id: t.data.id, quality: c.quality, home: homeOk && home.enabled });
-            if (config.questAv1 && c.single) questHlsAv1 = c.quality;
-            if (homeOk && home.enabled) {
+            if (config.questAv1 && c.single) {
+              questHlsAv1 = c.quality;
+              // Started now, before any home wait, so they build while home gets ready (round 2: time to first frame is the
+              // owner's priority, 2026-11-14; credits aren't). When home takes the play they are warmed builds nobody waits on.
+              questRungs = questRungsStart(t.data, questHlsAv1, started);
+            }
+            if (!(homeOk && home.enabled)) declined = 'home_off';
+            else {
               av1Play = true;
               // Not when this request already held on a home session (hs, slow or the race; it missed HOME_READY_SECONDS):
               // one hold, not two. Its Tunelio answer is pinned as AV1, so the next request goes home.
-              if (av1HomeFor(t.data, hq) && !waited.home) homeFor = 'av1';
+              if (waited.home) declined = 'home_ready';
+              else if (av1HomeFor(t.data, hq)) homeFor = 'av1';
+              else declined = av1Declined(t.data, hq);
             }
           }
         }
@@ -1515,39 +1584,40 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           // homeKeep: the video's session at another quality when this one can't be had (av1HomeFor counted it).
           const fallback = homeKeep(t.data, hq, startHome(shard, t.data, hq, homeFor));
           // Refused (allowance, caps, no room): home can't help this play, so its Tunelio pin stays as it is (#625 verifier).
-          if (homeFor === 'av1' && !fallback) av1Play = false;
+          if (homeFor === 'av1' && !fallback) {
+            av1Play = false;
+            const route = spendScope.getStore()?.route;
+            declined = /^(home_mb|allowance|cap)$/.test(route ?? '') ? route : 'no_room';
+          }
           if (fallback && fallback.state !== 'failed') {
             holding++;
             try { await home.wait(fallback, config.homeReadyMs); } finally { holding--; }
             if (fallback.state === 'ready') where = await homeWhere(fallback);
-          }
+            // Missed HOME_READY_SECONDS (home fails such a session with reason timeout, or it is still building): home_ready.
+            else if (homeFor === 'av1') declined = fallback.state === 'failed' && fallback.reason !== 'timeout' ? 'home_failed' : 'home_ready';
+          } else if (homeFor === 'av1' && fallback) declined = 'home_failed';
         }
-        // Everything-is-OK#764 (E, owner 2026-11-13 "D A unless we're hammering then E"): home didn't take a Quest's AV1
-        // HLS play (hammering YouTube, the day or hour cap, every stream taken, or HOME_ANDROID off): the first rung below
-        // it that isn't AV1 (720p, then QUEST_AV1_QUALITIES, 480p and 360p), each an HLS build read as above, instead of the
-        // AV1 file the Quest can't decode (staging 2026-11-13 23:29Z: it sat on a spinner and never asked again, so #625's
-        // pin that yields to home on the next ask never came into play). A rung whose read fails plays unread (most rungs
-        // below an AV1 build are H.264, #749). None: the AV1 answer and its #625 pin, as before.
-        if (questHlsAv1 && where.ready && where.via === 'tunelio') {
-          let rung = null;
-          const rungs = [...new Set([adaptive.lower, ...config.questAv1Qualities])].filter((q) => q && parseInt(q, 10) < parseInt(questHlsAv1, 10));
-          for (const low of rungs) {
-            const left = config.ticketPlayerHoldMs - (Date.now() - started);
-            if (left <= 0) break;
-            let w;
-            holding++;
-            try { w = await playback.location(t.data, { holdMs: left, quality: low, hls: true }); } finally { holding--; }
-            if (w.ready === false) break; // still building at the end of the hold: the AV1 answer now, the rung on a retry
-            const lowJob = w.ready && w.via === 'tunelio' ? playback.peek(t.data, low, { hls: true }) : null;
-            if (lowJob?.url !== w.location) continue; // failed or not ours: the next rung
-            if (await adaptive.codec?.(lowJob) === 'av1') continue;
-            c = { ...c, quality: low };
-            where = { ...w, location: adaptive.single(t.data, lowJob) };
-            rung = low;
+        // Everything-is-OK#764 (E, owner 2026-11-13 "D A unless we're hammering then E"; on cost, 2026-11-14: "we're nowhere
+        // near using all our tunelio credits per month, i'm mostly worried about latency to first frame"): home didn't take
+        // a Quest's AV1 HLS play (hammering YouTube, a day or hour cap, every stream taken, a refusal, HOME_ANDROID off, or
+        // home started but missed HOME_READY_SECONDS): the best rung below it that isn't AV1, instead of the AV1 file the
+        // Quest can't decode (staging 2026-11-13 23:29Z: it sat on a spinner and never asked again, so #625's pin that
+        // yields to home on the next ask never came into play). The rungs (720p, then QUEST_AV1_QUALITIES, 480p and 360p)
+        // were started together at the AV1 read (questRungsStart); questRungPick takes the highest whose build is ready and
+        // not AV1. None: the AV1 answer as before, pinned only when every rung is settled (one still building at the end of
+        // the hold leaves it unpinned, so the Quest's retry gets the rung: verifier M1).
+        if (questHlsAv1 && questRungs && where.ready && where.via === 'tunelio') {
+          holding++;
+          let pick;
+          try { pick = await questRungPick(questRungs, started + config.ticketPlayerHoldMs); } finally { holding--; }
+          if (pick.ok) {
+            c = { ...c, quality: pick.q };
+            where = { ...pick.where, location: adaptive.single(t.data, pick.job) };
             av1Play = false; // a playable source: a plain pin, which home doesn't take over mid-play
-            break;
-          }
-          logJson({ event: 'quest_av1', shard, n, id: t.data.id, quality: questHlsAv1, ...(rung ? { rung } : {}), client: kind, to: rung ? 'lower' : 'none', hls: true, hammering: home.enabled ? home.hammering?.() ?? null : null });
+            if (pick.unread) codecUnread = true; // read again on the next ask, as #749's unread rungs
+          } else rungPending = pick.pending;
+          logJson({ event: 'quest_av1', shard, n, id: t.data.id, quality: questHlsAv1, ...(pick.ok ? { rung: pick.q } : {}), client: kind,
+            to: pick.ok ? 'lower' : pick.pending ? 'building' : 'none', hls: true, declined, ...(pick.unread ? { reason: 'unread' } : {}), held: Date.now() - started });
         }
         // #741: home didn't take the PC's AV1 play: the 720p rung within what is left of the hold, unless that is AV1 too
         // (staging 2026-10-30 to 11-13: 4 of 30 Quest AV1 finds were 720p builds), then youtube.com. A 720p build that
@@ -1690,7 +1760,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       countPlay(shard, t.data, { via, reason, location }, playPlatform(req.headers['user-agent'], hlsTicket));
       lastAnswer.set(shard, { n, via, reason, quality: where.session?.quality ?? c?.quality, hls: where.session ? true : c?.hls, mode: c?.mode });
       if (warmed.delete(`${shard}:${t.data.id}`)) metrics.inc('warm_played');
-      if (config.ticketPin && via !== 'youtube' && !codecUnread) {
+      if (config.ticketPin && via !== 'youtube' && !codecUnread && !rungPending) {
         const session = via === 'home' ? where.session ?? null : null;
         const job = !session && c ? playback.peek?.(t.data, c.quality, { hls: c.hls }) : null;
         if (session || job?.url) {

@@ -173,6 +173,12 @@ export const config = {
   questAv1Qualities: (process.env.QUEST_AV1_QUALITIES ?? '480p,360p').split(',').map((q) => q.trim()).filter((q) => /^\d{3,4}p$/.test(q)),
   // The Quest player's mp4 codec read limit (#749); 0 or less would fail every read, so it counts as the default.
   questAv1ReadMs: (int('QUEST_AV1_READ_SECONDS', 10) > 0 ? int('QUEST_AV1_READ_SECONDS', 10) : 10) * 1000,
+  // Everything-is-OK#764 E (a Quest's AV1 HLS play home doesn't take): each lower rung's codec read is capped at this
+  // (and at the hold); on timeout the rung plays unread. A cached HLS read is under 1 s (the init segment, a few KB).
+  questAv1HlsReadMs: int('QUEST_AV1_HLS_READ_SECONDS', 4) * 1000,
+  // How long E waits for a higher rung once a lower one is ready and not AV1 (the rungs build at once; a lower one is
+  // ready first). 0 takes the first good one.
+  questAv1GraceMs: int('QUEST_AV1_GRACE_SECONDS', 5) * 1000,
   // A .m3u8 ticket (Quest): Unity's Android player gets the mp4, and a long or HLS-failed play sends AVPro on at once so
   // VizVid reaches that player (src/server.js questMp4, Everything-is-OK#584). off: as before. Long: this many minutes,
   // or a file at the ticket's quality of this many MB once its size is known (0 = by length only).

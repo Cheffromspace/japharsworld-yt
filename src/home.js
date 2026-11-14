@@ -195,8 +195,8 @@ export class Home {
   // av1 (Everything-is-OK#764, owner 2026-11-13 "D A unless we're hammering then E"): a build for an AV1 play, whose
   // players have no other source they can play (a Quest can't decode AV1; a PC's AVPro shows no frame of it), may start
   // inside the gap unless home is hammering YouTube (hammering). Only the gap: the day, the hour and the slots still hold.
-  // Staging 2026-11-13 23:29Z: a queue warm's build 11 s and 23 s before a Quest's and a PC's AV1 play left both on
-  // Tunelio's AV1 files, and the room never played.
+  // Staging 2026-11-13 23:29Z: a queue warm's build 11 s and 23 s before a Quest's and a PC's AV1 play left the Quest on
+  // Tunelio's AV1 HLS and the PC (its 720p AV1 too) on the youtube.com 302, and the room never played.
   limit({ av1 = false } = {}) {
     if (this.capped()) return 'day';
     const h = this.#hour();
@@ -449,12 +449,12 @@ export class Home {
       const d = this.#today();
       d.builds = Math.max(0, d.builds - 1);
       d.cacheHits = (d.cacheHits ?? 0) + 1;
-      // From the worker's own cache: nothing asked of YouTube, so it leaves the hour's count too (not the start gap).
+      // From the worker's own cache: nothing asked of YouTube, so it leaves the hour's count too.
       this.recent = this.recent.filter((r) => r.token !== s.token);
       // ...and gives the start gap back (Everything-is-OK#764): the gap spaces YouTube downloads from the home IP, and this
       // one asked nothing of YouTube. It runs from the last real download still in the hour instead. Staging 2026-11-13
-      // 23:29Z: a queue warm's cached build (ready in 607 ms) held the gap, so a Quest's and a PC's AV1 play 11 s and 23 s
-      // later found no worker and got Tunelio's AV1 files, which neither could play.
+      // 23:29Z: a queue warm's build, ready in 607 ms (a cache upload, inferred), held the gap, so a Quest's and a PC's AV1
+      // play 11 s and 23 s later found no worker: the Quest got Tunelio's AV1 HLS, the PC the youtube.com 302.
       this.lastStartMs = this.recent.reduce((m, r) => Math.max(m, r.t), -Infinity);
       this.onEvent('cache_hit');
     }

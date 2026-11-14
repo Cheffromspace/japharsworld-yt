@@ -256,9 +256,17 @@ one, f331bcc) and never for live streams:
    A higher rung of an adaptive master that turns out AV1 is answered, for a Quest player, with the best H.264 rung
    below it (`android_av1_rung`), so the play tops out lower instead of failing at the step up. When home doesn't take
    the AV1 play (hammering YouTube, below; a day or hour cap; every stream taken; `HOME_ANDROID=off`), the Quest player
-   gets the first rung below it that isn't AV1, each an HLS build read the same way: 720p, then `QUEST_AV1_QUALITIES`
-   (480p, 360p); a rung whose read fails plays unread; none: the AV1 build and its pin, as before (logged `quest_av1`
-   with `hls: true`, Everything-is-OK#764: a Quest handed the AV1 build sits on a spinner and never asks again),
+   gets the best rung below it that isn't AV1 (Everything-is-OK#764: a Quest handed the AV1 build sits on a spinner and
+   never asks again). For time to first frame (the owner's priority, 2026-11-14; credits aren't a concern) the rungs,
+   720p then `QUEST_AV1_QUALITIES` (480p, 360p), all start building as HLS the moment the read says AV1, before any home
+   wait, and each is answered within the player's hold: the highest ready one that isn't AV1 once the rungs above it
+   have settled, or the best ready one `QUEST_AV1_GRACE_SECONDS` (5) after the first good one. Each rung's codec read
+   is capped at `QUEST_AV1_HLS_READ_SECONDS` (4) and the hold; one that times out or fails plays unread and unpinned (the
+   next ask reads again). None: the AV1 build as before, pinned only when every rung has settled; one still building at
+   the hold's end leaves it unpinned, so the retry gets the rung. Logged `quest_av1` with `hls: true`, `to`
+   (lower, building, none) and `declined`: why home didn't take the play (`hammering`, `cap_day`, `cap_hour`, `slots`,
+   `size`, `hour_mb`, `no_room`, `allowance`, `home_mb`, `cap`, `home_ready`, `home_failed`, `home_off`). When home
+   does take the play the rung builds were started anyway: up to 3 paid builds nobody waits on,
    And on a plain ticket for a PC player (`PC_AV1=on`, the default; Everything-is-OK#741): Tunelio's mp4 build is AV1, read
    from 64 KB of the file's head (the `stsd` sample entry). The resolver is sent on and AVPro reuses the home session.
    When home can't take it: the 720p rung, or youtube.com when that is AV1 as well. Counted as `adaptive`/`pc_av1`.

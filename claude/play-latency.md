@@ -279,5 +279,10 @@ and nothing leaves home for "uneven" keyframes. Staging worker runs, 2026-10-27:
   picked again at 23:31:54, the gap over, went home and played on both (f20).
 - Owner's fix (2026-11-13): D a cache upload gives the gap back; A an AV1 play may start home inside the gap unless home
   is hammering (a real download in the last 10 s, `HOME_AV1_GAP_SECONDS`; 4+ real downloads in the hour; a refusal in
-  15 min); E otherwise the Quest gets the first H.264 HLS rung below (720p, 480p, 360p). The PC's resolver is still sent
+  15 min); E otherwise the Quest gets the best H.264 HLS rung below (720p, 480p, 360p). The PC's resolver is still sent
   on (owner's pick), so a PC whose AV1 play home can't take pays one AVPro error round (~16 s) before youtube.com.
+- E, round 2 (owner 2026-11-14: "i'm mostly worried about latency to first frame"; credits are fine): the rungs build
+  in parallel from the AV1 read (also during a home wait that then misses HOME_READY_SECONDS), so the wait is the
+  fastest good rung's build (plus up to QUEST_AV1_GRACE_SECONDS, 5, for a higher one), not up to three builds in a row
+  (a 720p HLS of 170 MB took 33 s); each rung's read is capped at QUEST_AV1_HLS_READ_SECONDS (4). Not measured on a
+  real Quest yet.

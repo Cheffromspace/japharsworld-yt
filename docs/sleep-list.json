@@ -1,6 +1,9 @@
 {
  "notice": "",
  "slots": {
+  "borneo-jungle-night": {
+   "hidden": true
+  },
   "fan-noise-black": {
    "hidden": true
   },

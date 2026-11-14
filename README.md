@@ -254,10 +254,18 @@ one, f331bcc) and never for live streams:
 6. on a `.m3u8` ticket with `HOME_ANDROID=on`: Tunelio's HLS build is AV1 (read from its init segment), which the
    Quest 2 can't decode; home is always H.264 + AAC. Counted as `adaptive`/`android_av1` whether or not the flag is on.
    A higher rung of an adaptive master that turns out AV1 is answered, for a Quest player, with the best H.264 rung
-   below it (`android_av1_rung`), so the play tops out lower instead of failing at the step up,
+   below it (`android_av1_rung`), so the play tops out lower instead of failing at the step up. When home doesn't take
+   the AV1 play (hammering YouTube, below; a day or hour cap; every stream taken; `HOME_ANDROID=off`), the Quest player
+   gets the first rung below it that isn't AV1, each an HLS build read the same way: 720p, then `QUEST_AV1_QUALITIES`
+   (480p, 360p); a rung whose read fails plays unread; none: the AV1 build and its pin, as before (logged `quest_av1`
+   with `hls: true`, Everything-is-OK#764: a Quest handed the AV1 build sits on a spinner and never asks again),
    And on a plain ticket for a PC player (`PC_AV1=on`, the default; Everything-is-OK#741): Tunelio's mp4 build is AV1, read
    from 64 KB of the file's head (the `stsd` sample entry). The resolver is sent on and AVPro reuses the home session.
    When home can't take it: the 720p rung, or youtube.com when that is AV1 as well. Counted as `adaptive`/`pc_av1`.
+   The resolver is sent on even then (the owner's pick, 2026-11-13, #764: a Quest's resolver looks the same, and its
+   player keeps the 480p rung), so such a PC pays one AVPro error round: its player opens the ticket, gets the
+   youtube.com 302, which AVPro can't play ("Loading failed"), and only the retry's resolver gets youtube.com (through
+   the mirror below) and plays it, about 16 s later (staging 2026-11-13 23:29Z).
    A Quest's player on a plain ticket (a pasted link, the long rows of Everything-is-OK#590) has its 720p mp4
    read the same way (`QUEST_AV1=on`, the default; Everything-is-OK#749), but home is no use to it (HLS behind a plain
    ticket, see above) and neither is youtube.com: an AV1 build gets the first of `QUEST_AV1_QUALITIES` (480p, then 360p)
@@ -303,6 +311,16 @@ to Tunelio, and its `build_route` says why (`home_hour`, `home_gap`, `home_day`,
 `HOME_HOUR_MB_EXEMPT_HOURS` (4) and longer skip the MB check, because Tunelio fails on them (#577) and would leave
 youtube.com's 360p; they still count in the hour and meet the build cap and the gap. The hour is kept in memory only, so
 a restart forgets it. Each is off at 0. `/ops/state` shows the hour's builds and MB and the limit holding now.
+A build the worker serves from its own cache asked nothing of YouTube, so it also gives the gap back: the gap then runs
+from the last real download (Everything-is-OK#764: a queue warm's cached build held the gap on staging, and the AV1
+plays after it found no worker).
+**AV1 plays and the gap** (Everything-is-OK#764, the owner's thresholds, 2026-11-13): an AV1 play (a Quest's
+`android_av1`, a PC's #741 read) has no other source its players can show, so its home build may start inside
+`HOME_START_GAP_SECONDS` unless home is hammering YouTube: a real download (not a cache upload) started in the last
+`HOME_AV1_GAP_SECONDS` (10; 0 keeps the whole gap for AV1 plays too), 4 or more real downloads in the rolling hour, or a
+bot, rate or potoken refusal at home in the last 15 minutes. Only the gap: the day and hour caps, the hour's MB and the
+free streams still hold. Such a start logs `home_av1_gap` (how long after the last real download); `/ops/state` shows
+`hammering`. When hammering, the Quest gets its H.264 rung (item 6) and the PC its 720p or youtube.com.
 
 **Quality and concurrency** (owner, 2026-10-25): home builds the room's own pick, or `HOME_QUALITY` (1080p) when
 the room hasn't picked, but 720p for a video whose 1080p files would be over `HOME_ITEM_MAX_GB` (6 GB by default since #576, about 2.9 h at

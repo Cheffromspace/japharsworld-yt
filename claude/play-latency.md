@@ -270,3 +270,14 @@ and nothing leaves home for "uneven" keyframes. Staging worker runs, 2026-10-27:
 - A 1 h 60 fps video at 1080p: 910 segments predicted and made, 831 MB in 159 s.
 - Cost, measured on a test clip: a segment can start between keyframes, so a player that starts or seeks there shows
   the picture from the next keyframe (60 fps, 5 s GOPs: 176 and 112 of 240 frames decodable from seg1 and seg2 alone).
+
+## AV1 plays and the home start gap (Everything-is-OK#764, staging 2026-11-13)
+- 23:29:12Z a queue warm's status ask started another (long) video's home build, ready in 607 ms (the worker's cache,
+  inferred). Its 45 s start gap (#576) left a Quest's AV1 play at +11 s and a PC's at +23 s with no home worker: the
+  Quest got Tunelio's AV1 1080p HLS and sat on a spinner without asking again; the PC's player got the youtube.com 302
+  (AVPro "Loading failed"), its retry played youtube.com's 360p but stayed paused waiting on the Quest. The same video
+  picked again at 23:31:54, the gap over, went home and played on both (f20).
+- Owner's fix (2026-11-13): D a cache upload gives the gap back; A an AV1 play may start home inside the gap unless home
+  is hammering (a real download in the last 10 s, `HOME_AV1_GAP_SECONDS`; 4+ real downloads in the hour; a refusal in
+  15 min); E otherwise the Quest gets the first H.264 HLS rung below (720p, 480p, 360p). The PC's resolver is still sent
+  on (owner's pick), so a PC whose AV1 play home can't take pays one AVPro error round (~16 s) before youtube.com.

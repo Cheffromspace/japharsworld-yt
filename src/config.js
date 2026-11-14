@@ -244,6 +244,10 @@ export const config = {
   // source (src/home.js blocks). 0 = none skip it.
   homeHourMbExemptHours: (() => { const v = Number.parseFloat(process.env.HOME_HOUR_MB_EXEMPT_HOURS ?? ''); return Number.isFinite(v) ? v : 4; })(),
   homeStartGapMs: int('HOME_START_GAP_SECONDS', 45) * 1000,
+  // Everything-is-OK#764: an AV1 play's home build may start inside HOME_START_GAP_SECONDS unless a real download started
+  // within this many seconds (or home is otherwise hammering YouTube, src/home.js hammering). 0 keeps the full gap for
+  // AV1 plays too, as before.
+  homeAv1GapMs: int('HOME_AV1_GAP_SECONDS', 10) * 1000,
   homeKeepHours: int('HOME_KEEP_HOURS', 12),
   homeMaxGb: int('HOME_MAX_GB', 8),
   // Free disk the home store never builds into (src/home.js #room): a build doesn't start when the disk's free space,

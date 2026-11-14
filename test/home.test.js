@@ -2130,7 +2130,7 @@ test('home: videos of hourMbExemptSeconds and longer skip the hour MB check (Tun
   assert.ok(home.start({ id: 'ccccccccccc', seconds: 10 * 3600 }, '720p'));
 });
 
-test('home: a build the worker serves from its own cache leaves the hour, not the gap', (t) => {
+test('home: a build the worker serves from its own cache leaves the hour (and, since #764, gives the start gap back)', (t) => {
   const relay = fakeRelay();
   let now = 1_000_000;
   const home = new Home({ relay, dir: tmp(t), enabled: true, dailyBuilds: 100, dailyMb: 1e9, hourBuilds: 2, startGapMs: 45_000, now: () => now });

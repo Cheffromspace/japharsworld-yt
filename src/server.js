@@ -177,7 +177,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const cookieWatch = new CookieWatch({ alert, hours: config.cookieNudgeHours, log: logJson });
   home ??= new Home({ relay, dir: join(dirname(config.dbPath), 'home'), base: `${config.publicUrl}/home`, enabled: config.homeRelay && relay.enabled,
     dailyBuilds: config.homeDailyBuilds, dailyMb: config.homeDailyMb, hourBuilds: config.homeHourBuilds, hourMb: config.homeHourMb,
-    hourMbExemptSeconds: config.homeHourMbExemptHours * 3600, startGapMs: config.homeStartGapMs,
+    hourMbExemptSeconds: config.homeHourMbExemptHours * 3600, startGapMs: config.homeStartGapMs, av1GapMs: config.homeAv1GapMs,
     itemMaxMb: config.homeItemTooBig === 'tunelio' ? config.homeItemMaxGb * 1000 : 0, keepHours: config.homeKeepHours, maxGb: config.homeMaxGb, freeFloorGb: config.homeFreeFloorGb, readyMs: config.homeReadyMs,
     segmentHoldMs: config.homeSegmentHoldMs,
     startPrecise: config.homeAndroidGrowing, seekWant: config.homeSeekWant, tz: config.metricsTz, log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
@@ -203,6 +203,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // YouTube refusals (src/refusal.js): counted by where and class; 3 or more bot/rate/potoken refusals at the home relay
   // within 15 minutes alert Discord, and an hour without one sends the all-clear (checkWorkers).
   const refusals = new RefusalWatch();
+  // A refusal at home within its 15 min window keeps AV1 plays to the start gap (src/home.js hammering, #764). Set here,
+  // not in the constructor, as a home passed in by a test or built above comes before the watch.
+  if (home) home.refusedRecently = () => refusals.recent();
   function refused(where, cls) {
     metrics.inc('yt_refusal', `${where}:${cls}`);
     if (where === 'home') cookieWatch.refused(cls);
@@ -832,7 +835,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (s) return s.state !== 'failed';
     // No session: a new one must get a worker and not be one home refuses anyway (size or hour, a recent no-room), else
     // the pin would be dropped and set again on every retry for the same Tunelio answer (#625 verifier).
-    return Boolean(home.worker()) && !home.blocks?.(data, hq) && !(homeRefused.get(data.id) > Date.now());
+    // An AV1 play may start inside the start gap unless home is hammering YouTube (src/home.js limit, #764).
+    return Boolean(home.worker({ av1: true })) && !home.blocks?.(data, hq) && !(homeRefused.get(data.id) > Date.now());
   }
   // A home session for this play, counted once by why it went home (a session that is already there is just used),
   // and once as `stepdown` when it is 720p only for its length.
@@ -850,16 +854,17 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const fresh = !home.peek(data, quality);
     const ip = spendScope.getStore()?.ip;
     const homeMb = Math.round((data.seconds ?? 0) * mbPerSecond(quality)); // at the session's own quality
-    if (fresh && home.worker()) {
+    const av1 = why === 'av1'; // an AV1 play: may start inside the start gap (src/home.js limit, #764)
+    if (fresh && home.worker({ av1 })) {
       // The route a refusal hands on: 'home_mb' when only this session's size doesn't fit (the allowance isn't used up,
       // so Tunelio may still take the play within its credits), else 'allowance' or 'cap' (no build anywhere).
       const over = allowance.over(ip, { home: true, homeMb, route: spendScope.getStore()?.answer });
       const no = over === 'home_mb_fit' ? 'home_mb' : over ? 'allowance' : spend?.rateCap?.(data.id) ?? null;
       if (no) { const ctx = spendScope.getStore(); if (ctx) ctx.route = no; return null; }
     }
-    const s = home.start(data, quality);
+    const s = home.start(data, quality, { av1 });
     // null with a worker free: home.start's #room said no (a size or hourly MB limit, home.refusal big/hour, isn't kept). Without a worker it has made no room check.
-    if (!s && home.worker() && (home.refusal ?? 'room') === 'room') {
+    if (!s && home.worker({ av1 }) && (home.refusal ?? 'room') === 'room') {
       homeRefused.set(data.id, Date.now() + HOME_REFUSED_MS);
       if (homeRefused.size > 5000) homeRefused.delete(homeRefused.keys().next().value);
     }
@@ -1452,11 +1457,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         // An AV1 build on a .m3u8 ticket: the Quest 2 can't decode AV1 (Everything-is-OK #101), and home is always
         // H.264 + AAC (relay/media.js). Counted whether or not HOME_ANDROID is on, to show how often it happens.
         let homeFor = null;
+        let questHlsAv1 = null; // #764: the AV1 HLS build's quality, for E below when home doesn't take the play
         if (hlsTicket && !resolver && where.ready && where.via === 'tunelio' && c.hls) {
           const codec = await adaptive.codec?.(playback.peek(t.data, c.quality, { hls: true }));
           if (codec === 'av1') {
             metrics.inc('adaptive', 'android_av1');
             logJson({ event: 'android_av1', shard, n, id: t.data.id, quality: c.quality, home: homeOk && home.enabled });
+            if (config.questAv1 && c.single) questHlsAv1 = c.quality;
             if (homeOk && home.enabled) {
               av1Play = true;
               // Not when this request already held on a home session (hs, slow or the race; it missed HOME_READY_SECONDS):
@@ -1514,6 +1521,33 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
             try { await home.wait(fallback, config.homeReadyMs); } finally { holding--; }
             if (fallback.state === 'ready') where = await homeWhere(fallback);
           }
+        }
+        // Everything-is-OK#764 (E, owner 2026-11-13 "D A unless we're hammering then E"): home didn't take a Quest's AV1
+        // HLS play (hammering YouTube, the day or hour cap, every stream taken, or HOME_ANDROID off): the first rung below
+        // it that isn't AV1 (720p, then QUEST_AV1_QUALITIES, 480p and 360p), each an HLS build read as above, instead of the
+        // AV1 file the Quest can't decode (staging 2026-11-13 23:29Z: it sat on a spinner and never asked again, so #625's
+        // pin that yields to home on the next ask never came into play). A rung whose read fails plays unread (most rungs
+        // below an AV1 build are H.264, #749). None: the AV1 answer and its #625 pin, as before.
+        if (questHlsAv1 && where.ready && where.via === 'tunelio') {
+          let rung = null;
+          const rungs = [...new Set([adaptive.lower, ...config.questAv1Qualities])].filter((q) => q && parseInt(q, 10) < parseInt(questHlsAv1, 10));
+          for (const low of rungs) {
+            const left = config.ticketPlayerHoldMs - (Date.now() - started);
+            if (left <= 0) break;
+            let w;
+            holding++;
+            try { w = await playback.location(t.data, { holdMs: left, quality: low, hls: true }); } finally { holding--; }
+            if (w.ready === false) break; // still building at the end of the hold: the AV1 answer now, the rung on a retry
+            const lowJob = w.ready && w.via === 'tunelio' ? playback.peek(t.data, low, { hls: true }) : null;
+            if (lowJob?.url !== w.location) continue; // failed or not ours: the next rung
+            if (await adaptive.codec?.(lowJob) === 'av1') continue;
+            c = { ...c, quality: low };
+            where = { ...w, location: adaptive.single(t.data, lowJob) };
+            rung = low;
+            av1Play = false; // a playable source: a plain pin, which home doesn't take over mid-play
+            break;
+          }
+          logJson({ event: 'quest_av1', shard, n, id: t.data.id, quality: questHlsAv1, ...(rung ? { rung } : {}), client: kind, to: rung ? 'lower' : 'none', hls: true, hammering: home.enabled ? home.hammering?.() ?? null : null });
         }
         // #741: home didn't take the PC's AV1 play: the 720p rung within what is left of the hold, unless that is AV1 too
         // (staging 2026-10-30 to 11-13: 4 of 30 Quest AV1 finds were 720p builds), then youtube.com. A 720p build that

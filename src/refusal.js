@@ -39,6 +39,14 @@ export class RefusalWatch {
     return true;
   }
 
+  // Whether a bot, rate or potoken refusal came within the last withinMs (the window by default): home is then
+  // hammering YouTube and an AV1 play keeps the start gap (src/home.js hammering, Everything-is-OK#764). A refusal
+  // exactly withinMs old no longer counts.
+  recent(withinMs = this.windowMs) {
+    const t = this.now();
+    return this.times.some((x) => t - x.t < withinMs);
+  }
+
   // "bot 2, rate 1" for the refusals in the window.
   summary() {
     const n = {};

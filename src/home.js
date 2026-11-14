@@ -71,9 +71,9 @@ const FREE_CHECK_MS = 5_000; // a build's uploads look at the disk's free space 
 
 export class Home {
   constructor({ relay, dir, base = 'https://yt.japharsworld.com/home', enabled = false, dailyBuilds = 40, dailyMb = 10_000,
-    hourBuilds = 0, hourMb = 0, hourMbExemptSeconds = 0, startGapMs = 0, itemMaxMb = 0, keepHours = 12, maxGb = 8, freeFloorGb = 0, freeMb = null, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, seekWant = false, tz = 'America/Chicago',
+    hourBuilds = 0, hourMb = 0, hourMbExemptSeconds = 0, startGapMs = 0, av1GapMs = 0, av1HourBuilds = 4, refusedRecently = () => false, itemMaxMb = 0, keepHours = 12, maxGb = 8, freeFloorGb = 0, freeMb = null, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, seekWant = false, tz = 'America/Chicago',
     now = () => Date.now(), log = () => {}, onEvent = () => {} }) {
-    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, hourBuilds, hourMb, hourMbExemptSeconds, startGapMs, itemMaxMb, keepHours, maxGb, freeFloorGb, readyMs, segmentHoldMs, startPrecise, seekWant, tz, now, log, onEvent });
+    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, hourBuilds, hourMb, hourMbExemptSeconds, startGapMs, av1GapMs, av1HourBuilds, refusedRecently, itemMaxMb, keepHours, maxGb, freeFloorGb, readyMs, segmentHoldMs, startPrecise, seekWant, tz, now, log, onEvent });
     // The disk's free MB where the sessions are (injectable for tests); Infinity when it can't be read.
     this.freeMb = freeMb ?? (() => { try { const f = statfsSync(this.dir); return (f.bavail * f.bsize) / 1e6; } catch { return Infinity; } });
     this.freeCheckedMs = 0;
@@ -158,9 +158,10 @@ export class Home {
   // worker already runs as many streams as it takes (the mediaMax it announces, RELAY_MEDIA_MAX: 4 at home). Without
   // that last check a fifth stream went to a 4-stream worker and only its "busy" answer sent the play on to Tunelio,
   // after the player's hold. The one with the most free streams first.
-  worker() {
+  // av1: the build is for an AV1 play (Everything-is-OK#764), which may start inside the start gap (limit).
+  worker({ av1 = false } = {}) {
     if (!this.enabled || !this.relay?.enabled) return null;
-    if (this.limit()) return null;
+    if (this.limit({ av1 })) return null;
     const max = this.relay.mediaMax?.() ?? {};
     let best = null, left = 0;
     for (const n of this.relay.capable?.('media') ?? []) {
@@ -191,13 +192,30 @@ export class Home {
   // build waits for room in a rolling hour (hourBuilds builds, hourMb expected MB) and starts at least startGapMs after
   // the last one; a play that meets a limit goes to Tunelio (owner 2026-11-04: shift load, don't answer busy).
   // → null, or why no new build may start now: 'day', 'hour' or 'gap'.
-  limit() {
+  // av1 (Everything-is-OK#764, owner 2026-11-13 "D A unless we're hammering then E"): a build for an AV1 play, whose
+  // players have no other source they can play (a Quest can't decode AV1; a PC's AVPro shows no frame of it), may start
+  // inside the gap unless home is hammering YouTube (hammering). Only the gap: the day, the hour and the slots still hold.
+  // Staging 2026-11-13 23:29Z: a queue warm's build 11 s and 23 s before a Quest's and a PC's AV1 play left both on
+  // Tunelio's AV1 files, and the room never played.
+  limit({ av1 = false } = {}) {
     if (this.capped()) return 'day';
     const h = this.#hour();
     // The hour's MB is checked per video (blocks), so the videos exempt from it are never held back by it.
     if (this.hourBuilds > 0 && h.builds >= this.hourBuilds) return 'hour';
-    if (this.startGapMs > 0 && this.now() - this.lastStartMs < this.startGapMs) return 'gap';
+    if (this.startGapMs > 0 && this.now() - this.lastStartMs < this.startGapMs && !(av1 && !this.hammering())) return 'gap';
     return null;
+  }
+  // Whether home is pulling hard on YouTube now, so an AV1 play keeps the start gap (owner's OK of the thresholds,
+  // 2026-11-13, #764): a real download (not a cache upload, which leaves `recent` and gives the gap back) started in the
+  // last av1GapMs (HOME_AV1_GAP_SECONDS, 10; 0 turns the AV1 exception off), so two downloads never start closer than
+  // that (#576's refusals came after two builds a second apart); av1HourBuilds (4) or more real downloads in the rolling
+  // hour, twice #576's pace (15 builds in 7 h before the refusals); or a bot, rate or potoken refusal at home in the last
+  // 15 min (refusedRecently, the server's RefusalWatch window).
+  hammering() {
+    if (!(this.av1GapMs > 0)) return true;
+    if (this.now() - this.lastStartMs < this.av1GapMs) return true;
+    if (this.av1HourBuilds > 0 && this.#hour().builds >= this.av1HourBuilds) return true;
+    return Boolean(this.refusedRecently());
   }
   #hour() {
     const t = this.now();
@@ -277,12 +295,13 @@ export class Home {
   }
 
   // The session for a video, started if there is none (and a worker is free and under the cap); null otherwise.
-  start(data, quality) {
+  // av1: for an AV1 play, which may start inside the start gap (limit, #764).
+  start(data, quality, { av1 = false } = {}) {
     const hit = this.peek(data, quality);
     if (hit) return hit;
-    const worker = this.worker();
+    const worker = this.worker({ av1 });
     if (!worker) {
-      const why = this.enabled ? this.limit() : null;
+      const why = this.enabled ? this.limit({ av1 }) : null;
       if (why) this.onEvent(why === 'day' ? 'capped' : why === 'hour' ? 'capped_hour' : 'spaced');
       return null;
     }
@@ -304,6 +323,8 @@ export class Home {
     }
     this.#today().builds++;
     this.#saveDay();
+    // An AV1 build let through the start gap (#764): logged with how long after the last real download it started.
+    if (av1 && this.startGapMs > 0 && this.now() - this.lastStartMs < this.startGapMs) this.log({ event: 'home_av1_gap', id: s.id, quality, afterMs: this.now() - this.lastStartMs });
     this.recent.push({ t: this.now(), mb: expected, token: s.token });
     this.lastStartMs = this.now();
     this.onEvent('start');
@@ -430,6 +451,11 @@ export class Home {
       d.cacheHits = (d.cacheHits ?? 0) + 1;
       // From the worker's own cache: nothing asked of YouTube, so it leaves the hour's count too (not the start gap).
       this.recent = this.recent.filter((r) => r.token !== s.token);
+      // ...and gives the start gap back (Everything-is-OK#764): the gap spaces YouTube downloads from the home IP, and this
+      // one asked nothing of YouTube. It runs from the last real download still in the hour instead. Staging 2026-11-13
+      // 23:29Z: a queue warm's cached build (ready in 607 ms) held the gap, so a Quest's and a PC's AV1 play 11 s and 23 s
+      // later found no worker and got Tunelio's AV1 files, which neither could play.
+      this.lastStartMs = this.recent.reduce((m, r) => Math.max(m, r.t), -Infinity);
       this.onEvent('cache_hit');
     }
     if (file === 'index.m3u8') {
@@ -605,7 +631,7 @@ export class Home {
       today: { builds: d.builds, mb: Math.round(d.mb), cacheHits: d.cacheHits ?? 0, cacheMb: Math.round(d.cacheMb ?? 0) },
       cap: { builds: this.dailyBuilds, mb: this.dailyMb, storedGb: this.maxGb },
       hour: (() => { const h = this.#hour(); return { builds: h.builds, mb: Math.round(h.mb), capBuilds: this.hourBuilds, capMb: this.hourMb }; })(),
-      limit: this.enabled ? this.limit() : null, startGapS: Math.round(this.startGapMs / 1000), hourMbExemptS: this.hourMbExemptSeconds, itemMaxMb: this.itemMaxMb,
+      limit: this.enabled ? this.limit() : null, startGapS: Math.round(this.startGapMs / 1000), av1GapS: this.av1GapMs / 1000, hammering: this.enabled ? this.hammering() : null, hourMbExemptS: this.hourMbExemptSeconds, itemMaxMb: this.itemMaxMb,
       building: all.filter((s) => s.state === 'building').length, ready: all.filter((s) => s.state === 'ready' && !s.ended).length,
       ended: all.filter((s) => s.ended).length, failed: all.filter((s) => s.state === 'failed').length,
       storedMb: Math.round(this.#storedMb()),

@@ -456,6 +456,12 @@ class FollowTitleTests(Base):
         self.assertEqual(publish.clean_title("Finse station - Live"), "Finse station")
         self.assertEqual(publish.clean_title("LIVE: Campfire · rain"), "Campfire · rain")
         self.assertEqual(publish.clean_title("Campfire: LIVE · rain"), "Campfire · rain")
+        self.assertEqual(publish.clean_title("Campfire (Live Stream)"), "Campfire (Stream)")
+        self.assertEqual(publish.clean_title("Rain (live)"), "Rain")
+
+    def test_clean_title_keeps_live_inside_a_hyphen_compound(self):
+        for t in ("Live-stream of rain", "Rain to re-live the night", "LIVE-STREAM: rain"):
+            self.assertEqual(publish.clean_title(t), t)
 
     def test_setting_off_publishes_what_it_did_before(self):
         self.checked("OLDOLDOLD01", CAMPFIRE, OVERRIDES)

@@ -20,8 +20,10 @@ def sheet_size(n):
 # stream's own title made calm for the list: no emoji (the row's Noto font has none: 🔴 and 🔥 draw as empty boxes, checked
 # against NotoSansCJKjp-Regular.otf 2026-11-15), no "LIVE" / "24/7" / "Live Now:" markers, no separator left dangling.
 LIVE_STAMP = re.compile(r"\s+\d{4}-\d{2}-\d{2} \d{2}:\d{2}\s*$")  # yt-dlp appends this to a live title (its fulltitle doesn't)
-MARKERS = re.compile(r"\blive\s+now\b\s*:?|(?<![\w/])24\s*/\s*7(?![\w/])|\blive\b", re.IGNORECASE)
+# "live" inside a hyphen compound ("Live-stream", "re-live") is a word, not a marker.
+MARKERS = re.compile(r"(?<!\w-)\blive\s+now\b\s*:?|(?<![\w/])24\s*/\s*7(?![\w/])|(?<!\w-)\blive\b(?!-\w)", re.IGNORECASE)
 EMPTY_BRACKETS = re.compile(r"[(\[【「『（〔]\s*[)\]】」』）〕]")
+OPEN_SPACE, SPACE_CLOSE = re.compile(r"([(\[【「『（〔])\s+"), re.compile(r"\s+([)\]】」』）〕])")  # "( Stream)" -> "(Stream)"
 SEPARATORS = set("·•|｜-–—:")
 PUNCT = set(",.!?;")  # left alone after a removed marker: "LIVE! View of ..." , "ISS live, with ..."
 
@@ -58,7 +60,7 @@ def clean_title(raw):
         words.pop()
     words = [w[:-1] if w.endswith(":") and (i + 1 == len(words) or set(words[i + 1]) <= SEPARATORS) else w
              for i, w in enumerate(words)]  # "Title: · more" or a closing "Title:" left by a removed marker
-    t = " ".join(words)
+    t = SPACE_CLOSE.sub(r"\1", OPEN_SPACE.sub(r"\1", " ".join(words)))
     return t if any(c.isalnum() for c in t) else ""
 
 

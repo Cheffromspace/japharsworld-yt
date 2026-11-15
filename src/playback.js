@@ -70,7 +70,7 @@ export class Playback {
     // VIDEO_MAX_HOURS those opened in Media Foundation, 8 h to 13.2 h (2026-10-31; not watched in a client). Only far longer
     // ones were seen failing (a 48 h video's and some 100 h ones' itag 18 links answered 500), and the cap stops those first.
     this.tooLongIds = new Map();
-    this.forcedRestricted = new Map(); // the test plans among them (forceRestricted): videoId → until
+    this.forcedRestricted = new Map(); // the test plans among them (forceRestricted): videoId → { until, real: Tunelio's verdict it covers or null, set: the restrictedIds value it wrote }
     this.alert = alert;
     this.log = log;
     // Spend limits (src/spend.js, Everything-is-OK#478): asked before every new paid /create. null: none.

@@ -127,7 +127,7 @@ journalctl -u japharsworld-yt-monitor -n 50
   Discord/summary labels keep their baked text. Known limits, left on purpose: `<3` loses its `<` ("I <3 rain" →
   "I 3 rain"); an all-caps LIVE is taken as the marker even where it is a word ("LIVE MUSIC all night" → "MUSIC all
   night"); styled letters outside a marker (𝐂𝐚𝐦𝐩𝐟𝐢𝐫𝐞) pass through and the row font may not draw them; an ANSI escape
-  loses only its escape character ("Rain\x1b[31mRed" → "Rain [31mRed"; YouTube titles can't hold one).
+  leaves its text behind ("Rain\x1b[31mRed" → "Rain 31mRed"; YouTube titles can't hold one).
 - **Retiring a slot** (a stream down for days with no replacement; slot order is frozen, so never remove it): in `overrides.json`
   give it `"hidden": true, "kind": "unmanaged", "retired": "<date>: <reason>"`. It leaves the checks, the replacement search,
   the daily summary, the mass-outage count and Grafana; drop the entry to bring it back. Five retired 2026-10-29 (owner).

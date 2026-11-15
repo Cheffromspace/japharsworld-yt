@@ -43,7 +43,6 @@ import { mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, statfsSy
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { dayOf } from './metrics.js';
-import { SHORT_S } from '../relay/cache.js';
 
 const SEGMENT = /^seg\d{1,5}\.ts$/;
 const segIndex = (file) => Number(file.slice(3, -3));
@@ -57,6 +56,10 @@ const RETRY_MS = 60_000; // a failed session is tried again after this long
 // An unfinished session with no upload for this long has no worker stream behind it any more (it died or was stopped);
 // a live one uploads every few seconds, and a server restart only pauses it for seconds (the worker retries).
 const STALE_MS = 5 * 60_000;
+// A copy this much shorter than the video is short (cut_short below): relay/cache.js's SHORT_S, the worker's rule, kept
+// here rather than imported so the search service runs nothing from relay/ (deploy/update.sh restarts it for src/ only;
+// test/cut-short.test.js checks the two match).
+export const SHORT_S = 10;
 // A session a player fetched from this recently is being played: the sweep leaves it alone. Players fetch a segment
 // every few seconds, and a paused one picks up where it was.
 const PLAYING_MS = 5 * 60_000;

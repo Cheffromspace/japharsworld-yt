@@ -5,9 +5,9 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { Home } from '../src/home.js';
+import { Home, SHORT_S as HOME_SHORT_S } from '../src/home.js';
 import { mediaJob } from '../relay/media.js';
-import { MediaCache } from '../relay/cache.js';
+import { MediaCache, SHORT_S } from '../relay/cache.js';
 
 const tmp = (t) => { const d = mkdtempSync(join(tmpdir(), 'cut-')); t.after(() => rmSync(d, { recursive: true, force: true })); return d; };
 const fakeRelay = () => ({ jobs: [], enabled: true, capable: () => ['home'], run() { return new Promise(() => {}); } });
@@ -198,4 +198,8 @@ test('#781 server: the mark after the closed playlist already went up unmarked f
   assert.equal(s.state, 'failed');
   now += 61_000;
   assert.equal(home.peek({ id: 'aaaaaaaaaaa' }, '720p'), null);
+});
+
+test('#780: the server and the worker judge short by the same SHORT_S', () => {
+  assert.equal(HOME_SHORT_S, SHORT_S);
 });

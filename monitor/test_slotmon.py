@@ -601,9 +601,15 @@ class FollowTitleTests(Base):
                 raws |= {"Rain %sTokyo%sOsaka%s night" % (o, sep, c), "%sRain%sNight%s" % (o, sep, c), "Night%s%sRain%s" % (sep, o, c),
                          "Rain %s%s%s more" % (o, "word " * 20, c), "x" * 55 + " %sRain at night%s" % (o, c), "Rain%s night%sNight" % (c, sep),
                          "Rain %s night%s%s" % (o, sep, "LIVE"), "%s%s%s Rain" % (o, "\U0001F525", c)}
+        # Fuzz finds on d7e4ec4 (scratch/r4/fuzz_all.py, 2026-11-15): dropping one character undid another rule.
+        raws |= {"Rain 〈)〉 night", "LE !V7 （き /”）丨 i", "丨ON›]L • .〕{丨〕 —‘;w〉› ！ 2o(V』«4",
+                 "4? !h〉〕\"（(火 / 『ｰ、“：]", "ei【》 】 「|‘⋆", "〔,き』/ ! 〕／[2nR2—L'『》R《'Lき」)き火"}
+        seps = set(__import__("slotmon.titles", fromlist=["SEPS"]).SEPS)
         for raw in raws:
             out = publish.row_title(raw)
             self.assertFalse(unpaired(out), (raw, out))
+            self.assertFalse(out and (out[0] in seps or out[-1] in seps), (raw, out))
+            self.assertFalse(any(o + c in out.replace(" ", "") for o, c in list(pairs.items()) + [("‘", "’")]), (raw, out))
 
     def test_a_bare_first_part_is_skipped(self):
         for raw, want in (("A · Rainy night by the lake", "Rainy night by the lake"), ("4K · Rainy night", "Rainy night"),

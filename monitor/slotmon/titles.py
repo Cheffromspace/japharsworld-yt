@@ -250,13 +250,29 @@ def _tidy(t):
         words.pop()  # "... Quadrilla +", "... Relaxation &"
     while words and not _word(words[0]):
         words.pop(0)
-    return " ".join(words).lstrip(SEPS + STOPS).rstrip(SEPS).strip()
+    # Spaces with the separators: "丨 —‘…" (丨 is a CJK letter to Python, so it is a word above) must lose both.
+    return " ".join(words).lstrip(" " + SEPS + STOPS).rstrip(" " + SEPS)
 
 
 def _balance(t):
     """t without the bracket and quote characters that have no partner (a title that came that way)."""
     bad = _unmatched(t)
-    return _tidy("".join(c for i, c in enumerate(t) if i not in bad)) if bad else t
+    return "".join(c for i, c in enumerate(t) if i not in bad) if bad else t
+
+
+def _final(t):
+    """Drop unpaired brackets and quotes, then empty pairs, then tidy the ends, until nothing changes. Each step only
+    takes characters away, so this ends; when it does, a published title has no unpaired or empty pair and doesn't start
+    or end with a separator (fuzzing found each step can undo another: "〈)〉" -> "〈〉", "（き /）" -> "（き")."""
+    for _ in range(len(t) + 1):
+        u = _balance(t)
+        while EMPTY_PAIRS.search(u):
+            u = EMPTY_PAIRS.sub(" ", u)
+        u = _tidy(u)
+        if u == t:
+            break
+        t = u
+    return t
 
 
 def _parts(t):
@@ -308,7 +324,9 @@ def row_title(raw):
     if banned(raw):
         return ""
     for part in _parts(clean_title(raw)):
-        part = _balance(part.lstrip(" " + SEPS + STOPS).rstrip(" " + SEPS))
+        part = _final(part)
         if _word(part) and not _bare(part):
-            return _cap(part)
+            out = _final(_cap(part))
+            if _word(out):
+                return out
     return ""

@@ -17,15 +17,24 @@ def sheet_size(n):
 
 
 # A title that follows the stream (overrides.json "title_from": "stream", Everything-is-OK#793, owner 2026-11-15) is the
-# stream's own title made calm for the list: no emoji (the row's Noto font has none: 🔴 and 🔥 draw as empty boxes, checked
-# against NotoSansCJKjp-Regular.otf 2026-11-15), no "LIVE" / "24/7" / "Live Now:" markers, no separator left dangling.
+# first part of the stream's own title made calm for the list (owner, 2026-11-15, on the long campfire title: "B. First
+# part only"): no emoji (the row's Noto font has none: 🔴 and 🔥 draw as empty boxes, checked against
+# NotoSansCJKjp-Regular.otf 2026-11-15), no LIVE / 24/7 / Live Now: markers, no separator left dangling.
 LIVE_STAMP = re.compile(r"\s+\d{4}-\d{2}-\d{2} \d{2}:\d{2}\s*$")  # yt-dlp appends this to a live title (its fulltitle doesn't)
-# "live" inside a hyphen compound ("Live-stream", "re-live") is a word, not a marker.
-MARKERS = re.compile(r"(?<!\w-)\blive\s+now\b\s*:?|(?<![\w/])24\s*/\s*7(?![\w/])|(?<!\w-)\blive\b(?!-\w)", re.IGNORECASE)
+# "live" is removed only where it is a marker, so "Long Live the Night", "live music" and "Live-stream" stay: "Live Now"
+# (any case, colon too), "live" beside 24/7, the all-caps LIVE, "(live)" in brackets; and, in clean_title, a "live" that
+# stands alone between separators or a "Live:" label at the start of a part. 24/7 itself always goes.
+MARKERS = re.compile(r"(?<!\w-)\b(?i:live\s+now)\b\s*:?"
+                     r"|(?<![\w/])(?:(?<!\w-)\b(?i:live)\s+)?24\s*/\s*7(?![\w/])(?:\s+(?i:live)\b(?!-\w))?"
+                     r"|(?<!\w-)\bLIVE\b(?!-\w)"
+                     r"|[(\[【（]\s*(?i:live)\s*[)\]】）]")
 EMPTY_BRACKETS = re.compile(r"[(\[【「『（〔]\s*[)\]】」』）〕]")
 OPEN_SPACE, SPACE_CLOSE = re.compile(r"([(\[【「『（〔])\s+"), re.compile(r"\s+([)\]】」』）〕])")  # "( Stream)" -> "(Stream)"
 SEPARATORS = set("·•|｜-–—:")
-PUNCT = set(",.!?;")  # left alone after a removed marker: "LIVE! View of ..." , "ISS live, with ..."
+PUNCT = set(",.!?;")  # left alone after a removed marker: "LIVE! View of ..." , "ISS LIVE, with ..."
+# Where row_title splits a title into parts: the dots and bars anywhere, a dash only with spaces round it ("Lo-Fi" is one
+# word). Commas and colons don't split ("Iceberg Cam of Ilulissat, Greenland in 4K").
+PARTS = re.compile(r"\s*[·•|｜]\s*|\s+[-–—]+\s+")
 
 
 def _pictograph(ch):
@@ -36,16 +45,25 @@ def _pictograph(ch):
     return cat == "So" and cp >= 0x2190 and not (0x2E80 <= cp <= 0x33FF or 0xFF00 <= cp <= 0xFFEF)
 
 
+def _sep(w):
+    return set(w) <= SEPARATORS | PUNCT
+
+
 def clean_title(raw):
-    """The stream's title for a calm row, or '' when nothing worth showing is left (the caller falls back)."""
+    """The stream's whole title, calm: '' when nothing worth showing is left. row_title takes its first part."""
     t = LIVE_STAMP.sub("", raw or "")
     t = "".join(" " if _pictograph(c) else c for c in t)
     t = MARKERS.sub(" ", t)
     while EMPTY_BRACKETS.search(t):
         t = EMPTY_BRACKETS.sub(" ", t)
+    tokens = t.split()
+    # "Finse station - Live", "🔥 · live · 🔥", "Live: Campfire": a "live" with no words of its own beside it is a marker.
+    tokens = [w for i, w in enumerate(tokens)
+              if not (w.casefold() == "live" and (i == 0 or _sep(tokens[i - 1])) and (i + 1 == len(tokens) or _sep(tokens[i + 1]))
+                      or w.casefold() == "live:" and (i == 0 or _sep(tokens[i - 1])))]
     words = []
-    for w in t.split():
-        if not words and set(w) <= SEPARATORS | PUNCT:
+    for w in tokens:
+        if not words and _sep(w):
             continue  # nothing before it
         if set(w) <= PUNCT:
             if not set(words[-1]) <= SEPARATORS:
@@ -64,6 +82,15 @@ def clean_title(raw):
     return t if any(c.isalnum() for c in t) else ""
 
 
+def row_title(raw):
+    """What a followed row shows: the first part of the cleaned title that has a letter or digit in it, else ''."""
+    for part in PARTS.split(clean_title(raw)):
+        part = part.strip(" ,;·•|｜:–—-")  # "Campfire: | rain" -> "Campfire"
+        if any(c.isalnum() for c in part):
+            return part
+    return ""
+
+
 def status_doc(slots, rows, overrides, stream_titles=None):
     """slots: channels.json slots; rows: db slot rows by key; overrides: monitor/overrides.json; stream_titles: slot key ->
     the stored title of the stream it plays, for the slots whose override says "title_from": "stream" (core.stream_titles).
@@ -73,7 +100,7 @@ def status_doc(slots, rows, overrides, stream_titles=None):
     for s in slots:
         key, o, r = s["key"], ov.get(s["key"], {}), rows.get(s["key"])
         if o.get("title_from") == "stream":
-            t = clean_title((stream_titles or {}).get(key))
+            t = row_title((stream_titles or {}).get(key))
             if t:  # else the override's own title, else the baked one: never an empty row
                 o = dict(o, title=t)
         e = {}

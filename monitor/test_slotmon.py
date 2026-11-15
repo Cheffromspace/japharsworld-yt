@@ -452,16 +452,40 @@ class FollowTitleTests(Base):
     def test_clean_title_tidies_punctuation_a_marker_leaves(self):
         # Stream titles from the monitor's seed data (2026-10-17).
         self.assertEqual(publish.clean_title("LIVE! View of the Milky Way Galaxy \U0001F30C"), "View of the Milky Way Galaxy")
-        self.assertEqual(publish.clean_title("ISS live, with crew audio"), "ISS, with crew audio")
+        self.assertEqual(publish.clean_title("ISS LIVE, with crew audio"), "ISS, with crew audio")
         self.assertEqual(publish.clean_title("Finse station - Live"), "Finse station")
         self.assertEqual(publish.clean_title("LIVE: Campfire · rain"), "Campfire · rain")
         self.assertEqual(publish.clean_title("Campfire: LIVE · rain"), "Campfire · rain")
-        self.assertEqual(publish.clean_title("Campfire (Live Stream)"), "Campfire (Stream)")
+        self.assertEqual(publish.clean_title("Campfire (24/7 Stream)"), "Campfire (Stream)")
         self.assertEqual(publish.clean_title("Rain (live)"), "Rain")
 
     def test_clean_title_keeps_live_inside_a_hyphen_compound(self):
         for t in ("Live-stream of rain", "Rain to re-live the night", "LIVE-STREAM: rain"):
             self.assertEqual(publish.clean_title(t), t)
+
+    def test_live_is_removed_only_where_it_is_a_marker(self):
+        # Round 2 (coordinator, 2026-11-15): "Long Live the Night" must stay.
+        for t in ("Long Live the Night", "Alive at Night", "Olive Grove", "live music", "Campfire (Live Stream)",
+                  "Osaka Loop Line live camera", "ISS live, with crew audio"):
+            self.assertEqual(publish.clean_title(t), t)
+        self.assertEqual(publish.clean_title("LIVE 24/7"), "")
+        self.assertEqual(publish.clean_title("\U0001F534 LIVE"), "")
+        self.assertEqual(publish.clean_title("Live Now: 24/7 Iceberg Cam"), "Iceberg Cam")
+        self.assertEqual(publish.clean_title("Live 24/7 rain on a tin roof"), "rain on a tin roof")
+        self.assertEqual(publish.clean_title("Live: Campfire"), "Campfire")
+
+    def test_row_title_is_the_first_part(self):
+        # Owner, 2026-11-15, on the long campfire title: "B. First part only".
+        self.assertEqual(publish.row_title(CAMPFIRE), "Lonely Lakeside Campfire")
+        self.assertEqual(publish.row_title("Iceberg Cam of Ilulissat, Greenland in 4K Ultra HD"), "Iceberg Cam of Ilulissat, Greenland in 4K Ultra HD")
+        self.assertEqual(publish.row_title("Lo-Fi beats - rainy night"), "Lo-Fi beats")  # a dash splits only with spaces round it
+        self.assertEqual(publish.row_title("Ancient Empires for Sleep — Calm History Radio"), "Ancient Empires for Sleep")
+        self.assertEqual(publish.row_title("\U0001F534 LIVE · | Campfire night – rain"), "Campfire night")  # first part with words
+        self.assertEqual(publish.row_title("Campfire: | rain"), "Campfire")
+        self.assertEqual(publish.row_title("\U0001F525 焚き火 LIVE 24/7 ｜ 森の夜"), "焚き火")
+        self.assertEqual(publish.row_title("焚き火の音・森の夜"), "焚き火の音・森の夜")  # the katakana middle dot is not a separator
+        self.assertEqual(publish.row_title("\U0001F534 LIVE 24/7 \U0001F525"), "")
+        self.assertEqual(publish.row_title(None), "")
 
     def test_setting_off_publishes_what_it_did_before(self):
         self.checked("OLDOLDOLD01", CAMPFIRE, OVERRIDES)
@@ -471,8 +495,7 @@ class FollowTitleTests(Base):
 
     def test_setting_on_publishes_the_cleaned_stream_title(self):
         self.checked("OLDOLDOLD01", CAMPFIRE)
-        self.assertEqual(self.doc()["slots"], {"cam": {"title": "Tokyo cam"},
-                                               "radio": {"title": "Lonely Lakeside Campfire · Boundary Waters Fire Crackling for Sleep"}})
+        self.assertEqual(self.doc()["slots"], {"cam": {"title": "Tokyo cam"}, "radio": {"title": "Lonely Lakeside Campfire"}})
         self.assertNotIn("title_from", json.dumps(self.doc()))  # a monitor setting, never published
 
     def test_no_stored_title_falls_back_to_the_override_then_the_baked_title(self):
@@ -510,7 +533,7 @@ class FollowTitleTests(Base):
                 mock.patch.object(publish, "build_sheet", lambda slots, cur: (b"", [])):
             core.publish_pass(self.con, SLOTS, FOLLOW)
         with open(os.path.join(self.tmp, "out", config.STATUS_FILE), encoding="utf-8") as f:
-            self.assertEqual(json.load(f)["slots"]["radio"], {"title": "Lonely Lakeside Campfire · Boundary Waters Fire Crackling for Sleep"})
+            self.assertEqual(json.load(f)["slots"]["radio"], {"title": "Lonely Lakeside Campfire"})
 
 
 class WorkerTests(unittest.TestCase):

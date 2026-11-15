@@ -175,6 +175,34 @@ test('Playback: a video Tunelio refuses as age-restricted is remembered: restric
   assert.equal((await other.location({ id: 'gone' })).via, 'youtube');
 });
 
+// Everything-is-OK#783 (review 2026-11-15): every POST /ops/plan calls forceRestricted(id, 0); it must not wipe Tunelio's
+// real verdict, or the next play makes another /create that is refused again.
+test('Playback: a test plan clears only its own restricted verdict, never the real one from Tunelio (#783)', async () => {
+  let now = 1_000_000;
+  const calls = [];
+  const tunelio = { enabled: true, async create(id) { calls.push(id); const e = new Error('This video is age-restricted and cannot be downloaded.'); e.status = 404; e.code = e.message; throw e; } };
+  const p = new Playback({ tunelio, now: () => now, restrictedHours: 24 });
+  assert.equal((await p.location({ id: 'agegate', seconds: 600 })).via, 'restricted');
+  p.forceRestricted('agegate', 0); // what /ops/plan mode=lower, direct, adaptive, start or clear does
+  assert.equal(p.restricted('agegate'), true, 'the real verdict stays');
+  now += 60_000; // past the 30 s a failed job is kept
+  assert.equal((await p.location({ id: 'agegate', seconds: 600 })).via, 'restricted');
+  assert.equal(calls.length, 1, 'no second /create');
+  // A plan over the real verdict keeps the later one and gives the real one back when cleared.
+  p.forceRestricted('agegate', 5);
+  assert.deepEqual(p.forcedRestrictions().map((f) => f.id), ['agegate']);
+  p.forceRestricted('agegate', 0);
+  assert.equal(p.restricted('agegate'), true, 'cleared: the real verdict is back');
+  assert.deepEqual(p.forcedRestrictions(), []);
+  // A plan alone is cleared as before.
+  p.forceRestricted('plainvideo1', 5);
+  assert.equal(p.restricted('plainvideo1'), true);
+  p.forceRestricted('plainvideo1', 0);
+  assert.equal(p.restricted('plainvideo1'), false);
+  now += 25 * 3600_000;
+  assert.equal(p.restricted('agegate'), false, 'the real verdict still ends after its day');
+});
+
 test('server: an age-restricted video answers restricted to the tablet and fails fast for players (world #305)', async (t) => {
   const store = new Store({ path: ':memory:', shards: 1, pool: 50, pinHours: 24 });
   const youtube = { async search() { return { videos: [{ id: 'AAAAAAAAAAA', title: 'a', channel: 'c', length: '1:00', seconds: 60, views: '', age: '', live: false, cc: false }], more: null }; }, thumbnailUrl: (id) => id };

@@ -560,6 +560,82 @@ class FollowTitleTests(Base):
         self.assertEqual(publish.row_title("Marble Run Race HABA Slope + Cuboro + Bornelund Quadrilla + Transparent pipe"),
                          "Marble Run Race HABA Slope + Cuboro + Bornelund Quadrilla")
 
+    # Round 4: the verifier's round 2 on 24849df (verify.md "Round 2").
+    def test_a_split_or_a_cut_never_leaves_a_pair_open(self):
+        for raw, want in (("Night Train (Tokyo – Osaka) ambience", "Night Train (Tokyo – Osaka) ambience"),
+                          ("Rain (Tokyo - Osaka)", "Rain (Tokyo - Osaka)"),
+                          ("Cozy Cabin (Rain · Fireplace · Snow)", "Cozy Cabin (Rain · Fireplace · Snow)"),
+                          ("Lakeside [4K | HDR] Campfire", "Lakeside [4K | HDR] Campfire"),
+                          ("Campfire 【焚き火 | 雨音】", "Campfire 【焚き火 | 雨音】"),
+                          ("Rain “Night · Sleep”", "Rain “Night · Sleep”"),
+                          ("Night Train (Tokyo – Osaka) · rain", "Night Train (Tokyo – Osaka)"),
+                          # a seed title (2026-10-17) the cap used to cut inside its brackets: cut back to before the opener
+                          ("Live Video from the International Space Station (Official NASA Stream)", "Live Video from the International Space Station"),
+                          ("Rain (Tokyo", "Rain Tokyo"), ("Rain) Night", "Rain Night")):  # a title that came unbalanced
+            self.assertEqual(publish.row_title(raw), want, raw)
+
+    def test_no_published_title_holds_an_unclosed_or_unopened_bracket_or_quote(self):
+        pairs = {"(": ")", "[": "]", "{": "}", "【": "】", "「": "」", "『": "』", "（": "）", "〔": "〕",
+                 "《": "》", "〈": "〉", "«": "»", "‹": "›", "“": "”", "„": "“"}
+
+        def unpaired(t):  # written apart from titles._unmatched on purpose
+            stack = []
+            for c in t:
+                if c == '"':
+                    stack.pop() if stack and stack[-1] == '"' else stack.append(c)
+                elif stack and pairs.get(stack[-1]) == c:
+                    stack.pop()
+                elif c in pairs:
+                    stack.append(c)
+                elif c in pairs.values():
+                    return True
+            return bool(stack)
+        raws = set()
+        for p in __import__("glob").glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed", "*.json")):
+            with open(p, encoding="utf-8") as f:
+                d = json.load(f)
+            raws |= {o["title"] for o in d.get("observations", []) + d.get("flash", []) if o.get("title")}
+        self.assertGreater(len(raws), 200)
+        for o, c in list(pairs.items()) + [('"', '"')]:
+            for sep in (" · ", " | ", " - ", " – ", "｜", " / "):
+                raws |= {"Rain %sTokyo%sOsaka%s night" % (o, sep, c), "%sRain%sNight%s" % (o, sep, c), "Night%s%sRain%s" % (sep, o, c),
+                         "Rain %s%s%s more" % (o, "word " * 20, c), "x" * 55 + " %sRain at night%s" % (o, c), "Rain%s night%sNight" % (c, sep),
+                         "Rain %s night%s%s" % (o, sep, "LIVE"), "%s%s%s Rain" % (o, "\U0001F525", c)}
+        for raw in raws:
+            out = publish.row_title(raw)
+            self.assertFalse(unpaired(out), (raw, out))
+
+    def test_a_bare_first_part_is_skipped(self):
+        for raw, want in (("A · Rainy night by the lake", "Rainy night by the lake"), ("4K · Rainy night", "Rainy night"),
+                          ("2024 | Rain", "Rain"), ("Ah | Rainy night", "Rainy night"), ("Cafe · Work · Study", "Cafe"),
+                          ("2024 | 4K", ""), ("雨音 | night", "雨音")):
+            self.assertEqual(publish.row_title(raw), want, raw)
+
+    def test_stacked_marks_are_capped_and_a_bidi_control_never_joins_two_words(self):
+        self.assertEqual(publish.clean_title("n" + "́" * 30 + " rain"), "ń́ rain")
+        self.assertEqual(publish.clean_title("Rain‮Night‬"), "Rain Night")
+        self.assertEqual(publish.clean_title("שלום‏."), "שלום.")  # an RLM before a stop: deleted
+        self.assertEqual(publish.clean_title("น้ำ"), "น้ำ")  # Thai: one mark stays
+
+    def test_the_cap_cuts_a_cjk_run_by_units_instead_of_dropping_it(self):
+        from slotmon import titles
+        out = publish.row_title("雨の夜 " + "焚き火の音" * 10)
+        self.assertTrue(out.startswith("雨の夜 焚き火"), out)
+        self.assertGreaterEqual(titles._units(out), titles.CAP_UNITS - 1)
+        self.assertEqual(publish.row_title("Rain " + "焚" * 40), "Rain " + "焚" * 29)
+
+    def test_a_title_that_raises_falls_back_and_the_pass_still_publishes_every_slot(self):
+        self.checked("OLDOLDOLD01", CAMPFIRE)
+
+        def boom(raw):
+            raise ValueError("bad title")
+        with mock.patch.object(publish, "row_title", boom), mock.patch.object(config, "DATA_DIR", self.tmp), \
+                mock.patch.object(config, "PUBLISH", False), mock.patch.object(publish, "build_sheet", lambda slots, cur: (b"", [])):
+            self.assertEqual(self.doc()["slots"], {"cam": {"title": "Tokyo cam"}, "radio": {"title": "Radio fallback"}})
+            core.publish_pass(self.con, SLOTS, FOLLOW)
+        with open(os.path.join(self.tmp, "out", config.STATUS_FILE), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["slots"], {"cam": {"title": "Tokyo cam"}, "radio": {"title": "Radio fallback"}})
+
     def test_setting_off_publishes_what_it_did_before(self):
         self.checked("OLDOLDOLD01", CAMPFIRE, OVERRIDES)
         self.checked("CAMCAMCAM01", CAMPFIRE, OVERRIDES)

@@ -106,20 +106,28 @@ journalctl -u japharsworld-yt-monitor -n 50
   keeps its fixed title). The published title is then the first part of the stored title of the stream the slot plays
   (`streams.title` of `slots.current_video`), cleaned for the list (owner, 2026-11-15: "First part only"); the code is
   `slotmon/titles.py`. Cleaning removes emoji and pictographs, control and format characters (a soft hyphen without
-  splitting the word; ZWNJ/ZWJ stay between letters), `<` and `>` (and tags like `<b>`), and live markers only where they
-  stand as markers, also in fullwidth or styled letters: `24/7`, `Live Now:`, the all-caps `LIVE`, "live" beside 24/7 or
-  alone in brackets or between separators, and a `Live:` label ("Long Live the Night", "live music" and "live.com" stay).
-  Where something was removed, no separator is left doubled or at an end and no bracket or quote pair is left empty.
+  splitting the word; ZWNJ/ZWJ stay between letters; a bidi control between two words becomes a space), a third
+  combining mark in a row on one letter, `<` and `>` (and tags like `<b>`), and live markers only where they stand as
+  markers, also in fullwidth or styled letters: `24/7`, `Live Now:`, the all-caps `LIVE`, "live" beside 24/7 or alone in
+  brackets or between separators, and a `Live:` label ("Long Live the Night", "live music" and "live.com" stay). Where
+  something was removed, no separator is left doubled or at an end and no bracket or quote pair is left empty.
   Parts are split at `· • | ｜ ¦ 丨 ⋆ ‖ ／` wherever they stand and at `- – — ~ / ｰ` only with spaces round them ("Lo-Fi",
-  "study/relax" stay whole); commas, colons and the katakana `・` never split. The first part with a letter or digit is
-  used, cut after a whole word at 64 units (a wide CJK character counts two; one tablet line held at most 62 in the seed
-  titles, so the row's own one-line cut still applies). E.g. "🔴 Lonely Lakeside Campfire · LIVE 24/7 · Boundary Waters
-  Fire Crackling for Sleep 🔥" becomes "Lonely Lakeside Campfire". With no stored title, one that cleans to nothing, or
-  one with a banned word anywhere in it (`BANNED_WORDS`, the replacement rule's list), the slot's `title` in
-  `overrides.json` is used, else the baked one. It changes after a swap has stuck (not while a candidate waits for its
-  flash check), after the daily playlist read follows a hand edit, and when the channel edits its title (every status
-  check stores it again). Only the published title follows; the channel line and the Discord/summary labels keep their
-  baked text.
+  "study/relax" stay whole), never inside a bracket or quote pair ("Night Train (Tokyo – Osaka)" is one part); commas,
+  colons and the katakana `・` never split. The first part with a word in it is used, unless it is bare (one token under
+  4 units like "A" or "4K", or no letter at all like "2024"): then the next part. It is cut at 64 units (a wide CJK
+  character counts two) after a whole word, or inside a run of CJK with no space, and back to before a bracket or quote
+  the cut would leave open; a bracket or quote the title itself left unpaired is dropped. 64 is just above the most one
+  tablet line held in the seed titles (62), so the row's own one-line cut still applies to a long one. E.g. "🔴 Lonely
+  Lakeside Campfire · LIVE 24/7 · Boundary Waters Fire Crackling for Sleep 🔥" becomes "Lonely Lakeside Campfire". With
+  no stored title, one that cleans to nothing or only to bare parts, one with a banned word anywhere in it
+  (`BANNED_WORDS`, the replacement rule's list), or an error in the title code (logged as `title_from <key>: …`; the pass
+  goes on), the slot's `title` in `overrides.json` is used, else the baked one. It changes after a swap has stuck (not
+  while a candidate waits for its flash check), after the daily playlist read follows a hand edit, and when the channel
+  edits its title (every status check stores it again). Only the published title follows; the channel line and the
+  Discord/summary labels keep their baked text. Known limits, left on purpose: `<3` loses its `<` ("I <3 rain" →
+  "I 3 rain"); an all-caps LIVE is taken as the marker even where it is a word ("LIVE MUSIC all night" → "MUSIC all
+  night"); styled letters outside a marker (𝐂𝐚𝐦𝐩𝐟𝐢𝐫𝐞) pass through and the row font may not draw them; an ANSI escape
+  loses only its escape character ("Rain\x1b[31mRed" → "Rain [31mRed"; YouTube titles can't hold one).
 - **Retiring a slot** (a stream down for days with no replacement; slot order is frozen, so never remove it): in `overrides.json`
   give it `"hidden": true, "kind": "unmanaged", "retired": "<date>: <reason>"`. It leaves the checks, the replacement search,
   the daily summary, the mass-outage count and Grafana; drop the entry to bring it back. Five retired 2026-10-29 (owner).

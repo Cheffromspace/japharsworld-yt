@@ -26,7 +26,11 @@ def status_doc(slots, rows, overrides, stream_titles=None):
     for s in slots:
         key, o, r = s["key"], ov.get(s["key"], {}), rows.get(s["key"])
         if o.get("title_from") == "stream":
-            t = row_title((stream_titles or {}).get(key))
+            try:
+                t = row_title((stream_titles or {}).get(key))
+            except Exception as ex:  # a channel's title must never stop a publish pass or the flash-fail hide (verifier R2)
+                print("title_from %s: %s: %s; the fixed title stays" % (key, type(ex).__name__, str(ex)[:200]), flush=True)
+                t = ""
             if t:  # else the override's own title, else the baked one: never an empty row
                 o = dict(o, title=t)
         e = {}

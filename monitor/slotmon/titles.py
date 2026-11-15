@@ -68,26 +68,41 @@ def _letter(ch):
     return unicodedata.category(ch)[0] in "LM"
 
 
+BIDI = set("‎‏؜‪‫‬‭‮⁦⁧⁨⁩")
+MAX_MARKS = 2  # combining marks kept in a row on one letter: Unity draws a taller stack over the row above (verifier, R2)
+
+
 def _chars(t):
     """Character pass. A word is never split: a soft hyphen is deleted, ZWNJ and ZWJ stay between two letters (Persian
-    "می‌خوابم") and are deleted elsewhere (a ZWJ left between emoji). Other format characters and every control
-    character are deleted; line breaks, tabs and wide spaces become a space."""
-    out = []
+    "می‌خوابم") and are deleted elsewhere (a ZWJ left between emoji). A bidi control between two letters or digits becomes
+    a space ("Rain‮Night" -> "Rain Night"), elsewhere it is deleted. Other format characters are deleted; control
+    characters leave a gap; line breaks, tabs and wide spaces become a space; a third combining mark in a row is dropped."""
+    out, marks = [], 0
     for i, c in enumerate(t):
         cp, cat = ord(c), unicodedata.category(c)
+        between = 0 < i < len(t) - 1
         if c in "\t\n\r\v\f" or cat in ("Zs", "Zl", "Zp") or c == "​":
             out.append(" ")
         elif cat == "Cc":
             out.append(GAP)  # \x00, \x07, \x1b...: gone, and never glues two words together
         elif c in "‌‍":
-            if 0 < i < len(t) - 1 and _letter(t[i - 1]) and _letter(t[i + 1]):
+            if between and _letter(t[i - 1]) and _letter(t[i + 1]):
                 out.append(c)
+        elif c in BIDI:
+            if between and t[i - 1].isalnum() and t[i + 1].isalnum():
+                out.append(" ")
         elif cat == "Cf" or cat == "Me" or 0xFE00 <= cp <= 0xFE0F or 0xE0100 <= cp <= 0xE01EF:
-            continue  # soft hyphen, bidi controls, tags, keycaps, variation selectors
+            continue  # soft hyphen, tags, keycaps, variation selectors
         elif c in "<>" or _pictograph(c):
             out.append(GAP)
+        elif cat == "Mn":
+            marks += 1
+            if marks <= MAX_MARKS:
+                out.append(c)
+            continue
         else:
             out.append(c)
+        marks = 0
     return out
 
 
@@ -176,20 +191,107 @@ def _units(t):
     return sum(2 if unicodedata.east_asian_width(c) in "WF" else 0 if unicodedata.category(c) == "Mn" else 1 for c in t)
 
 
+def _wide(t):
+    return any(unicodedata.east_asian_width(c) in "WF" for c in t)
+
+
+# Bracket and quote pairs a published title keeps whole (verifier R2-M1): never split or cut inside one, never leave one
+# open or unopened. Not the apostrophes (' ‘ ’), which stand alone in "Link's" and "90’s". The straight double quote
+# opens and closes; “ closes a „ and opens a “”.
+TRACKED = [p for p in PAIRS if p not in ("‘’", "''")]
+OPENS = {p[0]: p[1] for p in TRACKED if p[0] != p[1]}
+CLOSES = set(p[1] for p in TRACKED if p[0] != p[1])
+
+
+def _unmatched(t):
+    """Indices of the tracked bracket and quote characters in t that have no partner."""
+    stack, bad = [], set()
+    for i, c in enumerate(t):
+        if c == '"':
+            if stack and stack[-1][0] == '"':
+                stack.pop()
+            else:
+                stack.append((c, i))
+        elif c == "“" and stack and stack[-1][0] == "„":
+            stack.pop()
+        elif c in OPENS:
+            stack.append((c, i))
+        elif c in CLOSES:
+            if stack and OPENS.get(stack[-1][0]) == c:
+                stack.pop()
+            else:
+                bad.add(i)
+    return bad | {i for _, i in stack}
+
+
+def _depth(t):
+    """For each index, how many tracked pairs are open there."""
+    stack, out = [], []
+    for c in t:
+        out.append(len(stack))
+        if c == '"':
+            if stack and stack[-1] == '"':
+                stack.pop()
+            else:
+                stack.append(c)
+        elif c == "“" and stack and stack[-1] == "„":
+            stack.pop()
+        elif c in OPENS:
+            stack.append(c)
+        elif c in CLOSES and stack and OPENS.get(stack[-1]) == c:
+            stack.pop()
+    return out
+
+
+def _tidy(t):
+    t = SPACE_CLOSE.sub(r"\1", OPEN_SPACE.sub(r"\1", re.sub(r"\s+", " ", t)))
+    words = t.split()
+    while words and not _word(words[-1]):
+        words.pop()  # "... Quadrilla +", "... Relaxation &"
+    while words and not _word(words[0]):
+        words.pop(0)
+    return " ".join(words).lstrip(SEPS + STOPS).rstrip(SEPS).strip()
+
+
+def _balance(t):
+    """t without the bracket and quote characters that have no partner (a title that came that way)."""
+    bad = _unmatched(t)
+    return _tidy("".join(c for i, c in enumerate(t) if i not in bad)) if bad else t
+
+
+def _parts(t):
+    """t split at the part separators that stand outside every bracket and quote pair: "Night Train (Tokyo – Osaka)
+    ambience" is one part."""
+    depth, out, at = _depth(t), [], 0
+    for m in PARTS.finditer(t):
+        if depth[m.start()] == 0 and (m.end() == len(t) or depth[m.end() - 1] == 0):
+            out.append(t[at:m.start()])
+            at = m.end()
+    return out + [t[at:]]
+
+
+def _bare(p):
+    """A part too thin to stand for the stream: one token under 4 units ("A", "4K") or no letter at all ("2024")."""
+    return (" " not in p and _units(p) < 4) or not any(c.isalpha() for c in p)
+
+
 def _cap(t):
-    """At most CAP_UNITS (wide characters count two), cut after a whole word; a title with no space is cut where it is
-    full. No ellipsis: the row never had one."""
+    """At most CAP_UNITS (wide characters count two), cut after a whole word; a run with no space that holds wide (CJK)
+    characters, or a title with no space at all, is cut where it is full. A pair the cut would leave open is cut back to
+    before its opener. No ellipsis: the row never had one."""
     n = 0
     for i, c in enumerate(t):
         n += _units(c)
         if n > CAP_UNITS:
             head = t[:i]
-            if not t[i].isspace() and " " in head.strip():
-                head = head[:head.rstrip().rfind(" ")]
-            words = head.split()
-            while words and not _word(words[-1]):
-                words.pop()  # "... Quadrilla +", "... Relaxation &"
-            return " ".join(words).rstrip(SEPS)
+            sp = head.rfind(" ")
+            if not t[i].isspace() and sp > 0 and not _wide(head[sp + 1:] + t[i]):
+                head = head[:sp]  # a whole word
+            opened = sorted(k for k in _unmatched(head) if head[k] in OPENS or head[k] in '"„')
+            if opened:
+                before = _tidy(head[:opened[0]])
+                head = before if _word(before) else _balance(head)
+            return _tidy(head)
     return t
 
 
@@ -200,12 +302,13 @@ def banned(raw):
 
 
 def row_title(raw):
-    """What a followed row shows: the first part of the cleaned title with a letter or digit in it, capped to one line;
-    '' (the caller falls back to the fixed title) for none, or for a title with a banned word anywhere in it."""
+    """What a followed row shows: the first part of the cleaned title with a word in it that isn't bare, its brackets and
+    quotes whole, capped at CAP_UNITS; '' (the caller falls back to the fixed title) when there is none, or when the
+    title has a banned word anywhere in it."""
     if banned(raw):
         return ""
-    for part in PARTS.split(clean_title(raw)):
-        part = part.lstrip(" " + SEPS + STOPS).rstrip(" " + SEPS)
-        if _word(part):
+    for part in _parts(clean_title(raw)):
+        part = _balance(part.lstrip(" " + SEPS + STOPS).rstrip(" " + SEPS))
+        if _word(part) and not _bare(part):
             return _cap(part)
     return ""

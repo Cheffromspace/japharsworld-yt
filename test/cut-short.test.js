@@ -116,3 +116,86 @@ test('#780 server: with no failure signal, a closed playlist SHORT_S (10 s) or m
   assert.notEqual(near.state, 'failed');
   assert.equal(near.ended, true);
 });
+
+// #781: a growing (unpredicted) build that ends part way after players were sent. Uneven keyframe cuts, so no prediction.
+const UNEVEN = [3, 5, 4, 6, 2, 5, 7, 4, 3, 5, 4, 6]; // 54 s of a 60 s video
+const failedCloses = (uploads) => uploads.filter((u) => u.file === 'index.m3u8' && u.failed);
+
+test('#781 worker, path A (the catch): an upload refused after ready closes the playlist marked failed; nothing cached', async (t) => {
+  const uploads = [];
+  const { logs, cache } = await build(t, UNEVEN, 60, { upload: async (file, body, type, opts = {}) => {
+    uploads.push({ file, body: body.toString(), ...opts });
+    return file === 'seg9.ts' ? 413 : 204;
+  } });
+  assert.equal(logs.find((l) => l.event === 'media_steady')?.steady, false, 'growing playlist');
+  assert.match(logs.find((l) => l.event === 'media_failed')?.message ?? '', /seg9\.ts .* answered 413/);
+  const closes = failedCloses(uploads);
+  assert.equal(closes.length, 1, 'one closing playlist, marked failed');
+  assert.match(closes[0].body, /seg8\.ts\n#EXT-X-ENDLIST\n$/);
+  assert.equal(cache.get('aaaaaaaaaaa', '720p', { seconds: 60 }), null);
+});
+
+test('#781 worker, path B: ffmpeg exiting non-zero part way closes the playlist marked failed; nothing cached', async (t) => {
+  const lengths = UNEVEN.slice(0, 10); // 44 of 60 s, then a connection reset
+  const all = lengths.map((_, i) => name(i));
+  const { uploads, logs, cache } = await build(t, lengths, 60, { code: 1, steps: [[pl(lengths.slice(0, 8)), all.slice(0, 8)], [pl(lengths), all.slice(8)]] });
+  assert.equal(logs.find((l) => l.event === 'media_done')?.exit, 1);
+  const closes = failedCloses(uploads);
+  assert.equal(closes.length, 1);
+  assert.match(closes[0].body, /seg9\.ts\n#EXT-X-ENDLIST\n$/);
+  assert.equal(cache.get('aaaaaaaaaaa', '720p', { seconds: 60 }), null);
+});
+
+test('#781 worker, path C: ffmpeg ending cleanly short (its own ENDLIST, 44 of 60 s) closes marked failed, and the copy is not cached (main cached it)', async (t) => {
+  const lengths = UNEVEN.slice(0, 10);
+  const all = lengths.map((_, i) => name(i));
+  const { uploads, logs, cache } = await build(t, lengths, 60, { steps: [[pl(lengths.slice(0, 8)), all.slice(0, 8)], [pl(lengths, true), all.slice(8)]] });
+  assert.equal(logs.find((l) => l.event === 'media_failed')?.reason, 'short');
+  const closes = failedCloses(uploads);
+  assert.equal(closes.length, 1);
+  assert.match(closes[0].body, /seg9\.ts\n#EXT-X-ENDLIST\n$/);
+  assert.equal(cache.get('aaaaaaaaaaa', '720p', { seconds: 60 }), null, 'the worker does not cache it');
+  assert.equal(cache.get('aaaaaaaaaaa', '720p'), null, 'not even without a length to compare with');
+});
+
+test('#781 worker: a whole growing build sends no failure mark and is cached', async (t) => {
+  const lengths = [...UNEVEN, 6]; // 60 s
+  const { uploads, logs, cache } = await build(t, lengths, 60);
+  assert.equal(failedCloses(uploads).length, 0);
+  assert.ok(logs.some((l) => l.event === 'media_done') && !logs.some((l) => l.event === 'media_failed'));
+  assert.ok(cache.get('aaaaaaaaaaa', '720p', { seconds: 60 }));
+});
+
+test('#781 server: a growing playlist closed with the failure mark fails the session; players on it get what is here and end at the cut; not reused', async (t) => {
+  let now = 1_000_000;
+  const logs = [];
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), base: 'https://yt/home', enabled: true, segmentHoldMs: 5000, now: () => now, log: (l) => logs.push(l) });
+  const s = home.start({ id: 'aaaaaaaaaaa', seconds: 60 }, '720p');
+  home.put(s.token, 'seg0.ts', Buffer.from('a'));
+  home.put(s.token, 'index.m3u8', Buffer.from(pl([3])));
+  home.put(s.token, 'seg1.ts', Buffer.from('b'));
+  home.put(s.token, 'index.m3u8', Buffer.from(pl([3, 5])));
+  const waiting = home.file(s.token, 'seg2.ts'); // a player ahead of the upload
+  assert.equal(home.put(s.token, 'index.m3u8', Buffer.from(pl([3, 5], true)), { failed: true }), 204);
+  assert.equal(s.state, 'failed');
+  assert.equal(s.reason, 'cut_short');
+  assert.equal(await waiting, null, 'released at once, not after the hold');
+  assert.match((await home.file(s.token, 'index.m3u8')).body.toString(), /seg1\.ts\n#EXT-X-ENDLIST/, 'the closed playlist is still served');
+  assert.equal((await home.file(s.token, 'seg1.ts')).body.toString(), 'b');
+  assert.ok(!logs.some((l) => l.event === 'home_done'));
+  now += 61_000;
+  assert.equal(home.peek({ id: 'aaaaaaaaaaa' }, '720p'), null, 'the next play starts over, not 12 h of the short copy');
+});
+
+test('#781 server: the mark after the closed playlist already went up unmarked fails a session that had ended as done', async (t) => {
+  let now = 1_000_000;
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), base: 'https://yt/home', enabled: true, now: () => now });
+  const s = home.start({ id: 'aaaaaaaaaaa', seconds: 60 }, '720p');
+  home.put(s.token, 'seg0.ts', Buffer.from('a'));
+  home.put(s.token, 'index.m3u8', Buffer.from(pl([3], true)));
+  assert.equal(s.ended, true, 'done as far as the server could tell');
+  assert.equal(home.put(s.token, 'index.m3u8', Buffer.from(pl([3], true)), { failed: true }), 204);
+  assert.equal(s.state, 'failed');
+  now += 61_000;
+  assert.equal(home.peek({ id: 'aaaaaaaaaaa' }, '720p'), null);
+});

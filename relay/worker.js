@@ -50,9 +50,9 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
     // The segment a player is waiting for, from the server's answers (x-media-want, Everything-is-OK#367): every
     // stored upload's answer says it, or nothing once it is there.
     let want = null;
-    const upload = async (file, body, type, { cached = false } = {}) => {
+    const upload = async (file, body, type, { cached = false, failed = false } = {}) => {
       const res = await fetcher(`${base}/relay/media/${job.token}/${file}`, { method: 'PUT',
-        headers: { ...headers, 'content-type': type, ...(cached ? { 'x-media-cached': '1' } : {}) }, body,
+        headers: { ...headers, 'content-type': type, ...(cached ? { 'x-media-cached': '1' } : {}), ...(failed ? { 'x-media-failed': '1' } : {}) }, body,
         signal: AbortSignal.timeout(60_000) });
       try { await res.body?.cancel(); } catch { /* ignore */ }
       if (res.status === 204) { const w = res.headers.get('x-media-want'); want = /^\d{1,5}$/.test(w ?? '') ? Number(w) : null; }

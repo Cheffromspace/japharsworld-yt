@@ -1894,7 +1894,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       try { body = await readBody(req, 64 << 20); } catch (err) {
         return err?.message === 'body too large' ? fail(res, 413, 'too_large', 'Too large.') : fail(res, 503, 'upload_broken', 'Upload broke off.');
       }
-      const status = home.put(m[1], m[2], body, { cached: req.headers['x-media-cached'] === '1' });
+      // x-media-failed: the worker's closing playlist of a copy that isn't whole (Everything-is-OK#781).
+      const status = home.put(m[1], m[2], body, { cached: req.headers['x-media-cached'] === '1', failed: req.headers['x-media-failed'] === '1' });
       // The segment players are waiting for, so the worker sends it next (Everything-is-OK#367, src/home.js).
       if (status === 204) { const want = home.want(m[1]); res.writeHead(204, want == null ? {} : { 'x-media-want': String(want) }); return res.end(); }
       return fail(res, status, status === 410 ? 'gone' : status === 413 ? 'too_large' : 'bad_file', 'Not stored.');

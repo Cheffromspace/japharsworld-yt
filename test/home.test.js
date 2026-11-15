@@ -597,7 +597,7 @@ test('mediaJob: a segment the server refuses after players were sent → the pla
   assert.match(playlists.at(-1), /seg9\.ts\n#EXT-X-ENDLIST\n$/);
   assert.doesNotMatch(playlists.at(-1), /seg10\.ts/);
   assert.match(logs.find((o) => o.event === 'media_failed').message, /seg10\.ts \([\d.]+ MB\) answered 413/);
-  assert.deepEqual(logs.find((o) => o.event === 'media_closed'), { event: 'media_closed', segments: 10, status: 204 });
+  assert.deepEqual(logs.find((o) => o.event === 'media_closed'), { event: 'media_closed', segments: 10, status: 204, failed: true }, 'marked failed (#781)');
 });
 
 test('mediaJob: an upload that fails (server restarting) is tried again', async () => {
@@ -701,6 +701,21 @@ async function homeApp(t, { config: c = {}, media = null, playlist = PL1, ...ove
   return { play, jobs, store, url, n, app };
 }
 const QUEST = 'AVProMobileVideo/2026.3.3p2 (Linux;Android 14) ExoPlayer';
+
+test('PUT /relay/media: x-media-failed on a closing playlist fails the session (cut_short), a growing one too (Everything-is-OK#781)', async (t) => {
+  const app = await homeApp(t);
+  assert.equal((await app.play('NSPlayer/12.00.26100 WMFSDK/12.00', '')).status, 302);
+  const token = app.jobs[0].token;
+  const s = app.app.home.byToken.get(token);
+  assert.equal(s.state, 'ready');
+  const put = (headers) => fetch(`${app.url}/relay/media/${token}/index.m3u8`, { method: 'PUT', headers: { authorization: `Bearer ${TOKEN}`, ...headers },
+    body: `${PL1}#EXT-X-ENDLIST\n` });
+  assert.equal((await put({})).status, 204);
+  assert.equal(s.ended, true, 'unmarked: done');
+  assert.equal((await put({ 'x-media-failed': '1' })).status, 204);
+  assert.equal(s.state, 'failed');
+  assert.equal(s.reason, 'cut_short');
+});
 
 test('ticket → home: home builds 1080p when the room has not picked, and the room\'s own pick otherwise (owner, 2026-10-25)', async (t) => {
   const app = await homeApp(t);

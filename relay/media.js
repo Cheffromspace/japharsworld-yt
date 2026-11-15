@@ -281,10 +281,11 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   const duration = job.vod === false ? 0
     : Math.max(...urls.map((u) => Number(new URL(u).searchParams.get('dur')) || 0)) || Number(job.seconds) || 0;
   // Uploads that fail other than with an answer the server meant (204/400/410/413) are tried again, 5 times over ~15 s.
-  async function upload(file, body, type) {
+  // opts.failed (a closing playlist only): this copy isn't whole (x-media-failed, Everything-is-OK#781).
+  async function upload(file, body, type, opts = null) {
     for (let attempt = 0; ; attempt++) {
       let status;
-      try { status = await put(file, body, type); } catch { status = 0; }
+      try { status = await (opts ? put(file, body, type, opts) : put(file, body, type)); } catch { status = 0; }
       if (status && status < 500) return status;
       if (attempt >= 4) return status;
       await sleep(retryMs * (attempt + 1));
@@ -328,6 +329,7 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
   let jumping = null; // a jump waiting for its probes; uploads go on meanwhile
   let ending = false;
   let mb = 0, gone = false, isReady = false, lastPlaylist = '', realText = '', predicted = null, short = false, closedShort = false, jumps = 0, lastWant = null;
+  let failSent = false; // a closing playlist went up marked failed (x-media-failed)
   let seg0At, sourceAt = null; // first frame of run 0's seg0 (undefined until looked at) and of the source
   const name = (i) => `seg${i}.ts`;
   const index = (s) => Number(s.slice(3, -3));
@@ -530,6 +532,19 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
     if (final) for (const s of order()) if (!(await send(s))) return;
   }
 
+  // A job that ends without a whole copy after players were sent: the closed playlist goes up (again) marked failed
+  // (x-media-failed: 1), so the server fails the session instead of ending it as done, and the next play builds it again
+  // (Everything-is-OK#781, review 2026-11-15). Without it a growing playlist closed part way looked finished to the
+  // server (it only compared segment counts with a predicted list) and was reused for HOME_KEEP_HOURS. Sent as its own
+  // upload: the closed text may already have gone up unmarked (ffmpeg writes ENDLIST itself on a clean exit).
+  async function closeFailed(text) {
+    if (!isReady || gone || failSent || !text) return;
+    const status = await upload('index.m3u8', Buffer.from(text), 'application/vnd.apple.mpegurl', { failed: true }).catch(() => 0);
+    if (status === 410) gone = true;
+    if (status === 204) { lastPlaylist = text; failSent = true; }
+    log({ event: 'media_closed', segments: sent.size, status, failed: true });
+  }
+
   // Before the job ends: every segment the uploaded playlist lists should be on the server. Any that aren't (a race like
   // #553, or a segment that couldn't be read or sent) are tried once more; if some still can't go up, the playlist is
   // closed after the last one sent in order, so players end there instead of waiting 20 s for each missing one.
@@ -547,9 +562,9 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
     let closed = null;
     if (still && !gone && upTo > 0) {
       const text = closedAt(lastPlaylist, sent);
-      const status = await upload('index.m3u8', Buffer.from(text), 'application/vnd.apple.mpegurl').catch(() => 0);
+      const status = await upload('index.m3u8', Buffer.from(text), 'application/vnd.apple.mpegurl', { failed: true }).catch(() => 0);
       if (status === 410) gone = true;
-      if (status === 204) { lastPlaylist = text; closed = upTo; }
+      if (status === 204) { lastPlaylist = text; closed = upTo; failSent = true; }
     }
     log({ event: 'media_short', listed: listed.length, missing: missing.length, resent: missing.length - still, closedAt: closed, gone });
   }
@@ -576,25 +591,27 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       // only) keeps the count: realText is run 0's playlist alone, and a hole is what that count finds (#759).
       const count = jumped() ? whole() : extinfs(realText).length;
       const runS = playlistSeconds(realText);
-      short = !gone && exit === 0 && duration > 0 && (jumped() ? count < predicted.count : runS < duration - SHORT_S);
+      // Not the whole video. With no duration known there is nothing to compare with: then only a failed ffmpeg counts.
+      const lacking = jumped() ? count < predicted.count : duration > 0 ? runS < duration - SHORT_S : exit !== 0;
+      short = !gone && exit === 0 && duration > 0 && lacking;
       if (short) {
         log({ event: 'media_failed', reason: 'short', ms: Date.now() - started, mb: Math.round(mb), segments: sent.size,
           expected: predicted ? predicted.count : undefined, seconds: Math.round(runS), duration: Math.round(duration), source: proxy.failure ?? undefined });
         if (!isReady) failed(new Error(`ffmpeg ended at ${Math.round(runS)} of ${Math.round(duration)} s`));
+        await closeFailed(lastPlaylist); // path C: a clean exit short of the video (#266, #781)
         return;
       }
       log({ event: 'media_done', ms: Date.now() - started, mb: Math.round(mb), segments: sent.size, exit, gone, jumps: jumps || undefined,
         runs: jumped() ? runs.length : undefined, error: exit ? stderr.trim().split('\n').pop()?.slice(0, 200) : undefined });
       if (!isReady) failed(new Error(gone ? 'session gone' : `ffmpeg exited ${exit}: ${stderr.trim().split('\n').pop() ?? ''}`.slice(0, 300)));
+      else if (exit !== 0 && lacking) await closeFailed(lastPlaylist); // path B: ffmpeg failed part way (exit: not cached)
     } catch (err) {
       ending = true;
       runs.forEach(stop);
       log({ event: 'media_failed', ms: Date.now() - started, mb: Math.round(mb), message: String(err?.message ?? err).slice(0, 200) });
+      closedShort = true; // whatever went up, not a whole copy: never cached (#781)
       if (!isReady) failed(err);
-      else if (!gone && realText) {
-        const status = await upload('index.m3u8', Buffer.from(closedAt(listing(), sent)), 'application/vnd.apple.mpegurl').catch(() => 0);
-        log({ event: 'media_closed', segments: sent.size, status });
-      }
+      else if (!gone && realText) await closeFailed(closedAt(listing(), sent)); // path A
     } finally {
       clearTimeout(killer);
       ending = true;

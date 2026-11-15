@@ -406,7 +406,7 @@ export class Home {
   url(s) { return `${this.base}/${s.token}/index.m3u8`; }
 
   // A playlist from the worker (or from disk): which segments it lists, ready at the first one, ended when complete.
-  #playlist(s, text) {
+  #playlist(s, text, failed = false) {
     const before = s.listed.length, beforeSeconds = s.listedSeconds;
     const lines = text.split(/\r?\n/).filter(Boolean);
     s.listed = lines.filter((l) => !l.startsWith('#'));
@@ -423,9 +423,12 @@ export class Home {
     // 2026-10-27). By running time, not by count (Everything-is-OK#780, review 2026-11-15): a whole build can have fewer
     // segments than predicted (a `dur=` past the media's end adds a tail segment; a median GOP below the real one adds one
     // per GOP of drift), and its real playlist, as long as the video, was failed here and rebuilt on every play. A real cut
-    // under SHORT_S is taken as done: the video ends up to 10 s early, the rule the worker cache already uses.
-    if (s.endlist && s.segments < before && s.listedSeconds < beforeSeconds - SHORT_S && !this.loading && s.state !== 'failed') {
-      this.#fail(s, 'cut_short', `${s.segments} of ${before} segments`);
+    // under SHORT_S is taken as done: the video ends up to 10 s early, the rule the worker cache already uses. That
+    // comparison is the fallback for a worker that doesn't say: a worker that knows its copy isn't whole marks the closing
+    // playlist failed (x-media-failed, #781), a growing one too, and a session already ended as done is then failed too.
+    // A player already on it keeps what is here and ends at the cut; the next play builds it again.
+    if (s.endlist && (failed || (s.segments < before && s.listedSeconds < beforeSeconds - SHORT_S)) && !this.loading && s.state !== 'failed') {
+      this.#fail(s, 'cut_short', failed ? `worker: not whole, ${s.segments} segments` : `${s.segments} of ${before} segments`);
       for (const [file, ws] of s.segmentWaiters) if (!s.stored.has(file)) { for (const w of ws) w(); s.segmentWaiters.delete(file); }
       return;
     }
@@ -446,7 +449,8 @@ export class Home {
   // A worker's upload. → HTTP status: 204 stored, 400 bad name or playlist, 410 no such session any more (the worker
   // stops), 413 too large. cached: uploaded from the worker's own cache (relay/cache.js), not downloaded from YouTube,
   // so it counts as a cache hit and its MB as cacheMb, not against dailyBuilds / dailyMb.
-  put(token, file, body, { cached = false } = {}) {
+  // failed: the worker's closing playlist of a copy that isn't whole (x-media-failed, Everything-is-OK#781).
+  put(token, file, body, { cached = false, failed = false } = {}) {
     const s = this.byToken.get(token);
     if (!s || s.state === 'failed') return 410;
     if (cached && !s.cached) {
@@ -469,7 +473,7 @@ export class Home {
       if (lines[0] !== '#EXTM3U' || lines.some((l) => !l.startsWith('#') && !SEGMENT.test(l))) return 400;
       this.#write(s, file, Buffer.from(text));
       const was = s.state;
-      this.#playlist(s, text);
+      this.#playlist(s, text, failed);
       if (was === 'building' && s.state === 'ready') this.#ready(s);
       return 204;
     }

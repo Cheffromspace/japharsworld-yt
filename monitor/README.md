@@ -101,6 +101,17 @@ journalctl -u japharsworld-yt-monitor -n 50
 - **Changing the list:** edit `Assets/EverythingIsOK/Channels/channels.json` in the world repo, copy it to `monitor/channels.json`
   here, and push. The world preflight (`Tools/channels-monitor/preflight.cmd`) warns when the two differ.
 - **Showing a spare, renaming, recategorising, notices:** `monitor/overrides.json`, then push. Takes effect on the next pass.
+- **A title that follows the stream** (for a channel whose 24/7 stream keeps changing, #793): give the slot
+  `"title_from": "stream"` in `overrides.json`. The published title is then the stored title of the stream the slot
+  plays (`streams.title` of `slots.current_video`), cleaned for the list: emoji and pictographs, the markers `LIVE`,
+  `24/7` and `Live Now:` (any case, whole words only, so "Live" in "Long Live the Night" goes too), empty brackets, and
+  separators (`· • | - – — :`) left at an end or doubled are removed; e.g. "🔴 Lonely Lakeside Campfire · LIVE 24/7 ·
+  Boundary Waters Fire Crackling for Sleep 🔥" becomes "Lonely Lakeside Campfire · Boundary Waters Fire Crackling for Sleep".
+  With no stored title, or one that cleans to nothing, the slot's `title` in `overrides.json` is used, else the baked one.
+  It changes after a swap has stuck (not while a candidate waits for its flash check), after the daily playlist read
+  follows a hand edit, and when the channel edits its title (every status check stores it again). Only the published
+  title follows; the channel line and the Discord/summary labels keep their baked text. The row draws one line, so a
+  long title loses its last words on the tablet.
 - **Retiring a slot** (a stream down for days with no replacement; slot order is frozen, so never remove it): in `overrides.json`
   give it `"hidden": true, "kind": "unmanaged", "retired": "<date>: <reason>"`. It leaves the checks, the replacement search,
   the daily summary, the mass-outage count and Grafana; drop the entry to bring it back. Five retired 2026-10-29 (owner).

@@ -491,9 +491,29 @@ def summary(con, api, overrides, queued):
 
 # ---------- publish ----------
 
+def stream_titles(con, rows, overrides):
+    """Slot key -> the stored title of the stream it plays now, for slots with "title_from": "stream" (#793). current_video
+    moves only when a swap has stuck (or the daily playlist read follows a hand edit), so a candidate still waiting for its
+    flash check never lends its title. The title is rewritten by every status check (Data API or watch page) and by every
+    worker result (yt-dlp), so the row also follows a title the channel edits; publish.clean_title makes both forms equal."""
+    ov = overrides.get("slots", {})
+    out = {}
+    for key, r in rows.items():
+        if ov.get(key, {}).get("title_from") == "stream" and r["current_video"]:
+            s = db.stream(con, r["current_video"])
+            if s is not None and s["title"]:
+                out[key] = s["title"]
+    return out
+
+
+def published_doc(con, slots, overrides, rows=None):
+    rows = slot_rows(con) if rows is None else rows
+    return publish.status_doc(slots, rows, overrides, stream_titles(con, rows, overrides))
+
+
 def publish_pass(con, slots, overrides, force_thumbs=False):
     rows = slot_rows(con)
-    files = {config.STATUS_FILE: publish.dumps(publish.status_doc(slots, rows, overrides))}
+    files = {config.STATUS_FILE: publish.dumps(published_doc(con, slots, overrides, rows))}
     thumbs_at = db.get_meta(con, "thumbs_at", 0)
     if force_thumbs or db.get_meta(con, "thumbs_dirty", False) or now() - thumbs_at > config.THUMBS_REFRESH_HOURS * 3600:
         sheet, missing = publish.build_sheet(slots, {k: r["current_video"] for k, r in rows.items()})

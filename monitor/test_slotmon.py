@@ -409,6 +409,104 @@ class Tests(Base):
         self.assertEqual(len(core.claim_jobs(self.con, "optiplex", 12)), n)
 
 
+# A slot whose title follows its stream (Everything-is-OK#793, owner 2026-11-15: "Can we change it to follow the stream
+# title?"). The stream title the monitor journal showed for borneo-jungle-night at 2026-11-15 17:00:17Z:
+CAMPFIRE = "\U0001F534 Lonely Lakeside Campfire · LIVE 24/7 · Boundary Waters Fire Crackling for Sleep \U0001F525"
+FOLLOW = {"notice": "", "slots": {"noise": {"kind": "video"}, "cam": {"title": "Tokyo cam"},
+                                  "radio": {"title": "Radio fallback", "title_from": "stream"}}}
+
+
+class FollowTitleTests(Base):
+    def doc(self, overrides=FOLLOW):
+        return json.loads(publish.dumps(core.published_doc(self.con, SLOTS, overrides)))
+
+    def checked(self, vid, title, overrides=FOLLOW):
+        self.api.world[vid] = st(vid, "live", title=title)
+        core.check_pass(self.con, self.api, overrides)
+
+    def test_clean_title_of_the_campfire_stream(self):
+        self.assertEqual(publish.clean_title(CAMPFIRE), "Lonely Lakeside Campfire · Boundary Waters Fire Crackling for Sleep")
+
+    def test_clean_title_of_only_markers_and_emoji_is_empty(self):
+        for t in ("\U0001F534 LIVE 24/7 \U0001F525", "Live Now: 24 / 7 | \U0001F319✨", "\U0001F525 · live · \U0001F525", "", None, "   "):
+            self.assertEqual(publish.clean_title(t), "", t)
+
+    def test_clean_title_leaves_a_plain_title_alone(self):
+        for t in ("Jungle night sounds from a stilt hut, Borneo", "Shinjuku FM: soft lofi and smooth jazz",
+                  "Lo-Fi beats - rainy night in the Olive grove", "Alive: Delivery of the deliverance",
+                  "Lofi hip hop radio: beats to sleep and chill to", "Rain on a tin roof | 10 hours"):
+            self.assertEqual(publish.clean_title(t), t)
+
+    def test_clean_title_keeps_japanese_and_korean(self):
+        self.assertEqual(publish.clean_title("焚き火の音・森の夜々「ーー」"), "焚き火の音・森の夜々「ーー」")
+        self.assertEqual(publish.clean_title("\U0001F525 焚き火 LIVE 24/7 | 森の夜"), "焚き火 | 森の夜")
+        self.assertEqual(publish.clean_title("\U0001F534 LIVE 모닥불 소리 · 비 오는 밤 \U0001F327️"), "모닥불 소리 · 비 오는 밤")
+
+    def test_clean_title_drops_empty_brackets_and_the_yt_dlp_live_stamp(self):
+        self.assertEqual(publish.clean_title("Campfire 【LIVE】 (24/7) [live] \U0001F525"), "Campfire")
+        # yt-dlp appends the time to a live stream's title (its fulltitle doesn't); the worker stores that one.
+        self.assertEqual(publish.clean_title(CAMPFIRE + " 2026-11-15 17:00"), publish.clean_title(CAMPFIRE))
+        once = publish.clean_title(CAMPFIRE)
+        self.assertEqual(publish.clean_title(once), once)  # cleaning twice changes nothing
+
+    def test_clean_title_tidies_punctuation_a_marker_leaves(self):
+        # Stream titles from the monitor's seed data (2026-10-17).
+        self.assertEqual(publish.clean_title("LIVE! View of the Milky Way Galaxy \U0001F30C"), "View of the Milky Way Galaxy")
+        self.assertEqual(publish.clean_title("ISS live, with crew audio"), "ISS, with crew audio")
+        self.assertEqual(publish.clean_title("Finse station - Live"), "Finse station")
+        self.assertEqual(publish.clean_title("LIVE: Campfire · rain"), "Campfire · rain")
+        self.assertEqual(publish.clean_title("Campfire: LIVE · rain"), "Campfire · rain")
+
+    def test_setting_off_publishes_what_it_did_before(self):
+        self.checked("OLDOLDOLD01", CAMPFIRE, OVERRIDES)
+        self.checked("CAMCAMCAM01", CAMPFIRE, OVERRIDES)
+        self.assertEqual(self.doc(OVERRIDES), publish.status_doc(SLOTS, core.slot_rows(self.con), OVERRIDES))
+        self.assertEqual(self.doc(OVERRIDES), {"notice": "", "slots": {"cam": {"title": "Tokyo cam"}}})
+
+    def test_setting_on_publishes_the_cleaned_stream_title(self):
+        self.checked("OLDOLDOLD01", CAMPFIRE)
+        self.assertEqual(self.doc()["slots"], {"cam": {"title": "Tokyo cam"},
+                                               "radio": {"title": "Lonely Lakeside Campfire · Boundary Waters Fire Crackling for Sleep"}})
+        self.assertNotIn("title_from", json.dumps(self.doc()))  # a monitor setting, never published
+
+    def test_no_stored_title_falls_back_to_the_override_then_the_baked_title(self):
+        self.assertEqual(self.doc()["slots"]["radio"], {"title": "Radio fallback"})  # no check yet: no stored title
+        self.checked("OLDOLDOLD01", "\U0001F534 LIVE 24/7 \U0001F525")  # cleans to nothing
+        self.assertEqual(self.doc()["slots"]["radio"], {"title": "Radio fallback"})
+        bare = {"notice": "", "slots": {"radio": {"title_from": "stream"}}}
+        self.assertNotIn("radio", self.doc(bare)["slots"])  # the world's baked title, as with no override
+        self.checked("OLDOLDOLD01", "\U0001F534 Sleep radio · LIVE 24/7", bare)
+        self.assertNotIn("radio", self.doc(bare)["slots"])  # cleans to the baked title: nothing to write
+
+    def test_after_a_swap_the_title_follows_the_new_stream_not_the_candidate(self):
+        self.checked("OLDOLDOLD01", "\U0001F534 sleep lofi radio 24/7")
+        self.assertEqual(self.doc()["slots"]["radio"], {"title": "sleep lofi radio"})
+        self.api.world["OLDOLDOLD01"] = st("OLDOLDOLD01", "ended", title="sleep lofi radio 24/7")
+        self.api.world["NEWNEWNEW01"] = st("NEWNEWNEW01", "live", title="\U0001F534 sleep lofi radio 24/7 relaxing", started=time.time() - 600)
+        self.live_ids["UClofi"] = ["NEWNEWNEW01"]
+        core.check_pass(self.con, self.api, FOLLOW)
+        cand = [j for j in self.jobs() if j["reason"] == "candidate"]
+        self.assertEqual([j["video_id"] for j in cand], ["NEWNEWNEW01"])
+        # Waiting for its flash check: hidden, and still the title of the stream the slot plays.
+        self.assertEqual(self.doc()["slots"]["radio"], {"hidden": True, "title": "sleep lofi radio"})
+        r = {"id": cand[0]["id"], "video_id": "NEWNEWNEW01", "runner": "optiplex", "ts": time.time(), "live_status": "is_live",
+             "height": 1080, "format_id": "96", "title": "\U0001F534 sleep lofi radio 24/7 relaxing 2026-11-15 17:00",
+             "flash": {"verdict": "pass", "max_fps": 0, "regions": [0] * 5, "frames": 450, "mean_luminance": 0.05}}
+        core.submit_results(self.con, self.api, [r], FOLLOW)
+        self.assertEqual(self.slot("radio")["current_video"], "NEWNEWNEW01")
+        self.assertEqual(self.doc()["slots"]["radio"], {"title": "sleep lofi radio relaxing"})  # yt-dlp's stamped title, same text
+        core.check_pass(self.con, self.api, FOLLOW)  # the next pass stores the API's title again: no change, no commit
+        self.assertEqual(self.doc()["slots"]["radio"], {"title": "sleep lofi radio relaxing"})
+
+    def test_publish_pass_writes_the_followed_title(self):
+        self.checked("OLDOLDOLD01", CAMPFIRE)
+        with mock.patch.object(config, "DATA_DIR", self.tmp), mock.patch.object(config, "PUBLISH", False), \
+                mock.patch.object(publish, "build_sheet", lambda slots, cur: (b"", [])):
+            core.publish_pass(self.con, SLOTS, FOLLOW)
+        with open(os.path.join(self.tmp, "out", config.STATUS_FILE), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["slots"]["radio"], {"title": "Lonely Lakeside Campfire · Boundary Waters Fire Crackling for Sleep"})
+
+
 class WorkerTests(unittest.TestCase):
     def run_worker(self, verdicts):
         from slotmon import worker

@@ -3,6 +3,7 @@
   "notice": "",
   "slots": {
     "retroworld-ps1": { "hidden": true },
+    "borneo-jungle-night": { "title": "Lakeside Campfire" },
     "pink-noise-black": { "kind": "video" },
     "brown-noise-black": { "kind": "video" },
     "box-fan-black": { "kind": "video" },

@@ -2570,6 +2570,32 @@ test('#749 probe D: home off, an AV1 1080p and a failed 720p: the PC player gets
   assert.equal((await app.play(PC_RESOLVER, '')).status, 200, 'the mark is gone: sent on again (verifier L1)');
 });
 
+// Everything-is-OK#782 (review 2026-11-15): a pcYoutube mark holds the client's daily code, so the minute sweep drops it
+// when its window ends (the video's length plus the pin margin) and at the day's key change, whichever is first. Only
+// Date is mocked: the server and fetch keep real timers.
+test('#782: the minute sweep drops pcYoutube marks when their window ends and at the day\'s key change; kept() lists them', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-15T12:00:00Z') }); // 06:00 Chicago
+  const app = await pcAv1App(t, { config: { homeRelay: false }, fakes: { codecs: { '1080p': 'av01', '720p': 'avc1' }, answers: { '720p': 'failed' } } });
+  const marks = () => app.app.kept().pcYoutube.size;
+  const youtube = async () => assert.equal((await app.play(PC_PLAYER, '')).headers.get('location'), 'https://www.youtube.com/watch?v=aaaaaaaaaaa');
+  await youtube();
+  assert.equal(marks(), 1, 'kept() lists the mark');
+  app.app.sweep();
+  assert.equal(marks(), 1, 'inside its window (600 s video + 60 s margin)');
+  t.mock.timers.setTime(Date.parse('2026-11-15T12:11:01Z'));
+  app.app.sweep();
+  assert.equal(marks(), 0, 'its window ended: gone without another youtube.com answer');
+  t.mock.timers.setTime(Date.parse('2026-11-16T05:59:30Z')); // 23:59:30 Chicago
+  await youtube();
+  assert.equal(marks(), 1);
+  t.mock.timers.setTime(Date.parse('2026-11-16T06:00:30Z')); // 00:00:30: a new day's key, 30 s into the mark's 660 s window
+  app.app.sweep();
+  assert.equal(marks(), 0, 'gone with the day\'s key');
+  await youtube();
+  app.app.sweep();
+  assert.equal(marks(), 1, 'a mark made under the new key stays');
+});
+
 // homeWhy already answers tunelio_slow when Tunelio was slow before the request; the later branch is for a /create that
 // timed out during this request's plan (choice). The fake reads "not slow" on its first check and "slow" after.
 test('#749 (M2): Tunelio slow during the plan: the resolver on a plain ticket is sent on without starting home; the PC player starts it', async (t) => {

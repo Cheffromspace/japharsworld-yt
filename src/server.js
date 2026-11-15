@@ -274,6 +274,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     allowance.sweep?.();
     adaptive.sweep?.();
     ipKeys.sweep(); // a new day's key even with no request
+    // pcYoutube's marks hold a client code (Everything-is-OK#782): gone when their window ends, and at the day's key
+    // change at the latest (a new day's code never matches one, so nothing changes for anyone).
+    for (const [k, v] of pcYoutube) if (v.until <= now || v.day !== ipKeys.day) pcYoutube.delete(k);
     pruneCaptions(now);
   }
   setInterval(sweep, 60_000).unref();
@@ -800,7 +803,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // daily IP code, clientKey): a PC's resolver and player ask from the same address, and one visitor's own limit (allowance,
   // cap) must not reach another's resolver. Cleared when that client's PC player gets a file or home; kept for the pin's
   // window. A Quest behind the same address (a household, every desk test) shares it: its resolver, which sends a PC's
-  // UA, then gets youtube.com too.
+  // UA, then gets youtube.com too. The minute sweep drops a mark when its window ends or the day's key changes, whichever
+  // comes first (Everything-is-OK#782): it holds a client code, and the privacy page lists how long.
   const pcYoutube = new Map();
   function pinned(key, data, { touch = true } = {}) {
     if (!config.ticketPin) return null;
@@ -1754,7 +1758,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (!hlsTicket && !resolver && !android && !questResolver) {
         if (via === 'youtube' && where.ready !== false) {
           for (const [k, v] of pcYoutube) if (v.until <= Date.now()) pcYoutube.delete(k);
-          pcYoutube.set(`${shard}:${n}:${clientKey(req)}`, { id: t.data.id, until: Date.now() + pinWindow(t.data), reason });
+          pcYoutube.set(`${shard}:${n}:${clientKey(req)}`, { id: t.data.id, until: Date.now() + pinWindow(t.data), reason, day: ipKeys.day });
         } else if (via !== 'youtube') pcYoutube.delete(`${shard}:${n}:${clientKey(req)}`);
       }
       countPlay(shard, t.data, { via, reason, location }, playPlatform(req.headers['user-agent'], hlsTicket));
@@ -2011,7 +2015,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }
   }
   // kept(): everything that remembers a visitor past the request, for the tests that check no raw IP is in it.
-  const kept = () => ({ hits, ticketHits, playerHits, lookupWarms, outcomeHits, allowance, spend, adaptive, playback });
+  const kept = () => ({ hits, ticketHits, playerHits, lookupWarms, outcomeHits, allowance, spend, adaptive, playback, pcYoutube });
   return Object.assign(handler, { relay, checkWorkers, sweep, metrics, probe, refusals, home, kept, logJson });
 }
 

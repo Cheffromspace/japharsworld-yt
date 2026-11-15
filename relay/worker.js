@@ -7,7 +7,8 @@
 // RELAY_MEDIA (on; off = never announce media jobs), RELAY_MEDIA_MAX (4 streams at once; owner, 2026-10-25: four
 // 1080p plays need ~1.1 MB/s of the ~12 MB/s upload), RELAY_CACHE_GB (40; 440 on the Optiplex's 492 GB cache volume; 0 = no cache of finished streams, relay/cache.js) in RELAY_CACHE_DIR (else systemd's CACHE_DIRECTORY), YT_BACKOFF_MINUTES (10)
 // and YT_BACKOFF_MAX_MINUTES (120): how long a kind of job pauses after YouTube refuses it (see refused() below),
-// RELAY_SPLIT_BY_TIME (off; on = media segments cut on time, not keyframes, relay/media.js).
+// RELAY_SPLIT_BY_TIME (off; on = media segments cut on time, not keyframes, relay/media.js), RELAY_CACHE_KEEP_FORMAT_2
+// (off; on = cached streams of format 2 are served instead of dropped, production's worker only, relay/cache.js, #784).
 // YT_COOKIES (Everything-is-OK#575; default cookies.txt in systemd's STATE_DIRECTORY, none without one): a throwaway
 // account's cookies, put there by relay/cookies-install.js. A bot or PO-token refusal is retried once with them
 // (relay/cookies.js); polls carry their state word (none, ok, dead) so the server can ask the owner for a new sign-in.
@@ -20,7 +21,7 @@ import { captionsJob, findYtdlp, ytdlpArgs, runWarn } from './captions.js';
 import { run as runPlain } from '../src/captions.js';
 import { CookieJar } from './cookies.js';
 import { mediaJob } from './media.js';
-import { MediaCache } from './cache.js';
+import { MediaCache, keepFormatsFor } from './cache.js';
 import { txBytes as defaultTxBytes } from '../src/net.js';
 import { refusalClass } from '../src/refusal.js';
 
@@ -205,7 +206,7 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
 
   return {
     handle, conts, paused, get streaming() { return streaming; },
-    start() { log({ event: 'start', worker: name, version, relay: base, polls, mediaMax, cacheGb: cache?.maxGb ?? 0, cacheDir: cache?.dir, splitByTime }); return Promise.all(Array.from({ length: polls }, (_, i) => loop(i))); },
+    start() { log({ event: 'start', worker: name, version, relay: base, polls, mediaMax, cacheGb: cache?.maxGb ?? 0, cacheDir: cache?.dir, cacheKeepFormats: cache?.keepFormats, splitByTime }); return Promise.all(Array.from({ length: polls }, (_, i) => loop(i))); },
     stop() { stopping.abort(); },
   };
 }
@@ -217,7 +218,7 @@ function gitVersion() {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const { RELAY_URL, RELAY_TOKEN, WORKER_NAME = 'worker', RELAY_POLLS = '3', FFMPEG = 'ffmpeg', RELAY_MEDIA = 'on', RELAY_MEDIA_MAX = '4',
-    RELAY_CACHE_GB = '40', RELAY_CACHE_DIR = process.env.CACHE_DIRECTORY, RELAY_SPLIT_BY_TIME = 'off',
+    RELAY_CACHE_GB = '40', RELAY_CACHE_DIR = process.env.CACHE_DIRECTORY, RELAY_SPLIT_BY_TIME = 'off', RELAY_CACHE_KEEP_FORMAT_2 = 'off',
     YT_BACKOFF_MINUTES = '10', YT_BACKOFF_MAX_MINUTES = '120',
     YT_COOKIES = process.env.STATE_DIRECTORY ? join(process.env.STATE_DIRECTORY.split(':')[0], 'cookies.txt') : '' } = process.env;
   if (!RELAY_URL || !RELAY_TOKEN) { console.error('Set RELAY_URL and RELAY_TOKEN.'); process.exit(2); }
@@ -228,7 +229,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   let cache = null;
   if (caps.length && Number(RELAY_CACHE_GB) > 0 && RELAY_CACHE_DIR) {
     const log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
-    try { cache = new MediaCache({ dir: join(RELAY_CACHE_DIR, 'media'), maxGb: Number(RELAY_CACHE_GB), log }); }
+    try { cache = new MediaCache({ dir: join(RELAY_CACHE_DIR, 'media'), maxGb: Number(RELAY_CACHE_GB), log, keepFormats: keepFormatsFor(RELAY_CACHE_KEEP_FORMAT_2) }); }
     catch (err) { log({ event: 'media_cache_off', message: String(err?.message ?? err).slice(0, 200) }); }
   }
   const worker = createWorker({ url: RELAY_URL, token: RELAY_TOKEN, name: WORKER_NAME, version: gitVersion(), polls: Number(RELAY_POLLS) || 3,

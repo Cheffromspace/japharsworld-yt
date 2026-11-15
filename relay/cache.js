@@ -24,10 +24,18 @@ const short = (playlist, seconds) => seconds > 0 && playlistSeconds(playlist) < 
 // The stream format (relay/media.js ffmpegArgs). Entries of another are made again: 2 = SPS/PPS in every segment (2026-10-23);
 // 3 = seek runs on run 0's cuts (2026-10-30: copies from jumped builds could have holes and lack the video's last seconds).
 export const FORMAT = 3;
+// keepFormats (RELAY_CACHE_KEEP_FORMAT_2=on, production's worker only; owner on Everything-is-OK#787, 2026-11-15: "keep
+// cache, A"): older formats served as they are instead of dropped. Production's worker has only ever run main, which never
+// had split-by-time or seek runs (git log -S on origin/main), so its format 2 entries are single-run keyframe builds, the
+// same ffmpeg output this code makes with split-by-time off; dropping them would mean ~440 GB downloaded again from the
+// home IP, one replay at a time (#784). A kept entry stays format 2 on disk (only usedMs changes) and still passes get()'s
+// other checks (every segment there, not SHORT_S short of the job's length: main's cache kept copies cut short, #266).
+// New entries are made as FORMAT. Staging's worker leaves it off: its format 2 entries may be jumped builds.
+export const keepFormatsFor = (value) => (value === 'on' ? [2] : []);
 
 export class MediaCache {
-  constructor({ dir, maxGb = 40, now = () => Date.now(), log = () => {} }) {
-    Object.assign(this, { dir, maxGb, now, log });
+  constructor({ dir, maxGb = 40, now = () => Date.now(), log = () => {}, keepFormats = [] }) {
+    Object.assign(this, { dir, maxGb, now, log, keepFormats });
     mkdirSync(dir, { recursive: true });
     for (const f of readdirSync(dir)) if (f.startsWith('.tmp-')) rmSync(join(dir, f), { recursive: true, force: true });
   }
@@ -44,7 +52,7 @@ export class MediaCache {
     if (!KEY.test(key)) return null;
     const meta = this.#meta(key);
     if (!meta) return null;
-    if (meta.format !== FORMAT) { rmSync(join(this.dir, key), { recursive: true, force: true }); return null; }
+    if (meta.format !== FORMAT && !this.keepFormats.includes(meta.format)) { rmSync(join(this.dir, key), { recursive: true, force: true }); return null; }
     const dir = join(this.dir, key);
     let playlist;
     try { playlist = readFileSync(join(dir, 'index.m3u8'), 'utf8'); } catch { return null; }

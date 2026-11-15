@@ -397,6 +397,12 @@ uploaded from that disk without yt-dlp or YouTube: faster, and no download from 
 `/var/cache/japharsworld-yt-relay/media`, or `RELAY_CACHE_DIR`. The Optiplex's root volume is 100 GB of a 954 GB disk
 (the rest is unallocated in `ubuntu-vg`, 2026-10-23); a bigger cache wants its own volume mounted there (below). The
 server's daily cap is checked before the job, so once it is reached even a cached video isn't asked for.
+Each copy records its stream format (`FORMAT` in `relay/cache.js`, 3 since 2026-10-30); a copy of another format is
+deleted when it is looked up and made again. `RELAY_CACHE_KEEP_FORMAT_2=on` (production's worker only, off by default;
+owner on Everything-is-OK#787, 2026-11-15) serves format 2 copies as they are instead: production's worker has only
+ever made single-run keyframe builds, the same as this code with split-by-time off, so its ~440 GB cache isn't
+downloaded again from the home IP. Staging's worker leaves it off (its format 2 copies may be jumped builds). The
+worker's `start` log line shows it as `cacheKeepFormats: [2]`.
 
     sudo lvcreate -L 500G -n media ubuntu-vg && sudo mkfs.ext4 -L jyt-media /dev/ubuntu-vg/media
     echo 'LABEL=jyt-media /var/cache/japharsworld-yt-relay ext4 defaults,noatime 0 2' | sudo tee -a /etc/fstab

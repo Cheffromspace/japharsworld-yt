@@ -355,7 +355,10 @@ session failed (`cut_short`), so the next play starts over. Whole or short is ju
 a copy within 10 s of the video's length is whole even with fewer segments than predicted (Everything-is-OK#780), the
 rule the worker cache uses too. A worker that knows its copy isn't whole (an upload refused, ffmpeg failing or ending
 short of the video) sends its closing playlist with `x-media-failed: 1`, and the server fails that session even when its
-playlist was growing or had already ended (Everything-is-OK#781). Media Foundation
+playlist was growing or had already ended (Everything-is-OK#781). A copy whose only failure was its closing playlist
+upload (every segment sent, within 10 s of the video) is closed unmarked and cached. A failed session someone is still
+playing is set aside, not deleted, when the next play of its video starts a new one (`home_set_aside`): its players
+play on to where it ends, and the sweep removes it once nobody has fetched from it for 5 minutes. Media Foundation
 opens a growing playlist as live, at its end, with the clock from 0 (2026-10-23, Everything-is-OK#111: picture ~7 min
 ahead of the captions), so a player is held up to `HOME_SETTLE_SECONDS` (10) when the upload rate says the rest is due
 by then, and gets the finished playlist (`home`/`settled`; `home_first_segment` logs where each session's first

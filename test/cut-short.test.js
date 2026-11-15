@@ -203,3 +203,127 @@ test('#781 server: the mark after the closed playlist already went up unmarked f
 test('#780: the server and the worker judge short by the same SHORT_S', () => {
   assert.equal(HOME_SHORT_S, SHORT_S);
 });
+
+// Verifier round 1, M1 (2026-11-15): a failed session still being played is set aside by the next start of its video,
+// not deleted under its players; sweep() drops it once nobody plays it. From the verifier's probe-drop-after-fail.mjs.
+const growing400 = (n) => `#EXTM3U\n${Array.from({ length: n }, (_, i) => `#EXTINF:4,\nseg${i}.ts\n`).join('')}#EXT-X-ENDLIST\n`;
+function failedSession(t, now) {
+  const logs = [];
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), base: 'https://yt/home', enabled: true, now: () => now.t, log: (l) => logs.push(l) });
+  const s = home.start({ id: 'aaaaaaaaaaa', seconds: 3600 }, '720p');
+  for (let i = 0; i < 100; i++) home.put(s.token, name(i), Buffer.from('x'));
+  home.put(s.token, 'index.m3u8', Buffer.from(growing400(100)), { failed: true }); // 400 s of 3600 s, marked failed
+  assert.equal(s.state, 'failed');
+  return { home, s, logs };
+}
+
+test('M1: a failed session a player is on is set aside, not deleted, by the next play of its video after RETRY_MS; the player plays on to the cut', async (t) => {
+  const now = { t: 1_000_000 };
+  const { home, s, logs } = failedSession(t, now);
+  now.t += 10_000;
+  assert.equal((await home.file(s.token, 'seg5.ts')).body.toString(), 'x', 'a player on it');
+  now.t += 61_000;
+  const s2 = home.start({ id: 'aaaaaaaaaaa', seconds: 3600 }, '720p'); // a late joiner, a Resync or a pin re-plan
+  assert.ok(s2 && s2 !== s, 'the new play gets its own session');
+  assert.equal(home.peek({ id: 'aaaaaaaaaaa' }, '720p'), s2);
+  assert.equal((await home.file(s.token, 'seg6.ts'))?.body.toString(), 'x', 'the first player\'s next segment is still there');
+  assert.ok(logs.some((l) => l.event === 'home_set_aside' && l.state === 'failed'));
+  assert.equal((await home.file(s.token, 'seg99.ts'))?.body.toString(), 'x', 'up to the cut');
+  assert.match((await home.file(s.token, 'index.m3u8')).body.toString(), /seg99\.ts\n#EXT-X-ENDLIST/);
+  home.sweep();
+  assert.ok(await home.file(s.token, 'seg7.ts'), 'a sweep while it is played keeps it');
+  now.t += 5 * 60_000 + 1; // nobody has fetched from it for PLAYING_MS
+  home.sweep();
+  assert.equal(await home.file(s.token, 'seg8.ts'), null, 'then the sweep drops it');
+  assert.ok(logs.some((l) => l.event === 'home_evict' && l.why === 'replaced'));
+  assert.equal(home.peek({ id: 'aaaaaaaaaaa' }, '720p'), s2, 'the new session stays');
+});
+
+test('M1: a failed session nobody is playing is dropped by the next play after RETRY_MS, as before', async (t) => {
+  const now = { t: 1_000_000 };
+  const { home, s, logs } = failedSession(t, now);
+  now.t += 61_000;
+  const s2 = home.start({ id: 'aaaaaaaaaaa', seconds: 3600 }, '720p');
+  assert.ok(s2 && s2 !== s);
+  assert.equal(await home.file(s.token, 'seg0.ts'), null, 'gone at once');
+  assert.ok(!logs.some((l) => l.event === 'home_set_aside'));
+});
+
+// Verifier round 1, M2: a whole copy whose only failure is the closing playlist upload is not failed. From the verifier's
+// probe-patha-whole.mjs: a growing 60 s build sends all 13 segments, then its closing playlist answers 503 five times.
+for (const [why, closeAnswers] of [['the server takes it on the next try', [503, 503, 503, 503, 503, 204]], ['the server never takes it', Array(12).fill(503)]]) {
+  test(`M2: a whole copy whose closing playlist upload fails is closed unmarked and cached, not failed (${why})`, async (t) => {
+    const lengths = [...UNEVEN, 6]; // 60 s, 13 segments
+    const answers = [...closeAnswers];
+    const uploads = [];
+    const { logs, cache } = await build(t, lengths, 60, { upload: async (file, body, type, opts = {}) => {
+      const b = body.toString();
+      const status = file === 'index.m3u8' && b.includes('#EXT-X-ENDLIST') ? (answers.shift() ?? 204) : 204;
+      uploads.push({ file, body: b, status, ...opts });
+      return status;
+    } });
+    assert.equal(new Set(uploads.filter((u) => u.file !== 'index.m3u8').map((u) => u.file)).size, 13, 'every segment sent');
+    assert.match(logs.find((l) => l.event === 'media_failed')?.message ?? '', /upload playlist answered 503/);
+    assert.equal(failedCloses(uploads).length, 0, 'no failure mark');
+    assert.equal(logs.find((l) => l.event === 'media_closed')?.whole, true);
+    assert.ok(cache.get('aaaaaaaaaaa', '720p', { seconds: 60 }), 'the whole copy is cached');
+  });
+}
+
+test('M2: a copy the catch finds short (a segment refused) is still marked failed and not cached', async (t) => {
+  const uploads = [];
+  const { cache } = await build(t, [...UNEVEN, 6], 60, { upload: async (file, body, type, opts = {}) => {
+    uploads.push({ file, body: body.toString(), ...opts });
+    return file === 'seg11.ts' ? 413 : 204;
+  } });
+  assert.equal(failedCloses(uploads).length, 1);
+  assert.equal(cache.get('aaaaaaaaaaa', '720p', { seconds: 60 }), null);
+});
+
+// Verifier round 1, L6: a growing copy short of the video goes up closed only once, marked; ffmpeg's own ENDLIST, read
+// before its exit was seen, is not sent unmarked first. The server counts and logs it once, as failed.
+test('L6: path C sends no unmarked closed playlist before the marked one', async (t) => {
+  for (let i = 0; i < 3; i++) { // the pass that reads ffmpeg's ENDLIST before its exit is seen is a race: three tries
+    const lengths = UNEVEN.slice(0, 10);
+    const all = lengths.map((_, j) => name(j));
+    const { uploads } = await build(t, lengths, 60, { steps: [[pl(lengths.slice(0, 8)), all.slice(0, 8)], [pl(lengths, true), all.slice(8)]] });
+    const closes = uploads.filter((u) => u.file === 'index.m3u8' && u.body.includes('#EXT-X-ENDLIST'));
+    assert.deepEqual(closes.map((u) => Boolean(u.failed)), [true], `try ${i + 1}: one close, marked`);
+  }
+});
+
+test('L6: a session ended as done and then marked failed counts once, as failed', (t) => {
+  const home = new Home({ relay: fakeRelay(), dir: tmp(t), base: 'https://yt/home', enabled: true });
+  const s = home.start({ id: 'aaaaaaaaaaa', seconds: 60 }, '720p');
+  home.put(s.token, 'seg0.ts', Buffer.from('a'));
+  home.put(s.token, 'index.m3u8', Buffer.from(pl([3], true)));
+  home.put(s.token, 'index.m3u8', Buffer.from(pl([3], true)), { failed: true });
+  const st = home.state();
+  assert.deepEqual([st.ended, st.failed], [0, 1]);
+});
+
+test('M1: after a restart a failed session with files is kept set aside for its players, never offered to a new play, then swept', async (t) => {
+  const now = { t: 1_000_000 };
+  const dir = tmp(t);
+  const relay = fakeRelay();
+  const first = new Home({ relay, dir, base: 'https://yt/home', enabled: true, now: () => now.t });
+  const s = first.start({ id: 'aaaaaaaaaaa', seconds: 3600 }, '720p');
+  for (let i = 0; i < 100; i++) first.put(s.token, name(i), Buffer.from('x'));
+  first.put(s.token, 'index.m3u8', Buffer.from(growing400(100)), { failed: true });
+  now.t += 10_000;
+  const restarted = new Home({ relay, dir, base: 'https://yt/home', enabled: true, now: () => now.t }); // a deploy
+  assert.equal(restarted.peek({ id: 'aaaaaaaaaaa' }, '720p'), null, 'not offered to a new play');
+  assert.equal((await restarted.file(s.token, 'seg6.ts'))?.body.toString(), 'x', 'its player plays on');
+  const s2 = restarted.start({ id: 'aaaaaaaaaaa', seconds: 3600 }, '720p');
+  assert.ok(s2 && s2.token !== s.token);
+  assert.ok(await restarted.file(s.token, 'seg7.ts'), 'still there after a new play started');
+  now.t += 5 * 60_000 + 1;
+  restarted.sweep();
+  assert.equal(await restarted.file(s.token, 'seg8.ts'), null, 'swept once nobody plays it');
+  // A session failed another way (given up) is still removed at load, as before.
+  const empty = restarted.start({ id: 'bbbbbbbbbbb', seconds: 60 }, '720p');
+  restarted.put(empty.token, 'index.m3u8', Buffer.from('#EXTM3U\n'));
+  restarted.giveUp(empty, 'uneven');
+  const again = new Home({ relay, dir, base: 'https://yt/home', enabled: true, now: () => now.t });
+  assert.equal(await again.file(empty.token, 'index.m3u8'), null);
+});

@@ -515,11 +515,18 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       text = differs && jumped() ? closedAt(jumpedList(), sent) : differs ? text : predicted.text;
       if (final && !differs && actual.length) log({ event: 'media_predicted', segments: count });
     }
-    if (text !== lastPlaylist) {
+    // A growing playlist is closed by the last pass only, marked failed there when the copy isn't whole (verifier
+    // 2026-11-15, L6): ffmpeg writes ENDLIST itself as it ends, and a pass that read that before the exit was seen sent it
+    // unmarked, so a copy short of the video was logged done by the server and then failed by closeFailed. Such a pass
+    // sends no playlist; the last pass, a poll later, sends the closed one.
+    if (!final && !predicted && text.includes('#EXT-X-ENDLIST')) return;
+    const mark = final && !failSent && lackingIn(realText, exitCode());
+    if (text !== lastPlaylist || mark) {
       lastPlaylist = text;
-      const status = await upload('index.m3u8', Buffer.from(text), 'application/vnd.apple.mpegurl');
+      const status = await upload('index.m3u8', Buffer.from(text), 'application/vnd.apple.mpegurl', mark ? { failed: true } : null);
       if (status === 410) { gone = true; return; }
       if (status !== 204) throw new Error(`upload playlist answered ${status}`);
+      if (mark) { failSent = true; log({ event: 'media_closed', segments: sent.size, status, failed: true }); }
       if (!isReady && segs.length) {
         isReady = true;
         ready({ ready: true, segments: segs.length, done: background });
@@ -531,6 +538,11 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
     // segments, 1 came, and the play froze at 4 s (Everything-is-OK#553, staging 2026-11-05 17:46Z; prod 2 of 175).
     if (final) for (const s of order()) if (!(await send(s))) return;
   }
+
+  // Not the whole video, judged on ffmpeg's playlist `text` (#780): SHORT_S less running time than the video; a jumped
+  // build (split-by-time only) by its segments in order, realText being run 0's alone (#759). With no duration known
+  // there is nothing to compare with: then only a failed ffmpeg (exit != 0) counts.
+  const lackingIn = (text, exit) => (jumped() ? whole() < predicted.count : duration > 0 ? playlistSeconds(text) < duration - SHORT_S : exit !== 0);
 
   // A job that ends without a whole copy after players were sent: the closed playlist goes up (again) marked failed
   // (x-media-failed: 1), so the server fails the session instead of ending it as done, and the next play builds it again
@@ -589,10 +601,8 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       // (Everything-is-OK#780): a whole build can have fewer segments than predicted (a `dur=` past the media's end adds
       // a tail segment; steadyLength's median below the real GOP adds one per GOP of drift). A jumped build (split-by-time
       // only) keeps the count: realText is run 0's playlist alone, and a hole is what that count finds (#759).
-      const count = jumped() ? whole() : extinfs(realText).length;
       const runS = playlistSeconds(realText);
-      // Not the whole video. With no duration known there is nothing to compare with: then only a failed ffmpeg counts.
-      const lacking = jumped() ? count < predicted.count : duration > 0 ? runS < duration - SHORT_S : exit !== 0;
+      const lacking = lackingIn(realText, exit);
       short = !gone && exit === 0 && duration > 0 && lacking;
       if (short) {
         log({ event: 'media_failed', reason: 'short', ms: Date.now() - started, mb: Math.round(mb), segments: sent.size,
@@ -607,11 +617,28 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       else if (exit !== 0 && lacking) await closeFailed(lastPlaylist); // path B: ffmpeg failed part way (exit: not cached)
     } catch (err) {
       ending = true;
+      const clean = !alive().length && !failedRun(); // ffmpeg had ended cleanly before this failure
       runs.forEach(stop);
       log({ event: 'media_failed', ms: Date.now() - started, mb: Math.round(mb), message: String(err?.message ?? err).slice(0, 200) });
-      closedShort = true; // whatever went up, not a whole copy: never cached (#781)
+      // Path A (#781). Failed, and never cached, only when the copy isn't whole: a listed segment not sent, or the copy
+      // SHORT_S short of the video (with no duration known: ffmpeg not ended cleanly). A whole copy whose only failure was
+      // an upload at the end (the closing playlist answered 503 five times while the search service restarted: verifier
+      // 2026-11-15, M2) is closed unmarked, so the server ends it as done, and the worker caches it, as be142c4 did.
+      const listed = realText ? listing().split(/\r?\n/).filter((l) => SEGMENT.test(l)) : [];
+      const text = realText ? closedAt(listing(), sent) : '';
+      const isWhole = isReady && listed.length > 0 && listed.every((f) => sent.has(f)) && !lackingIn(listing(), clean ? 0 : 1);
+      if (!isWhole) closedShort = true;
       if (!isReady) failed(err);
-      else if (!gone && realText) await closeFailed(closedAt(listing(), sent)); // path A
+      else if (gone || !realText) { /* nothing to close */ }
+      else if (!isWhole) await closeFailed(text);
+      else {
+        const status = await upload('index.m3u8', Buffer.from(text), 'application/vnd.apple.mpegurl').catch(() => 0);
+        if (status === 410) gone = true;
+        log({ event: 'media_closed', segments: sent.size, status, whole: true });
+      }
+      // The cache keeps the whole copy even if the server didn't take its closing playlist: that session goes stale, and
+      // the next play is a cache hit.
+      if (isWhole) lastPlaylist = text;
     } finally {
       clearTimeout(killer);
       ending = true;

@@ -94,7 +94,7 @@ export class Home {
   }
 
   // Sessions, today's use and the uneven videos from before a restart. Folders without a readable meta.json are removed,
-  // and so are sessions that failed or were given up, and unfinished ones whose worker stream is gone (STALE_MS):
+  // and so are sessions that failed (but for a cut_short one with files, set aside below) or were given up, and unfinished ones whose worker stream is gone (STALE_MS):
   // 2026-10-25, a session given up as uneven after 13 of a 90-minute video's segments came back after a deploy as
   // ready, and a Quest replay was sent to its ~65 s growing playlist, which never grew (6 of the 8 sessions on disk).
   #load() {
@@ -111,10 +111,19 @@ export class Home {
       const folder = join(this.dir, token);
       try {
         const m = JSON.parse(readFileSync(join(folder, 'meta.json'), 'utf8'));
-        if (m.state === 'failed') throw new Error('failed');
         const s = this.#session({ ...m, token });
         for (const f of readdirSync(folder)) if (SEGMENT.test(f)) { s.stored.add(f); s.mb += statSync(join(folder, f)).size / 1e6; s.last = Math.max(s.last, segIndex(f)); }
         try { this.#playlist(s, readFileSync(join(folder, 'index.m3u8'), 'utf8')); } catch { /* none yet */ }
+        // A copy failed as cut_short, with files, is kept set aside (M1, verifier 2026-11-15): never offered to a new play
+        // (not in sessions), only to players that hold its token, so a deploy doesn't cut them off before the cut;
+        // counted as played for PLAYING_MS from the restart, then sweep() drops it once nobody fetches from it. Other
+        // failures (given up, no room, worker failed) go as before.
+        if (m.state === 'failed') {
+          if (m.reason !== 'cut_short' || !s.stored.size) throw new Error('failed');
+          Object.assign(s, { state: 'failed', reason: m.reason ?? null, endedMs: m.endedMs ?? 0, lastGetMs: this.now() });
+          this.byToken.set(s.token, s);
+          continue;
+        }
         if (s.state !== 'ready') throw new Error('never ready');
         if (this.#stale(s)) throw new Error('stream gone');
         this.sessions.set(`${s.id}@${s.quality}`, s);
@@ -314,7 +323,15 @@ export class Home {
     this.refusal = this.blocks(data, quality);
     if (this.refusal) { if (this.refusal === 'hour') this.onEvent('capped_hour'); return null; }
     const expected = this.expectedMb(data, quality);
-    this.#drop(this.sessions.get(`${data.id}@${quality}`));
+    // The old session for this video and quality (failed, stale or past keepHours: peek didn't take it) makes way. One
+    // a player fetched from in the last PLAYING_MS is only set aside: its token and files stay, so that player plays on
+    // to where it ends, and sweep() drops it once nobody is on it (verifier 2026-11-15, M1: since #781 a failed session
+    // can have players, and a late joiner, a Resync or a pin re-plan 60 s later deleted it under them).
+    const old = this.sessions.get(`${data.id}@${quality}`);
+    if (old && this.#playing(old)) {
+      this.sessions.delete(`${data.id}@${quality}`);
+      this.log({ event: 'home_set_aside', id: old.id, quality, state: old.state, reason: old.reason ?? undefined });
+    } else this.#drop(old);
     const s = this.#session({ token: randomBytes(9).toString('hex'), id: data.id, quality, seconds: data.seconds ?? 0, worker });
     this.sessions.set(`${s.id}@${quality}`, s);
     this.byToken.set(s.token, s);
@@ -573,6 +590,9 @@ export class Home {
     return { body: Buffer.from(text), type: 'application/vnd.apple.mpegurl' };
   }
 
+  // A player fetched from it in the last PLAYING_MS.
+  #playing(s, now = this.now()) { return s.lastGetMs > 0 && now - s.lastGetMs < PLAYING_MS; }
+
   #drop(s) {
     if (!s) return;
     this.byToken.delete(s.token);
@@ -621,11 +641,13 @@ export class Home {
   // building or being played stays.
   sweep() {
     const now = this.now();
-    const playing = (s) => s.lastGetMs > 0 && now - s.lastGetMs < PLAYING_MS;
+    const playing = (s) => this.#playing(s, now);
     const evict = (s, why) => { this.log({ event: 'home_evict', id: s.id, quality: s.quality, why, mb: Math.round(s.mb) }); this.#drop(s); };
     for (const s of [...this.byToken.values()]) {
       const last = s.lastPutMs || s.endedMs || s.startedMs;
       if (now - last > this.keepHours * 3600_000 && !playing(s)) evict(s, 'age');
+      // Set aside by start() for a newer session of its video (M1): gone once nobody plays it.
+      else if (this.sessions.get(`${s.id}@${s.quality}`) !== s && !playing(s)) evict(s, 'replaced');
     }
     const done = [...this.byToken.values()].filter((s) => (s.ended || s.state === 'failed') && !playing(s))
       .sort((a, b) => (a.lastPutMs || a.startedMs) - (b.lastPutMs || b.startedMs));
@@ -645,7 +667,8 @@ export class Home {
       hour: (() => { const h = this.#hour(); return { builds: h.builds, mb: Math.round(h.mb), capBuilds: this.hourBuilds, capMb: this.hourMb }; })(),
       limit: this.enabled ? this.limit() : null, startGapS: Math.round(this.startGapMs / 1000), av1GapS: this.av1GapMs / 1000, hammering: this.enabled ? this.hammering() : null, hourMbExemptS: this.hourMbExemptSeconds, itemMaxMb: this.itemMaxMb,
       building: all.filter((s) => s.state === 'building').length, ready: all.filter((s) => s.state === 'ready' && !s.ended).length,
-      ended: all.filter((s) => s.ended).length, failed: all.filter((s) => s.state === 'failed').length,
+      // A session ended as done and then failed (an old worker's late failure mark) counts once, as failed (verifier L6).
+      ended: all.filter((s) => s.ended && s.state !== 'failed').length, failed: all.filter((s) => s.state === 'failed').length,
       storedMb: Math.round(this.#storedMb()),
       expectedMb: Math.round([...this.byToken.values()].reduce((n, s) => n + this.#expectedMb(s), 0)) };
   }

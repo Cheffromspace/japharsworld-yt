@@ -117,6 +117,15 @@ test('ops routes: token required, state and redacted events', async (t) => {
   assert.ok(Date.parse(set.body.forced[0].until) - Date.now() <= 240 * 60_000 + 1000, 'at most 4 hours');
   assert.equal((await get('/ops/plan')).body.forced.length, 1);
   assert.deepEqual((await post('id=AbCdEfGh1jK&mode=clear')).body.forced, []);
+  // Everything-is-OK#783: a plan or a clear for a video Tunelio really refused as age-restricted keeps that verdict.
+  playback.restrictedIds.set('ZzAgeGate01', Date.now() + 3600_000); // as a real refusal leaves it
+  for (const mode of ['lower', 'direct', 'adaptive', 'start', 'clear']) {
+    assert.equal((await post(`id=ZzAgeGate01&mode=${mode}`)).status, 200);
+    assert.equal(playback.restricted('ZzAgeGate01'), true, `after mode=${mode}`);
+  }
+  assert.equal((await post('id=ZzAgeGate01&mode=restricted&minutes=5')).status, 200);
+  await post('id=ZzAgeGate01&mode=clear');
+  assert.equal(playback.restricted('ZzAgeGate01'), true, 'a forced plan cleared: the real verdict is back');
 
   // Without a token configured the routes don't exist.
   const off = createApp({ config: { ...config, statsToken: '' }, store, youtube, tunelio, log: () => {} });

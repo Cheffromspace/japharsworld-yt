@@ -43,6 +43,7 @@ import { mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, statfsSy
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { dayOf } from './metrics.js';
+import { SHORT_S } from '../relay/cache.js';
 
 const SEGMENT = /^seg\d{1,5}\.ts$/;
 const segIndex = (file) => Number(file.slice(3, -3));
@@ -406,7 +407,7 @@ export class Home {
 
   // A playlist from the worker (or from disk): which segments it lists, ready at the first one, ended when complete.
   #playlist(s, text) {
-    const before = s.listed.length;
+    const before = s.listed.length, beforeSeconds = s.listedSeconds;
     const lines = text.split(/\r?\n/).filter(Boolean);
     s.listed = lines.filter((l) => !l.startsWith('#'));
     s.listedSeconds = lines.reduce((a, l) => a + (Number(/^#EXTINF:([\d.]+)/.exec(l)?.[1]) || 0), 0);
@@ -416,10 +417,14 @@ export class Home {
       s.state = 'ready';
       s.readyMs = this.now();
     }
-    // Fewer segments than before, closed: the worker cut a predicted (whole) playlist back to what it uploaded after
-    // failing part way (relay/media.js closedAt). Players already on it end there; the session is failed, not done, so
-    // the next play starts over instead of getting the short copy (coordinator, 2026-10-27).
-    if (s.endlist && s.segments < before && !this.loading && s.state !== 'failed') {
+    // Fewer segments than before, closed, and SHORT_S (10 s) or more shorter: the worker cut a predicted (whole) playlist
+    // back to what it uploaded after failing part way (relay/media.js closedAt). Players already on it end there; the
+    // session is failed, not done, so the next play starts over instead of getting the short copy (coordinator,
+    // 2026-10-27). By running time, not by count (Everything-is-OK#780, review 2026-11-15): a whole build can have fewer
+    // segments than predicted (a `dur=` past the media's end adds a tail segment; a median GOP below the real one adds one
+    // per GOP of drift), and its real playlist, as long as the video, was failed here and rebuilt on every play. A real cut
+    // under SHORT_S is taken as done: the video ends up to 10 s early, the rule the worker cache already uses.
+    if (s.endlist && s.segments < before && s.listedSeconds < beforeSeconds - SHORT_S && !this.loading && s.state !== 'failed') {
       this.#fail(s, 'cut_short', `${s.segments} of ${before} segments`);
       for (const [file, ws] of s.segmentWaiters) if (!s.stored.has(file)) { for (const w of ws) w(); s.segmentWaiters.delete(file); }
       return;

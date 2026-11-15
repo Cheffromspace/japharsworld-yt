@@ -58,10 +58,11 @@ test('home: a predicted playlist cut back after a part-way failure is failed, no
   let now = 1_000_000;
   const logs = [];
   const home = new Home({ relay: fakeRelay(), dir: tmp(t), base: 'https://yt/home', enabled: true, segmentHoldMs: 5000, now: () => now, log: (l) => logs.push(l) });
-  const s = home.start({ id: 'aaaaaaaaaaa', seconds: 16 }, '720p');
+  const s = home.start({ id: 'aaaaaaaaaaa', seconds: 40 }, '720p');
   const pl = (n, end = true) => `#EXTM3U\n#EXT-X-PLAYLIST-TYPE:VOD\n${Array.from({ length: n }, (_, i) => `#EXTINF:4.000000,\nseg${i}.ts\n`).join('')}${end ? '#EXT-X-ENDLIST\n' : ''}`;
   assert.equal(home.put(s.token, 'seg0.ts', Buffer.from('a')), 204);
-  assert.equal(home.put(s.token, 'index.m3u8', Buffer.from(pl(4))), 204);
+  // 40 s, cut back to 8 s below: SHORT_S (10 s) or more short, so failed with no signal from the worker (#780)
+  assert.equal(home.put(s.token, 'index.m3u8', Buffer.from(pl(10))), 204);
   assert.equal(home.put(s.token, 'seg1.ts', Buffer.from('b')), 204);
   assert.equal(s.state, 'ready');
   const waiting = home.file(s.token, 'seg2.ts'); // a player ahead of the upload
@@ -76,7 +77,7 @@ test('home: a predicted playlist cut back after a part-way failure is failed, no
   assert.equal(home.peek({ id: 'aaaaaaaaaaa' }, '720p'), s, 'failed for a minute, like any failure');
   now += 61_000;
   assert.equal(home.peek({ id: 'aaaaaaaaaaa' }, '720p'), null, 'then the next play starts over');
-  assert.notEqual(home.start({ id: 'aaaaaaaaaaa', seconds: 16 }, '720p'), s);
+  assert.notEqual(home.start({ id: 'aaaaaaaaaaa', seconds: 40 }, '720p'), s);
 });
 
 test('home: uploads are checked (names, playlist lines, unknown sessions)', async (t) => {

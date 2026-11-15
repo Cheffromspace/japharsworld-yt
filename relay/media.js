@@ -568,12 +568,15 @@ export async function mediaJob(job, { ytdlp, ffmpeg = 'ffmpeg', extraArgs = [], 
       if (gone) runs.forEach(stop);
       const exit = exitCode();
       const stderr = (failedRun() ?? main).stderr;
-      // ffmpeg ending cleanly short of the video is a failure, not done (world #266): fewer segments than predicted, or
-      // (growing playlist) SHORT_S less running time than the video. The playlist went up closed where it got to; the
-      // server marks a predicted session cut_short, and the copy is not cached, so the next play makes it again.
+      // ffmpeg ending cleanly short of the video is a failure, not done (world #266): SHORT_S less running time than the
+      // video. The playlist went up closed where it got to; the server marks a predicted session cut_short, and the copy
+      // is not cached, so the next play makes it again. By running time for a predicted build too, not by count
+      // (Everything-is-OK#780): a whole build can have fewer segments than predicted (a `dur=` past the media's end adds
+      // a tail segment; steadyLength's median below the real GOP adds one per GOP of drift). A jumped build (split-by-time
+      // only) keeps the count: realText is run 0's playlist alone, and a hole is what that count finds (#759).
       const count = jumped() ? whole() : extinfs(realText).length;
       const runS = playlistSeconds(realText);
-      short = !gone && exit === 0 && duration > 0 && (predicted ? count < predicted.count : runS < duration - SHORT_S);
+      short = !gone && exit === 0 && duration > 0 && (jumped() ? count < predicted.count : runS < duration - SHORT_S);
       if (short) {
         log({ event: 'media_failed', reason: 'short', ms: Date.now() - started, mb: Math.round(mb), segments: sent.size,
           expected: predicted ? predicted.count : undefined, seconds: Math.round(runS), duration: Math.round(duration), source: proxy.failure ?? undefined });

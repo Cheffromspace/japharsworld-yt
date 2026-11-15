@@ -351,7 +351,9 @@ playlist: no seek bar on the first play, one for replays and late joiners once t
 whether or not a keyframe is there (`-hls_flags split_by_time`, still no re-encode), so every video gets the whole
 playlist and a seek bar from the first second: a seek resumes the picture at the next keyframe, a second or two later.
 A job that fails after players were sent closes the playlist at its last uploaded segment, and the server marks that
-session failed (`cut_short`), so the next play starts over. Media Foundation
+session failed (`cut_short`), so the next play starts over. Whole or short is judged by running time, not segment count:
+a copy within 10 s of the video's length is whole even with fewer segments than predicted (Everything-is-OK#780), the
+rule the worker cache uses too. Media Foundation
 opens a growing playlist as live, at its end, with the clock from 0 (2026-10-23, Everything-is-OK#111: picture ~7 min
 ahead of the captions), so a player is held up to `HOME_SETTLE_SECONDS` (10) when the upload rate says the rest is due
 by then, and gets the finished playlist (`home`/`settled`; `home_first_segment` logs where each session's first

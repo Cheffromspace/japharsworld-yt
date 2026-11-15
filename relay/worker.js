@@ -226,6 +226,12 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   let hasFfmpeg = false;
   try { execFileSync(FFMPEG, ['-version'], { stdio: 'ignore' }); hasFfmpeg = true; } catch { /* no ffmpeg */ }
   const caps = RELAY_MEDIA !== 'off' && hasFfmpeg ? ['media'] : [];
+  // Only the exact lower-case on keeps format 2 copies; anything else means delete them on lookup, so a typo (ON, yes, a
+  // stray quote) is said at start, not found later in the hit rate (verifier 2026-11-15, L3/L4; #784).
+  if (!['on', 'off', ''].includes(RELAY_CACHE_KEEP_FORMAT_2)) {
+    console.log(JSON.stringify({ at: new Date().toISOString(), event: 'setting_ignored', name: 'RELAY_CACHE_KEEP_FORMAT_2',
+      value: String(RELAY_CACHE_KEEP_FORMAT_2).slice(0, 20), means: 'off: format 2 cache copies are deleted when looked up' }));
+  }
   let cache = null;
   if (caps.length && Number(RELAY_CACHE_GB) > 0 && RELAY_CACHE_DIR) {
     const log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));

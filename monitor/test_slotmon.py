@@ -556,6 +556,9 @@ class FollowTitleTests(Base):
         cjk = publish.row_title("焚き火" * 40)
         self.assertEqual(titles._units(cjk), titles.CAP_UNITS)  # no spaces: cut where it is full
         self.assertEqual(publish.row_title("Iceberg Cam of Ilulissat, Greenland in 4K Ultra HD"), "Iceberg Cam of Ilulissat, Greenland in 4K Ultra HD")
+        # A seed title (2026-10-17) whose cut fell after a lone "+": no mark is left at the end.
+        self.assertEqual(publish.row_title("Marble Run Race HABA Slope + Cuboro + Bornelund Quadrilla + Transparent pipe"),
+                         "Marble Run Race HABA Slope + Cuboro + Bornelund Quadrilla")
 
     def test_setting_off_publishes_what_it_did_before(self):
         self.checked("OLDOLDOLD01", CAMPFIRE, OVERRIDES)

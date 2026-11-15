@@ -186,7 +186,10 @@ def _cap(t):
             head = t[:i]
             if not t[i].isspace() and " " in head.strip():
                 head = head[:head.rstrip().rfind(" ")]
-            return head.rstrip(" " + SEPS)
+            words = head.split()
+            while words and not _word(words[-1]):
+                words.pop()  # "... Quadrilla +", "... Relaxation &"
+            return " ".join(words).rstrip(SEPS)
     return t
 
 

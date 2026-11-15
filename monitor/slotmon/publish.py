@@ -1,7 +1,8 @@
 """sleep-list.json + sleep-thumbs.jpg on GitHub Pages (docs/ on main), committed only when they change."""
-import io, json, math, os, re, subprocess, unicodedata, urllib.error
+import io, json, math, os, subprocess, urllib.error
 
 from . import config
+from .titles import clean_title, row_title  # noqa: F401 (clean_title: the tests and tools reach it here)
 from .youtube import http, oembed_thumbnail, video_id
 
 COLS, CELL_W, CELL_H = 10, 192, 108  # EverythingIsOKTabletLayout.Channels.cs: ThumbCols, ThumbW, ThumbH
@@ -14,81 +15,6 @@ def sheet_size(n):
     """Same as the baker: next power of two of the cell grid. The world ignores a sheet of any other size."""
     p2 = lambda v: 1 << max(0, math.ceil(math.log2(v)))
     return p2(COLS * CELL_W), p2(max(1, math.ceil(n / COLS)) * CELL_H)
-
-
-# A title that follows the stream (overrides.json "title_from": "stream", Everything-is-OK#793, owner 2026-11-15) is the
-# first part of the stream's own title made calm for the list (owner, 2026-11-15, on the long campfire title: "B. First
-# part only"): no emoji (the row's Noto font has none: 🔴 and 🔥 draw as empty boxes, checked against
-# NotoSansCJKjp-Regular.otf 2026-11-15), no LIVE / 24/7 / Live Now: markers, no separator left dangling.
-LIVE_STAMP = re.compile(r"\s+\d{4}-\d{2}-\d{2} \d{2}:\d{2}\s*$")  # yt-dlp appends this to a live title (its fulltitle doesn't)
-# "live" is removed only where it is a marker, so "Long Live the Night", "live music" and "Live-stream" stay: "Live Now"
-# (any case, colon too), "live" beside 24/7, the all-caps LIVE, "(live)" in brackets; and, in clean_title, a "live" that
-# stands alone between separators or a "Live:" label at the start of a part. 24/7 itself always goes.
-MARKERS = re.compile(r"(?<!\w-)\b(?i:live\s+now)\b\s*:?"
-                     r"|(?<![\w/])(?:(?<!\w-)\b(?i:live)\s+)?24\s*/\s*7(?![\w/])(?:\s+(?i:live)\b(?!-\w))?"
-                     r"|(?<!\w-)\bLIVE\b(?!-\w)"
-                     r"|[(\[【（]\s*(?i:live)\s*[)\]】）]")
-EMPTY_BRACKETS = re.compile(r"[(\[【「『（〔]\s*[)\]】」』）〕]")
-OPEN_SPACE, SPACE_CLOSE = re.compile(r"([(\[【「『（〔])\s+"), re.compile(r"\s+([)\]】」』）〕])")  # "( Stream)" -> "(Stream)"
-SEPARATORS = set("·•|｜-–—:")
-PUNCT = set(",.!?;")  # left alone after a removed marker: "LIVE! View of ..." , "ISS LIVE, with ..."
-# Where row_title splits a title into parts: the dots and bars anywhere, a dash only with spaces round it ("Lo-Fi" is one
-# word). Commas and colons don't split ("Iceberg Cam of Ilulissat, Greenland in 4K").
-PARTS = re.compile(r"\s*[·•|｜]\s*|\s+[-–—]+\s+")
-
-
-def _pictograph(ch):
-    """Emoji and pictographs; CJK and fullwidth symbols stay (Japanese titles use them as text)."""
-    cp, cat = ord(ch), unicodedata.category(ch)
-    if 0x1F000 <= cp <= 0x1FAFF or 0xFE00 <= cp <= 0xFE0F or cat in ("Cf", "Co", "Cs", "Me"):
-        return True  # emoji blocks (also any newer than this Python knows), variation selectors, ZWJ and tags, keycaps
-    return cat == "So" and cp >= 0x2190 and not (0x2E80 <= cp <= 0x33FF or 0xFF00 <= cp <= 0xFFEF)
-
-
-def _sep(w):
-    return set(w) <= SEPARATORS | PUNCT
-
-
-def clean_title(raw):
-    """The stream's whole title, calm: '' when nothing worth showing is left. row_title takes its first part."""
-    t = LIVE_STAMP.sub("", raw or "")
-    t = "".join(" " if _pictograph(c) else c for c in t)
-    t = MARKERS.sub(" ", t)
-    while EMPTY_BRACKETS.search(t):
-        t = EMPTY_BRACKETS.sub(" ", t)
-    tokens = t.split()
-    # "Finse station - Live", "🔥 · live · 🔥", "Live: Campfire": a "live" with no words of its own beside it is a marker.
-    tokens = [w for i, w in enumerate(tokens)
-              if not (w.casefold() == "live" and (i == 0 or _sep(tokens[i - 1])) and (i + 1 == len(tokens) or _sep(tokens[i + 1]))
-                      or w.casefold() == "live:" and (i == 0 or _sep(tokens[i - 1])))]
-    words = []
-    for w in tokens:
-        if not words and _sep(w):
-            continue  # nothing before it
-        if set(w) <= PUNCT:
-            if not set(words[-1]) <= SEPARATORS:
-                words[-1] += w  # "ISS , with" -> "ISS, with"
-            continue
-        if set(w) <= SEPARATORS:
-            if words and not set(words[-1]) <= SEPARATORS:
-                words.append(w)  # a separator only between two words, and only one
-            continue
-        words.append(w)
-    while words and set(words[-1]) <= SEPARATORS:
-        words.pop()
-    words = [w[:-1] if w.endswith(":") and (i + 1 == len(words) or set(words[i + 1]) <= SEPARATORS) else w
-             for i, w in enumerate(words)]  # "Title: · more" or a closing "Title:" left by a removed marker
-    t = SPACE_CLOSE.sub(r"\1", OPEN_SPACE.sub(r"\1", " ".join(words)))
-    return t if any(c.isalnum() for c in t) else ""
-
-
-def row_title(raw):
-    """What a followed row shows: the first part of the cleaned title that has a letter or digit in it, else ''."""
-    for part in PARTS.split(clean_title(raw)):
-        part = part.strip(" ,;·•|｜:–—-")  # "Campfire: | rain" -> "Campfire"
-        if any(c.isalnum() for c in part):
-            return part
-    return ""
 
 
 def status_doc(slots, rows, overrides, stream_titles=None):

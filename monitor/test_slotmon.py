@@ -1,5 +1,5 @@
 """Outage, replacement, swap and flash-fail paths against a fake YouTube.  py -m unittest test_slotmon  (from monitor/)"""
-import json, os, tempfile, time, unittest
+import json, os, tempfile, time, unicodedata, unittest
 from unittest import mock
 
 from slotmon import config, core, db, discord, publish
@@ -486,6 +486,76 @@ class FollowTitleTests(Base):
         self.assertEqual(publish.row_title("焚き火の音・森の夜"), "焚き火の音・森の夜")  # the katakana middle dot is not a separator
         self.assertEqual(publish.row_title("\U0001F534 LIVE 24/7 \U0001F525"), "")
         self.assertEqual(publish.row_title(None), "")
+
+    # Round 3: the verifier's findings on 776344a (verify.md, 2026-11-15), checked against dac03d5.
+    def test_a_removed_marker_leaves_no_doubled_or_dangling_separator_or_empty_pair(self):
+        for raw, want in (("Rain・LIVE・Night", "Rain・Night"), ("LIVE・Rain", "Rain"), ("Rain、LIVE、Night", "Rain、Night"),
+                          ("Rain，LIVE，Night", "Rain，Night"), ("Rain / LIVE / Night", "Rain / Night"), ("Rain ~ LIVE ~ Night", "Rain ~ Night"),
+                          ("Rain ¦ LIVE ¦ Night", "Rain ¦ Night"), ("Rain 丨 LIVE 丨 Night", "Rain 丨 Night"),
+                          ("Rain ⋆ LIVE ⋆ Night", "Rain ⋆ Night"), ("Rain ｰ LIVE ｰ Night", "Rain ｰ Night"),
+                          ('"LIVE" Rain', "Rain"), ("Rain {LIVE}", "Rain"), ("《LIVE》Rain", "Rain"), ("〈LIVE〉Rain", "Rain"),
+                          ("“LIVE” Rain", "Rain"), ("«LIVE» Rain", "Rain"), ("Rain: LIVE: Night", "Rain: Night"),
+                          ("Now Live: rain", "Now Live: rain"), ("Rain | | | Night", "Rain | Night"), ("Rain • • Night", "Rain • Night")):
+            self.assertEqual(publish.clean_title(raw), want, raw)
+
+    def test_no_published_title_starts_or_ends_with_a_separator_or_holds_an_empty_pair_or_a_doubled_one(self):
+        from slotmon import titles
+        seps = set(titles.SEPS)
+        raws = [a + " " + m + " " + b for m in ("LIVE", "\U0001F525", "24/7", "(LIVE)", '"LIVE"', "《LIVE》") for a, b in (("", "Rain"), ("Rain", ""), ("Rain", "Night"))]
+        raws += [a + s + m + s + b for s in titles.SEPS + " " for m in ("LIVE", "\U0001F525") for a, b in (("Rain", "Night"), ("", "Rain"), ("Rain", ""))]
+        for raw in raws:
+            for out in (publish.clean_title(raw), publish.row_title(raw)):
+                if not out:
+                    continue
+                self.assertFalse(out[0] in seps or out[-1] in seps, (raw, out))
+                squeezed = [c for c in out if not c.isspace()]
+                self.assertFalse(any(a == b and a in seps for a, b in zip(squeezed, squeezed[1:])), (raw, out))
+                self.assertFalse(titles.EMPTY_PAIRS.search(out), (raw, out))
+
+    def test_which_separators_split_a_part(self):
+        for raw, want in (("Rain ¦ Night", "Rain"), ("Rain丨Night", "Rain"), ("Rain ⋆ Night", "Rain"), ("Rain / Night", "Rain"),
+                          ("Rain ~ Night", "Rain"), ("Rain ‖ Night", "Rain"), ("Rain／Night", "Rain"),
+                          ("chill music to study/relax to", "chill music to study/relax to"), ("安眠・リラックス", "安眠・リラックス"),
+                          ("Rain、Night", "Rain、Night"), ("Rain, Night: Sleep", "Rain, Night: Sleep")):
+            self.assertEqual(publish.row_title(raw), want, raw)
+
+    def test_live_inside_another_token_stays(self):
+        for t in ("live.com rain", "#live rain", "@live rain", "Live—stream", "live_stream"):
+            self.assertEqual(publish.clean_title(t), t)
+
+    def test_a_word_is_never_split_and_control_characters_go(self):
+        self.assertEqual(publish.clean_title("Cam­pfire night"), "Campfire night")  # soft hyphen: deleted, not a space
+        self.assertEqual(publish.clean_title("می‌خوابم"), "می‌خوابم")  # Persian ZWNJ stays
+        self.assertEqual(publish.clean_title("\U0001F469‍\U0001F525 Rain"), "Rain")  # a ZWJ left by removed emoji goes
+        self.assertEqual(publish.clean_title("Rain\x00Night"), "Rain Night")
+        self.assertEqual(publish.clean_title("\x07Rain\x1b"), "Rain")
+        self.assertFalse(any(unicodedata.category(c) == "Cc" for c in publish.clean_title("Rain\x1b[31mRed\x7f")))
+
+    def test_fullwidth_and_styled_markers_are_caught(self):
+        self.assertEqual(publish.clean_title("ＬＩＶＥ Campfire"), "Campfire")
+        self.assertEqual(publish.clean_title("\U0001D40B\U0001D408\U0001D415\U0001D404 Campfire"), "Campfire")
+        self.assertEqual(publish.clean_title("Ｌｉｖｅ ２４／７ 焚き火"), "焚き火")
+
+    def test_angle_brackets_never_reach_the_title(self):
+        self.assertEqual(publish.clean_title("<b>Rain</b> night"), "Rain night")
+        self.assertEqual(publish.clean_title("<color=red>RED ALERT</color>"), "RED ALERT")
+        for t in ("Rain >> Night << Sleep", "Rain <3 Night", "a < b > c"):
+            self.assertFalse(set("<>") & set(publish.row_title(t)), t)
+
+    def test_a_banned_word_in_the_followed_title_falls_back(self):
+        self.checked("OLDOLDOLD01", "\U0001F534 ASMR rain sounds · LIVE 24/7")
+        self.assertEqual(self.doc()["slots"]["radio"], {"title": "Radio fallback"})
+        self.assertEqual(publish.row_title("Rain sounds · asmr tingles"), "")  # in a later part too
+        self.assertEqual(publish.row_title("ＡＳＭＲ rain"), "")  # fullwidth
+
+    def test_a_long_title_is_capped_at_a_whole_word(self):
+        from slotmon import titles
+        long = publish.row_title("Rain " * 60)
+        self.assertLessEqual(titles._units(long), titles.CAP_UNITS)
+        self.assertTrue(long.endswith("Rain") and long == long.strip(), long)
+        cjk = publish.row_title("焚き火" * 40)
+        self.assertEqual(titles._units(cjk), titles.CAP_UNITS)  # no spaces: cut where it is full
+        self.assertEqual(publish.row_title("Iceberg Cam of Ilulissat, Greenland in 4K Ultra HD"), "Iceberg Cam of Ilulissat, Greenland in 4K Ultra HD")
 
     def test_setting_off_publishes_what_it_did_before(self):
         self.checked("OLDOLDOLD01", CAMPFIRE, OVERRIDES)

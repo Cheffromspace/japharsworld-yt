@@ -68,6 +68,77 @@ def slot_rows(con):
     return {r["key"]: r for r in con.execute("SELECT * FROM slots WHERE idx IS NOT NULL ORDER BY idx")}
 
 
+# ---------- the flash-fail hold (Everything-is-OK#776) ----------
+# A slot whose stream failed the flash check stays hidden until a person clears it (`slotmon clear-flash <key>`): through
+# its stream ending, a same-channel restart, the daily pass, a hand playlist edit and a restart of the monitor. Until
+# 2026-11-16 the hide lived only in slots.auto_reason and was lost twice for retroworld-ps1: handle_down wrote 'down' over
+# it when its stream ended (11-14), and the swap to the channel's next stream, after one 60 s sample, cleared it (11-15).
+# Now the events table is the record: a flash_fail event with no later flash_cleared event holds the slot, and every
+# check pass and every publish puts the hide back if anything wrote over it (coordinator's call, 2026-11-16: a hold until
+# a person clears it, not a longer sample). A held slot gets no replacement search and no swap, so the playlist
+# pull_from_playlist emptied stays empty for any PC still showing the slot; it keeps its daily sample while it plays a
+# stream other than the one that failed.
+FLASH_FAIL = "flash fail"
+
+
+def held(row):
+    return row["auto_reason"] == FLASH_FAIL
+
+
+def _hold_times(con, key):
+    """(last flash_fail, last flash_cleared) event times for a slot, None where there is none."""
+    r = con.execute("SELECT MAX(CASE WHEN kind='flash_fail' THEN ts END) f, MAX(CASE WHEN kind='flash_cleared' THEN ts END) c "
+                    "FROM events WHERE slot_key=? AND kind IN ('flash_fail', 'flash_cleared')", (key,)).fetchone()
+    return r["f"], r["c"]
+
+
+def owed_hold(con, key):
+    """True when the slot's last flash fail has not been cleared by a person since."""
+    failed_at, cleared_at = _hold_times(con, key)
+    return bool(failed_at) and not (cleared_at and cleared_at > failed_at)
+
+
+def hold_flash_fails(con):
+    """Put the flash-fail hide back on every listed slot whose last flash_fail event no person has cleared."""
+    for r in con.execute("SELECT key, title, auto_hidden, auto_reason FROM slots WHERE idx IS NOT NULL").fetchall():
+        if (r["auto_hidden"] and held(r)) or not owed_hold(con, r["key"]):
+            continue
+        failed_at, _ = _hold_times(con, r["key"])
+        con.execute("UPDATE slots SET auto_hidden=1, auto_reason=? WHERE key=?", (FLASH_FAIL, r["key"]))
+        when = dt.datetime.fromtimestamp(failed_at, dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        was = (r["auto_reason"] or "hidden") if r["auto_hidden"] else "not hidden by the monitor"
+        db.event(con, r["key"], "flash_hold", None, "was %s; flash fail %s not cleared" % (was, when))
+        discord.note(con, "Flash-fail hide put back: %s" % (r["title"] or r["key"]),
+                     "%s failed the flash check on %s and no person has cleared it, so it is hidden again (it was %s). "
+                     "Clear it with `slotmon clear-flash %s`." % (label(r), when, was, r["key"]), "warn")
+    con.commit()
+
+
+def clear_flash(con, key):
+    """A person clears a slot's flash-fail hold. The stream that failed is never shown again: a slot still on it, or on a
+    stream that is down, becomes an ordinary down slot whose replacement must pass its own flash check. Returns a line."""
+    row = con.execute("SELECT * FROM slots WHERE key=?", (key,)).fetchone()
+    if row is None:
+        return "no slot %s" % key
+    if not held(row) and not owed_hold(con, key):
+        return "%s has no flash-fail hold (hidden by the monitor: %s)" % (key, row["auto_reason"] if row["auto_hidden"] else "no")
+    s = db.stream(con, row["current_video"]) if row["current_video"] else None
+    on_failed = bool(s and (s["flash_verdict"] == "fail" or s["rejected"] == FLASH_FAIL))
+    db.event(con, key, "flash_cleared", row["current_video"], "by hand")
+    if on_failed or row["down_since"] or not row["current_video"]:
+        con.execute("UPDATE slots SET auto_hidden=1, auto_reason='down', down_since=COALESCE(down_since, ?), next_discovery=0 WHERE key=?", (now(), key))
+        line = ("%s: cleared. It stays hidden as down (%s): the next pass looks for a replacement on the same channel, "
+                "which goes in only after it passes its own flash check." % (key, "it still plays the stream that failed" if on_failed else "its stream is down"))
+    else:
+        con.execute("UPDATE slots SET auto_hidden=0, auto_reason=NULL WHERE key=?", (key,))
+        line = "%s: cleared. It plays %s (flash %s, last checked %s) and is shown from this publish, unless overrides.json hides it." % (
+            key, yt(row["current_video"]), (s["flash_verdict"] if s else None) or "never checked",
+            dt.datetime.fromtimestamp(s["flash_at"], dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if s and s["flash_at"] else "never")
+    db.set_meta(con, "publish_now", True)
+    con.commit()
+    return line
+
+
 def is_shown(row, overrides):
     o = overrides.get("slots", {}).get(row["key"], {})
     return not bool(o.get("hidden", bool(row["baked_hidden"])))
@@ -118,6 +189,7 @@ def queue_job(con, vid, slot_key, reason):
 
 
 def check_pass(con, api, overrides):
+    hold_flash_fails(con)
     rows = [r for r in slot_rows(con).values() if r["kind"] in ("live", "video") and r["current_video"]]
     sts = statuses(con, api, [r["current_video"] for r in rows])
     for row in rows:
@@ -127,6 +199,12 @@ def check_pass(con, api, overrides):
         if status == "error":
             continue
         ok = status == "live" if row["kind"] == "live" else status in ("video", "live")
+        # #776: once a person clears a hold on a slot still on the stream that failed (clear_flash makes it down), that
+        # stream being live must not bring the slot back.
+        cur = db.stream(con, row["current_video"])
+        failed = bool(cur and cur["flash_verdict"] == "fail") and not held(row)
+        if failed:
+            ok = False
         shown = is_shown(row, overrides)
         if ok:
             con.execute("UPDATE slots SET misses=0 WHERE key=?", (row["key"],))
@@ -135,7 +213,7 @@ def check_pass(con, api, overrides):
                 db.event(con, row["key"], "recovered", row["current_video"])
                 if row["auto_reason"] == "down":
                     con.execute("UPDATE slots SET auto_hidden=0, auto_reason=NULL WHERE key=?", (row["key"],))
-                if shown:
+                if shown and not held(row):
                     discord.note(con, "Back up: %s" % (row["title"] or row["key"]), "%s is live again: %s" % (label(row), yt(row["current_video"])), "good")
             s = db.stream(con, row["current_video"])
             if row["kind"] == "live" and s["flash_at"] is None:
@@ -143,7 +221,7 @@ def check_pass(con, api, overrides):
         else:
             misses = (row["misses"] or 0) + 1
             con.execute("UPDATE slots SET misses=? WHERE key=?", (misses, row["key"]))
-            if status in ("ended", "unavailable") or misses >= 2:
+            if status in ("ended", "unavailable") or misses >= 2 or failed:
                 handle_down(con, api, con.execute("SELECT * FROM slots WHERE key=?", (row["key"],)).fetchone(), st, shown)
     con.commit()
 
@@ -152,14 +230,19 @@ def check_pass(con, api, overrides):
 
 def handle_down(con, api, row, st, shown):
     if not row["down_since"]:
-        con.execute("UPDATE slots SET down_since=?, auto_hidden=1, auto_reason='down' WHERE key=?", (now(), row["key"]))
+        # #776: a flash-fail hold outlives the stream (until 2026-11-16 this wrote 'down' over it).
+        con.execute("UPDATE slots SET down_since=?, auto_hidden=1, auto_reason=? WHERE key=?", (now(), FLASH_FAIL if held(row) else "down", row["key"]))
         db.event(con, row["key"], "down", row["current_video"], "%s %s" % (st.get("status"), st.get("error") or ""))
-        if shown:
+        if shown and held(row):
+            discord.note(con, "Stream down: %s" % (row["title"] or row["key"]),
+                         "%s: %s is **%s**. It stays hidden for its flash fail until a person clears it (`slotmon clear-flash %s`); "
+                         "no replacement is looked for until then." % (label(row), yt(row["current_video"]), st.get("status"), row["key"]), "warn")
+        elif shown:
             discord.note(con, "Stream down: %s" % (row["title"] or row["key"]),
                          "%s: %s is **%s**%s. Hidden in sleep-list.json; looking for a replacement on the same channel."
                          % (label(row), yt(row["current_video"]), st.get("status"), (" (%s)" % st["error"]) if st.get("error") else ""), "warn")
         row = con.execute("SELECT * FROM slots WHERE key=?", (row["key"],)).fetchone()
-    if row["kind"] == "live":
+    if row["kind"] == "live" and not held(row):
         find_replacement(con, api, row, shown)
 
 
@@ -186,7 +269,7 @@ def judge_candidate(con, old, st):
 
 
 def find_replacement(con, api, row, shown):
-    if now() < (row["next_discovery"] or 0):
+    if held(row) or now() < (row["next_discovery"] or 0):
         return
     con.execute("UPDATE slots SET next_discovery=? WHERE key=?", (now() + 1800, row["key"]))
     old = db.stream(con, row["current_video"])
@@ -217,7 +300,7 @@ def find_replacement(con, api, row, shown):
             swap(con, api, row, vid, shown)
         elif queue_job(con, vid, row["key"], "candidate"):
             db.event(con, row["key"], "candidate", vid, st.get("title") or "")
-            con.execute("UPDATE slots SET auto_reason='down' WHERE key=?", (row["key"],))
+            con.execute("UPDATE slots SET auto_reason='down' WHERE key=? AND auto_reason IS NOT ?", (row["key"], FLASH_FAIL))
             if shown:
                 discord.note(con, "Replacement found, waiting for its flash check: %s" % (row["title"] or row["key"]),
                              "%s: candidate %s (%s). It goes in only after it passes the flash check and is %dp or better."
@@ -234,6 +317,11 @@ def note_no_replacement(con, row, shown, why):
 
 def swap(con, api, row, vid, shown):
     title = row["title"] or row["key"]
+    # #776: the row as it is now, not as the caller read it: a hold set since stops the swap (a swap used to clear it).
+    if held(con.execute("SELECT auto_reason FROM slots WHERE key=?", (row["key"],)).fetchone()):
+        db.event(con, row["key"], "swap_held", vid, "flash-fail hold: no swap until a person clears it")
+        con.commit()
+        return False
     if not row["playlist"]:
         swap_failed(con, row, vid, "no slot playlist (the world bakes the old link)",
                     "Replacement ready but slot has no playlist: %s" % title,
@@ -259,7 +347,14 @@ def swap(con, api, row, vid, shown):
                     "%s: playlist starts with %s" % (label(row), first[0][1] if first else "nothing"))
         return False
     old = row["current_video"]
-    con.execute("UPDATE slots SET current_video=?, down_since=NULL, misses=0, auto_hidden=0, auto_reason=NULL WHERE key=?", (vid, row["key"]))
+    if not con.execute("UPDATE slots SET current_video=?, down_since=NULL, misses=0, auto_hidden=0, auto_reason=NULL WHERE key=? AND auto_reason IS NOT ?",
+                       (vid, row["key"], FLASH_FAIL)).rowcount:
+        # #776: held while the playlist was written (a worker's submit runs beside the pass): the hold stays, and the
+        # playlist is emptied again so a PC with a stale list plays nothing.
+        db.event(con, row["key"], "swap_held", vid, "held during the swap; playlist emptied again")
+        con.commit()
+        pull_from_playlist(con, api, row)
+        return False
     db.event(con, row["key"], "replaced", vid, "from %s" % old)
     db.set_meta(con, "thumbs_dirty", True)
     con.commit()
@@ -384,7 +479,8 @@ def react(con, api, job, res, rows, overrides):
                          % (label(r), res.get("height"), config.MIN_HEIGHT), "warn")
     if job["reason"] == "candidate":
         row = con.execute("SELECT * FROM slots WHERE key=?", (job["slot_key"],)).fetchone()
-        if row is None or not row["down_since"]:
+        # A candidate queued before its slot was retired (verifier Low 1, 2026-11-15) or held (#776) does not go in.
+        if row is None or not row["down_since"] or row["kind"] != "live" or held(row):
             return
         shown = is_shown(row, overrides)
         if not live or (res.get("height") or 0) < config.MIN_HEIGHT:
@@ -419,7 +515,11 @@ def maybe_daily(con, api, overrides):
     rows = slot_rows(con)
     queued = 0
     for r in rows.values():
-        if r["kind"] == "live" and r["current_video"] and not r["auto_hidden"]:
+        # #776: a held slot playing a stream other than the one that failed (retroworld-ps1 from 2026-11-15) is still
+        # sampled daily, so whoever clears the hold has the record of more than one sample.
+        s = db.stream(con, r["current_video"]) if r["current_video"] else None
+        sample_held = held(r) and not r["down_since"] and not (s and s["flash_verdict"] == "fail")
+        if r["kind"] == "live" and r["current_video"] and (not r["auto_hidden"] or sample_held):
             queued += queue_job(con, r["current_video"], r["key"], "daily")
     if api.can_write:
         for r in rows.values():
@@ -512,6 +612,7 @@ def published_doc(con, slots, overrides, rows=None):
 
 
 def publish_pass(con, slots, overrides, force_thumbs=False):
+    hold_flash_fails(con)
     rows = slot_rows(con)
     files = {config.STATUS_FILE: publish.dumps(published_doc(con, slots, overrides, rows))}
     thumbs_at = db.get_meta(con, "thumbs_at", 0)

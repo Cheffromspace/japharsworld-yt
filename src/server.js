@@ -183,7 +183,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     startPrecise: config.homeAndroidGrowing, seekWant: config.homeSeekWant, tz: config.metricsTz, log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
   if (home.enabled) setInterval(() => home.sweep(), 10 * 60_000).unref();
   channels ??= new ChannelSlots({ monitorDb: config.monitorDb, baked: new URL('../monitor/channels.json', import.meta.url),
-    upstream: config.channelsUpstream, log: logJson });
+    overrides: new URL('../monitor/overrides.json', import.meta.url), upstream: config.channelsUpstream, log: logJson });
   // The Linode's own bytes sent, every minute (the transfer alerts, src/net.js).
   const txDelta = new TxDelta();
   if (txBytes() != null) {

@@ -7,6 +7,8 @@ import { DatabaseSync } from 'node:sqlite';
 
 export const KEY = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const VIDEO = /^[A-Za-z0-9_-]{11}$/;
+// A JSON file that may start with a byte-order mark (the monitor reads overrides.json as utf-8-sig).
+const readJson = (path) => { const t = readFileSync(path, 'utf8'); return JSON.parse(t.charCodeAt(0) === 0xfeff ? t.slice(1) : t); };
 
 // key → { id } | { error: 'unknown_channel' | 'channel_unavailable' }. Read-only, cached for cacheMs so a room full of
 // players opening one slot reads the database once.
@@ -24,12 +26,16 @@ export class ChannelSlots {
   // Bounded (verifier, 2026-11-04): at most upstreamCacheMax keys, oldest dropped first, and a 404 for a key the baked
   // file doesn't have is not kept, so a scan of random keys can't grow it. After a timeout or a network error the
   // upstream is skipped for upstreamDownMs, so a hanging upstream doesn't add its timeout to every play.
-  constructor({ monitorDb, baked = null, cacheMs = 30_000, now = () => Date.now(), upstream = '', upstreamTimeoutMs = 2000,
+  //
+  // overrides: monitor/overrides.json, for the baked file only (Everything-is-OK#776, 2026-11-16): the owner's hides and
+  // retirements live there, not in channels.json, which on 2026-11-16 hid none of the retired or flash-failed slots.
+  constructor({ monitorDb, baked = null, overrides = null, cacheMs = 30_000, now = () => Date.now(), upstream = '', upstreamTimeoutMs = 2000,
     upstreamCacheMs = 5 * 60_000, upstreamCacheMax = 256, upstreamDownMs = 20_000, fetch: fetchFn = globalThis.fetch,
     log = () => {} }) {
-    Object.assign(this, { monitorDb, baked, cacheMs, now, upstream: (upstream ?? '').replace(/\/$/, ''), upstreamTimeoutMs,
+    Object.assign(this, { monitorDb, baked, overrides, cacheMs, now, upstream: (upstream ?? '').replace(/\/$/, ''), upstreamTimeoutMs,
       upstreamCacheMs, upstreamCacheMax, upstreamDownMs, fetchFn, log });
     this.upstreamDownUntil = 0;
+    this.unreadable = { at: -Infinity, more: 0 };
     this.cache = new Map();
     this.upstreamCache = new Map();
     this.inflight = new Map();
@@ -97,16 +103,32 @@ export class ChannelSlots {
     return this.bakedKeys.keys.has(key);
   }
 
+  // The baked link, hidden as sleep-list.json would hide it without the monitor's own hides: overrides.json's hidden when
+  // set, else channels.json's (slotmon publish.status_doc). The monitor's hides (down, flash fail) can't be known here. An
+  // overrides file that can't be read refuses every slot (#776: fail closed; the owner's hides are the reason it is read).
   #readBaked(key) {
     if (!this.baked) return { error: 'monitor_unreadable' };
     try {
       const slot = JSON.parse(readFileSync(this.baked, 'utf8')).slots.find((s) => s.key === key);
       if (!slot) return { error: 'unknown_channel' };
-      const id = slot.hidden ? null : /[?&]v=([A-Za-z0-9_-]{11})(?:&|$)/.exec(slot.url ?? '')?.[1];
+      const owner = this.overrides ? readJson(this.overrides).slots?.[key] : null;
+      const hidden = owner && 'hidden' in owner ? Boolean(owner.hidden) : Boolean(slot.hidden);
+      const id = hidden ? null : /[?&]v=([A-Za-z0-9_-]{11})(?:&|$)/.exec(slot.url ?? '')?.[1];
       return id ? { id } : { error: 'channel_unavailable' };
-    } catch {
-      return { error: 'monitor_unreadable' };
+    } catch (e) {
+      return this.#unreadable('baked', e);
     }
+  }
+
+  // #776: a refusal says why in the journal, so "every slot refused because the status can't be read" is told apart from
+  // "this slot is hidden". No key or video in either line. The unreadable line is kept to one a minute (that answer is not
+  // cached, so each play reads again), with the count it stood for.
+  #unreadable(source, e) {
+    if (this.now() - this.unreadable.at >= 60_000) {
+      this.log({ event: 'channel_refused', why: 'status_unreadable', source, error: String(e?.message ?? e).slice(0, 200), more: this.unreadable.more });
+      this.unreadable = { at: this.now(), more: 0 };
+    } else this.unreadable.more++;
+    return { error: 'monitor_unreadable' };
   }
 
   #read(key) {
@@ -114,13 +136,23 @@ export class ChannelSlots {
     let db;
     try {
       db = new DatabaseSync(this.monitorDb, { readOnly: true });
-      const row = db.prepare('SELECT kind, current_video FROM slots WHERE key = ?').get(key);
+      // Everything-is-OK#776 (2026-11-16): a slot the list hides is refused too, by the rule sleep-list.json is published
+      // with (slotmon publish.status_doc): baked_hidden (overrides.json's hidden when set, else channels.json's; a retired
+      // slot is hidden there) or auto_hidden (the monitor's: down, flash fail). Until then only kind 'removed' was, and a
+      // retired slot is 'unmanaged', so a Quest that picked a hidden row from the baked list (the first 12 s after join, or
+      // a failed status load) was sent to its stream, flash-failed or not. Both columns are in the monitor's first schema
+      // (81689b2); a database without them throws, which is monitor_unreadable, a 503: refused, never shown.
+      const row = db.prepare('SELECT kind, current_video, baked_hidden, auto_hidden FROM slots WHERE key = ?').get(key);
       if (!row) return { error: 'unknown_channel' };
-      // A spare (no video yet) or a slot taken off the list.
+      // A spare (no video yet), a slot taken off the list, or one the list hides.
+      if (row.kind !== 'removed' && (row.baked_hidden || row.auto_hidden)) {
+        this.log({ event: 'channel_refused', why: row.auto_hidden ? 'hidden_by_monitor' : 'hidden_by_owner' });
+        return { error: 'channel_unavailable' };
+      }
       if (row.kind === 'removed' || !VIDEO.test(row.current_video ?? '')) return { error: 'channel_unavailable' };
       return { id: row.current_video };
-    } catch {
-      return { error: 'monitor_unreadable' };
+    } catch (e) {
+      return this.#unreadable('monitor', e);
     } finally {
       try { db?.close(); } catch { /* closed */ }
     }

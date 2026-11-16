@@ -145,7 +145,10 @@ journalctl -u japharsworld-yt-monitor -n 50
     next pass looks for a replacement on the same channel, and one goes in after a single passing flash check (60 s; a
     same-title restart is taken at any age). For more than one sample, queue the candidate yourself first
     (`slotmon queue <videoId> --slot <key>`) and read `slotmon report`. The stream that failed never counts as up again.
-  - Otherwise it is shown from that publish, unless `overrides.json` hides it.
+  - If it plays another stream, one that has passed a flash check (retroworld-ps1's from 2026-11-15), it is shown from
+    that publish, unless `overrides.json` hides it. A stream with no passing check yet (a `channels.json` change moved
+    the slot to it) is not cleared: queue it, wait for the result, then clear again (exit code 1 until then).
+  - A stream that once failed stays failed, even if a later sample by hand passes.
   - `slotmon status` shows `AUTO-HIDDEN: flash fail`; `slotmon report` lists the flash rows and the `flash_fail`,
     `flash_hold` (a hide put back), `swap_held` and `flash_cleared` events. A retired slot keeps its hold too.
 

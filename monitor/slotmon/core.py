@@ -85,6 +85,12 @@ def held(row):
     return row["auto_reason"] == FLASH_FAIL
 
 
+def failed_stream(s):
+    """A stream that has failed a flash check: never shown again, even after a later sample passes (a hand recheck sets
+    the verdict to pass but leaves rejected). One rule for check_pass, maybe_daily and clear_flash."""
+    return bool(s and (s["flash_verdict"] == "fail" or s["rejected"] == FLASH_FAIL))
+
+
 def _hold_times(con, key):
     """(last flash_fail, last flash_cleared) event times for a slot, None where there is none."""
     r = con.execute("SELECT MAX(CASE WHEN kind='flash_fail' THEN ts END) f, MAX(CASE WHEN kind='flash_cleared' THEN ts END) c "
@@ -123,7 +129,12 @@ def clear_flash(con, key):
     if not held(row) and not owed_hold(con, key):
         return "%s has no flash-fail hold (hidden by the monitor: %s)" % (key, row["auto_reason"] if row["auto_hidden"] else "no")
     s = db.stream(con, row["current_video"]) if row["current_video"] else None
-    on_failed = bool(s and (s["flash_verdict"] == "fail" or s["rejected"] == FLASH_FAIL))
+    on_failed = failed_stream(s)
+    if not (on_failed or row["down_since"] or not row["current_video"]) and not (s and s["flash_verdict"] == "pass"):
+        # A live stream with no passing check (a channels.json change moves a held slot to a new stream, sync_slots):
+        # never shown unchecked. Nothing is cleared.
+        return ("%s: not cleared. It plays %s, which has no passing flash check yet: `slotmon queue %s --slot %s`, wait for "
+                "the result (slotmon report), then clear again." % (key, yt(row["current_video"]), row["current_video"], key))
     db.event(con, key, "flash_cleared", row["current_video"], "by hand")
     if on_failed or row["down_since"] or not row["current_video"]:
         con.execute("UPDATE slots SET auto_hidden=1, auto_reason='down', down_since=COALESCE(down_since, ?), next_discovery=0 WHERE key=?", (now(), key))
@@ -131,9 +142,9 @@ def clear_flash(con, key):
                 "which goes in only after it passes its own flash check." % (key, "it still plays the stream that failed" if on_failed else "its stream is down"))
     else:
         con.execute("UPDATE slots SET auto_hidden=0, auto_reason=NULL WHERE key=?", (key,))
-        line = "%s: cleared. It plays %s (flash %s, last checked %s) and is shown from this publish, unless overrides.json hides it." % (
-            key, yt(row["current_video"]), (s["flash_verdict"] if s else None) or "never checked",
-            dt.datetime.fromtimestamp(s["flash_at"], dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if s and s["flash_at"] else "never")
+        line = "%s: cleared. It plays %s (flash pass at %s/s, last checked %s) and is shown from this publish, unless overrides.json hides it." % (
+            key, yt(row["current_video"]), s["flash_max"],
+            dt.datetime.fromtimestamp(s["flash_at"], dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if s["flash_at"] else "?")
     db.set_meta(con, "publish_now", True)
     con.commit()
     return line
@@ -201,8 +212,7 @@ def check_pass(con, api, overrides):
         ok = status == "live" if row["kind"] == "live" else status in ("video", "live")
         # #776: once a person clears a hold on a slot still on the stream that failed (clear_flash makes it down), that
         # stream being live must not bring the slot back.
-        cur = db.stream(con, row["current_video"])
-        failed = bool(cur and cur["flash_verdict"] == "fail") and not held(row)
+        failed = failed_stream(db.stream(con, row["current_video"])) and not held(row)
         if failed:
             ok = False
         shown = is_shown(row, overrides)
@@ -518,7 +528,7 @@ def maybe_daily(con, api, overrides):
         # #776: a held slot playing a stream other than the one that failed (retroworld-ps1 from 2026-11-15) is still
         # sampled daily, so whoever clears the hold has the record of more than one sample.
         s = db.stream(con, r["current_video"]) if r["current_video"] else None
-        sample_held = held(r) and not r["down_since"] and not (s and s["flash_verdict"] == "fail")
+        sample_held = held(r) and not r["down_since"] and not failed_stream(s)
         if r["kind"] == "live" and r["current_video"] and (not r["auto_hidden"] or sample_held):
             queued += queue_job(con, r["current_video"], r["key"], "daily")
     if api.can_write:

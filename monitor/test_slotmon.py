@@ -601,6 +601,40 @@ class FlashHoldTests(Base):
         # With an owner's hide (retroworld-ps1's override) it stays hidden by that.
         self.assertEqual(self.published({"notice": "", "slots": {"radio": {"hidden": True}}})["radio"], {"hidden": True})
 
+    def test_clear_flash_after_a_hand_recheck_that_passed_still_never_shows_the_stream_that_failed(self):
+        # Verifier-style path (advisor, 2026-11-16): `slotmon queue` the failed stream, it passes, then clear-flash.
+        self.fail_radio()
+        self.con.execute("UPDATE jobs SET done=1")
+        core.queue_job(self.con, "OLDOLDOLD01", "radio", "manual")
+        self.result([j for j in self.jobs() if j["video_id"] == "OLDOLDOLD01"][0], fps=1)
+        self.assertEqual(db.stream(self.con, "OLDOLDOLD01")["flash_verdict"], "pass")
+        self.assertIn("stays hidden as down", core.clear_flash(self.con, "radio"))
+        self.check()
+        self.check()
+        s = self.slot("radio")
+        self.assertEqual((s["auto_hidden"], s["auto_reason"]), (1, "down"))
+        self.assertEqual(self.published()["radio"], {"hidden": True})
+
+    def test_clear_flash_never_shows_a_stream_with_no_passing_check(self):
+        # A channels.json change moves a held slot to a new stream (sync_slots), not yet checked.
+        self.fail_radio()
+        moved = [dict(SLOTS[0], url="https://www.youtube.com/watch?v=MOVEDMOVED1")] + SLOTS[1:]
+        core.sync_slots(self.con, moved, OVERRIDES)
+        self.assertEqual(self.slot("radio")["current_video"], "MOVEDMOVED1")
+        self.assertEqual(self.slot("radio")["auto_reason"], "flash fail")
+        line = core.clear_flash(self.con, "radio")
+        self.assertIn("not cleared", line)
+        self.assertNotIn(": cleared.", line)
+        s = self.slot("radio")
+        self.assertEqual((s["auto_hidden"], s["auto_reason"]), (1, "flash fail"))
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM events WHERE slot_key='radio' AND kind='flash_cleared'").fetchone()[0], 0)
+        # Its daily sample still runs (another stream than the one that failed); once it passes, the clear shows it.
+        self.api.world["MOVEDMOVED1"] = st("MOVEDMOVED1", "live")
+        self.check()
+        self.result([j for j in self.jobs() if j["video_id"] == "MOVEDMOVED1"][0], fps=0)
+        self.assertIn(": cleared.", core.clear_flash(self.con, "radio"))
+        self.assertEqual(self.slot("radio")["auto_hidden"], 0)
+
     def test_a_candidate_queued_before_a_retirement_does_not_swap(self):
         # Verifier Low 1 on f187ac2 (2026-11-15): react swapped a down slot's candidate without looking at its kind.
         self.api.world["OLDOLDOLD01"] = st("OLDOLDOLD01", "ended")

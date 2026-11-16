@@ -149,6 +149,10 @@ journalctl -u japharsworld-yt-monitor -n 50
     that publish, unless `overrides.json` hides it. A stream with no passing check yet (a `channels.json` change moved
     the slot to it) is not cleared: queue it, wait for the result, then clear again (exit code 1 until then).
   - A stream that once failed stays failed, even if a later sample by hand passes.
+  - A retired slot (kind `unmanaged`) stays hidden after the clear and no replacement is looked for, as for any retired
+    slot.
+  - `clear-flash` reads and writes in one write transaction, so it waits for a pass or a worker's submit that is writing
+    and never clears a fail committed beside it.
   - `slotmon status` shows `AUTO-HIDDEN: flash fail`; `slotmon report` lists the flash rows and the `flash_fail`,
     `flash_hold` (a hide put back), `swap_held` and `flash_cleared` events. A retired slot keeps its hold too.
 

@@ -122,7 +122,22 @@ def hold_flash_fails(con):
 
 def clear_flash(con, key):
     """A person clears a slot's flash-fail hold. The stream that failed is never shown again: a slot still on it, or on a
-    stream that is down, becomes an ordinary down slot whose replacement must pass its own flash check. Returns a line."""
+    stream that is down, becomes an ordinary down slot whose replacement must pass its own flash check. Returns a line.
+    Read and written in one write transaction (verifier L6, 2026-11-16): `slotmon submit` runs beside it without the run
+    lock, and a flash fail it commits between this function's reads and its writes would otherwise be cleared unseen."""
+    if con.in_transaction:
+        con.commit()
+    con.execute("BEGIN IMMEDIATE")  # waits (the connection's 60 s timeout) for a submit or a pass that is writing
+    try:
+        line = _clear_flash(con, key)
+        con.commit()
+        return line
+    except BaseException:
+        con.rollback()
+        raise
+
+
+def _clear_flash(con, key):
     row = con.execute("SELECT * FROM slots WHERE key=?", (key,)).fetchone()
     if row is None:
         return "no slot %s" % key
@@ -138,15 +153,19 @@ def clear_flash(con, key):
     db.event(con, key, "flash_cleared", row["current_video"], "by hand")
     if on_failed or row["down_since"] or not row["current_video"]:
         con.execute("UPDATE slots SET auto_hidden=1, auto_reason='down', down_since=COALESCE(down_since, ?), next_discovery=0 WHERE key=?", (now(), key))
-        line = ("%s: cleared. It stays hidden as down (%s): the next pass looks for a replacement on the same channel, "
-                "which goes in only after it passes its own flash check." % (key, "it still plays the stream that failed" if on_failed else "its stream is down"))
+        why = "it still plays the stream that failed" if on_failed else "its stream is down"
+        if row["kind"] == "live":
+            line = ("%s: cleared. It stays hidden as down (%s): the next pass looks for a replacement on the same channel, "
+                    "which goes in only after it passes its own flash check." % (key, why))
+        else:  # retired (unmanaged): out of the checks and the search (verifier L3)
+            line = ("%s: cleared. It stays hidden as down (%s). It is %s, so no replacement is looked for; if overrides.json "
+                    "brings it back as a live slot, a replacement must pass its own flash check first." % (key, why, "retired (kind unmanaged)" if row["kind"] == "unmanaged" else "kind %s" % row["kind"]))
     else:
         con.execute("UPDATE slots SET auto_hidden=0, auto_reason=NULL WHERE key=?", (key,))
         line = "%s: cleared. It plays %s (flash pass at %s/s, last checked %s) and is shown from this publish, unless overrides.json hides it." % (
             key, yt(row["current_video"]), s["flash_max"],
             dt.datetime.fromtimestamp(s["flash_at"], dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if s["flash_at"] else "?")
     db.set_meta(con, "publish_now", True)
-    con.commit()
     return line
 
 

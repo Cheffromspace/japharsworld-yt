@@ -1,5 +1,5 @@
 """Outage, replacement, swap and flash-fail paths against a fake YouTube.  py -m unittest test_slotmon  (from monitor/)"""
-import json, os, tempfile, time, unicodedata, unittest
+import json, os, sqlite3, tempfile, time, unicodedata, unittest
 from unittest import mock
 
 from slotmon import config, core, db, discord, publish
@@ -634,6 +634,56 @@ class FlashHoldTests(Base):
         self.result([j for j in self.jobs() if j["video_id"] == "MOVEDMOVED1"][0], fps=0)
         self.assertIn(": cleared.", core.clear_flash(self.con, "radio"))
         self.assertEqual(self.slot("radio")["auto_hidden"], 0)
+
+    def test_clear_flash_holds_the_write_lock_so_a_fail_committed_beside_it_is_never_cleared_unseen(self):
+        # Verifier L6 (2026-11-16, its probe test_race.py): `slotmon submit` runs in another process without the run lock.
+        # radio is held for an old fail and now plays a stream that passed; a new fail on that stream is committed by a
+        # second connection right after clear_flash has read the stream.
+        self.fail_radio()
+        db.upsert_stream(self.con, "NEWNEWNEW01", flash_verdict="pass", flash_max=2, flash_at=time.time(), height=1080)
+        self.con.execute("UPDATE slots SET current_video='NEWNEWNEW01' WHERE key='radio'")
+        self.con.commit()
+        time.sleep(0.01)
+        real, tried = db.stream, []
+
+        def submit_fail():
+            c = sqlite3.connect(os.path.join(self.tmp, "t.db"), timeout=0.2)
+            try:
+                c.execute("UPDATE streams SET flash_verdict='fail', rejected='flash fail' WHERE video_id='NEWNEWNEW01'")
+                c.execute("UPDATE slots SET auto_hidden=1, auto_reason='flash fail' WHERE key='radio'")
+                c.execute("INSERT INTO events(ts,slot_key,kind,video_id,detail) VALUES(?,?,?,?,?)", (time.time(), "radio", "flash_fail", "NEWNEWNEW01", "8/s"))
+                c.commit()
+                return True
+            except sqlite3.OperationalError:  # database is locked: clear_flash holds the write lock
+                return False
+            finally:
+                c.close()
+
+        def stream_then_submit(con, vid):
+            r = real(con, vid)
+            if not tried:
+                tried.append(submit_fail())
+            return r
+        with mock.patch.object(db, "stream", stream_then_submit):
+            line = core.clear_flash(self.con, "radio")
+        self.assertEqual(tried, [False], "the second connection could not write while clear_flash ran")
+        self.assertIn("is shown from this publish", line)  # it saw only the pass
+        # The submit, retried once the clear has committed, holds the slot again.
+        self.assertTrue(submit_fail())
+        core.hold_flash_fails(self.con)
+        s = self.slot("radio")
+        self.assertEqual((s["auto_hidden"], s["auto_reason"]), (1, "flash fail"))
+        self.assertTrue(core.owed_hold(self.con, "radio"))
+
+    def test_clear_flash_on_a_retired_slot_says_no_replacement_is_looked_for(self):
+        # Verifier L3: gta-vice-city's shape (retired, held, still on the stream that failed).
+        self.fail_radio()
+        ov = {"notice": "", "slots": dict(OVERRIDES["slots"], radio={"hidden": True, "kind": "unmanaged", "retired": "2026-11-15: flash fail"})}
+        core.sync_slots(self.con, SLOTS, ov)
+        line = core.clear_flash(self.con, "radio")
+        self.assertIn("no replacement is looked for", line)
+        self.assertNotIn("the next pass looks for a replacement", line)
+        self.assertEqual(self.slot("radio")["auto_hidden"], 1)
 
     def test_a_candidate_queued_before_a_retirement_does_not_swap(self):
         # Verifier Low 1 on f187ac2 (2026-11-15): react swapped a down slot's candidate without looking at its kind.

@@ -2,6 +2,7 @@
 import io, json, math, os, subprocess, urllib.error
 
 from . import config
+from .titles import clean_title, row_title  # noqa: F401 (clean_title: the tests and tools reach it here)
 from .youtube import http, oembed_thumbnail, video_id
 
 COLS, CELL_W, CELL_H = 10, 192, 108  # EverythingIsOKTabletLayout.Channels.cs: ThumbCols, ThumbW, ThumbH
@@ -16,13 +17,22 @@ def sheet_size(n):
     return p2(COLS * CELL_W), p2(max(1, math.ceil(n / COLS)) * CELL_H)
 
 
-def status_doc(slots, rows, overrides):
-    """slots: channels.json slots; rows: db slot rows by key; overrides: monitor/overrides.json.
+def status_doc(slots, rows, overrides, stream_titles=None):
+    """slots: channels.json slots; rows: db slot rows by key; overrides: monitor/overrides.json; stream_titles: slot key ->
+    the stored title of the stream it plays, for the slots whose override says "title_from": "stream" (core.stream_titles).
     Writes only what differs from what the world baked, so an unreadable file and an empty file mean the same."""
     out = {"notice": overrides.get("notice", ""), "slots": {}}
     ov = overrides.get("slots", {})
     for s in slots:
         key, o, r = s["key"], ov.get(s["key"], {}), rows.get(s["key"])
+        if o.get("title_from") == "stream":
+            try:
+                t = row_title((stream_titles or {}).get(key))
+            except Exception as ex:  # a channel's title must never stop a publish pass or the flash-fail hide (verifier R2)
+                print("title_from %s: %s: %s; the fixed title stays" % (key, type(ex).__name__, str(ex)[:200]), flush=True)
+                t = ""
+            if t:  # else the override's own title, else the baked one: never an empty row
+                o = dict(o, title=t)
         e = {}
         hidden = bool(o.get("hidden", s.get("hidden", False)))
         if r is not None and r["auto_hidden"]:

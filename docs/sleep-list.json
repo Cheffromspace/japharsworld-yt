@@ -2,7 +2,8 @@
  "notice": "",
  "slots": {
   "borneo-jungle-night": {
-   "title": "Lakeside Campfire"
+   "hidden": true,
+   "title": "Lonely Lakeside Campfire"
   },
   "fan-noise-black": {
    "hidden": true

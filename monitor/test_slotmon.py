@@ -1,5 +1,5 @@
 """Outage, replacement, swap and flash-fail paths against a fake YouTube.  py -m unittest test_slotmon  (from monitor/)"""
-import json, os, tempfile, time, unittest
+import json, os, tempfile, time, unicodedata, unittest
 from unittest import mock
 
 from slotmon import config, core, db, discord, publish
@@ -407,6 +407,288 @@ class Tests(Base):
         self.assertEqual(core.claim_jobs(self.con, "optiplex", 12), [])  # still claimed
         self.con.execute("UPDATE jobs SET claimed=?", (time.time() - core.CLAIM_SECONDS - 60,))
         self.assertEqual(len(core.claim_jobs(self.con, "optiplex", 12)), n)
+
+
+# A slot whose title follows its stream (Everything-is-OK#793, owner 2026-11-15: "Can we change it to follow the stream
+# title?"). The stream title the monitor journal showed for borneo-jungle-night at 2026-11-15 17:00:17Z:
+CAMPFIRE = "\U0001F534 Lonely Lakeside Campfire · LIVE 24/7 · Boundary Waters Fire Crackling for Sleep \U0001F525"
+FOLLOW = {"notice": "", "slots": {"noise": {"kind": "video"}, "cam": {"title": "Tokyo cam"},
+                                  "radio": {"title": "Radio fallback", "title_from": "stream"}}}
+
+
+class FollowTitleTests(Base):
+    def doc(self, overrides=FOLLOW):
+        return json.loads(publish.dumps(core.published_doc(self.con, SLOTS, overrides)))
+
+    def checked(self, vid, title, overrides=FOLLOW):
+        self.api.world[vid] = st(vid, "live", title=title)
+        core.check_pass(self.con, self.api, overrides)
+
+    def test_clean_title_of_the_campfire_stream(self):
+        self.assertEqual(publish.clean_title(CAMPFIRE), "Lonely Lakeside Campfire · Boundary Waters Fire Crackling for Sleep")
+
+    def test_clean_title_of_only_markers_and_emoji_is_empty(self):
+        for t in ("\U0001F534 LIVE 24/7 \U0001F525", "Live Now: 24 / 7 | \U0001F319✨", "\U0001F525 · live · \U0001F525", "", None, "   "):
+            self.assertEqual(publish.clean_title(t), "", t)
+
+    def test_clean_title_leaves_a_plain_title_alone(self):
+        for t in ("Jungle night sounds from a stilt hut, Borneo", "Shinjuku FM: soft lofi and smooth jazz",
+                  "Lo-Fi beats - rainy night in the Olive grove", "Alive: Delivery of the deliverance",
+                  "Lofi hip hop radio: beats to sleep and chill to", "Rain on a tin roof | 10 hours"):
+            self.assertEqual(publish.clean_title(t), t)
+
+    def test_clean_title_keeps_japanese_and_korean(self):
+        self.assertEqual(publish.clean_title("焚き火の音・森の夜々「ーー」"), "焚き火の音・森の夜々「ーー」")
+        self.assertEqual(publish.clean_title("\U0001F525 焚き火 LIVE 24/7 | 森の夜"), "焚き火 | 森の夜")
+        self.assertEqual(publish.clean_title("\U0001F534 LIVE 모닥불 소리 · 비 오는 밤 \U0001F327️"), "모닥불 소리 · 비 오는 밤")
+
+    def test_clean_title_drops_empty_brackets_and_the_yt_dlp_live_stamp(self):
+        self.assertEqual(publish.clean_title("Campfire 【LIVE】 (24/7) [live] \U0001F525"), "Campfire")
+        # yt-dlp appends the time to a live stream's title (its fulltitle doesn't); the worker stores that one.
+        self.assertEqual(publish.clean_title(CAMPFIRE + " 2026-11-15 17:00"), publish.clean_title(CAMPFIRE))
+        once = publish.clean_title(CAMPFIRE)
+        self.assertEqual(publish.clean_title(once), once)  # cleaning twice changes nothing
+
+    def test_clean_title_tidies_punctuation_a_marker_leaves(self):
+        # Stream titles from the monitor's seed data (2026-10-17).
+        self.assertEqual(publish.clean_title("LIVE! View of the Milky Way Galaxy \U0001F30C"), "View of the Milky Way Galaxy")
+        self.assertEqual(publish.clean_title("ISS LIVE, with crew audio"), "ISS, with crew audio")
+        self.assertEqual(publish.clean_title("Finse station - Live"), "Finse station")
+        self.assertEqual(publish.clean_title("LIVE: Campfire · rain"), "Campfire · rain")
+        self.assertEqual(publish.clean_title("Campfire: LIVE · rain"), "Campfire · rain")
+        self.assertEqual(publish.clean_title("Campfire (24/7 Stream)"), "Campfire (Stream)")
+        self.assertEqual(publish.clean_title("Rain (live)"), "Rain")
+
+    def test_clean_title_keeps_live_inside_a_hyphen_compound(self):
+        for t in ("Live-stream of rain", "Rain to re-live the night", "LIVE-STREAM: rain"):
+            self.assertEqual(publish.clean_title(t), t)
+
+    def test_live_is_removed_only_where_it_is_a_marker(self):
+        # Round 2 (coordinator, 2026-11-15): "Long Live the Night" must stay.
+        for t in ("Long Live the Night", "Alive at Night", "Olive Grove", "live music", "Campfire (Live Stream)",
+                  "Osaka Loop Line live camera", "ISS live, with crew audio"):
+            self.assertEqual(publish.clean_title(t), t)
+        self.assertEqual(publish.clean_title("LIVE 24/7"), "")
+        self.assertEqual(publish.clean_title("\U0001F534 LIVE"), "")
+        self.assertEqual(publish.clean_title("Live Now: 24/7 Iceberg Cam"), "Iceberg Cam")
+        self.assertEqual(publish.clean_title("Live 24/7 rain on a tin roof"), "rain on a tin roof")
+        self.assertEqual(publish.clean_title("Live: Campfire"), "Campfire")
+
+    def test_row_title_is_the_first_part(self):
+        # Owner, 2026-11-15, on the long campfire title: "B. First part only".
+        self.assertEqual(publish.row_title(CAMPFIRE), "Lonely Lakeside Campfire")
+        self.assertEqual(publish.row_title("Iceberg Cam of Ilulissat, Greenland in 4K Ultra HD"), "Iceberg Cam of Ilulissat, Greenland in 4K Ultra HD")
+        self.assertEqual(publish.row_title("Lo-Fi beats - rainy night"), "Lo-Fi beats")  # a dash splits only with spaces round it
+        self.assertEqual(publish.row_title("Ancient Empires for Sleep — Calm History Radio"), "Ancient Empires for Sleep")
+        self.assertEqual(publish.row_title("\U0001F534 LIVE · | Campfire night – rain"), "Campfire night")  # first part with words
+        self.assertEqual(publish.row_title("Campfire: | rain"), "Campfire")
+        self.assertEqual(publish.row_title("\U0001F525 焚き火 LIVE 24/7 ｜ 森の夜"), "焚き火")
+        self.assertEqual(publish.row_title("焚き火の音・森の夜"), "焚き火の音・森の夜")  # the katakana middle dot is not a separator
+        self.assertEqual(publish.row_title("\U0001F534 LIVE 24/7 \U0001F525"), "")
+        self.assertEqual(publish.row_title(None), "")
+
+    # Round 3: the verifier's findings on 776344a (verify.md, 2026-11-15), checked against dac03d5.
+    def test_a_removed_marker_leaves_no_doubled_or_dangling_separator_or_empty_pair(self):
+        for raw, want in (("Rain・LIVE・Night", "Rain・Night"), ("LIVE・Rain", "Rain"), ("Rain、LIVE、Night", "Rain、Night"),
+                          ("Rain，LIVE，Night", "Rain，Night"), ("Rain / LIVE / Night", "Rain / Night"), ("Rain ~ LIVE ~ Night", "Rain ~ Night"),
+                          ("Rain ¦ LIVE ¦ Night", "Rain ¦ Night"), ("Rain 丨 LIVE 丨 Night", "Rain 丨 Night"),
+                          ("Rain ⋆ LIVE ⋆ Night", "Rain ⋆ Night"), ("Rain ｰ LIVE ｰ Night", "Rain ｰ Night"),
+                          ('"LIVE" Rain', "Rain"), ("Rain {LIVE}", "Rain"), ("《LIVE》Rain", "Rain"), ("〈LIVE〉Rain", "Rain"),
+                          ("“LIVE” Rain", "Rain"), ("«LIVE» Rain", "Rain"), ("Rain: LIVE: Night", "Rain: Night"),
+                          ("Now Live: rain", "Now Live: rain"), ("Rain | | | Night", "Rain | Night"), ("Rain • • Night", "Rain • Night")):
+            self.assertEqual(publish.clean_title(raw), want, raw)
+
+    def test_no_published_title_starts_or_ends_with_a_separator_or_holds_an_empty_pair_or_a_doubled_one(self):
+        from slotmon import titles
+        seps = set(titles.SEPS)
+        raws = [a + " " + m + " " + b for m in ("LIVE", "\U0001F525", "24/7", "(LIVE)", '"LIVE"', "《LIVE》") for a, b in (("", "Rain"), ("Rain", ""), ("Rain", "Night"))]
+        raws += [a + s + m + s + b for s in titles.SEPS + " " for m in ("LIVE", "\U0001F525") for a, b in (("Rain", "Night"), ("", "Rain"), ("Rain", ""))]
+        for raw in raws:
+            for out in (publish.clean_title(raw), publish.row_title(raw)):
+                if not out:
+                    continue
+                self.assertFalse(out[0] in seps or out[-1] in seps, (raw, out))
+                squeezed = [c for c in out if not c.isspace()]
+                self.assertFalse(any(a == b and a in seps for a, b in zip(squeezed, squeezed[1:])), (raw, out))
+                self.assertFalse(titles.EMPTY_PAIRS.search(out), (raw, out))
+
+    def test_which_separators_split_a_part(self):
+        for raw, want in (("Rain ¦ Night", "Rain"), ("Rain丨Night", "Rain"), ("Rain ⋆ Night", "Rain"), ("Rain / Night", "Rain"),
+                          ("Rain ~ Night", "Rain"), ("Rain ‖ Night", "Rain"), ("Rain／Night", "Rain"),
+                          ("chill music to study/relax to", "chill music to study/relax to"), ("安眠・リラックス", "安眠・リラックス"),
+                          ("Rain、Night", "Rain、Night"), ("Rain, Night: Sleep", "Rain, Night: Sleep")):
+            self.assertEqual(publish.row_title(raw), want, raw)
+
+    def test_live_inside_another_token_stays(self):
+        for t in ("live.com rain", "#live rain", "@live rain", "Live—stream", "live_stream"):
+            self.assertEqual(publish.clean_title(t), t)
+
+    def test_a_word_is_never_split_and_control_characters_go(self):
+        self.assertEqual(publish.clean_title("Cam­pfire night"), "Campfire night")  # soft hyphen: deleted, not a space
+        self.assertEqual(publish.clean_title("می‌خوابم"), "می‌خوابم")  # Persian ZWNJ stays
+        self.assertEqual(publish.clean_title("\U0001F469‍\U0001F525 Rain"), "Rain")  # a ZWJ left by removed emoji goes
+        self.assertEqual(publish.clean_title("Rain\x00Night"), "Rain Night")
+        self.assertEqual(publish.clean_title("\x07Rain\x1b"), "Rain")
+        self.assertFalse(any(unicodedata.category(c) == "Cc" for c in publish.clean_title("Rain\x1b[31mRed\x7f")))
+
+    def test_fullwidth_and_styled_markers_are_caught(self):
+        self.assertEqual(publish.clean_title("ＬＩＶＥ Campfire"), "Campfire")
+        self.assertEqual(publish.clean_title("\U0001D40B\U0001D408\U0001D415\U0001D404 Campfire"), "Campfire")
+        self.assertEqual(publish.clean_title("Ｌｉｖｅ ２４／７ 焚き火"), "焚き火")
+
+    def test_angle_brackets_never_reach_the_title(self):
+        self.assertEqual(publish.clean_title("<b>Rain</b> night"), "Rain night")
+        self.assertEqual(publish.clean_title("<color=red>RED ALERT</color>"), "RED ALERT")
+        for t in ("Rain >> Night << Sleep", "Rain <3 Night", "a < b > c"):
+            self.assertFalse(set("<>") & set(publish.row_title(t)), t)
+
+    def test_a_banned_word_in_the_followed_title_falls_back(self):
+        self.checked("OLDOLDOLD01", "\U0001F534 ASMR rain sounds · LIVE 24/7")
+        self.assertEqual(self.doc()["slots"]["radio"], {"title": "Radio fallback"})
+        self.assertEqual(publish.row_title("Rain sounds · asmr tingles"), "")  # in a later part too
+        self.assertEqual(publish.row_title("ＡＳＭＲ rain"), "")  # fullwidth
+
+    def test_a_long_title_is_capped_at_a_whole_word(self):
+        from slotmon import titles
+        long = publish.row_title("Rain " * 60)
+        self.assertLessEqual(titles._units(long), titles.CAP_UNITS)
+        self.assertTrue(long.endswith("Rain") and long == long.strip(), long)
+        cjk = publish.row_title("焚き火" * 40)
+        self.assertEqual(titles._units(cjk), titles.CAP_UNITS)  # no spaces: cut where it is full
+        self.assertEqual(publish.row_title("Iceberg Cam of Ilulissat, Greenland in 4K Ultra HD"), "Iceberg Cam of Ilulissat, Greenland in 4K Ultra HD")
+        # A seed title (2026-10-17) whose cut fell after a lone "+": no mark is left at the end.
+        self.assertEqual(publish.row_title("Marble Run Race HABA Slope + Cuboro + Bornelund Quadrilla + Transparent pipe"),
+                         "Marble Run Race HABA Slope + Cuboro + Bornelund Quadrilla")
+
+    # Round 4: the verifier's round 2 on 24849df (verify.md "Round 2").
+    def test_a_split_or_a_cut_never_leaves_a_pair_open(self):
+        for raw, want in (("Night Train (Tokyo – Osaka) ambience", "Night Train (Tokyo – Osaka) ambience"),
+                          ("Rain (Tokyo - Osaka)", "Rain (Tokyo - Osaka)"),
+                          ("Cozy Cabin (Rain · Fireplace · Snow)", "Cozy Cabin (Rain · Fireplace · Snow)"),
+                          ("Lakeside [4K | HDR] Campfire", "Lakeside [4K | HDR] Campfire"),
+                          ("Campfire 【焚き火 | 雨音】", "Campfire 【焚き火 | 雨音】"),
+                          ("Rain “Night · Sleep”", "Rain “Night · Sleep”"),
+                          ("Night Train (Tokyo – Osaka) · rain", "Night Train (Tokyo – Osaka)"),
+                          # a seed title (2026-10-17) the cap used to cut inside its brackets: cut back to before the opener
+                          ("Live Video from the International Space Station (Official NASA Stream)", "Live Video from the International Space Station"),
+                          ("Rain (Tokyo", "Rain Tokyo"), ("Rain) Night", "Rain Night")):  # a title that came unbalanced
+            self.assertEqual(publish.row_title(raw), want, raw)
+
+    def test_no_published_title_holds_an_unclosed_or_unopened_bracket_or_quote(self):
+        pairs = {"(": ")", "[": "]", "{": "}", "【": "】", "「": "」", "『": "』", "（": "）", "〔": "〕",
+                 "《": "》", "〈": "〉", "«": "»", "‹": "›", "“": "”", "„": "“"}
+
+        def unpaired(t):  # written apart from titles._unmatched on purpose
+            stack = []
+            for c in t:
+                if c == '"':
+                    stack.pop() if stack and stack[-1] == '"' else stack.append(c)
+                elif stack and pairs.get(stack[-1]) == c:
+                    stack.pop()
+                elif c in pairs:
+                    stack.append(c)
+                elif c in pairs.values():
+                    return True
+            return bool(stack)
+        raws = set()
+        for p in __import__("glob").glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed", "*.json")):
+            with open(p, encoding="utf-8") as f:
+                d = json.load(f)
+            raws |= {o["title"] for o in d.get("observations", []) + d.get("flash", []) if o.get("title")}
+        self.assertGreater(len(raws), 200)
+        for o, c in list(pairs.items()) + [('"', '"')]:
+            for sep in (" · ", " | ", " - ", " – ", "｜", " / "):
+                raws |= {"Rain %sTokyo%sOsaka%s night" % (o, sep, c), "%sRain%sNight%s" % (o, sep, c), "Night%s%sRain%s" % (sep, o, c),
+                         "Rain %s%s%s more" % (o, "word " * 20, c), "x" * 55 + " %sRain at night%s" % (o, c), "Rain%s night%sNight" % (c, sep),
+                         "Rain %s night%s%s" % (o, sep, "LIVE"), "%s%s%s Rain" % (o, "\U0001F525", c)}
+        # Fuzz finds on d7e4ec4 (scratch/r4/fuzz_all.py, 2026-11-15): dropping one character undid another rule.
+        raws |= {"Rain 〈)〉 night", "LE !V7 （き /”）丨 i", "丨ON›]L • .〕{丨〕 —‘;w〉› ！ 2o(V』«4",
+                 "4? !h〉〕\"（(火 / 『ｰ、“：]", "ei【》 】 「|‘⋆", "〔,き』/ ! 〕／[2nR2—L'『》R《'Lき」)き火"}
+        seps = set(__import__("slotmon.titles", fromlist=["SEPS"]).SEPS)
+        for raw in raws:
+            out = publish.row_title(raw)
+            self.assertFalse(unpaired(out), (raw, out))
+            self.assertFalse(out and (out[0] in seps or out[-1] in seps), (raw, out))
+            self.assertFalse(any(o + c in out.replace(" ", "") for o, c in list(pairs.items()) + [("‘", "’")]), (raw, out))
+
+    def test_a_bare_first_part_is_skipped(self):
+        for raw, want in (("A · Rainy night by the lake", "Rainy night by the lake"), ("4K · Rainy night", "Rainy night"),
+                          ("2024 | Rain", "Rain"), ("Ah | Rainy night", "Rainy night"), ("Cafe · Work · Study", "Cafe"),
+                          ("2024 | 4K", ""), ("雨音 | night", "雨音")):
+            self.assertEqual(publish.row_title(raw), want, raw)
+
+    def test_stacked_marks_are_capped_and_a_bidi_control_never_joins_two_words(self):
+        self.assertEqual(publish.clean_title("n" + "́" * 30 + " rain"), "ń́ rain")
+        self.assertEqual(publish.clean_title("Rain‮Night‬"), "Rain Night")
+        self.assertEqual(publish.clean_title("שלום‏."), "שלום.")  # an RLM before a stop: deleted
+        self.assertEqual(publish.clean_title("น้ำ"), "น้ำ")  # Thai: one mark stays
+
+    def test_the_cap_cuts_a_cjk_run_by_units_instead_of_dropping_it(self):
+        from slotmon import titles
+        out = publish.row_title("雨の夜 " + "焚き火の音" * 10)
+        self.assertTrue(out.startswith("雨の夜 焚き火"), out)
+        self.assertGreaterEqual(titles._units(out), titles.CAP_UNITS - 1)
+        self.assertEqual(publish.row_title("Rain " + "焚" * 40), "Rain " + "焚" * 29)
+
+    def test_a_title_that_raises_falls_back_and_the_pass_still_publishes_every_slot(self):
+        self.checked("OLDOLDOLD01", CAMPFIRE)
+
+        def boom(raw):
+            raise ValueError("bad title")
+        with mock.patch.object(publish, "row_title", boom), mock.patch.object(config, "DATA_DIR", self.tmp), \
+                mock.patch.object(config, "PUBLISH", False), mock.patch.object(publish, "build_sheet", lambda slots, cur: (b"", [])):
+            self.assertEqual(self.doc()["slots"], {"cam": {"title": "Tokyo cam"}, "radio": {"title": "Radio fallback"}})
+            core.publish_pass(self.con, SLOTS, FOLLOW)
+        with open(os.path.join(self.tmp, "out", config.STATUS_FILE), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["slots"], {"cam": {"title": "Tokyo cam"}, "radio": {"title": "Radio fallback"}})
+
+    def test_setting_off_publishes_what_it_did_before(self):
+        self.checked("OLDOLDOLD01", CAMPFIRE, OVERRIDES)
+        self.checked("CAMCAMCAM01", CAMPFIRE, OVERRIDES)
+        self.assertEqual(self.doc(OVERRIDES), publish.status_doc(SLOTS, core.slot_rows(self.con), OVERRIDES))
+        self.assertEqual(self.doc(OVERRIDES), {"notice": "", "slots": {"cam": {"title": "Tokyo cam"}}})
+
+    def test_setting_on_publishes_the_cleaned_stream_title(self):
+        self.checked("OLDOLDOLD01", CAMPFIRE)
+        self.assertEqual(self.doc()["slots"], {"cam": {"title": "Tokyo cam"}, "radio": {"title": "Lonely Lakeside Campfire"}})
+        self.assertNotIn("title_from", json.dumps(self.doc()))  # a monitor setting, never published
+
+    def test_no_stored_title_falls_back_to_the_override_then_the_baked_title(self):
+        self.assertEqual(self.doc()["slots"]["radio"], {"title": "Radio fallback"})  # no check yet: no stored title
+        self.checked("OLDOLDOLD01", "\U0001F534 LIVE 24/7 \U0001F525")  # cleans to nothing
+        self.assertEqual(self.doc()["slots"]["radio"], {"title": "Radio fallback"})
+        bare = {"notice": "", "slots": {"radio": {"title_from": "stream"}}}
+        self.assertNotIn("radio", self.doc(bare)["slots"])  # the world's baked title, as with no override
+        self.checked("OLDOLDOLD01", "\U0001F534 Sleep radio · LIVE 24/7", bare)
+        self.assertNotIn("radio", self.doc(bare)["slots"])  # cleans to the baked title: nothing to write
+
+    def test_after_a_swap_the_title_follows_the_new_stream_not_the_candidate(self):
+        self.checked("OLDOLDOLD01", "\U0001F534 sleep lofi radio 24/7")
+        self.assertEqual(self.doc()["slots"]["radio"], {"title": "sleep lofi radio"})
+        self.api.world["OLDOLDOLD01"] = st("OLDOLDOLD01", "ended", title="sleep lofi radio 24/7")
+        self.api.world["NEWNEWNEW01"] = st("NEWNEWNEW01", "live", title="\U0001F534 sleep lofi radio 24/7 relaxing", started=time.time() - 600)
+        self.live_ids["UClofi"] = ["NEWNEWNEW01"]
+        core.check_pass(self.con, self.api, FOLLOW)
+        cand = [j for j in self.jobs() if j["reason"] == "candidate"]
+        self.assertEqual([j["video_id"] for j in cand], ["NEWNEWNEW01"])
+        # Waiting for its flash check: hidden, and still the title of the stream the slot plays.
+        self.assertEqual(self.doc()["slots"]["radio"], {"hidden": True, "title": "sleep lofi radio"})
+        r = {"id": cand[0]["id"], "video_id": "NEWNEWNEW01", "runner": "optiplex", "ts": time.time(), "live_status": "is_live",
+             "height": 1080, "format_id": "96", "title": "\U0001F534 sleep lofi radio 24/7 relaxing 2026-11-15 17:00",
+             "flash": {"verdict": "pass", "max_fps": 0, "regions": [0] * 5, "frames": 450, "mean_luminance": 0.05}}
+        core.submit_results(self.con, self.api, [r], FOLLOW)
+        self.assertEqual(self.slot("radio")["current_video"], "NEWNEWNEW01")
+        self.assertEqual(self.doc()["slots"]["radio"], {"title": "sleep lofi radio relaxing"})  # yt-dlp's stamped title, same text
+        core.check_pass(self.con, self.api, FOLLOW)  # the next pass stores the API's title again: no change, no commit
+        self.assertEqual(self.doc()["slots"]["radio"], {"title": "sleep lofi radio relaxing"})
+
+    def test_publish_pass_writes_the_followed_title(self):
+        self.checked("OLDOLDOLD01", CAMPFIRE)
+        with mock.patch.object(config, "DATA_DIR", self.tmp), mock.patch.object(config, "PUBLISH", False), \
+                mock.patch.object(publish, "build_sheet", lambda slots, cur: (b"", [])):
+            core.publish_pass(self.con, SLOTS, FOLLOW)
+        with open(os.path.join(self.tmp, "out", config.STATUS_FILE), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["slots"]["radio"], {"title": "Lonely Lakeside Campfire"})
 
 
 class WorkerTests(unittest.TestCase):

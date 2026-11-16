@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 export const KEY = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const VIDEO = /^[A-Za-z0-9_-]{11}$/;
 // A JSON file that may start with a byte-order mark (the monitor reads overrides.json as utf-8-sig).
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const readJson = (path) => { const t = readFileSync(path, 'utf8'); return JSON.parse(t.charCodeAt(0) === 0xfeff ? t.slice(1) : t); };
 
 // key → { id } | { error: 'unknown_channel' | 'channel_unavailable' }. Read-only, cached for cacheMs so a room full of
@@ -15,7 +16,10 @@ const readJson = (path) => { const t = readFileSync(path, 'utf8'); return JSON.p
 export class ChannelSlots {
   // baked: channels.json (the world's list), for a host with no link monitor. Staging has none (DEPLOY_MONITOR=off), so
   // every /v1/ch answered 503 and no Quest Channels play could start from a staging-baked world (world #376, 181 of 181
-  // requests on 2026-10-29/30). There a slot plays its baked link, which may be older than the monitor's.
+  // requests on 2026-10-29/30). There a slot plays its baked link, which may be older than the monitor's. Only where an
+  // upstream is set (staging) since Everything-is-OK#776 (verifier M2, 2026-11-16): a host with no upstream is production,
+  // whose monitor database is the only record of the monitor's own hides (down, flash fail), so a missing or unreadable
+  // database there refuses every slot instead (status_missing, below).
   //
   // upstream: another service's base URL (CHANNELS_UPSTREAM; staging sets production, world #519). The baked file goes
   // stale as the monitor swaps streams and unhides slots: on 2026-11-04 it disagreed with the live list for 11 of the 52
@@ -28,14 +32,14 @@ export class ChannelSlots {
   // upstream is skipped for upstreamDownMs, so a hanging upstream doesn't add its timeout to every play.
   //
   // overrides: monitor/overrides.json, for the baked file only (Everything-is-OK#776, 2026-11-16): the owner's hides and
-  // retirements live there, not in channels.json, which on 2026-11-16 hid none of the retired or flash-failed slots.
+  // retirements live there, not in channels.json.
   constructor({ monitorDb, baked = null, overrides = null, cacheMs = 30_000, now = () => Date.now(), upstream = '', upstreamTimeoutMs = 2000,
     upstreamCacheMs = 5 * 60_000, upstreamCacheMax = 256, upstreamDownMs = 20_000, fetch: fetchFn = globalThis.fetch,
     log = () => {} }) {
     Object.assign(this, { monitorDb, baked, overrides, cacheMs, now, upstream: (upstream ?? '').replace(/\/$/, ''), upstreamTimeoutMs,
       upstreamCacheMs, upstreamCacheMax, upstreamDownMs, fetchFn, log });
     this.upstreamDownUntil = 0;
-    this.unreadable = { at: -Infinity, more: 0 };
+    this.refusedAt = new Map(); // why -> { at, more }: the status_unreadable / status_missing lines, one a minute each
     this.cache = new Map();
     this.upstreamCache = new Map();
     this.inflight = new Map();
@@ -104,14 +108,25 @@ export class ChannelSlots {
   }
 
   // The baked link, hidden as sleep-list.json would hide it without the monitor's own hides: overrides.json's hidden when
-  // set, else channels.json's (slotmon publish.status_doc). The monitor's hides (down, flash fail) can't be known here. An
-  // overrides file that can't be read refuses every slot (#776: fail closed; the owner's hides are the reason it is read).
+  // set, else channels.json's (slotmon publish.status_doc). The monitor's hides (down, flash fail) can't be known here.
+  // overrides.json must have the shape slotmon reads (#776, verifier L1): a file that can't be read or parsed, that is not
+  // an object, or whose "slots" is there but not an object (null, a list) vouches for no slot, so every slot is refused;
+  // an entry for this key that is not an object (null, a string, a list) refuses this key only. A file without "slots"
+  // has no owner edits, as for slotmon.
   #readBaked(key) {
     if (!this.baked) return { error: 'monitor_unreadable' };
     try {
       const slot = JSON.parse(readFileSync(this.baked, 'utf8')).slots.find((s) => s.key === key);
       if (!slot) return { error: 'unknown_channel' };
-      const owner = this.overrides ? readJson(this.overrides).slots?.[key] : null;
+      let owner;
+      if (this.overrides) {
+        const doc = readJson(this.overrides);
+        if (!isObject(doc) || ('slots' in doc && !isObject(doc.slots))) throw new Error('overrides.json: not an object with an object "slots"');
+        if (isObject(doc.slots) && Object.hasOwn(doc.slots, key)) {
+          owner = doc.slots[key];
+          if (!isObject(owner)) throw new Error('overrides.json: a slot entry is not an object');
+        }
+      }
       const hidden = owner && 'hidden' in owner ? Boolean(owner.hidden) : Boolean(slot.hidden);
       const id = hidden ? null : /[?&]v=([A-Za-z0-9_-]{11})(?:&|$)/.exec(slot.url ?? '')?.[1];
       return id ? { id } : { error: 'channel_unavailable' };
@@ -121,27 +136,32 @@ export class ChannelSlots {
   }
 
   // #776: a refusal says why in the journal, so "every slot refused because the status can't be read" is told apart from
-  // "this slot is hidden". No key or video in either line. The unreadable line is kept to one a minute (that answer is not
-  // cached, so each play reads again), with the count it stood for.
-  #unreadable(source, e) {
-    if (this.now() - this.unreadable.at >= 60_000) {
-      this.log({ event: 'channel_refused', why: 'status_unreadable', source, error: String(e?.message ?? e).slice(0, 200), more: this.unreadable.more });
-      this.unreadable = { at: this.now(), more: 0 };
-    } else this.unreadable.more++;
+  // "this slot is hidden". No key or video in either line. The unreadable and missing lines are kept to one a minute each
+  // (those answers are not cached, so each play reads again), with the count each stood for.
+  #unreadable(source, e, why = 'status_unreadable') {
+    const r = this.refusedAt.get(why) ?? { at: -Infinity, more: 0 };
+    if (this.now() - r.at >= 60_000) {
+      this.log({ event: 'channel_refused', why, source, error: String(e?.message ?? e).slice(0, 200), more: r.more });
+      this.refusedAt.set(why, { at: this.now(), more: 0 });
+    } else r.more++;
     return { error: 'monitor_unreadable' };
   }
 
   #read(key) {
-    if (!this.monitorDb || !existsSync(this.monitorDb)) return this.#readBaked(key);
+    if (!this.monitorDb || !existsSync(this.monitorDb)) {
+      // No database file, or a path the service can't see (verifier M2): the baked file only where an upstream is set
+      // (staging, whose answers come from the upstream while it answers); with none set, refused (fail closed).
+      if (this.upstream) return this.#readBaked(key);
+      return this.#unreadable('monitor', 'the monitor database is missing or not readable', 'status_missing');
+    }
     let db;
     try {
       db = new DatabaseSync(this.monitorDb, { readOnly: true });
       // Everything-is-OK#776 (2026-11-16): a slot the list hides is refused too, by the rule sleep-list.json is published
       // with (slotmon publish.status_doc): baked_hidden (overrides.json's hidden when set, else channels.json's; a retired
-      // slot is hidden there) or auto_hidden (the monitor's: down, flash fail). Until then only kind 'removed' was, and a
-      // retired slot is 'unmanaged', so a Quest that picked a hidden row from the baked list (the first 12 s after join, or
-      // a failed status load) was sent to its stream, flash-failed or not. Both columns are in the monitor's first schema
-      // (81689b2); a database without them throws, which is monitor_unreadable, a 503: refused, never shown.
+      // slot is hidden there) or auto_hidden (the monitor's: down, flash fail). Until then only kind 'removed' was refused.
+      // Both columns are in the monitor's first schema (81689b2); a database without them throws, which is
+      // monitor_unreadable, a 503: refused, never shown.
       const row = db.prepare('SELECT kind, current_video, baked_hidden, auto_hidden FROM slots WHERE key = ?').get(key);
       if (!row) return { error: 'unknown_channel' };
       // A spare (no video yet), a slot taken off the list, or one the list hides.

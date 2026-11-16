@@ -180,7 +180,7 @@ test('channel slots with no monitor database and an upstream set (#776): overrid
     shown: 'JD-kMIpDfnY', retired: 'AMwnj-pSbLo', 'owner-hidden': 'lHa4PnLnFEI', 'spare-shown': 'channel_unavailable', spare: 'channel_unavailable' });
   // A file that vouches for no slot: every slot refused.
   const none = { shown: 'monitor_unreadable', retired: 'monitor_unreadable', 'owner-hidden': 'monitor_unreadable', 'spare-shown': 'monitor_unreadable', spare: 'monitor_unreadable' };
-  for (const bad of ['{ not json', 'null', '[]', '"x"', JSON.stringify({ slots: [] }), JSON.stringify({ slots: null }), JSON.stringify({ slots: 'x' })]) {
+  for (const bad of ['{ not json', '{"slots": {"shown": {"hidden": NaN}}}', '{"notice": Infinity}', 'null', '[]', '"x"', JSON.stringify({ slots: [] }), JSON.stringify({ slots: null }), JSON.stringify({ slots: 'x' })]) {
     assert.deepEqual(slots(bad), none, bad);
   }
   assert.deepEqual(slots(undefined), none, 'a missing overrides file');

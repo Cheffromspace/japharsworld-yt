@@ -425,6 +425,11 @@ class FlashHoldTests(Base):
         self.result([j for j in self.jobs() if j["video_id"] == "OLDOLDOLD01"][0], verdict="fail", fps=8)
         self.assertEqual(self.slot("radio")["auto_reason"], "flash fail")
         self.assertEqual(self.api.playlists["PLradio"], [])
+        # The fail is an hour old, as a real one is by the time a person clears it: a clear in the same clock tick (about
+        # 15 ms on Windows) would tie with it, and a tie keeps the hold (owed_hold's strict >), which is right but made
+        # the clear tests fail now and then (verifier R2-L1, 2 of 25 rounds at 5d68edf).
+        self.con.execute("UPDATE events SET ts=ts-3600 WHERE slot_key='radio' AND kind='flash_fail'")
+        self.con.commit()
 
     def published(self, ov=OVERRIDES):
         with mock.patch.object(config, "DATA_DIR", self.tmp), mock.patch.object(config, "PUBLISH", False), \

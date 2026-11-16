@@ -109,10 +109,11 @@ export class ChannelSlots {
 
   // The baked link, hidden as sleep-list.json would hide it without the monitor's own hides: overrides.json's hidden when
   // set, else channels.json's (slotmon publish.status_doc). The monitor's hides (down, flash fail) can't be known here.
-  // overrides.json must have the shape slotmon reads (#776, verifier L1): a file that can't be read or parsed, that is not
-  // an object, or whose "slots" is there but not an object (null, a list) vouches for no slot, so every slot is refused;
-  // an entry for this key that is not an object (null, a string, a list) refuses this key only. A file without "slots"
-  // has no owner edits, as for slotmon.
+  // overrides.json must have the shape slotmon reads (#776, verifier L1): a file that is missing, can't be read or isn't
+  // strict JSON (NaN or Infinity too, which slotmon's reader accepts), that is not an object, or whose "slots" is there but
+  // not an object (null, a list) vouches for no slot, so every slot is refused; an entry for this key that is not an object
+  // (null, a string, a list) refuses this key only. A file without "slots" has no owner edits, as for slotmon. A missing
+  // file is stricter than slotmon (no edits there) on purpose: it is in the repo, so missing means a broken deploy.
   #readBaked(key) {
     if (!this.baked) return { error: 'monitor_unreadable' };
     try {

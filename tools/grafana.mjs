@@ -105,12 +105,16 @@ const marker = (name, expr, iconColor, titleFormat, tagKeys) => ({
 const OK = '#9ece6a', WARN = '#e0af68', BAD = '#f7768e', INK = '#7aa2f7', SURFACE = '#24283b';
 
 // Graph lines in Tokyo Night (folke/tokyonight.nvim "night" accents; owner, 2026-11-17, #868: a palette colour per line).
-// A line's colour follows what it means: failures red, warnings amber, healthy green, anything else the neutrals, each
-// family in this order. Within a panel a line takes the first colour of its family not used there yet. A neutral line
-// never takes a red, amber or green (it would claim a meaning it hasn't): past the 10 neutrals they repeat. A failure,
-// warning or healthy line whose family has run out takes a neutral left over, then repeats its family. p50 and p95 lines
-// come in fixed pairs (a panel's first group blue and magenta, its second cyan and purple). Lines whose names aren't
-// known when this builds (no 'names' entry in the series() call) keep series()'s default, shades of INK.
+// A line's colour follows what it means: failures red, warnings amber, healthy green (the meaning colours), anything
+// else the neutrals, each family in this order. Within a panel a line takes the first colour of its family not used
+// there yet. A neutral line never wears a meaning colour (it would claim a meaning it hasn't). A line with a meaning
+// never shares its colour in a panel of up to 18 lines (the palette's size): when its family runs out it takes a
+// neutral before the neutral lines do, and repeats fall only on neutral lines, each sharing with a neutral line's colour
+// from the last one back, so the first lines of a panel stay unique (coordinator's ruling, 2026-11-17, #868). Past 18
+// lines (only Home relay) that can't hold: there the neutral lines keep the neutrals and a meaning line repeats its
+// own family, so a shared colour still means the same kind of line. p50 and p95 lines come in fixed pairs (a panel's
+// first group blue and magenta, its second cyan and purple). Lines whose names aren't known when this builds (no
+// 'names' entry in the series() call) keep series()'s default, shades of INK, picked by series index.
 export const LINE = {
   bad: [BAD, '#db4b4b', '#ff007c'],   // red, red1, magenta2
   warn: [WARN, '#ff9e64'],   // yellow, orange
@@ -149,12 +153,19 @@ export function lineColours(lines) {
   }
   const take = (l, list) => { const c = list.find((x) => !used.has(x)); if (c) { colour.set(l, c); used.add(c); } };
   const rest = lines.filter((l) => !colour.has(l));
-  for (const l of rest) take(l, LINE[meaningOf(label(l))]);                  // each line's own family first
-  const wrap = { bad: 0, warn: 0, ok: 0, neutral: 0 };
-  const again = (l) => { const m = meaningOf(label(l)); colour.set(l, LINE[m][wrap[m]++ % LINE[m].length]); };
-  for (const l of rest) if (!colour.has(l) && meaningOf(label(l)) === 'neutral') again(l);   // neutrals repeat
-  for (const l of rest) if (!colour.has(l)) take(l, LINE.neutral);           // a meaning family ran out: a spare neutral
-  for (const l of rest) if (!colour.has(l)) again(l);                        // none left: its own family repeats
+  const neutral = (l) => meaningOf(label(l)) === 'neutral';
+  const meant = rest.filter((l) => !neutral(l)), plain = rest.filter(neutral);
+  for (const l of meant) take(l, LINE[meaningOf(label(l))]);                 // a meaning line: its own family
+  const spare = () => meant.forEach((l) => colour.has(l) || take(l, LINE.neutral));   // ran out: a spare neutral
+  if (lines.length <= 18) spare();                                            // before the neutral lines take them
+  for (const l of plain) take(l, LINE.neutral);
+  if (lines.length > 18) spare();
+  const wrap = { bad: 0, warn: 0, ok: 0 };
+  for (const l of meant) if (!colour.has(l)) { const m = meaningOf(label(l)); colour.set(l, LINE[m][wrap[m]++ % LINE[m].length]); }
+  // Neutral lines past the neutrals share a neutral line's colour, from the panel's last neutral line back.
+  const shareable = lines.filter((l) => colour.has(l) && neutral(l)).map((l) => colour.get(l)).reverse();
+  let n = 0;
+  for (const l of plain) if (!colour.has(l)) colour.set(l, shareable[n++ % shareable.length] ?? INK);
   return lines.map((l) => ({ matcher: typeof l === 'string' ? { id: 'byName', options: l } : { id: 'byRegexp', options: l.re },
     properties: [{ id: 'color', value: { mode: 'fixed', fixedColor: colour.get(l) } }] }));
 }

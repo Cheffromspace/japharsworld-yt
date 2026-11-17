@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CHICAGO_HOUR, KEYS, LINE, RETIRED_RULES, alertRules, contactPoint, dashboard, meaningOf, prodOnly, pushRule, tonight } from '../tools/grafana.mjs';
+import * as grafana from '../tools/grafana.mjs';
+import { CHICAGO_HOUR, RETIRED_RULES, alertRules, contactPoint, dashboard, prodOnly, pushRule, tonight } from '../tools/grafana.mjs';
 import { METRICS, OUTCOME_FAILS } from '../src/metrics.js';
 
 // Staging (#160) sends the same metrics with env="staging": every selector of every query and rule leaves them out.
@@ -110,6 +111,20 @@ test('tonight: its own dashboard, refresh 1 min, the last 12 h in Chicago time, 
 const lineColour = (p) => Object.fromEntries(p.fieldConfig.overrides.filter((o) => o.properties.some((x) => x.id === 'color'))
   .map((o) => [o.matcher.options, o.properties.find((x) => x.id === 'color').value.fixedColor]));
 const graphs = () => dashboard().panels.filter((p) => p.type === 'timeseries');
+const { KEYS = {}, LINE = { bad: [], warn: [], ok: [], neutral: [] }, meaningOf = () => 'neutral' } = grafana;   // older builds lack them
+
+// From the built dashboard alone: what the owner sees.
+test('graph lines: failures red, the freeze signal a colour of its own, and every graph in Tokyo Night shades by default', () => {
+  const byTitle = (t) => lineColour(graphs().find((p) => p.title === t));
+  assert.equal(byTitle('Start-up problems (per 3 h)')['failed builds'], '#db4b4b');
+  assert.equal(byTitle('Start-up problems (per 3 h)')['player timeouts (got youtube.com)'], '#f7768e');
+  const adaptive = byTitle('Adaptive steps and Quest tickets (per 6 h)');
+  const freeze = adaptive.reload_after_upgrade;
+  assert.ok(freeze, 'reload_after_upgrade has a colour');
+  assert.deepEqual(Object.entries(adaptive).filter(([, c]) => c === freeze).map(([n]) => n), ['reload_after_upgrade']);
+  assert.equal(byTitle('Flash checks (per 6 h)').pass, '#9ece6a');
+  for (const p of graphs()) assert.equal(p.fieldConfig.defaults.color?.fixedColor, '#7aa2f7', p.title);
+});
 
 test('graph lines: the key lists match the key checks in src/metrics.js, so a new key needs a colour', () => {
   // src/metrics.js keeps its keys in oneOf(...) closures; read the literal lists from its text (src/ stays untouched).
@@ -133,7 +148,7 @@ test('graph lines: the key lists match the key checks in src/metrics.js, so a ne
   }
 });
 
-test('graph lines: every line has a palette colour, by meaning, and lines in a panel differ unless it has more than the palette', () => {
+test('graph lines: every line has a palette colour by meaning; colours repeat only between neutral lines (past 18 lines, within a kind)', () => {
   const palette = [...LINE.bad, ...LINE.warn, ...LINE.ok, ...LINE.neutral];
   assert.equal(new Set(palette).size, 18);
   let lines = 0;
@@ -154,10 +169,12 @@ test('graph lines: every line has a palette colour, by meaning, and lines in a p
       if (m === 'neutral') assert.ok(LINE.neutral.includes(colour), `${p.title}: neutral ${name} took a meaning colour`);
       else assert.ok([...LINE[m], ...LINE.neutral].includes(colour), `${p.title}: ${m} ${name} took another meaning's colour`);
     }
-    const colours = Object.values(c);
-    const neutrals = Object.keys(c).filter((n) => meaningOf(n) === 'neutral').length;
-    if (colours.length <= 18 && neutrals <= LINE.neutral.length) {
-      assert.equal(new Set(colours).size, colours.length, `${p.title}: two lines share a colour`);
+    // Repeats: in up to 18 lines only between neutral lines; past 18, a meaning line shares only with its own kind.
+    const entries = Object.entries(c);
+    for (const [name, colour] of entries) {
+      const sharers = entries.filter(([n, x]) => n !== name && x === colour).map(([n]) => n);
+      if (!sharers.length || meaningOf(name) === 'neutral' && sharers.every((n) => meaningOf(n) === 'neutral')) continue;
+      assert.ok(entries.length > 18 && sharers.every((n) => meaningOf(n) === meaningOf(name)), `${p.title}: ${name} shares ${colour} with ${sharers}`);
     }
   }
   assert.ok(lines > 150, `${lines} coloured lines`);

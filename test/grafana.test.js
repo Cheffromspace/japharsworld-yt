@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CHICAGO_HOUR, RETIRED_RULES, alertRules, contactPoint, dashboard, prodOnly, pushRule, tonight } from '../tools/grafana.mjs';
+import { CHICAGO_HOUR, KEYS, LINE, RETIRED_RULES, alertRules, contactPoint, dashboard, meaningOf, prodOnly, pushRule, tonight } from '../tools/grafana.mjs';
+import { METRICS, OUTCOME_FAILS } from '../src/metrics.js';
 
 // Staging (#160) sends the same metrics with env="staging": every selector of every query and rule leaves them out.
 test('every dashboard query and alert rule excludes staging', () => {
@@ -103,6 +104,81 @@ test('tonight: its own dashboard, refresh 1 min, the last 12 h in Chicago time, 
   assert.deepEqual(vibe.fieldConfig.defaults.mappings.map((m) => m.type), ['value', 'range', 'range'], 'quiet 0, cozy 1-3, lively 4+');
   // Only the existing aggregates: events_total keys, the VRChat poll, the hourly shard rows.
   for (const m of text.matchAll(/(eiok_[a-z_]+)/g)) assert.ok(['eiok_events_total', 'eiok_poll', 'eiok_shard_active_hours_total'].includes(m[1]), m[1]);
+});
+
+// Graph lines in the Tokyo Night palette, a colour per line by meaning (owner, 2026-11-17, #868).
+const lineColour = (p) => Object.fromEntries(p.fieldConfig.overrides.filter((o) => o.properties.some((x) => x.id === 'color'))
+  .map((o) => [o.matcher.options, o.properties.find((x) => x.id === 'color').value.fixedColor]));
+const graphs = () => dashboard().panels.filter((p) => p.type === 'timeseries');
+
+test('graph lines: the key lists match the key checks in src/metrics.js, so a new key needs a colour', () => {
+  // src/metrics.js keeps its keys in oneOf(...) closures; read the literal lists from its text (src/ stays untouched).
+  const text = readFileSync(new URL('../src/metrics.js', import.meta.url), 'utf8');
+  const listed = {};
+  for (const m of text.matchAll(/^ {2}(\w+): \['(?:daily|gauge|hourly)', oneOf\(([^)]*)\)\]/gm)) {
+    if (!m[2].includes('...')) listed[m[1]] = [...m[2].matchAll(/'([^']*)'/g)].map((x) => x[1]);
+  }
+  const fromMetrics = ['play_route', 'play_fallback', 'adaptive', 'ticket_client', 'home', 'home_why', 'credits', 'build_route', 'search_source',
+    'cc_via', 'cc_outcome', 'cc_words', 'cc_unavailable', 'play_platform'];
+  for (const k of fromMetrics) assert.deepEqual(KEYS[k], listed[k], k);
+  for (const k of [...KEYS.yt_refusal, ...KEYS.quality_pick]) assert.ok(METRICS.yt_refusal[1](k) || METRICS.quality_pick[1](k), k);
+  assert.equal(KEYS.yt_refusal.length, 18);
+  assert.deepEqual(KEYS.outcome, [...OUTCOME_FAILS, 'left']);
+  // Every metric a graph splits by key is one of those lists.
+  for (const p of graphs()) {
+    for (const t of p.targets) {
+      const m = t.expr.match(/sum by \(key\) \(increase\(eiok_events_total\{[^}]*metric="(\w+)"/);
+      if (m) assert.ok(KEYS[m[1]], `${p.title}: ${m[1]}`);
+    }
+  }
+});
+
+test('graph lines: every line has a palette colour, by meaning, and lines in a panel differ unless it has more than the palette', () => {
+  const palette = [...LINE.bad, ...LINE.warn, ...LINE.ok, ...LINE.neutral];
+  assert.equal(new Set(palette).size, 18);
+  let lines = 0;
+  for (const p of graphs()) {
+    assert.deepEqual(p.fieldConfig.defaults.color, { mode: 'shades', fixedColor: '#7aa2f7' }, `${p.title}: unlisted lines in shades of INK`);
+    const c = lineColour(p);
+    lines += Object.keys(c).length;
+    // Every legend is coloured: a fixed name, or a template with its values listed (the one exception has two labels).
+    for (const t of p.targets) {
+      if (t.legendFormat === '{{host}} {{name}}') continue;
+      const [pre, post = ''] = t.legendFormat.split(/\{\{\w+\}\}/);
+      assert.ok(Object.keys(c).some((n) => (t.legendFormat.includes('{{') ? n.startsWith(pre) && n.endsWith(post) : n === t.legendFormat)
+        || (n.startsWith('^.*') && n.endsWith(`${post}$`))), `${p.title}: ${t.legendFormat}`);
+    }
+    for (const [name, colour] of Object.entries(c)) {
+      assert.ok(palette.includes(colour), `${p.title}: ${name} ${colour}`);
+      const m = meaningOf(name);
+      if (m === 'neutral') assert.ok(LINE.neutral.includes(colour), `${p.title}: neutral ${name} took a meaning colour`);
+      else assert.ok([...LINE[m], ...LINE.neutral].includes(colour), `${p.title}: ${m} ${name} took another meaning's colour`);
+    }
+    const colours = Object.values(c);
+    const neutrals = Object.keys(c).filter((n) => meaningOf(n) === 'neutral').length;
+    if (colours.length <= 18 && neutrals <= LINE.neutral.length) {
+      assert.equal(new Set(colours).size, colours.length, `${p.title}: two lines share a colour`);
+    }
+  }
+  assert.ok(lines > 150, `${lines} coloured lines`);
+  // p50 and p95: the same pair on every panel.
+  for (const p of graphs()) {
+    const c = lineColour(p);
+    if (c.p50) assert.deepEqual([c.p50, c.p95], ['#7aa2f7', '#bb9af7'], p.title);
+  }
+  const ttff = lineColour(graphs().find((p) => p.title === 'Time to first frame, visitors'));
+  assert.deepEqual([ttff['p50 pc'], ttff['p95 pc'], ttff['p50 android'], ttff['p95 android']], ['#7aa2f7', '#bb9af7', '#7dcfff', '#9d7cd8']);
+  // Meanings, including the names that would mislead a plain word match.
+  assert.equal(meaningOf('failed builds'), 'bad');
+  assert.equal(meaningOf('resolver fast-fails (normal while building)'), 'neutral');
+  assert.equal(meaningOf('fallback: build_failed'), 'warn');
+  assert.equal(meaningOf('unavailable: no_captions'), 'neutral');
+  assert.equal(meaningOf('unavailable: failed'), 'bad');
+  assert.equal(meaningOf('pass'), 'ok');
+  assert.equal(meaningOf('home:bot'), 'neutral');
+  // Tonight's one time series keeps its own Blue-Purple scheme, with no per-line colours.
+  const curve = tonight().panels.find((p) => p.type === 'timeseries');
+  assert.deepEqual([curve.fieldConfig.defaults.color, curve.fieldConfig.overrides], [{ mode: 'continuous-BlPu' }, []]);
 });
 
 // Stats with no state are quiet tiles on the Tokyo Night surface (owner, 2026-11-17, #866); every stat with a state

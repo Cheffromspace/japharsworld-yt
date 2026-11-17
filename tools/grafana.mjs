@@ -12,6 +12,7 @@
 //                             rules go to their own contact point there; without it, everything goes to the one above.
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { HOUR_CREDITS, HOME_FIRST_PERCENT } from '../src/spend.js';
+import { REFUSAL_CLASSES, REFUSAL_WHERE } from '../src/refusal.js';
 
 const env = { ...dotenv('.env'), ...process.env };
 function dotenv(path) {
@@ -73,11 +74,15 @@ function stat(title, expr, { unit = 'short', w = 4, h = 4, thresholds, decimals,
     fieldConfig: { defaults: { unit, decimals, mappings: mappings ?? [], thresholds: { mode: 'absolute', steps: thresholds ?? [{ color: 'blue', value: null }] } }, overrides: [] },
   };
 }
-function series(title, list, { unit = 'short', w = 12, h = 8, stack = false, description, min, decimals, overrides = [] } = {}) {
+// names: the values a templated legend takes, by legend ({ '{{key}}': KEYS.home }), so each of its lines gets a colour.
+// palette: false leaves the colours to the caller (Tonight's curve has its own scheme).
+function series(title, list, { unit = 'short', w = 12, h = 8, stack = false, description, min, decimals, overrides = [], names = {}, palette = true } = {}) {
+  const colour = palette ? { color: { mode: 'shades', fixedColor: INK } } : {};
   return {
     type: 'timeseries', id: ++id, title, description, datasource: DS, gridPos: place(w, h), targets: targets(list),
     options: { legend: { displayMode: 'list', placement: 'bottom' }, tooltip: { mode: 'multi' } },
-    fieldConfig: { defaults: { unit, min, decimals, custom: { lineWidth: 2, fillOpacity: stack ? 30 : 8, stacking: { mode: stack ? 'normal' : 'none' } } }, overrides },
+    fieldConfig: { defaults: { unit, min, decimals, ...colour, custom: { lineWidth: 2, fillOpacity: stack ? 30 : 8, stacking: { mode: stack ? 'normal' : 'none' } } },
+      overrides: palette ? [...overrides, ...lineColours(list.flatMap(([, legend]) => lineNames(legend, names[legend])))] : overrides },
   };
 }
 // The latest rows of a "value = when (ms)" series: one row per label set, newest first.
@@ -98,6 +103,88 @@ const marker = (name, expr, iconColor, titleFormat, tagKeys) => ({
 
 // Tokyo Night status colours.
 const OK = '#9ece6a', WARN = '#e0af68', BAD = '#f7768e', INK = '#7aa2f7', SURFACE = '#24283b';
+
+// Graph lines in Tokyo Night (folke/tokyonight.nvim "night" accents; owner, 2026-11-17, #868: a palette colour per line).
+// A line's colour follows what it means: failures red, warnings amber, healthy green, anything else the neutrals, each
+// family in this order. Within a panel a line takes the first colour of its family not used there yet. A neutral line
+// never takes a red, amber or green (it would claim a meaning it hasn't): past the 10 neutrals they repeat. A failure,
+// warning or healthy line whose family has run out takes a neutral left over, then repeats its family. p50 and p95 lines
+// come in fixed pairs (a panel's first group blue and magenta, its second cyan and purple). Lines whose names aren't
+// known when this builds (no 'names' entry in the series() call) keep series()'s default, shades of INK.
+export const LINE = {
+  bad: [BAD, '#db4b4b', '#ff007c'],   // red, red1, magenta2
+  warn: [WARN, '#ff9e64'],   // yellow, orange
+  ok: [OK, '#73daca', '#1abc9c'],   // green, green1, teal
+  neutral: [INK, '#bb9af7', '#7dcfff', '#9d7cd8', '#2ac3de', '#89ddff', '#c0caf5', '#737aa2', '#b4f9f8', '#41a6b5'],   // blue, magenta, cyan, purple, blue1, blue5, fg, dark5, blue6, green2 (teal-blue, last)
+};
+const P50 = [LINE.neutral[0], LINE.neutral[2], LINE.neutral[4]], P95 = [LINE.neutral[1], LINE.neutral[3], LINE.neutral[6]];
+// First match wins; anything else is neutral.
+const MEANING = [
+  ['neutral', /fast-fails \(normal/],   // normal while a build runs, as its own name says
+  ['warn', /^fallback: /],                // sent on to youtube.com: the play still happened
+  ['bad', /^unavailable: (failed|temporarily_unavailable|list_unavailable)$/],
+  ['neutral', /^unavailable: /],          // the video has no such captions: not a fault
+  ['bad', /fail|error|timeout|refus|unreachable|could not|^cuts$|^e(invalid|denied|rate|player|unknown)$|^after$|^capped|no_room|too_big/],
+  ['warn', /defer|slow|^oldest|paced|pacer|stepdown|skip|reload_after|uneven|spaced|budget|^cap$|too_long|estimated|^videos: none$/],
+  ['ok', /^ok$|^ready$|played|served|cache_hit|^pass$|real$|^videos: tracks$|^settled$|race_won|^stayed$/],
+];
+export const meaningOf = (name) => (MEANING.find(([, re]) => re.test(name)) ?? ['neutral'])[0];
+// A legend's line names: itself when it has no {{label}}; else one per value given ({ re } values match by pattern);
+// none (shades) when no values are given or the legend has two labels.
+function lineNames(legend, values) {
+  if (!legend.includes('{{')) return [legend];
+  if (!values || legend.split('{{').length > 2) return [];
+  return values.map((v) => (typeof v === 'string' ? legend.replace(/\{\{\w+\}\}/, v) : { re: `^${legend.replace(/\{\{\w+\}\}/, v.re)}$` }));
+}
+export function lineColours(lines) {
+  const label = (l) => (typeof l === 'string' ? l : l.re);
+  const used = new Set(), colour = new Map(), groups = [];
+  for (const l of lines) {   // p50 / p95 first: their pairs are fixed
+    const m = label(l).match(/\bp(50|95)\b/);
+    if (!m) continue;
+    const g = label(l).replace(/\s*\bp(50|95)\b\s*/, ' ').trim();
+    if (!groups.includes(g)) groups.push(g);
+    const c = (m[1] === '50' ? P50 : P95)[groups.indexOf(g)];
+    if (c && !used.has(c)) { colour.set(l, c); used.add(c); }
+  }
+  const take = (l, list) => { const c = list.find((x) => !used.has(x)); if (c) { colour.set(l, c); used.add(c); } };
+  const rest = lines.filter((l) => !colour.has(l));
+  for (const l of rest) take(l, LINE[meaningOf(label(l))]);                  // each line's own family first
+  const wrap = { bad: 0, warn: 0, ok: 0, neutral: 0 };
+  const again = (l) => { const m = meaningOf(label(l)); colour.set(l, LINE[m][wrap[m]++ % LINE[m].length]); };
+  for (const l of rest) if (!colour.has(l) && meaningOf(label(l)) === 'neutral') again(l);   // neutrals repeat
+  for (const l of rest) if (!colour.has(l)) take(l, LINE.neutral);           // a meaning family ran out: a spare neutral
+  for (const l of rest) if (!colour.has(l)) again(l);                        // none left: its own family repeats
+  return lines.map((l) => ({ matcher: typeof l === 'string' ? { id: 'byName', options: l } : { id: 'byRegexp', options: l.re },
+    properties: [{ id: 'color', value: { mode: 'fixed', fixedColor: colour.get(l) } }] }));
+}
+// The key values of the counters the graphs split by, copied from the key checks in src/metrics.js (a test compares
+// them, so a key added there fails the tests until it is listed here), and the label values of the other series.
+export const KEYS = {
+  play_route: ['tunelio-progressive', 'tunelio-hls', 'tunelio-adaptive', 'home', 'youtube-live', 'youtube-fallback'],
+  play_fallback: ['disabled', 'paused', 'tunelio_failed', 'too_long', 'build_failed', 'build_timeout', 'av1'],
+  adaptive: ['plan_lower', 'plan_direct', 'plan_adaptive', 'plan_start', 'master', 'upgrade', 'upgrade_served', 'upgrade_failed', 'paced_off', 'defer', 'android_progressive', 'hls_ticket', 'quest_mp4', 'quest_skip',
+    'reload_before_upgrade', 'reload_after_upgrade', 'android_av1', 'android_av1_rung', 'pc_av1', 'quest_av1', 'start_one_step', 'start_mid'],
+  ticket_client: ['string', 'ytdlp', 'avpro', 'other'],
+  home: ['start', 'ready', 'failed', 'capped', 'defer', 'timeout', 'cache_hit', 'settled', 'settle_timeout', 'other_quality', 'uneven', 'stepdown', 'no_room', 'race_won', 'capped_hour', 'spaced', 'too_big', 'stayed'],
+  home_why: ['tunelio_off', 'long', 'pacer', 'tunelio_failed', 'av1', 'tunelio_slow', 'slow_build', 'budget', 'cap', 'near_budget', 'tunelio_busy'],
+  credits: ['playback', 'captions', 'probe', 'test'],
+  build_route: ['home', 'tunelio', 'youtube'],
+  search_source: ['worker', 'local', 'api'],
+  cc_via: ['worker', 'local', 'tunelio'],
+  cc_outcome: ['tracks', 'none'],
+  cc_words: ['real', 'estimated'],
+  cc_unavailable: ['no_captions', 'no_track_in_language', 'temporarily_unavailable', 'translation_unavailable', 'nothing_playing', 'no_tracks', 'list_unavailable', 'failed', 'none'],
+  play_platform: ['pc', 'android'],
+  yt_refusal: REFUSAL_WHERE.flatMap((w) => REFUSAL_CLASSES.map((c) => `${w}:${c}`)),
+  quality_pick: ['auto', '720p', '1080p'],   // TUNELIO_QUALITIES' default (src/config.js); another quality draws in shades
+  outcome: ['einvalid', 'edenied', 'erate', 'eplayer', 'eunknown', 'timeout', 'after', 'left'],   // OUTCOME_FAILS and left
+  probe: ['tunelio:progressive', 'tunelio:hls'],
+  verdict: ['pass', 'fail', 'unreachable', 'none'],   // the monitor's flash verdicts; none: no verdict stored
+  reason: ['daily', 'other'],
+  host: ['linode', 'optiplex'],
+  job: [{ re: '.*search-healthz' }, { re: '.*short-healthz' }, { re: '.*pages-sleep-list' }],   // deploy/alloy/linode.alloy
+};
 const upDown = [{ type: 'value', options: { 0: { text: 'down', color: BAD }, 1: { text: 'up', color: OK } } }];
 
 export function dashboard() {
@@ -148,7 +235,7 @@ export function dashboard() {
     description: 'All-time visits and favorites (right axis) of the production world, from VRChat. Older history is on /stats.' }));
   p.push(series('Searches, plays, joins (per hour)', [
     ['sum by (metric) (increase(eiok_events_total{metric=~"search|play|join|more",key=""}[1h]))', '{{metric}}'],
-  ], { w: 24, h: 6, description: 'Searches, More pages, plays (once per room) and joins (the world\'s first load of the search address), each point counting the hour before it.' }));
+  ], { names: { '{{metric}}': ['search', 'play', 'join', 'more'] }, w: 24, h: 6, description: 'Searches, More pages, plays (once per room) and joins (the world\'s first load of the search address), each point counting the hour before it.' }));
   p.push(series('Search latency', [
     ['histogram_quantile(0.5, sum by (le) (increase(eiok_search_seconds_bucket[3h])))', 'p50'],
     ['histogram_quantile(0.95, sum by (le) (increase(eiok_search_seconds_bucket[3h]))) and on() sum(increase(eiok_search_seconds_count[3h])) >= 20', 'p95'],
@@ -160,7 +247,7 @@ export function dashboard() {
   ], { w: 8, unit: 'percentunit', min: 0, description: 'Share of searches that failed (rate limited or YouTube not answering) over the 3 h before each point.' }));
   p.push(series('Play routes (per 3 h)', [
     ['sum by (key) (increase(eiok_events_total{metric="play_route"}[3h]))', '{{key}}'],
-  ], { w: 8, stack: true, description: 'Where each play went (once per room) over the 3 h before each point: Tunelio progressive, HLS or adaptive, the home relay, a live stream, or youtube.com as a fallback.' }));
+  ], { names: { '{{key}}': KEYS.play_route }, w: 8, stack: true, description: 'Where each play went (once per room) over the 3 h before each point: Tunelio progressive, HLS or adaptive, the home relay, a live stream, or youtube.com as a fallback.' }));
   p.push(series('Tunelio credits left', [['max(eiok_credits_remaining)', 'left']], { w: 8, min: 0, description: 'Tunelio credits left on the plan; it jumps back up when the plan renews.' }));
   p.push(series('Tunelio build time', [
     ['histogram_quantile(0.5, sum by (le) (increase(eiok_build_progressive_seconds_bucket[6h])))', 'progressive p50'],
@@ -174,16 +261,16 @@ export function dashboard() {
     ['sum(increase(eiok_events_total{metric="ticket_fastfail"}[3h]))', 'resolver fast-fails (normal while building)'],
     ['sum(increase(eiok_events_total{metric="build",key="failed"}[3h]))', 'failed builds'],
     ['sum by (key) (increase(eiok_events_total{metric="play_fallback"}[3h]))', 'fallback: {{key}}'],
-  ], { w: 8, min: 0, description: 'Player timeouts, resolver fast-fails, failed builds and youtube.com fallbacks by reason, over the 3 h before each point. Timeouts count per ticket request, so a retried video counts several.' }));
+  ], { names: { 'fallback: {{key}}': KEYS.play_fallback }, w: 8, min: 0, description: 'Player timeouts, resolver fast-fails, failed builds and youtube.com fallbacks by reason, over the 3 h before each point. Timeouts count per ticket request, so a retried video counts several.' }));
   const probeNote = 'The speed probe builds a fresh 12–30 min video at 1080p about hourly, progressive and HLS on alternate runs, so each line moves every 2–3 h.';
   p.push(series('Tunelio probe: time to start', [
     ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="start_s"})', '{{source}}'],
     ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="create_s"})', '{{source}} /create'],
-  ], { w: 12, unit: 's', min: 0, description: `${probeNote} Start is what a player waits for (progressive: first byte; HLS: playlist and first segment).` }));
+  ], { names: { '{{source}}': KEYS.probe, '{{source}} /create': KEYS.probe }, w: 12, unit: 's', min: 0, description: `${probeNote} Start is what a player waits for (progressive: first byte; HLS: playlist and first segment).` }));
   p.push(series('Tunelio probe: build speed', [
     ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="mb_per_s"})', '{{source}} MB/s'],
     ['max by (source) (eiok_poll{source=~"tunelio:.*",metric="mb"})', '{{source}} file MB'],
-  ], { w: 12, min: 0, description: `${probeNote} Build speed in MB/s, file size on the right axis.`,
+  ], { names: { '{{source}} MB/s': KEYS.probe, '{{source}} file MB': KEYS.probe }, w: 12, min: 0, description: `${probeNote} Build speed in MB/s, file size on the right axis.`,
     overrides: [{ matcher: { id: 'byRegexp', options: '.*file MB' }, properties: [{ id: 'custom.axisPlacement', value: 'right' }] }] }));
   const dropNote = 'The speed probe reads each progressive link at playback speed for 10 minutes and resumes after a cut, skipping a read while a visitor\'s build is in flight. Each point covers the 24 h before it; empty while the drop check is off.';
   p.push(series('Tunelio cuts per playback hour (24 h)', [
@@ -202,16 +289,16 @@ export function dashboard() {
   p.push(series('Time to first frame, visitors', [
     ['histogram_quantile(0.5, sum by (le, platform) (increase(eiok_play_first_frame_seconds_bucket{who="visitor"}[6h])))', 'p50 {{platform}}'],
     ['histogram_quantile(0.95, sum by (le, platform) (increase(eiok_play_first_frame_seconds_bucket{who="visitor"}[6h])))', 'p95 {{platform}}'],
-  ], { unit: 's', min: 0, description: 'From the load starting to the first frame on each visitor\'s own client (testers left out), p50 and p95 by platform over the 6 h before each point. Coarse buckets: 5, 10, 20, 30, 45, 60, 90 s.' }));
+  ], { names: { 'p50 {{platform}}': KEYS.play_platform, 'p95 {{platform}}': KEYS.play_platform }, unit: 's', min: 0, description: 'From the load starting to the first frame on each visitor\'s own client (testers left out), p50 and p95 by platform over the 6 h before each point. Coarse buckets: 5, 10, 20, 30, 45, 60, 90 s.' }));
   p.push(series('Plays that never showed a picture, visitors', [
     ['sum by (outcome) (increase(eiok_play_outcome_total{who="visitor",outcome=~"e.*|timeout|after|left"}[6h]))', '{{outcome}}'],
-  ], { stack: true, min: 0, description: 'Visitor plays with no picture over the 6 h before each point. e*: the player gave up, by error class; timeout: nothing by the world\'s cap; after: gave up after a first frame; left: the room moved on first, not a fault.' }));
+  ], { names: { '{{outcome}}': KEYS.outcome }, stack: true, min: 0, description: 'Visitor plays with no picture over the 6 h before each point. e*: the player gave up, by error class; timeout: nothing by the world\'s cap; after: gave up after a first frame; left: the room moved on first, not a fault.' }));
   p.push(row('Playback plans, home relay, captions'));
-  p.push(series('Playback plans (per 6 h)', [[ev('adaptive').replace('}[', ',key=~"plan_.*|paced_off"}['), '{{key}}']], { w: 8, stack: true, min: 0,
+  p.push(series('Playback plans (per 6 h)', [[ev('adaptive').replace('}[', ',key=~"plan_.*|paced_off"}['), '{{key}}']], { names: { '{{key}}': KEYS.adaptive.filter((k) => /^(plan_.*|paced_off)$/.test(k)) }, w: 8, stack: true, min: 0,
     description: 'Which plan each video got, per 6 h: plan_direct 1080p at once, plan_adaptive 720p then 1080p, plan_start from a 360p first rung, plan_lower 720p only; paced_off kept at 720p by the credit pacer.' }));
-  p.push(series('Adaptive steps and Quest tickets (per 6 h)', [[ev('adaptive').replace('}[', ',key!~"plan_.*|paced_off"}['), '{{key}}']], { w: 8, min: 0,
+  p.push(series('Adaptive steps and Quest tickets (per 6 h)', [[ev('adaptive').replace('}[', ',key!~"plan_.*|paced_off"}['), '{{key}}']], { names: { '{{key}}': KEYS.adaptive.filter((k) => !/^(plan_.*|paced_off)$/.test(k)) }, w: 8, min: 0,
     description: 'Per 6 h: adaptive playlists served (master), 1080p step-ups started, played and failed, Quest .m3u8 tickets, resolvers told to wait (defer), and playlist reloads before and after 1080p (after is the freeze signal).' }));
-  p.push(series('Ticket requests by client (per 6 h)', [[ev('ticket_client'), '{{key}}']], { w: 8, stack: true, min: 0,
+  p.push(series('Ticket requests by client (per 6 h)', [[ev('ticket_client'), '{{key}}']], { names: { '{{key}}': KEYS.ticket_client }, w: 8, stack: true, min: 0,
     description: 'Ticket requests per 6 h by who asked: string is the tablet’s status checks, ytdlp VRChat’s resolver, avpro the video player. Per request, not per play.' }));
   p.push(stat('Home relay today', [
     ['max(eiok_home_today{key="mb"}) / 1000', 'GB'],
@@ -221,31 +308,31 @@ export function dashboard() {
     ['max(eiok_home_today{key="workers"})', 'workers'],
     ['max(eiok_home_today{key="cache_mb"}) / 1000', 'from cache GB'],
   ], { w: 8, h: 8, decimals: 1, thresholds: [{ color: SURFACE, value: null }], description: 'Today (Chicago day), now: what the Optiplex downloaded for home relay plays against its daily cap, the videos, what it served from its own cache (not counted against the cap), and the media workers connected.' }));
-  p.push(series('Home relay (per 6 h)', [[ev('home'), '{{key}}'], [ev('home_why'), 'why: {{key}}']], { w: 8, min: 0,
+  p.push(series('Home relay (per 6 h)', [[ev('home'), '{{key}}'], [ev('home_why'), 'why: {{key}}']], { names: { '{{key}}': KEYS.home, 'why: {{key}}': KEYS.home_why }, w: 8, min: 0,
     description: 'Home relay sessions per 6 h (started, ready, failed, refused by the cap or for room, cache hits, step-downs), and why a play went home: a long video, Tunelio off, slow or failed, the pacer, or the spend budget or build cap.' }));
   p.push(series('Home relay start time', [
     ['histogram_quantile(0.5, sum by (le) (increase(eiok_home_start_seconds_bucket[6h])))', 'p50'],
     ['histogram_quantile(0.95, sum by (le) (increase(eiok_home_start_seconds_bucket[6h])))', 'p95'],
   ], { w: 8, unit: 's', min: 0, description: 'From a home relay play to its first playlist with a segment from the Optiplex, p50 and p95 over the 6 h before each point.' }));
-  p.push(series('Credits spent per day, by use', [[ev('credits', '1d'), '{{key}}']], { w: 8, stack: true, min: 0,
+  p.push(series('Credits spent per day, by use', [[ev('credits', '1d'), '{{key}}']], { names: { '{{key}}': KEYS.credits }, w: 8, stack: true, min: 0,
     description: 'Tunelio credits spent in the 24 h before each point, by use: playback builds, caption transcripts, the speed probe, and test slot refills.' }));
-  p.push(series('New builds: home vs Tunelio, per day', [[ev('build_route', '1d'), '{{key}}']], { w: 8, stack: true, min: 0,
+  p.push(series('New builds: home vs Tunelio, per day', [[ev('build_route', '1d'), '{{key}}']], { names: { '{{key}}': KEYS.build_route }, w: 8, stack: true, min: 0,
     description: 'Videos newly built in the 24 h before each point, by where they went: home (a new home relay session), tunelio (a paid build), youtube (no source could take it: a spend limit with home full). Each video counts once an hour per route, however many builds its play made. Next to the credits spent per day, it shows how the load is shared.' }));
-  p.push(series('Search sources (per 6 h)', [[ev('search_source'), '{{key}}'], ['max(eiok_youtube_api_units_today)', 'Data API units today']], { w: 8, stack: false, min: 0,
+  p.push(series('Search sources (per 6 h)', [[ev('search_source'), '{{key}}'], ['max(eiok_youtube_api_units_today)', 'Data API units today']], { names: { '{{key}}': KEYS.search_source }, w: 8, stack: false, min: 0,
     description: 'Which source answered searches, per 6 h: worker the home relay, local the Linode, api the YouTube Data API (quota), with today\'s Data API units.' }));
   p.push(series('Captions (per 6 h)', [
     ['sum by (metric) (increase(eiok_events_total{metric=~"cc_list|cc_track",key=""}[6h]))', '{{metric}}'],
     [ev('cc_via'), 'via {{key}}'], [ev('cc_outcome'), 'videos: {{key}}'], [ev('cc_words'), 'words {{key}}'], [ev('cc_unavailable'), 'unavailable: {{key}}'],
-  ], { w: 8, min: 0, description: 'Per 6 h: caption lists and picked tracks served, which source answered (home relay, Linode yt-dlp, Tunelio), real or estimated word timing, distinct videos whose list had tracks or none, and why none was available.' }));
-  p.push(series('YouTube refusals (per hour)', [[ev('yt_refusal', '1h'), '{{key}}']], { w: 8, stack: true, min: 0,
+  ], { names: { '{{metric}}': ['cc_list', 'cc_track'], 'via {{key}}': KEYS.cc_via, 'videos: {{key}}': KEYS.cc_outcome, 'words {{key}}': KEYS.cc_words, 'unavailable: {{key}}': KEYS.cc_unavailable }, w: 8, min: 0, description: 'Per 6 h: caption lists and picked tracks served, which source answered (home relay, Linode yt-dlp, Tunelio), real or estimated word timing, distinct videos whose list had tracks or none, and why none was available.' }));
+  p.push(series('YouTube refusals (per hour)', [[ev('yt_refusal', '1h'), '{{key}}']], { names: { '{{key}}': KEYS.yt_refusal }, w: 8, stack: true, min: 0,
     description: 'YouTube refusals per hour by where (home relay, Linode, flash-check worker) and class: bot ("Sign in to confirm"), rate (429 or try again later), forbidden (403), potoken, restricted (age gate), other.' }));
   p.push(series('Rooms active (shards with a request, per hour)', [
     ['count(increase(eiok_shard_active_hours_total[1h]) > 0) or vector(0)', 'rooms'],
   ], { w: 8, min: 0, decimals: 0, description: 'Tablet shards (rooms) that made any request in the hour before each point.' }));
-  p.push(series('Plays by platform (per 6 h)', [[ev('play_platform'), '{{key}}']], { w: 8, stack: true, min: 0,
+  p.push(series('Plays by platform (per 6 h)', [[ev('play_platform'), '{{key}}']], { names: { '{{key}}': KEYS.play_platform }, w: 8, stack: true, min: 0,
     description: 'Plays per 6 h by player platform, once per room and platform (a room with PC and Quest players counts one of each). PC is low before the Everything-is-OK#586 deploy (see the Deploys markers; built 2026-11-06): plays whose resolver got the link were not counted PC, so don’t compare the PC/Quest ratio across it. Quest is in practice unchanged.' }));
   p.push(series('Room quality picks and tablet warm-ups (per 6 h)', [[ev('quality_pick'), 'pick {{key}}'],
-    ['sum(increase(eiok_events_total{metric="warm"}[6h]))', 'warm builds'], ['sum(increase(eiok_events_total{metric="warm_played"}[6h]))', 'warm then played']], { w: 8, min: 0,
+    ['sum(increase(eiok_events_total{metric="warm"}[6h]))', 'warm builds'], ['sum(increase(eiok_events_total{metric="warm_played"}[6h]))', 'warm then played']], { names: { 'pick {{key}}': KEYS.quality_pick }, w: 8, min: 0,
     description: 'Per 6 h: quality picks on room tablets, builds started before Play (tablet status checks and pasted-link lookups), and how many of those a player then asked for.' }));
 
   p.push(row('Channels and flash checks'));
@@ -274,17 +361,17 @@ export function dashboard() {
       ],
     },
   });
-  p.push(series('Flash checks (per 6 h)', [['sum by (verdict) (increase(eiok_flash_checks_total[6h]))', '{{verdict}}']], { w: 10, h: 6, stack: true, description: 'Channels flash checks by verdict over the 6 h before each point.' }));
+  p.push(series('Flash checks (per 6 h)', [['sum by (verdict) (increase(eiok_flash_checks_total[6h]))', '{{verdict}}']], { names: { '{{verdict}}': KEYS.verdict }, w: 10, h: 6, stack: true, description: 'Channels flash checks by verdict over the 6 h before each point.' }));
   p.push(series('Check queue', [
     ['max(eiok_jobs_pending)', 'waiting'],
     ['max by (reason) (eiok_jobs_oldest_pending_seconds) / 60', 'oldest {{reason}} (min)'],
-  ], { w: 10, h: 6, min: 0, description: 'Channels check jobs waiting for the Optiplex worker, and how many minutes the oldest of each kind has waited.' }));
+  ], { names: { 'oldest {{reason}} (min)': KEYS.reason }, w: 10, h: 6, min: 0, description: 'Channels check jobs waiting for the Optiplex worker, and how many minutes the oldest of each kind has waited.' }));
 
   p.push(row('Hosts'));
-  p.push(series('CPU busy', [['1 - avg by (host) (rate(node_cpu_seconds_total{mode="idle"}[5m]))', '{{host}}']], { w: 8, unit: 'percentunit', min: 0, description: 'Share of CPU time busy on each host (5 min rate).' }));
-  p.push(series('Memory available', [['max by (host) (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)', '{{host}}']], { w: 8, unit: 'percentunit', min: 0, description: 'Share of memory available on each host.' }));
-  p.push(series('Disk free (/)', [['max by (host) (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})', '{{host}}']], { w: 8, unit: 'percentunit', min: 0, description: 'Share of the root disk free on each host.' }));
-  p.push(series('Public endpoints', [['max by (job) (probe_success)', '{{job}}'], ['max by (job) (probe_duration_seconds)', '{{job}} seconds']], { w: 12, description: 'Outside health checks of the public addresses: 1 up, 0 down, and how long each check took in seconds.' }));
+  p.push(series('CPU busy', [['1 - avg by (host) (rate(node_cpu_seconds_total{mode="idle"}[5m]))', '{{host}}']], { names: { '{{host}}': KEYS.host }, w: 8, unit: 'percentunit', min: 0, description: 'Share of CPU time busy on each host (5 min rate).' }));
+  p.push(series('Memory available', [['max by (host) (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)', '{{host}}']], { names: { '{{host}}': KEYS.host }, w: 8, unit: 'percentunit', min: 0, description: 'Share of memory available on each host.' }));
+  p.push(series('Disk free (/)', [['max by (host) (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})', '{{host}}']], { names: { '{{host}}': KEYS.host }, w: 8, unit: 'percentunit', min: 0, description: 'Share of the root disk free on each host.' }));
+  p.push(series('Public endpoints', [['max by (job) (probe_success)', '{{job}}'], ['max by (job) (probe_duration_seconds)', '{{job}} seconds']], { names: { '{{job}}': KEYS.job, '{{job}} seconds': KEYS.job }, w: 12, description: 'Outside health checks of the public addresses: 1 up, 0 down, and how long each check took in seconds.' }));
   p.push(series('Failed units', [['sum by (host, name) (node_systemd_unit_state{state="failed"}) > 0', '{{host}} {{name}}']], { w: 12, description: 'systemd units in the failed state on either host; empty when all is well.' }));
   // From the capacity-alerts branch (d22fa0e), already live on the dashboard since 2026-11-01; the exporter series is on prod.
   p.push(series('Search service memory', [
@@ -428,7 +515,7 @@ export function tonight() {
     { w: 12, h: 10, description: `Over the selected range: plays by player platform (once per room and platform) and joins from visitors who allow untrusted URLs. PC plays are low before the Everything-is-OK#586 deploy (built 2026-11-06; plays whose resolver got the link were not counted PC), so a range that spans it mixes the two. ${OWN_TESTS}` }));
 
   p.push(row('The night\'s shape'));
-  const curve = series('Through the night (Chicago time)', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 18, h: 9, stack: true, min: 0, decimals: 0,
+  const curve = series('Through the night (Chicago time)', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 18, h: 9, stack: true, min: 0, decimals: 0, palette: false,
     description: 'People in the production world over the selected range, stacked by public and private instances, in Chicago time.' });
   curve.fieldConfig.defaults.color = { mode: 'continuous-BlPu' };
   curve.fieldConfig.defaults.custom.lineInterpolation = 'smooth';

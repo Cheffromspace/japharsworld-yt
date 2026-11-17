@@ -215,7 +215,7 @@ export function dashboard() {
     ['max(eiok_home_today{key="cap_builds"})', 'cap videos'],
     ['max(eiok_home_today{key="workers"})', 'workers'],
     ['max(eiok_home_today{key="cache_mb"}) / 1000', 'from cache GB'],
-  ], { w: 8, decimals: 1, thresholds: [{ color: INK, value: null }], description: 'Today (Chicago day), now: what the Optiplex downloaded for home relay plays against its daily cap, the videos, what it served from its own cache (not counted against the cap), and the media workers connected.' }));
+  ], { w: 8, h: 8, decimals: 1, thresholds: [{ color: INK, value: null }], description: 'Today (Chicago day), now: what the Optiplex downloaded for home relay plays against its daily cap, the videos, what it served from its own cache (not counted against the cap), and the media workers connected.' }));
   p.push(series('Home relay (per 6 h)', [[ev('home'), '{{key}}'], [ev('home_why'), 'why: {{key}}']], { w: 8, min: 0,
     description: 'Home relay sessions per 6 h (started, ready, failed, refused by the cap or for room, cache hits, step-downs), and why a play went home: a long video, Tunelio off, slow or failed, the pacer, or the spend budget or build cap.' }));
   p.push(series('Home relay start time', [

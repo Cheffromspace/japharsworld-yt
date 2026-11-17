@@ -105,6 +105,22 @@ test('tonight: its own dashboard, refresh 1 min, the last 12 h in Chicago time, 
   for (const m of text.matchAll(/(eiok_[a-z_]+)/g)) assert.ok(['eiok_events_total', 'eiok_poll', 'eiok_shard_active_hours_total'].includes(m[1]), m[1]);
 });
 
+// Stats with no state are quiet tiles on the Tokyo Night surface (owner, 2026-11-17, #866); every stat with a state
+// colour keeps its gradient fill, and Tonight's tiles keep theirs.
+test('stats: the four no-state tiles are solid #24283b, every other stat keeps its fill', () => {
+  const stats = (d) => d.panels.filter((p) => p.type === 'stat');
+  const main = stats(dashboard());
+  const quiet = main.filter((p) => p.options.colorMode === 'background_solid');
+  assert.deepEqual(quiet.map((p) => p.title), ['In the world now', 'Total visits (production)', 'Favorites (production)', 'Home relay today']);
+  for (const p of quiet) assert.deepEqual(p.fieldConfig.defaults.thresholds.steps, [{ color: '#24283b', value: null }], p.title);
+  for (const p of main.filter((x) => !quiet.includes(x))) {
+    assert.equal(p.options.colorMode, 'background', p.title);
+    assert.ok(p.fieldConfig.defaults.thresholds.steps.some((s) => s.color !== '#24283b'), p.title);
+  }
+  const night = Object.fromEntries(stats(tonight()).map((p) => [p.title, p.options.colorMode]));
+  assert.deepEqual(night, { 'People here': 'background', Rooms: 'background', 'Warmth, this range': 'background', 'Here lately': 'background_solid', 'Search languages': 'background_solid' });
+});
+
 // PromQL knows only UTC: "Stayed past 03:00" computes Chicago's hour with the US summer-time rule (#248). The same rule
 // in JS, against Intl's America/Chicago, at every hour that can fall in the window (UTC 08–12) for two years.
 test('tonight: Chicago hour follows summer and winter time (the 03:00–06:00 window)', () => {

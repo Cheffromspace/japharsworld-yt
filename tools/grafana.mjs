@@ -60,15 +60,16 @@ const target = (expr, legendFormat = '', extra = {}) => ({ refId: String.fromCha
 const targets = (list) => list.map(([e, l, t], i) => target(e, l, { i, t }));
 
 // expr: one expression, or a list of [expr, legend] shown side by side with their names.
-function stat(title, expr, { unit = 'short', w = 4, h = 4, thresholds, decimals, mappings, description, colorMode } = {}) {
+function stat(title, expr, { unit = 'short', w = 4, h = 4, thresholds, decimals, mappings, description } = {}) {
   const list = Array.isArray(expr) ? expr.map(([e, l]) => [e, l, { instant: true }]) : [[expr, '', { instant: true }]];
-  // An all-blue stat says no state, so it shows blue numbers on the dashboard's own dark background instead of a filled
-  // blue tile (owner, 2026-11-17, #866: "All current blue tiles go dark, blue"). Stats with a state colour keep the fill;
-  // colorMode overrides it (Tonight's "People here" stays filled beside its purple and green tiles, coordinator, #866).
-  const allBlue = (thresholds ?? [{ color: 'blue' }]).every((s) => s.color === 'blue' || s.color === INK);
+  // A stat with no state (its only colour the SURFACE) is a quiet tile: a solid Tokyo Night surface, numbers in the
+  // colour Grafana picks for it (near-white; a stat can't colour the text and the fill apart, Grafana 13.4). Owner,
+  // 2026-11-17, #866: blue fill, then blue numbers on the plain panel, then "background just a tiny bit brighter" with
+  // near-white numbers. Stats with a state colour keep the gradient fill.
+  const quiet = (thresholds ?? []).length > 0 && thresholds.every((s) => s.color === SURFACE);
   return {
     type: 'stat', id: ++id, title, description, datasource: DS, gridPos: place(w, h), targets: targets(list),
-    options: { reduceOptions: { calcs: ['lastNotNull'] }, colorMode: colorMode ?? (allBlue ? 'value' : 'background'), graphMode: 'none', textMode: Array.isArray(expr) ? 'value_and_name' : 'value' },
+    options: { reduceOptions: { calcs: ['lastNotNull'] }, colorMode: quiet ? 'background_solid' : 'background', graphMode: 'none', textMode: Array.isArray(expr) ? 'value_and_name' : 'value' },
     fieldConfig: { defaults: { unit, decimals, mappings: mappings ?? [], thresholds: { mode: 'absolute', steps: thresholds ?? [{ color: 'blue', value: null }] } }, overrides: [] },
   };
 }
@@ -96,7 +97,7 @@ const marker = (name, expr, iconColor, titleFormat, tagKeys) => ({
 });
 
 // Tokyo Night status colours.
-const OK = '#9ece6a', WARN = '#e0af68', BAD = '#f7768e', INK = '#7aa2f7';
+const OK = '#9ece6a', WARN = '#e0af68', BAD = '#f7768e', INK = '#7aa2f7', SURFACE = '#24283b';
 const upDown = [{ type: 'value', options: { 0: { text: 'down', color: BAD }, 1: { text: 'up', color: OK } } }];
 
 export function dashboard() {
@@ -108,7 +109,7 @@ export function dashboard() {
   p.push(stat('Public /healthz', 'min(probe_success{job=~".*search-healthz.*"})', { w: 3, mappings: upDown, thresholds: [{ color: BAD, value: null }, { color: OK, value: 1 }],
     description: 'Whether https://yt.japharsworld.com/healthz answers from outside (Caddy, TLS and DNS included), now.' }));
   p.push(stat('Relay workers', 'max(eiok_relay_workers_online)', { w: 3, thresholds: [{ color: BAD, value: null }, { color: OK, value: 1 }], description: 'Home relay workers (the Optiplex) connected now and waiting for searches. At 0, searches fall back to the Linode.' }));
-  p.push(stat('In the world now', 'max(eiok_poll{source="world:prod",metric="occupants"})', { w: 3, thresholds: [{ color: INK, value: null }],
+  p.push(stat('In the world now', 'max(eiok_poll{source="world:prod",metric="occupants"})', { w: 3, thresholds: [{ color: SURFACE, value: null }],
     description: 'People in the production world now, as VRChat reports it (polled every minute).' }));
   p.push(stat('Credits left', 'max(eiok_credits_remaining)', { w: 3, thresholds: [{ color: BAD, value: null }, { color: WARN, value: 500 }, { color: OK, value: 1500 }],
     description: 'Tunelio credits left on the plan now. At 0, plays go to youtube.com.' }));
@@ -119,9 +120,9 @@ export function dashboard() {
 
   const startupNote = 'Over the selected range, per ticket request, so a slow video the player retries counts several timeouts. A timeout means the player waited 90 s and got youtube.com.';
   const noBuilds = [{ type: 'special', options: { match: 'nan', result: { text: 'no builds' } } }, { type: 'special', options: { match: 'null', result: { text: 'no builds' } } }];
-  p.push(stat('Total visits (production)', 'max(eiok_poll{source="world:prod",metric="visits"})', { w: 5, unit: 'locale', decimals: 0, thresholds: [{ color: INK, value: null }],
+  p.push(stat('Total visits (production)', 'max(eiok_poll{source="world:prod",metric="visits"})', { w: 5, unit: 'locale', decimals: 0, thresholds: [{ color: SURFACE, value: null }],
     description: 'All-time visits to the production world, from VRChat.' }));
-  p.push(stat('Favorites (production)', 'max(eiok_poll{source="world:prod",metric="favorites"})', { w: 4, unit: 'locale', decimals: 0, thresholds: [{ color: INK, value: null }],
+  p.push(stat('Favorites (production)', 'max(eiok_poll{source="world:prod",metric="favorites"})', { w: 4, unit: 'locale', decimals: 0, thresholds: [{ color: SURFACE, value: null }],
     description: 'All-time favorites of the production world, from VRChat.' }));
   p.push(stat('Start-up problems, this range', [
     ['sum(increase(eiok_events_total{metric="ticket_timeout"}[$__range])) or vector(0)', 'player timeouts'],
@@ -219,7 +220,7 @@ export function dashboard() {
     ['max(eiok_home_today{key="cap_builds"})', 'cap videos'],
     ['max(eiok_home_today{key="workers"})', 'workers'],
     ['max(eiok_home_today{key="cache_mb"}) / 1000', 'from cache GB'],
-  ], { w: 8, h: 8, decimals: 1, thresholds: [{ color: INK, value: null }], description: 'Today (Chicago day), now: what the Optiplex downloaded for home relay plays against its daily cap, the videos, what it served from its own cache (not counted against the cap), and the media workers connected.' }));
+  ], { w: 8, h: 8, decimals: 1, thresholds: [{ color: SURFACE, value: null }], description: 'Today (Chicago day), now: what the Optiplex downloaded for home relay plays against its daily cap, the videos, what it served from its own cache (not counted against the cap), and the media workers connected.' }));
   p.push(series('Home relay (per 6 h)', [[ev('home'), '{{key}}'], [ev('home_why'), 'why: {{key}}']], { w: 8, min: 0,
     description: 'Home relay sessions per 6 h (started, ready, failed, refused by the cap or for room, cache hits, step-downs), and why a play went home: a long video, Tunelio off, slow or failed, the pacer, or the spend budget or build cap.' }));
   p.push(series('Home relay start time', [
@@ -391,7 +392,7 @@ export function tonight() {
     { w: 5, description: 'People in the production world right now (polled every minute): 0 quiet, 1–3 cozy, 4 or more lively.',
       colors: { vibe: [{ color: NIGHT.quiet, value: null }, { color: NIGHT.amber, value: 1 }, { color: NIGHT.purple, value: 4 }], quiet: lit(NIGHT.quiet), cozy: lit(NIGHT.amber), lively: lit(NIGHT.purple) },
       mappings: [{ type: 'value', options: { 0: { text: 'quiet' } } }, { type: 'range', options: { from: 1, to: 3, result: { text: 'cozy' } } }, { type: 'range', options: { from: 4, to: 1e6, result: { text: 'lively' } } }] }));
-  p.push(stat('People here', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 5, thresholds: tile(NIGHT.blue), colorMode: 'background',
+  p.push(stat('People here', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 5, thresholds: tile(NIGHT.blue),
     description: 'People in the production world right now, in public and private instances (polled every minute).' }));
   p.push(stat('Rooms', [[occ('instances'), 'public instances'], ['count(increase(eiok_shard_active_hours_total[$__range]) > 0) or vector(0)', 'tablets in use']], { w: 4, thresholds: tile(NIGHT.purple),
     description: `Public instances of the production world right now (VRChat lists only those), and the tablets (rooms) that made any request in the selected range. ${OWN_TESTS}` }));

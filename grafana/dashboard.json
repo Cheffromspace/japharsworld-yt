@@ -336,7 +336,7 @@
       "lastNotNull"
      ]
     },
-    "colorMode": "value",
+    "colorMode": "background_solid",
     "graphMode": "none",
     "textMode": "value"
    },
@@ -348,7 +348,7 @@
       "mode": "absolute",
       "steps": [
        {
-        "color": "#7aa2f7",
+        "color": "#24283b",
         "value": null
        }
       ]
@@ -634,7 +634,7 @@
       "lastNotNull"
      ]
     },
-    "colorMode": "value",
+    "colorMode": "background_solid",
     "graphMode": "none",
     "textMode": "value"
    },
@@ -647,7 +647,7 @@
       "mode": "absolute",
       "steps": [
        {
-        "color": "#7aa2f7",
+        "color": "#24283b",
         "value": null
        }
       ]
@@ -689,7 +689,7 @@
       "lastNotNull"
      ]
     },
-    "colorMode": "value",
+    "colorMode": "background_solid",
     "graphMode": "none",
     "textMode": "value"
    },
@@ -702,7 +702,7 @@
       "mode": "absolute",
       "steps": [
        {
-        "color": "#7aa2f7",
+        "color": "#24283b",
         "value": null
        }
       ]
@@ -2128,7 +2128,7 @@
       "lastNotNull"
      ]
     },
-    "colorMode": "value",
+    "colorMode": "background_solid",
     "graphMode": "none",
     "textMode": "value_and_name"
    },
@@ -2141,7 +2141,7 @@
       "mode": "absolute",
       "steps": [
        {
-        "color": "#7aa2f7",
+        "color": "#24283b",
         "value": null
        }
       ]

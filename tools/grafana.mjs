@@ -125,7 +125,7 @@ const MEANING = [
   ['bad', /^unavailable: (failed|temporarily_unavailable|list_unavailable)$/],
   ['neutral', /^unavailable: /],          // the video has no such captions: not a fault
   ['bad', /fail|error|timeout|refus|unreachable|could not|^cuts$|^e(invalid|denied|rate|player|unknown)$|^after$|^capped|no_room|too_big/],
-  ['warn', /defer|slow|^oldest|paced|pacer|stepdown|skip|reload_after|uneven|spaced|budget|^cap$|too_long|estimated|^videos: none$/],
+  ['warn', /defer|slow|^oldest|paced|pacer|stepdown|skip|reload_after|uneven|spaced|budget|: cap$|too_long|estimated|^videos: none$/],
   ['ok', /^ok$|^ready$|played|served|cache_hit|^pass$|real$|^videos: tracks$|^settled$|race_won|^stayed$/],
 ];
 export const meaningOf = (name) => (MEANING.find(([, re]) => re.test(name)) ?? ['neutral'])[0];
@@ -179,7 +179,7 @@ export const KEYS = {
   yt_refusal: REFUSAL_WHERE.flatMap((w) => REFUSAL_CLASSES.map((c) => `${w}:${c}`)),
   quality_pick: ['auto', '720p', '1080p'],   // TUNELIO_QUALITIES' default (src/config.js); another quality draws in shades
   outcome: ['einvalid', 'edenied', 'erate', 'eplayer', 'eunknown', 'timeout', 'after', 'left'],   // OUTCOME_FAILS and left
-  probe: ['tunelio:progressive', 'tunelio:hls'],
+  probe: ['tunelio:progressive', 'tunelio:hls', 'tunelio:pair720', 'tunelio:pair1080'],   // src/probe.js run sources
   verdict: ['pass', 'fail', 'unreachable', 'none'],   // the monitor's flash verdicts; none: no verdict stored
   reason: ['daily', 'other'],
   host: ['linode', 'optiplex'],

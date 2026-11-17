@@ -176,6 +176,8 @@ test('graph lines: every line has a palette colour, by meaning, and lines in a p
   assert.equal(meaningOf('unavailable: failed'), 'bad');
   assert.equal(meaningOf('pass'), 'ok');
   assert.equal(meaningOf('home:bot'), 'neutral');
+  assert.equal(meaningOf('why: cap'), 'warn');
+  assert.equal(meaningOf('cap videos'), 'neutral');
   // Tonight's one time series keeps its own Blue-Purple scheme, with no per-line colours.
   const curve = tonight().panels.find((p) => p.type === 'timeseries');
   assert.deepEqual([curve.fieldConfig.defaults.color, curve.fieldConfig.overrides], [{ mode: 'continuous-BlPu' }, []]);

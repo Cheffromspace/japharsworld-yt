@@ -336,7 +336,7 @@
       "lastNotNull"
      ]
     },
-    "colorMode": "background",
+    "colorMode": "value",
     "graphMode": "none",
     "textMode": "value"
    },
@@ -634,7 +634,7 @@
       "lastNotNull"
      ]
     },
-    "colorMode": "background",
+    "colorMode": "value",
     "graphMode": "none",
     "textMode": "value"
    },
@@ -689,7 +689,7 @@
       "lastNotNull"
      ]
     },
-    "colorMode": "background",
+    "colorMode": "value",
     "graphMode": "none",
     "textMode": "value"
    },
@@ -2128,7 +2128,7 @@
       "lastNotNull"
      ]
     },
-    "colorMode": "background",
+    "colorMode": "value",
     "graphMode": "none",
     "textMode": "value_and_name"
    },

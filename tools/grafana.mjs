@@ -60,11 +60,15 @@ const target = (expr, legendFormat = '', extra = {}) => ({ refId: String.fromCha
 const targets = (list) => list.map(([e, l, t], i) => target(e, l, { i, t }));
 
 // expr: one expression, or a list of [expr, legend] shown side by side with their names.
-function stat(title, expr, { unit = 'short', w = 4, h = 4, thresholds, decimals, mappings, description } = {}) {
+function stat(title, expr, { unit = 'short', w = 4, h = 4, thresholds, decimals, mappings, description, colorMode } = {}) {
   const list = Array.isArray(expr) ? expr.map(([e, l]) => [e, l, { instant: true }]) : [[expr, '', { instant: true }]];
+  // An all-blue stat says no state, so it shows blue numbers on the dashboard's own dark background instead of a filled
+  // blue tile (owner, 2026-11-17, #866: "All current blue tiles go dark, blue"). Stats with a state colour keep the fill;
+  // colorMode overrides it (Tonight's "People here" stays filled beside its purple and green tiles, coordinator, #866).
+  const allBlue = (thresholds ?? [{ color: 'blue' }]).every((s) => s.color === 'blue' || s.color === INK);
   return {
     type: 'stat', id: ++id, title, description, datasource: DS, gridPos: place(w, h), targets: targets(list),
-    options: { reduceOptions: { calcs: ['lastNotNull'] }, colorMode: 'background', graphMode: 'none', textMode: Array.isArray(expr) ? 'value_and_name' : 'value' },
+    options: { reduceOptions: { calcs: ['lastNotNull'] }, colorMode: colorMode ?? (allBlue ? 'value' : 'background'), graphMode: 'none', textMode: Array.isArray(expr) ? 'value_and_name' : 'value' },
     fieldConfig: { defaults: { unit, decimals, mappings: mappings ?? [], thresholds: { mode: 'absolute', steps: thresholds ?? [{ color: 'blue', value: null }] } }, overrides: [] },
   };
 }
@@ -387,7 +391,7 @@ export function tonight() {
     { w: 5, description: 'People in the production world right now (polled every minute): 0 quiet, 1–3 cozy, 4 or more lively.',
       colors: { vibe: [{ color: NIGHT.quiet, value: null }, { color: NIGHT.amber, value: 1 }, { color: NIGHT.purple, value: 4 }], quiet: lit(NIGHT.quiet), cozy: lit(NIGHT.amber), lively: lit(NIGHT.purple) },
       mappings: [{ type: 'value', options: { 0: { text: 'quiet' } } }, { type: 'range', options: { from: 1, to: 3, result: { text: 'cozy' } } }, { type: 'range', options: { from: 4, to: 1e6, result: { text: 'lively' } } }] }));
-  p.push(stat('People here', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 5, thresholds: tile(NIGHT.blue),
+  p.push(stat('People here', [[occ('publicOccupants'), 'public'], [occ('privateOccupants'), 'private']], { w: 5, thresholds: tile(NIGHT.blue), colorMode: 'background',
     description: 'People in the production world right now, in public and private instances (polled every minute).' }));
   p.push(stat('Rooms', [[occ('instances'), 'public instances'], ['count(increase(eiok_shard_active_hours_total[$__range]) > 0) or vector(0)', 'tablets in use']], { w: 4, thresholds: tile(NIGHT.purple),
     description: `Public instances of the production world right now (VRChat lists only those), and the tablets (rooms) that made any request in the selected range. ${OWN_TESTS}` }));

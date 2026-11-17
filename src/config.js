@@ -31,6 +31,9 @@ export const config = {
   // A video player's ticket loads a minute per client IP, counted apart (429 rate_limited over it, which the world shows
   // as a load error): 6 players behind one NAT, each resolver + player + a Quest's retry every 6 s, is ~150, so 600.
   ticketPlayerPerMinutePerIp: int('TICKET_PLAYER_PER_MINUTE_PER_IP', 600),
+  // Play outcomes (/v1/o, world #274) a minute per client IP; over it the answer is the same and nothing is counted or
+  // logged. Each client sends one per play, so even several players behind one NAT stay far under 30. 0 = no per-IP limit.
+  outcomePerMinutePerIp: int('OUTCOME_PER_MINUTE_PER_IP', 30),
   // Each visitor's (client IP's) daily allowance for new builds, Tunelio and home together (src/allowance.js, where the
   // defaults are worked out from prod): Tunelio credits, home sessions, home MB (expected size). Any one used up: no new
   // build anywhere, the play gets youtube.com. 0 = no limit. Trusted IPs x TRUSTED_IP_FACTOR.
@@ -118,6 +121,9 @@ export const config = {
   // Minutes between Tunelio speed probes (src/probe.js; 10 credits each, at least 20, plus a random quarter). 0 = off.
   // Hourly (owner, 2026-10-23): every 20 minutes cost ~720 credits a day, more than playback's 80–450.
   tunelioProbeMinutes: int('TUNELIO_PROBE_MINUTES', 60),
+  // Minutes of paced read-and-resume after each progressive probe run (Everything-is-OK#361; no credits, up to 270 MB
+  // inbound per 10 minutes). 0 = off, and off until the owner's go on prod.
+  tunelioDropMinutes: int('TUNELIO_DROP_MINUTES', 0),
   // Tunelio's /create timeout, and how long after a Tunelio timeout plays go home (when they can) instead of to Tunelio.
   tunelioCreateTimeoutMs: int('TUNELIO_CREATE_TIMEOUT_SECONDS', 6) * 1000,
   tunelioSuspectMs: int('TUNELIO_SUSPECT_SECONDS', 120) * 1000,
@@ -157,6 +163,22 @@ export const config = {
   // as a PC player, and for an AV1 Tunelio build, which the Quest 2 can't decode (home is always H.264). Off until
   // verified on the Quest (2026-10-23).
   homeAndroid: (process.env.HOME_ANDROID ?? 'off') === 'on',
+  // A PC player on a plain ticket: the codec of its progressive Tunelio build is read first, and an AV1 one goes home
+  // (else the 720p rung, else youtube.com) instead of to the player (src/server.js, Everything-is-OK#741, staging
+  // 2026-11-13: a PC alone got the AV1 1080p mp4 and never showed a frame). off: as before, no read.
+  pcAv1: (process.env.PC_AV1 ?? 'on') !== 'off',
+  // Everything-is-OK#749: the same read for a Quest on a plain ticket; AV1 gets the first of QUEST_AV1_QUALITIES (each read)
+  // that isn't AV1, else "can't be played here". QUEST_AV1_QUALITIES empty: straight to that answer.
+  questAv1: (process.env.QUEST_AV1 ?? 'on') !== 'off',
+  questAv1Qualities: (process.env.QUEST_AV1_QUALITIES ?? '480p,360p').split(',').map((q) => q.trim()).filter((q) => /^\d{3,4}p$/.test(q)),
+  // The Quest player's mp4 codec read limit (#749); 0 or less would fail every read, so it counts as the default.
+  questAv1ReadMs: (int('QUEST_AV1_READ_SECONDS', 10) > 0 ? int('QUEST_AV1_READ_SECONDS', 10) : 10) * 1000,
+  // Everything-is-OK#764 E (a Quest's AV1 HLS play home doesn't take): each lower rung's codec read is capped at this
+  // (and at the hold); on timeout the rung plays unread. A cached HLS read is under 1 s (the init segment, a few KB).
+  questAv1HlsReadMs: int('QUEST_AV1_HLS_READ_SECONDS', 4) * 1000,
+  // How long E waits for a higher rung once a lower one is ready and not AV1 (the rungs build at once; a lower one is
+  // ready first). 0 takes the first good one.
+  questAv1GraceMs: int('QUEST_AV1_GRACE_SECONDS', 5) * 1000,
   // A .m3u8 ticket (Quest): Unity's Android player gets the mp4, and a long or HLS-failed play sends AVPro on at once so
   // VizVid reaches that player (src/server.js questMp4, Everything-is-OK#584). off: as before. Long: this many minutes,
   // or a file at the ticket's quality of this many MB once its size is known (0 = by length only).
@@ -173,6 +195,10 @@ export const config = {
   // it stays off until the fix for #393 is out.
   homeRaceMs: int('HOME_RACE_SECONDS', 0) * 1000,
   homeLongMinutes: int('HOME_LONG_MINUTES', 30),
+  // Segments on demand for far seeks (src/home.js "Segments on demand", Everything-is-OK#367): the server names the
+  // segment a player waits for in its upload answers (x-media-want), so the worker sends it next. Off (the default) is the
+  // in-order upload production had before it; on for staging while #727 (a black screen after far seeks) is open.
+  homeSeekWant: (process.env.HOME_SEEK_WANT ?? 'off') === 'on',
   // One source per ticket once playing (#293): a ticket's answer is kept per ticket and client kind while it is played
   // (until the video's length plus TICKET_PIN_MARGIN_MINUTES after its last play) instead of decided again on every
   // request, which sent one PC ticket home → Tunelio → home within a minute and its players reloaded from 0 (prod
@@ -224,6 +250,10 @@ export const config = {
   // source (src/home.js blocks). 0 = none skip it.
   homeHourMbExemptHours: (() => { const v = Number.parseFloat(process.env.HOME_HOUR_MB_EXEMPT_HOURS ?? ''); return Number.isFinite(v) ? v : 4; })(),
   homeStartGapMs: int('HOME_START_GAP_SECONDS', 45) * 1000,
+  // Everything-is-OK#764: an AV1 play's home build may start inside HOME_START_GAP_SECONDS unless a real download started
+  // within this many seconds (or home is otherwise hammering YouTube, src/home.js hammering). 0 keeps the full gap for
+  // AV1 plays too, as before.
+  homeAv1GapMs: int('HOME_AV1_GAP_SECONDS', 10) * 1000,
   homeKeepHours: int('HOME_KEEP_HOURS', 12),
   homeMaxGb: int('HOME_MAX_GB', 8),
   // Free disk the home store never builds into (src/home.js #room): a build doesn't start when the disk's free space,

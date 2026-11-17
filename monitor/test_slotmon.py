@@ -1,5 +1,5 @@
 """Outage, replacement, swap and flash-fail paths against a fake YouTube.  py -m unittest test_slotmon  (from monitor/)"""
-import json, os, tempfile, time, unicodedata, unittest
+import json, os, sqlite3, tempfile, time, unicodedata, unittest
 from unittest import mock
 
 from slotmon import config, core, db, discord, publish
@@ -414,6 +414,294 @@ class Tests(Base):
 CAMPFIRE = "\U0001F534 Lonely Lakeside Campfire · LIVE 24/7 · Boundary Waters Fire Crackling for Sleep \U0001F525"
 FOLLOW = {"notice": "", "slots": {"noise": {"kind": "video"}, "cam": {"title": "Tokyo cam"},
                                   "radio": {"title": "Radio fallback", "title_from": "stream"}}}
+
+
+class FlashHoldTests(Base):
+    """#776 (2026-11-16): a flash-fail hide holds until a person clears it, whatever happens to the stream."""
+
+    def fail_radio(self):
+        """radio's stream fails its first check: hidden, playlist emptied (the existing flash-fail path)."""
+        self.check()
+        self.result([j for j in self.jobs() if j["video_id"] == "OLDOLDOLD01"][0], verdict="fail", fps=8)
+        self.assertEqual(self.slot("radio")["auto_reason"], "flash fail")
+        self.assertEqual(self.api.playlists["PLradio"], [])
+        # The fail is an hour old, as a real one is by the time a person clears it: a clear in the same clock tick (about
+        # 15 ms on Windows) would tie with it, and a tie keeps the hold (owed_hold's strict >), which is right but made
+        # the clear tests fail now and then (verifier R2-L1, 2 of 25 rounds at 5d68edf).
+        self.con.execute("UPDATE events SET ts=ts-3600 WHERE slot_key='radio' AND kind='flash_fail'")
+        self.con.commit()
+
+    def published(self, ov=OVERRIDES):
+        with mock.patch.object(config, "DATA_DIR", self.tmp), mock.patch.object(config, "PUBLISH", False), \
+                mock.patch.object(publish, "build_sheet", lambda slots, cur: (b"", [])):
+            core.publish_pass(self.con, SLOTS, ov)
+        with open(os.path.join(self.tmp, "out", config.STATUS_FILE), encoding="utf-8") as f:
+            return json.load(f)["slots"]
+
+    def test_the_hold_outlives_the_stream_and_no_restart_is_looked_for(self):
+        # retroworld-ps1, 2026-11-07 to 11-15: the stream that failed ends, the channel starts a same-title stream.
+        self.fail_radio()
+        self.api.world["OLDOLDOLD01"] = st("OLDOLDOLD01", "ended")
+        self.api.world["NEWNEWNEW01"] = st("NEWNEWNEW01", "live", title="sleep lofi radio 24/7 relaxing", started=time.time() - 600)
+        self.live_ids["UClofi"] = ["NEWNEWNEW01"]
+        looked = []
+        with mock.patch.object(core, "channel_live_ids", lambda cid: looked.append(cid) or self.live_ids.get(cid, [])):
+            self.check()
+            self.check()
+        s = self.slot("radio")
+        self.assertTrue(s["auto_hidden"])
+        self.assertEqual(s["auto_reason"], "flash fail")  # was 'down' (core.py handle_down, before #776)
+        self.assertTrue(s["down_since"])
+        self.assertEqual(looked, [])  # no replacement search
+        self.assertFalse([j for j in self.jobs() if j["reason"] == "candidate"])
+        self.assertEqual(self.api.playlists["PLradio"], [])  # nothing for a PC with a stale list to play
+        self.assertTrue(any("until a person clears it" in t or "Stream down" in t for _, t in self.notes))
+        # The copy of the world's list says shown (hidden false); the status file must say hidden, explicitly.
+        self.assertFalse(SLOTS[0]["hidden"])
+        self.assertEqual(self.published()["radio"], {"hidden": True})
+        # A stream back up does not bring it back either.
+        self.api.world["OLDOLDOLD01"] = st("OLDOLDOLD01", "live")
+        self.check()
+        self.assertEqual(self.slot("radio")["auto_reason"], "flash fail")
+        self.assertFalse(any(t.startswith("Back up") for _, t in self.notes))
+
+    def test_a_candidate_that_passes_never_swaps_a_held_slot(self):
+        # The stream ends and a candidate is queued; then a flash fail on the old stream arrives (a job claimed earlier);
+        # then the candidate passes. The swap used to clear the hide (core.py swap, before #776).
+        self.check()
+        old_job = [j for j in self.jobs() if j["video_id"] == "OLDOLDOLD01"][0]
+        self.api.world["OLDOLDOLD01"] = st("OLDOLDOLD01", "ended")
+        self.api.world["NEWNEWNEW01"] = st("NEWNEWNEW01", "live", title="sleep lofi radio 24/7 relaxing", started=time.time() - 600)
+        self.live_ids["UClofi"] = ["NEWNEWNEW01"]
+        self.check()
+        cand = [j for j in self.jobs() if j["reason"] == "candidate"]
+        self.assertEqual([j["video_id"] for j in cand], ["NEWNEWNEW01"])
+        self.result(old_job, verdict="fail", fps=8)
+        self.result(cand[0])
+        s = self.slot("radio")
+        self.assertEqual(s["current_video"], "OLDOLDOLD01")
+        self.assertTrue(s["auto_hidden"])
+        self.assertEqual(s["auto_reason"], "flash fail")
+        self.assertNotIn(("insert", "PLradio", "NEWNEWNEW01"), self.api.calls)
+        self.assertEqual(self.api.playlists["PLradio"], [])
+        # The fresh-pass swap (a candidate that passed within 24 h) is refused the same way.
+        self.assertFalse(core.swap(self.con, self.api, s, "NEWNEWNEW01", True))
+        self.assertEqual(self.slot("radio")["auto_reason"], "flash fail")
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM events WHERE slot_key='radio' AND kind='swap_held'").fetchone()[0], 1)
+
+    def test_a_hold_set_while_the_playlist_is_written_keeps_the_slot_hidden_and_empties_the_playlist(self):
+        # A worker's submit runs beside the pass: a flash fail can land between the swap's check and its write.
+        self.api.world["OLDOLDOLD01"] = st("OLDOLDOLD01", "ended")
+        self.check()
+        row = self.slot("radio")
+        db.upsert_stream(self.con, "NEWNEWNEW01", flash_verdict="pass", flash_max=0, flash_at=time.time(), height=1080)
+        insert = self.api.insert_first
+
+        def insert_then_fail(pl, vid):
+            insert(pl, vid)
+            self.con.execute("UPDATE slots SET auto_hidden=1, auto_reason='flash fail' WHERE key='radio'")
+        self.api.insert_first = insert_then_fail
+        self.assertFalse(core.swap(self.con, self.api, row, "NEWNEWNEW01", True))
+        s = self.slot("radio")
+        self.assertEqual((s["current_video"], s["auto_hidden"], s["auto_reason"]), ("OLDOLDOLD01", 1, "flash fail"))
+        self.assertEqual(self.api.playlists["PLradio"], [])
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM events WHERE slot_key='radio' AND kind='replaced'").fetchone()[0], 0)
+
+    def test_a_hold_another_path_wrote_over_is_put_back_from_the_event_log(self):
+        # retroworld-ps1 on production at 2026-11-16 04:59Z (read-only read): a flash_fail event of 11-07 and no clear,
+        # but its row not hidden (auto_hidden 0, auto_reason NULL) and playing a stream that passed once.
+        self.fail_radio()
+        db.upsert_stream(self.con, "NEWNEWNEW01", flash_verdict="pass", flash_max=2, flash_at=time.time(), height=1080)
+        self.con.execute("UPDATE slots SET current_video='NEWNEWNEW01', down_since=NULL, auto_hidden=0, auto_reason=NULL WHERE key='radio'")
+        self.con.commit()
+        self.api.world["NEWNEWNEW01"] = st("NEWNEWNEW01", "live")
+        # A restart of the monitor reads the same database.
+        self.con.close()
+        self.con = db.connect(os.path.join(self.tmp, "t.db"))
+        self.check()
+        s = self.slot("radio")
+        self.assertTrue(s["auto_hidden"])
+        self.assertEqual(s["auto_reason"], "flash fail")
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM events WHERE slot_key='radio' AND kind='flash_hold'").fetchone()[0], 1)
+        self.assertTrue(any(t.startswith("Flash-fail hide put back") for _, t in self.notes))
+        self.check()  # once: nothing to put back the second time
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM events WHERE slot_key='radio' AND kind='flash_hold'").fetchone()[0], 1)
+        # A publish alone puts it back too (slotmon publish, or a submit's publish, between passes).
+        self.con.execute("UPDATE slots SET auto_hidden=0, auto_reason=NULL WHERE key='radio'")
+        self.assertEqual(self.published()["radio"], {"hidden": True})
+        # Retired as well (gta-vice-city): still held, out of the checks.
+        ov = {"notice": "", "slots": dict(OVERRIDES["slots"], radio={"hidden": True, "kind": "unmanaged", "retired": "2026-11-15: flash fail"})}
+        core.sync_slots(self.con, SLOTS, ov)
+        self.con.execute("UPDATE slots SET auto_hidden=0, auto_reason=NULL WHERE key='radio'")
+        core.check_pass(self.con, self.api, ov)
+        self.assertEqual(self.slot("radio")["auto_reason"], "flash fail")
+        self.assertEqual(self.published(ov)["radio"], {"hidden": True})
+        # ... and without its override: the hold alone keeps it hidden.
+        core.sync_slots(self.con, SLOTS, OVERRIDES)
+        self.assertEqual(self.published()["radio"], {"hidden": True})
+
+    def test_a_held_slot_on_another_stream_keeps_its_daily_sample_and_skips_the_playlist_follow(self):
+        config.DAILY_HOUR_UTC = 0
+        self.fail_radio()
+        db.upsert_stream(self.con, "NEWNEWNEW01", flash_verdict="pass", flash_max=2, flash_at=time.time() - 30 * H, height=1080)
+        self.con.execute("UPDATE slots SET current_video='NEWNEWNEW01' WHERE key='radio'")
+        self.con.execute("UPDATE jobs SET done=1")
+        self.api.playlists["PLradio"] = [("x", "MANUALMANU1")]  # a hand edit while held
+        core.maybe_daily(self.con, self.api, OVERRIDES)
+        daily = [j["video_id"] for j in self.jobs() if j["reason"] == "daily"]
+        self.assertIn("NEWNEWNEW01", daily)  # sampled though hidden (before #776 a hidden slot got no daily sample)
+        self.assertEqual(self.slot("radio")["current_video"], "NEWNEWNEW01")  # the hand edit is not followed while held
+        # A daily sample that passes leaves the hold as it is; the stream that failed is never sampled again.
+        self.result([j for j in self.jobs() if j["video_id"] == "NEWNEWNEW01"][0], fps=1)
+        self.assertEqual(self.slot("radio")["auto_reason"], "flash fail")
+        self.con.execute("UPDATE slots SET current_video='OLDOLDOLD01' WHERE key='radio'")
+        self.con.execute("UPDATE jobs SET done=1")
+        db.set_meta(self.con, "last_daily", "")
+        core.maybe_daily(self.con, self.api, OVERRIDES)
+        self.assertNotIn("OLDOLDOLD01", [j["video_id"] for j in self.jobs() if j["reason"] == "daily"])
+
+    def test_clear_flash_on_the_stream_that_failed_waits_for_a_checked_replacement(self):
+        self.fail_radio()
+        self.assertIn("no flash-fail hold", core.clear_flash(self.con, "cam"))
+        self.assertIn("no slot", core.clear_flash(self.con, "nope"))
+        line = core.clear_flash(self.con, "radio")
+        self.assertIn("stays hidden as down", line)
+        s = self.slot("radio")
+        self.assertEqual((s["auto_hidden"], s["auto_reason"]), (1, "down"))
+        self.assertTrue(db.get_meta(self.con, "publish_now"))
+        # The stream that failed is still live: it does not bring the slot back, and a replacement is looked for.
+        self.api.world["NEWNEWNEW01"] = st("NEWNEWNEW01", "live", title="sleep lofi radio 24/7 relaxing", started=time.time() - 600)
+        self.live_ids["UClofi"] = ["OLDOLDOLD01", "NEWNEWNEW01"]
+        self.check()
+        s = self.slot("radio")
+        self.assertEqual((s["auto_hidden"], s["auto_reason"]), (1, "down"))
+        self.assertFalse(any(t.startswith("Back up") for _, t in self.notes))
+        cand = [j for j in self.jobs() if j["reason"] == "candidate"]
+        self.assertEqual([j["video_id"] for j in cand], ["NEWNEWNEW01"])  # never the stream that failed
+        self.result(cand[0])
+        s = self.slot("radio")
+        self.assertEqual((s["current_video"], s["auto_hidden"]), ("NEWNEWNEW01", 0))
+        self.check()  # the event log has the clear: not held again
+        self.assertEqual(self.slot("radio")["auto_hidden"], 0)
+        self.assertNotIn("radio", self.published())
+        # A new flash fail after the clear holds it again.
+        self.con.execute("UPDATE jobs SET done=1")
+        core.queue_job(self.con, "NEWNEWNEW01", "radio", "manual")
+        self.result([j for j in self.jobs() if j["video_id"] == "NEWNEWNEW01"][0], verdict="fail", fps=6)
+        self.con.execute("UPDATE slots SET auto_reason='down' WHERE key='radio'")
+        self.check()
+        self.assertEqual(self.slot("radio")["auto_reason"], "flash fail")
+
+    def test_clear_flash_on_a_stream_that_passed_shows_the_slot(self):
+        self.fail_radio()
+        db.upsert_stream(self.con, "NEWNEWNEW01", flash_verdict="pass", flash_max=2, flash_at=time.time(), height=1080)
+        self.con.execute("UPDATE slots SET current_video='NEWNEWNEW01' WHERE key='radio'")
+        self.api.world["NEWNEWNEW01"] = st("NEWNEWNEW01", "live")
+        line = core.clear_flash(self.con, "radio")
+        self.assertIn("is shown from this publish", line)
+        self.assertEqual(self.slot("radio")["auto_hidden"], 0)
+        self.check()
+        self.assertEqual(self.slot("radio")["auto_hidden"], 0)
+        self.assertNotIn("radio", self.published())
+        # With an owner's hide (retroworld-ps1's override) it stays hidden by that.
+        self.assertEqual(self.published({"notice": "", "slots": {"radio": {"hidden": True}}})["radio"], {"hidden": True})
+
+    def test_clear_flash_after_a_hand_recheck_that_passed_still_never_shows_the_stream_that_failed(self):
+        # Verifier-style path (advisor, 2026-11-16): `slotmon queue` the failed stream, it passes, then clear-flash.
+        self.fail_radio()
+        self.con.execute("UPDATE jobs SET done=1")
+        core.queue_job(self.con, "OLDOLDOLD01", "radio", "manual")
+        self.result([j for j in self.jobs() if j["video_id"] == "OLDOLDOLD01"][0], fps=1)
+        self.assertEqual(db.stream(self.con, "OLDOLDOLD01")["flash_verdict"], "pass")
+        self.assertIn("stays hidden as down", core.clear_flash(self.con, "radio"))
+        self.check()
+        self.check()
+        s = self.slot("radio")
+        self.assertEqual((s["auto_hidden"], s["auto_reason"]), (1, "down"))
+        self.assertEqual(self.published()["radio"], {"hidden": True})
+
+    def test_clear_flash_never_shows_a_stream_with_no_passing_check(self):
+        # A channels.json change moves a held slot to a new stream (sync_slots), not yet checked.
+        self.fail_radio()
+        moved = [dict(SLOTS[0], url="https://www.youtube.com/watch?v=MOVEDMOVED1")] + SLOTS[1:]
+        core.sync_slots(self.con, moved, OVERRIDES)
+        self.assertEqual(self.slot("radio")["current_video"], "MOVEDMOVED1")
+        self.assertEqual(self.slot("radio")["auto_reason"], "flash fail")
+        line = core.clear_flash(self.con, "radio")
+        self.assertIn("not cleared", line)
+        self.assertNotIn(": cleared.", line)
+        s = self.slot("radio")
+        self.assertEqual((s["auto_hidden"], s["auto_reason"]), (1, "flash fail"))
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM events WHERE slot_key='radio' AND kind='flash_cleared'").fetchone()[0], 0)
+        # Its daily sample still runs (another stream than the one that failed); once it passes, the clear shows it.
+        self.api.world["MOVEDMOVED1"] = st("MOVEDMOVED1", "live")
+        self.check()
+        self.result([j for j in self.jobs() if j["video_id"] == "MOVEDMOVED1"][0], fps=0)
+        self.assertIn(": cleared.", core.clear_flash(self.con, "radio"))
+        self.assertEqual(self.slot("radio")["auto_hidden"], 0)
+
+    def test_clear_flash_holds_the_write_lock_so_a_fail_committed_beside_it_is_never_cleared_unseen(self):
+        # Verifier L6 (2026-11-16, its probe test_race.py): `slotmon submit` runs in another process without the run lock.
+        # radio is held for an old fail and now plays a stream that passed; a new fail on that stream is committed by a
+        # second connection right after clear_flash has read the stream.
+        self.fail_radio()
+        db.upsert_stream(self.con, "NEWNEWNEW01", flash_verdict="pass", flash_max=2, flash_at=time.time(), height=1080)
+        self.con.execute("UPDATE slots SET current_video='NEWNEWNEW01' WHERE key='radio'")
+        self.con.commit()
+        time.sleep(0.01)
+        real, tried = db.stream, []
+
+        def submit_fail():
+            c = sqlite3.connect(os.path.join(self.tmp, "t.db"), timeout=0.2)
+            try:
+                c.execute("UPDATE streams SET flash_verdict='fail', rejected='flash fail' WHERE video_id='NEWNEWNEW01'")
+                c.execute("UPDATE slots SET auto_hidden=1, auto_reason='flash fail' WHERE key='radio'")
+                c.execute("INSERT INTO events(ts,slot_key,kind,video_id,detail) VALUES(?,?,?,?,?)", (time.time(), "radio", "flash_fail", "NEWNEWNEW01", "8/s"))
+                c.commit()
+                return True
+            except sqlite3.OperationalError:  # database is locked: clear_flash holds the write lock
+                return False
+            finally:
+                c.close()
+
+        def stream_then_submit(con, vid):
+            r = real(con, vid)
+            if not tried:
+                tried.append(submit_fail())
+            return r
+        with mock.patch.object(db, "stream", stream_then_submit):
+            line = core.clear_flash(self.con, "radio")
+        self.assertEqual(tried, [False], "the second connection could not write while clear_flash ran")
+        self.assertIn("is shown from this publish", line)  # it saw only the pass
+        # The submit, retried once the clear has committed, holds the slot again.
+        self.assertTrue(submit_fail())
+        core.hold_flash_fails(self.con)
+        s = self.slot("radio")
+        self.assertEqual((s["auto_hidden"], s["auto_reason"]), (1, "flash fail"))
+        self.assertTrue(core.owed_hold(self.con, "radio"))
+
+    def test_clear_flash_on_a_retired_slot_says_no_replacement_is_looked_for(self):
+        # Verifier L3: gta-vice-city's shape (retired, held, still on the stream that failed).
+        self.fail_radio()
+        ov = {"notice": "", "slots": dict(OVERRIDES["slots"], radio={"hidden": True, "kind": "unmanaged", "retired": "2026-11-15: flash fail"})}
+        core.sync_slots(self.con, SLOTS, ov)
+        line = core.clear_flash(self.con, "radio")
+        self.assertIn("no replacement is looked for", line)
+        self.assertNotIn("the next pass looks for a replacement", line)
+        self.assertEqual(self.slot("radio")["auto_hidden"], 1)
+
+    def test_a_candidate_queued_before_a_retirement_does_not_swap(self):
+        # Verifier Low 1 on f187ac2 (2026-11-15): react swapped a down slot's candidate without looking at its kind.
+        self.api.world["OLDOLDOLD01"] = st("OLDOLDOLD01", "ended")
+        self.api.world["NEWNEWNEW01"] = st("NEWNEWNEW01", "live", title="sleep lofi radio 24/7 relaxing", started=time.time() - 600)
+        self.live_ids["UClofi"] = ["NEWNEWNEW01"]
+        self.check()
+        cand = [j for j in self.jobs() if j["reason"] == "candidate"][0]
+        ov = {"notice": "", "slots": dict(OVERRIDES["slots"], radio={"hidden": True, "kind": "unmanaged", "retired": "2026-11-16: test"})}
+        core.sync_slots(self.con, SLOTS, ov)
+        self.result(cand)
+        self.assertEqual(self.slot("radio")["current_video"], "OLDOLDOLD01")
+        self.assertNotIn(("insert", "PLradio", "NEWNEWNEW01"), self.api.calls)
 
 
 class FollowTitleTests(Base):

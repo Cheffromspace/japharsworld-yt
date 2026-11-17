@@ -65,8 +65,8 @@ const PAYER_MS = 12 * 3600_000; // a payer no rung has needed for this long is l
 export class Adaptive {
   constructor({ playback, pacer, fetcher = fetch, log = () => {}, onEvent = () => {}, lower = '720p', upper = '1080p',
     holdMs = 1000, maxUpperMb = 1500, directSeconds = 10, now = () => Date.now(), base = 'https://yt.japharsworld.com/hls', switching = true,
-    start = null, startSeconds = 10, startMid = false, startStepSeconds = 30, androidNoAv1 = false, stateFile = null }) {
-    Object.assign(this, { playback, pacer, fetch: fetcher, log, onEvent, lower, upper, holdMs, maxUpperMb, directSeconds, now, base, switching, start, startSeconds, startMid, androidNoAv1 });
+    start = null, startSeconds = 10, startMid = false, startStepSeconds = 30, androidNoAv1 = false, stateFile = null, mp4CodecMs = 3000 }) {
+    Object.assign(this, { playback, pacer, fetch: fetcher, log, onEvent, lower, upper, holdMs, maxUpperMb, directSeconds, now, base, switching, start, startSeconds, startMid, androidNoAv1, mp4CodecMs });
     this.startStepSeconds = startStepSeconds;
     this.byJob = new WeakMap(); // build job → its adaptive session
     // A plain-playlist session apart: on a shared 720p HLS build, a Quest's single session reused a PC's adaptive one
@@ -379,11 +379,56 @@ export class Adaptive {
   // Tunelio's builds sometimes are (Everything-is-OK #101), so an Android play of one goes home instead (server.js).
   // Only the playlist's head is read for the EXT-X-MAP line (2026-10-23, Quest: a fresh 1080p HLS playlist took over
   // 15 s to arrive whole, and the play waited for it), and concurrent asks for the same build share one read.
-  codec(job) {
+  // A progressive build (an mp4, format 'progressive') is read from the file's own head instead (#mp4Codec).
+  // timeoutMs: the mp4 read's limit for this ask (Everything-is-OK#749: the Quest's player, held up to 90 s, waits longer
+  // than a resolver). A read already in flight is shared whatever its limit. After the read, job.codec still undefined
+  // means it failed (server.js then doesn't pin the answer, so the next ask reads again).
+  codec(job, { timeoutMs } = {}) {
     if (!job || job.state !== 'ready') return Promise.resolve(null);
     if (job.codec !== undefined) return Promise.resolve(job.codec);
-    job.codecRead ??= this.#readCodec(job).finally(() => { job.codecRead = null; });
+    job.codecRead ??= (job.format === 'progressive' ? this.#mp4Codec(job, timeoutMs ?? this.mp4CodecMs) : this.#readCodec(job)).finally(() => { job.codecRead = null; });
     return job.codecRead;
+  }
+
+  // The video codec of a progressive mp4 build from the sample entry in its moov box (Everything-is-OK#741): a PC alone
+  // with a video got Tunelio's AV1 1080p mp4 and never showed a frame (staging 2026-11-13). Tunelio's mp4s put moov first
+  // (observed 2026-11-13: ftyp at byte 4, moov at 36, stsd at 415, the av01 entry at 431), so the first 64 KB hold it.
+  // Matched only after "stsd": ftyp's compatible brands can name avc1 or av01 whatever the track is. Read as a stream
+  // and cancelled at 64 KB, in case Range is ignored. A file with moov at its end, or no stsd in the head, is null and
+  // kept (the file doesn't change); a failed read is null and not kept, so the next play asks again. Short timeout: a
+  // player is held while this reads, and unknown keeps the answer as before.
+  async #mp4Codec(job, timeoutMs = this.mp4CodecMs) {
+    const t0 = Date.now();
+    try {
+      const res = await this.fetch(job.url, { headers: { range: 'bytes=0-65535' }, signal: AbortSignal.timeout(timeoutMs) });
+      if (res.status !== 200 && res.status !== 206) {
+        try { await res.body?.cancel(); } catch { /* ignore */ }
+        this.log({ event: 'adaptive_codec_error', id: job.id, quality: job.quality, status: res.status, ms: Date.now() - t0 });
+        return null; // not kept: the next play asks again
+      }
+      const chunks = [];
+      let size = 0;
+      const reader = res.body?.getReader?.();
+      if (!reader) { const b = Buffer.from(await res.arrayBuffer()); chunks.push(b); size = b.length; }
+      else {
+        while (size < 65536) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          chunks.push(Buffer.from(value)); size += value.length;
+        }
+        try { await reader.cancel(); } catch { /* ignore */ }
+      }
+      const head = Buffer.concat(chunks).subarray(0, 65536).toString('latin1');
+      const at = head.indexOf('stsd');
+      const box = at < 0 ? null : head.slice(at).match(/av01|avc[13]|hev1|hvc1|vp09/)?.[0];
+      job.codec = box ? { av01: 'av1', avc1: 'h264', avc3: 'h264', hev1: 'hevc', hvc1: 'hevc', vp09: 'vp9' }[box] : null;
+      // Once per build (it is cached). found null: no stsd in the head, so the answer stays as before (#741).
+      this.log({ event: 'mp4_codec', id: job.id, quality: job.quality, found: job.codec, ms: Date.now() - t0 });
+      return job.codec;
+    } catch (err) {
+      this.log({ event: 'adaptive_codec_error', id: job.id, quality: job.quality, message: String(err?.message ?? err).slice(0, 200) });
+      return null;
+    }
   }
 
   // The init segment's URL from the first lines of a build's playlist (absolute), or null.

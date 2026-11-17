@@ -9,7 +9,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
-import { METRICS, MS_BUCKETS, S_BUCKETS, REPORT_WHO, REPORT_KINDS, dayOf } from '../src/metrics.js';
+import { METRICS, MS_BUCKETS, S_BUCKETS, REPORT_WHO, REPORT_KINDS, OUTCOME_WHO, OUTCOME_PLATFORMS, OUTCOME_FRAME_SECONDS, dayOf } from '../src/metrics.js';
 import { REFUSAL_CLASSES as FLASH_REFUSALS } from '../src/refusal.js';
 
 // Daily bucket counters exported as Prometheus histograms (le in seconds), so histogram_quantile works.
@@ -57,7 +57,7 @@ export function metricsDbSeries(db, o, now = Date.now()) {
   const hist = {};
   for (const r of totals) {
     if (HISTOGRAMS[r.metric]) { (hist[r.metric] ??= {})[r.key] = r.v; continue; }
-    if (METRICS[r.metric]?.[0] !== 'daily') continue;
+    if (METRICS[r.metric]?.[0] !== 'daily' || r.metric === 'play_outcome') continue; // play_outcome has its own labelled series below
     o.add('eiok_events_total', 'counter', 'Usage counts from the search service, all days summed (claude/metrics.md).', { metric: r.metric, key: r.key }, r.v);
   }
   for (const [metric, [name, bounds, perSecond]] of Object.entries(HISTOGRAMS)) {
@@ -86,10 +86,39 @@ export function metricsDbSeries(db, o, now = Date.now()) {
       o.add('eiok_events_total', 'counter', 'Usage counts from the search service, all days summed (claude/metrics.md).', { metric: 'cc_unavailable', key }, 0);
     }
   }
+  // Unhandled promise rejections the service survived (src/server.js catchRejections), from 0 for the same reason. No
+  // alert rule reads it yet.
+  if (!totals.some((r) => r.metric === 'unhandled_rejection')) {
+    o.add('eiok_events_total', 'counter', 'Usage counts from the search service, all days summed (claude/metrics.md).', { metric: 'unhandled_rejection', key: '' }, 0);
+  }
   // The world's video reports (world #353), by who and kind, every pair from 0 so increase() sees the first report.
   const reports = Object.fromEntries(totals.filter((r) => r.metric === 'video_report').map((r) => [r.key, r.v]));
   for (const who of REPORT_WHO) for (const kind of REPORT_KINDS) {
     o.add('eiok_video_report_total', 'counter', 'Video reports from the world (Tester tab problems, Resync presses), all days summed.', { who, kind }, reports[`${who}:${kind}`] ?? 0);
+  }
+  // The speed probe's paced read of its own link (src/probe.js, Everything-is-OK#361), from 0 so increase() sees the first.
+  const drop = Object.fromEntries(totals.filter((r) => r.metric === 'tunelio_drop').map((r) => [r.key, r.v]));
+  o.add('eiok_tunelio_probe_read_minutes_total', 'counter', 'Minutes the probe read a Tunelio link at playback speed, all days summed.', {}, drop.minutes ?? 0);
+  o.add('eiok_tunelio_probe_cuts_total', 'counter', 'Connections cut during that read, all days summed.', {}, drop.cut ?? 0);
+  o.add('eiok_tunelio_probe_reopen_fail_total', 'counter', 'Reopens at the byte reached that failed (status, wrong offset, or no first byte in 10 s), all days summed.', {}, drop.reopen_fail ?? 0);
+  o.add('eiok_tunelio_probe_open_fail_total', 'counter', 'Reads that never started: all three first opens failed the same way, all days summed.', {}, drop.open_fail ?? 0);
+  // Play outcomes (world #274): labelled counts, only those seen (448 possible; a count's very first play doesn't show in
+  // increase()), and a first-frame histogram per who and platform, from 0.
+  const outcomes = totals.filter((r) => r.metric === 'play_outcome' && r.key !== 'other').map((r) => [...r.key.split(':'), r.v]);
+  for (const [who, platform, plan, outcome, v] of outcomes) {
+    o.add('eiok_play_outcome_total', 'counter', 'Play outcomes from the world, all days summed: first frame within f<n> seconds, or how it failed.', { who, platform, plan, outcome }, v);
+  }
+  for (const who of OUTCOME_WHO) for (const platform of OUTCOME_PLATFORMS) {
+    const frames = (name) => outcomes.filter((x) => x[0] === who && x[1] === platform && x[3] === name).reduce((sum, x) => sum + x[4], 0);
+    const help = 'Seconds from a video starting to load to its first frame, from the world (world #274).';
+    let seen = 0;
+    for (const s of OUTCOME_FRAME_SECONDS) {
+      seen += frames(`f${s}`);
+      o.add('eiok_play_first_frame_seconds_bucket', 'histogram', help, { who, platform, le: String(s) }, seen);
+    }
+    seen += frames('fmax');
+    o.add('eiok_play_first_frame_seconds_bucket', 'histogram', help, { who, platform, le: '+Inf' }, seen);
+    o.add('eiok_play_first_frame_seconds_count', 'histogram', help, { who, platform }, seen);
   }
   const credits = db.prepare("SELECT value, at FROM gauges WHERE metric = 'credits_remaining' ORDER BY day DESC, at DESC LIMIT 1").get();
   if (credits) o.add('eiok_credits_remaining', 'gauge', 'Tunelio credits left (search service, last seen).', {}, credits.value);
@@ -181,6 +210,15 @@ export function healthSeries(h, o) {
   o.add('eiok_youtube_api_units_today', 'gauge', 'YouTube Data API units the search service used today.', {}, h.apiUnitsToday);
 }
 
+// The daily S3 backup's own record (metrics/backup.js, Everything-is-OK#585): when a day last landed. Left out until the
+// first backup, so Grafana's eiok-backup-missing stays quiet where backups are off.
+export function backupSeries(path, o) {
+  let s;
+  try { s = JSON.parse(readFileSync(path, 'utf8')); } catch { return; }
+  if (!Number.isFinite(s?.lastSuccessMs)) return;
+  o.add('eiok_backup_last_success_timestamp_seconds', 'gauge', 'When the daily S3 backup last uploaded a day (metrics/backup.js).', {}, Math.floor(s.lastSuccessMs / 1000));
+}
+
 // The cap the running service enforces, asked of the service itself, so it follows HOME_DAILY_BUILDS across an env edit
 // and restart with no change here and no restart of the service to start reporting it (the env file as the exporter
 // loaded it would go stale: an edit restarts only the search service). Only this number leaves the answer.
@@ -200,15 +238,6 @@ export function serviceMemorySeries(dir, o) {
   o.add('eiok_service_memory_limit_bytes', 'gauge', 'The search service\'s memory.max (MemoryMax), bytes.', {}, read('memory.max').match(/^\d+/)?.[0]);
 }
 
-// The daily S3 backup's own record (metrics/backup.js, Everything-is-OK#585): when a day last landed. Left out until the
-// first backup, so Grafana's eiok-backup-missing stays quiet where backups are off.
-export function backupSeries(path, o) {
-  let s;
-  try { s = JSON.parse(readFileSync(path, 'utf8')); } catch { return; }
-  if (!Number.isFinite(s?.lastSuccessMs)) return;
-  o.add('eiok_backup_last_success_timestamp_seconds', 'gauge', 'When the daily S3 backup last uploaded a day (metrics/backup.js).', {}, Math.floor(s.lastSuccessMs / 1000));
-}
-
 export async function render({ metricsDb, monitorDb, healthUrl, opsUrl, statsToken, cgroupDir, backupState, now = Date.now(), fetchImpl = fetch }) {
   const o = new Out();
   for (const [name, path, fn] of [['metrics', metricsDb, metricsDbSeries], ['monitor', monitorDb, monitorDbSeries]]) {
@@ -226,6 +255,7 @@ export async function render({ metricsDb, monitorDb, healthUrl, opsUrl, statsTok
     try { const r = await fetchImpl(healthUrl, { signal: AbortSignal.timeout(3000) }); health = r.ok ? await r.json() : null; } catch { health = null; }
   }
   healthSeries(health, o);
+  if (backupState) backupSeries(backupState, o);
   if (health?.ok && opsUrl && statsToken) {
     try {
       const r = await fetchImpl(opsUrl, { headers: { authorization: `Bearer ${statsToken}` }, signal: AbortSignal.timeout(3000) });
@@ -233,7 +263,6 @@ export async function render({ metricsDb, monitorDb, healthUrl, opsUrl, statsTok
     } catch { /* left out; eiok-alert-inputs-missing fires if it stays out */ }
   }
   if (cgroupDir) serviceMemorySeries(cgroupDir, o);
-  if (backupState) backupSeries(backupState, o);
   return o.text();
 }
 
@@ -244,10 +273,10 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     metricsDb: e.METRICS_DB ?? '/var/lib/japharsworld-yt/metrics.db',
     monitorDb: e.MONITOR_DB ?? '/var/lib/japharsworld-yt-monitor/monitor.db',
     healthUrl: `http://127.0.0.1:${e.PORT ?? 8790}/healthz`,
+    backupState: e.BACKUP_STATE ?? '/var/lib/japharsworld-yt/backup-state.json',
     opsUrl: `http://127.0.0.1:${e.PORT ?? 8790}/ops/state`,
     statsToken: e.STATS_TOKEN ?? '',
     cgroupDir: '/sys/fs/cgroup/system.slice/japharsworld-yt.service',
-    backupState: e.BACKUP_STATE ?? '/var/lib/japharsworld-yt/backup-state.json',
   };
   http.createServer(async (req, res) => {
     if (req.url !== '/metrics') { res.writeHead(404).end(); return; }

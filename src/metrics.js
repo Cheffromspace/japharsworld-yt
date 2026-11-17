@@ -77,6 +77,16 @@ const none = (k) => k === '';
 // world's stall watchdog reloading. Fixed sets, baked into the world's URLs.
 export const REPORT_WHO = ['visitor', 'tester'];
 export const REPORT_KINDS = ['frozen', 'stutter', 'sync', 'sound', 'load', 'quality', 'resync', 'autoresync'];
+// A play's outcome from the world (world #274): /v1/o/<who>/<platform>/<plan>/<outcome>. Baked URLs, same order as the world's
+// EverythingIsOKYouTubeBake.Outcome*. f<n>: first frame within n seconds of the load starting (fmax: later). e*: VizVid gave up,
+// by its error class. timeout: nothing after the world's cap. left: the room moved on first. after: gave up after a first frame.
+export const OUTCOME_WHO = REPORT_WHO;
+export const OUTCOME_PLATFORMS = ['pc', 'android'];
+export const OUTCOME_PLANS = ['home', 'adaptive', 'lower', 'direct', 'channel', 'link', 'unknown'];
+export const OUTCOME_FRAME_SECONDS = [5, 10, 20, 30, 45, 60, 90];
+export const OUTCOME_FRAMES = [...OUTCOME_FRAME_SECONDS.map((s) => `f${s}`), 'fmax'];
+export const OUTCOME_FAILS = ['einvalid', 'edenied', 'erate', 'eplayer', 'eunknown', 'timeout', 'after'];
+export const OUTCOMES = [...OUTCOME_FRAMES, ...OUTCOME_FAILS, 'left'];
 
 // metric → [table, key check]
 export const METRICS = {
@@ -107,8 +117,8 @@ export const METRICS = {
   // Playback plans (src/adaptive.js): which plan each video got, masters served, 1080p upgrades started / served /
   // failed, plays the pacer kept at 720p, resolvers sent on to the player. plan_start: adaptive from a 360p first rung.
   adaptive: ['daily', oneOf('plan_lower', 'plan_direct', 'plan_adaptive', 'plan_start', 'master', 'upgrade', 'upgrade_served', 'upgrade_failed', 'paced_off', 'defer', 'android_progressive', 'hls_ticket', 'quest_mp4', 'quest_skip',
-    'reload_before_upgrade', 'reload_after_upgrade', 'android_av1', 'android_av1_rung', 'start_one_step', 'start_mid')], // reloads: the freeze proxy (src/adaptive.js master)
-  play_fallback: ['daily', oneOf('disabled', 'paused', 'tunelio_failed', 'too_long', 'build_failed', 'build_timeout')],
+    'reload_before_upgrade', 'reload_after_upgrade', 'android_av1', 'android_av1_rung', 'pc_av1', 'quest_av1', 'start_one_step', 'start_mid')], // reloads: the freeze proxy (src/adaptive.js master)
+  play_fallback: ['daily', oneOf('disabled', 'paused', 'tunelio_failed', 'too_long', 'build_failed', 'build_timeout', 'av1')],
   play_length: ['daily', oneOf('live', 'unknown', 'lt10m', 'lt1h', 'lt3h', 'longer')],
   tunelio_create_ms: ['daily', isBucket],
   // Playback latency (claude/play-latency.md): who asks for tickets, how long they were held, Tunelio build times.
@@ -141,9 +151,13 @@ export const METRICS = {
   cc_outcome: ['daily', oneOf('tracks', 'none')],
   cc_words: ['daily', oneOf('real', 'estimated')],         // word timing in a served track: YouTube's, or spread by character
   credits: ['daily', oneOf('playback', 'captions', 'probe', 'test')],
+  tunelio_drop: ['daily', oneOf('minutes', 'cut', 'reopen_ok', 'reopen_fail', 'open_fail')], // the probe's paced read of its own link (src/probe.js, #361): a random public video, no visitor data
   // YouTube refused a lookup (src/refusal.js): '<where>:<class>', the class only, never the message, query or video.
   yt_refusal: ['daily', oneOf(...REFUSAL_WHERE.flatMap((w) => REFUSAL_CLASSES.map((c) => `${w}:${c}`)))],
   video_report: ['daily', oneOf(...REPORT_WHO.flatMap((w) => REPORT_KINDS.map((k) => `${w}:${k}`)))], // '<who>:<kind>'
+  // '<who>:<platform>:<plan>:<outcome>', fixed sets, no shard, ticket or video (world #274).
+  play_outcome: ['daily', oneOf(...OUTCOME_WHO.flatMap((w) => OUTCOME_PLATFORMS.flatMap((p) => OUTCOME_PLANS.flatMap((l) => OUTCOMES.map((o) => `${w}:${p}:${l}:${o}`)))))],
+  unhandled_rejection: ['daily', none], // a promise rejected with nobody waiting on it; the service carried on (src/server.js catchRejections)
   join: ['daily', none],
   join_lang: ['daily', isLang],
   credits_remaining: ['gauge', none],

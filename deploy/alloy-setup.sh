@@ -3,11 +3,12 @@
 # (once it is installed, update.sh and relay-update.sh re-run it when deploy/alloy* changes).
 #   bash deploy/alloy-setup.sh linode      on the Linode   (/opt/japharsworld-yt)
 #   bash deploy/alloy-setup.sh optiplex    on the Optiplex (/opt/japharsworld-yt-relay)
+#   bash deploy/alloy-setup.sh staging     on the staging VPS (#160; update.sh passes DEPLOY_ALLOY)
 # Credentials go in /etc/japharsworld-yt-alloy.env (root only). Alloy stays stopped until they are filled in.
 set -euo pipefail
 main() {
 ROLE=${1:-}
-case "$ROLE" in linode|optiplex) ;; *) echo "usage: alloy-setup.sh linode|optiplex"; exit 2 ;; esac
+case "$ROLE" in linode|optiplex|staging) ;; *) echo "usage: alloy-setup.sh linode|optiplex|staging"; exit 2 ;; esac
 [ "$(id -u)" = 0 ] || { echo "Run as root."; exit 1; }
 HERE=$(cd "$(dirname "$0")" && pwd)
 ENVF=/etc/japharsworld-yt-alloy.env

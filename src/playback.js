@@ -70,6 +70,7 @@ export class Playback {
     // VIDEO_MAX_HOURS those opened in Media Foundation, 8 h to 13.2 h (2026-10-31; not watched in a client). Only far longer
     // ones were seen failing (a 48 h video's and some 100 h ones' itag 18 links answered 500), and the cap stops those first.
     this.tooLongIds = new Map();
+    this.forcedRestricted = new Map(); // the test plans among them (forceRestricted): videoId → { until, real: Tunelio's verdict it covers or null, set: the restrictedIds value it wrote }
     this.alert = alert;
     this.log = log;
     // Spend limits (src/spend.js, Everything-is-OK#478): asked before every new paid /create. null: none.
@@ -179,7 +180,36 @@ export class Playback {
     return Boolean(until && this.now() < until);
   }
 
+  // A test plan (/ops/plan mode restricted): `id` answers as if Tunelio had refused it as age-restricted, for `minutes`,
+  // so the world's restricted message can be tested without an age-gated video (#305). 0 clears it. Memory only.
+  // Only the plan's own verdict is cleared (Everything-is-OK#783, review 2026-11-15): every /ops/plan calls this with 0,
+  // and it used to delete Tunelio's real age-restricted verdict too, so that video's next play made another /create,
+  // refused again (refunded in the spend gate; Tunelio charges nothing for a failed call, as src/server.js counts it).
+  // A plan over a real verdict keeps the later of the two and gives the real one back when cleared, unless a real
+  // refusal has set a new one meanwhile.
+  forceRestricted(id, minutes) {
+    const plan = this.forcedRestricted.get(id);
+    if (plan) {
+      this.forcedRestricted.delete(id);
+      if (this.restrictedIds.get(id) === plan.set) {
+        if (plan.real) this.restrictedIds.set(id, plan.real); else this.restrictedIds.delete(id);
+      }
+    }
+    if (!minutes) return;
+    const until = this.now() + minutes * 60_000;
+    const real = this.restrictedIds.get(id) ?? null;
+    const set = Math.max(until, real ?? 0);
+    this.forcedRestricted.set(id, { until, real, set });
+    this.restrictedIds.set(id, set);
+  }
+
+  forcedRestrictions() {
+    for (const [id, { until }] of this.forcedRestricted) if (until <= this.now()) this.forcedRestricted.delete(id);
+    return [...this.forcedRestricted].map(([id, { until }]) => ({ id, mode: 'restricted', until: new Date(until).toISOString() }));
+  }
+
   // Static answers that need no build: live streams, Tunelio off or paused.
+
   #direct(data) {
     const id = data.id;
     if (this.restricted(id)) return { location: null, via: 'restricted', reason: 'restricted' };

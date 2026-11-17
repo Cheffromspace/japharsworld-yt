@@ -5,8 +5,10 @@
 // Settings (environment, /etc/japharsworld-yt-relay.env): RELAY_URL, RELAY_TOKEN, WORKER_NAME, RELAY_POLLS (3),
 // YTDLP (found in the flash-check venv or PATH when unset), YTDLP_ARGS (--js-runtimes node), FFMPEG (ffmpeg),
 // RELAY_MEDIA (on; off = never announce media jobs), RELAY_MEDIA_MAX (4 streams at once; owner, 2026-10-25: four
-// 1080p plays need ~1.1 MB/s of the ~12 MB/s upload), RELAY_CACHE_GB (40; 0 = no cache of finished streams, relay/cache.js) in RELAY_CACHE_DIR (else systemd's CACHE_DIRECTORY), YT_BACKOFF_MINUTES (10)
-// and YT_BACKOFF_MAX_MINUTES (120): how long a kind of job pauses after YouTube refuses it (see refused() below).
+// 1080p plays need ~1.1 MB/s of the ~12 MB/s upload), RELAY_CACHE_GB (40; 440 on the Optiplex's 492 GB cache volume; 0 = no cache of finished streams, relay/cache.js) in RELAY_CACHE_DIR (else systemd's CACHE_DIRECTORY), YT_BACKOFF_MINUTES (10)
+// and YT_BACKOFF_MAX_MINUTES (120): how long a kind of job pauses after YouTube refuses it (see refused() below),
+// RELAY_SPLIT_BY_TIME (off; on = media segments cut on time, not keyframes, relay/media.js), RELAY_CACHE_KEEP_FORMAT_2
+// (off; on = cached streams of format 2 are served instead of dropped, production's worker only, relay/cache.js, #784).
 // YT_COOKIES (Everything-is-OK#575; default cookies.txt in systemd's STATE_DIRECTORY, none without one): a throwaway
 // account's cookies, put there by relay/cookies-install.js. A bot or PO-token refusal is retried once with them
 // (relay/cookies.js); polls carry their state word (none, ok, dead) so the server can ask the owner for a new sign-in.
@@ -19,7 +21,7 @@ import { captionsJob, findYtdlp, ytdlpArgs, runWarn } from './captions.js';
 import { run as runPlain } from '../src/captions.js';
 import { CookieJar } from './cookies.js';
 import { mediaJob } from './media.js';
-import { MediaCache } from './cache.js';
+import { MediaCache, keepFormatsFor } from './cache.js';
 import { txBytes as defaultTxBytes } from '../src/net.js';
 import { refusalClass } from '../src/refusal.js';
 
@@ -31,7 +33,7 @@ export const PAUSE_KINDS = ['search', 'captions', 'media'];
 const pauseKind = (kind) => (kind === 'more' ? 'search' : kind);
 
 export function createWorker({ url, token, name = 'worker', version = '', polls = 3, youtube = defaultYoutube, reset = resetClient,
-  txBytes = defaultTxBytes, captions = null, ytdlp = null, ytdlpExtraArgs = ytdlpArgs(), media = null, caps = [], mediaMax = 4, ffmpeg = 'ffmpeg', cache = null,
+  txBytes = defaultTxBytes, captions = null, ytdlp = null, ytdlpExtraArgs = ytdlpArgs(), media = null, caps = [], mediaMax = 4, ffmpeg = 'ffmpeg', cache = null, splitByTime = false,
   backoffMinutes = 10, backoffMaxMinutes = 120, jar = null, fetcher = fetch, log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o })), now = () => Date.now(),
   sleep = (ms, signal) => new Promise((r) => { const t = setTimeout(r, ms); signal?.addEventListener('abort', () => { clearTimeout(t); r(); }); }) }) {
   // Caption jobs: an injected function (tests) or yt-dlp, found once on first use.
@@ -46,15 +48,19 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
   let streaming = 0;
   const runMedia = media ?? (async (job) => {
     ytdlpPath ??= await findYtdlp();
-    const upload = async (file, body, type, { cached = false } = {}) => {
+    // The segment a player is waiting for, from the server's answers (x-media-want, Everything-is-OK#367): every
+    // stored upload's answer says it, or nothing once it is there.
+    let want = null;
+    const upload = async (file, body, type, { cached = false, failed = false } = {}) => {
       const res = await fetcher(`${base}/relay/media/${job.token}/${file}`, { method: 'PUT',
-        headers: { ...headers, 'content-type': type, ...(cached ? { 'x-media-cached': '1' } : {}) }, body,
+        headers: { ...headers, 'content-type': type, ...(cached ? { 'x-media-cached': '1' } : {}), ...(failed ? { 'x-media-failed': '1' } : {}) }, body,
         signal: AbortSignal.timeout(60_000) });
       try { await res.body?.cancel(); } catch { /* ignore */ }
+      if (res.status === 204) { const w = res.headers.get('x-media-want'); want = /^\d{1,5}$/.test(w ?? '') ? Number(w) : null; }
       return res.status;
     };
-    const attempt = () => mediaJob(job, { ytdlp: ytdlpPath, ffmpeg, extraArgs: ytdlpExtraArgs, upload, cache, log: (o) => log({ ...o, quality: job.quality }),
-      ...(jar ? { runner: jar.wrap(runPlain) } : {}) });
+    const attempt = () => mediaJob(job, { ytdlp: ytdlpPath, ffmpeg, extraArgs: ytdlpExtraArgs, upload, wanted: () => want, cache, splitByTime,
+      log: (o) => log({ ...o, quality: job.quality }), ...(jar ? { runner: jar.wrap(runPlain) } : {}) });
     // ffmpeg that can't open the streams: once more from a fresh yt-dlp resolve (2026-10-23, 1 of 8 test videos: its
     // fresh stream URLs answered 403 for a minute or two).
     return attempt().catch((err) => (/ffmpeg exited/.test(err?.message ?? '') ? attempt() : Promise.reject(err)));
@@ -200,7 +206,7 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
 
   return {
     handle, conts, paused, get streaming() { return streaming; },
-    start() { log({ event: 'start', worker: name, version, relay: base, polls, mediaMax, cacheGb: cache?.maxGb ?? 0, cacheDir: cache?.dir }); return Promise.all(Array.from({ length: polls }, (_, i) => loop(i))); },
+    start() { log({ event: 'start', worker: name, version, relay: base, polls, mediaMax, cacheGb: cache?.maxGb ?? 0, cacheDir: cache?.dir, cacheKeepFormats: cache?.keepFormats, splitByTime }); return Promise.all(Array.from({ length: polls }, (_, i) => loop(i))); },
     stop() { stopping.abort(); },
   };
 }
@@ -212,7 +218,7 @@ function gitVersion() {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const { RELAY_URL, RELAY_TOKEN, WORKER_NAME = 'worker', RELAY_POLLS = '3', FFMPEG = 'ffmpeg', RELAY_MEDIA = 'on', RELAY_MEDIA_MAX = '4',
-    RELAY_CACHE_GB = '40', RELAY_CACHE_DIR = process.env.CACHE_DIRECTORY,
+    RELAY_CACHE_GB = '40', RELAY_CACHE_DIR = process.env.CACHE_DIRECTORY, RELAY_SPLIT_BY_TIME = 'off', RELAY_CACHE_KEEP_FORMAT_2 = 'off',
     YT_BACKOFF_MINUTES = '10', YT_BACKOFF_MAX_MINUTES = '120',
     YT_COOKIES = process.env.STATE_DIRECTORY ? join(process.env.STATE_DIRECTORY.split(':')[0], 'cookies.txt') : '' } = process.env;
   if (!RELAY_URL || !RELAY_TOKEN) { console.error('Set RELAY_URL and RELAY_TOKEN.'); process.exit(2); }
@@ -220,14 +226,20 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   let hasFfmpeg = false;
   try { execFileSync(FFMPEG, ['-version'], { stdio: 'ignore' }); hasFfmpeg = true; } catch { /* no ffmpeg */ }
   const caps = RELAY_MEDIA !== 'off' && hasFfmpeg ? ['media'] : [];
+  // Only the exact lower-case on keeps format 2 copies; anything else means delete them on lookup, so a typo (ON, yes, a
+  // stray quote) is said at start, not found later in the hit rate (verifier 2026-11-15, L3/L4; #784).
+  if (!['on', 'off', ''].includes(RELAY_CACHE_KEEP_FORMAT_2)) {
+    console.log(JSON.stringify({ at: new Date().toISOString(), event: 'setting_ignored', name: 'RELAY_CACHE_KEEP_FORMAT_2',
+      value: String(RELAY_CACHE_KEEP_FORMAT_2).slice(0, 20), means: 'off: format 2 cache copies are deleted when looked up' }));
+  }
   let cache = null;
   if (caps.length && Number(RELAY_CACHE_GB) > 0 && RELAY_CACHE_DIR) {
     const log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
-    try { cache = new MediaCache({ dir: join(RELAY_CACHE_DIR, 'media'), maxGb: Number(RELAY_CACHE_GB), log }); }
+    try { cache = new MediaCache({ dir: join(RELAY_CACHE_DIR, 'media'), maxGb: Number(RELAY_CACHE_GB), log, keepFormats: keepFormatsFor(RELAY_CACHE_KEEP_FORMAT_2) }); }
     catch (err) { log({ event: 'media_cache_off', message: String(err?.message ?? err).slice(0, 200) }); }
   }
   const worker = createWorker({ url: RELAY_URL, token: RELAY_TOKEN, name: WORKER_NAME, version: gitVersion(), polls: Number(RELAY_POLLS) || 3,
-    caps, ffmpeg: FFMPEG, mediaMax: Number(RELAY_MEDIA_MAX) || 2, cache,
+    caps, ffmpeg: FFMPEG, mediaMax: Number(RELAY_MEDIA_MAX) || 2, cache, splitByTime: RELAY_SPLIT_BY_TIME === 'on',
     // Cookies only where a cookie path is set (production's unit has a StateDirectory; staging's worker has none).
     jar: YT_COOKIES ? new CookieJar({ path: YT_COOKIES, log: (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o })) }) : null,
     backoffMinutes: Number(YT_BACKOFF_MINUTES) || 10, backoffMaxMinutes: Number(YT_BACKOFF_MAX_MINUTES) || 120 });

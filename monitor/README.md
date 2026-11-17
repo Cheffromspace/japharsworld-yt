@@ -24,7 +24,8 @@ Jobs (resolution + flash) are queued for every new stream, for each candidate re
 The Optiplex worker claims them over SSH (`slotmon claim --runner optiplex`), runs them and sends the results back (`slotmon submit`).
 A flash fail is sent at once and the rest of the run carries on; a claim never reported is handed out again after 1 h.
 Its key in the Linode's `/root/.ssh/authorized_keys` is `restrict,command="/usr/local/bin/slotmon-remote"`, so it can do nothing else.
-A flash fail hides the slot at once, empties its playlist so nothing plays, and pings Discord (urgent).
+A flash fail hides the slot at once, empties its playlist so nothing plays, and pings Discord (urgent). The hide holds
+until a person clears it (below, "A slot the monitor hid").
 While no worker is running, replacements wait hidden, and the daily summary says the checks are stalled.
 
 Rules for replacements: live; no ASMR or Yellow Brick Cinema in the title/channel; the same 24/7 stream restarted (same
@@ -94,6 +95,7 @@ Log: `monitor/data/worker.log`. Remove the entry with `schtasks /Delete /TN "Eve
 slotmon status                 # every slot: stream, height, flash peak, last status, hidden by the monitor?
 slotmon report --days 14       # baseline: uptime per slot, restarts, resolution changes, flash results
 slotmon queue <videoId> --slot <key>   # flash-check a stream by hand
+slotmon clear-flash <key>      # a person clears a slot's flash-fail hide, then it publishes (as root on the Linode)
 slotmon publish --thumbs       # publish now, with a fresh thumbnail sheet
 journalctl -u japharsworld-yt-monitor -n 50
 ```
@@ -131,8 +133,27 @@ journalctl -u japharsworld-yt-monitor -n 50
 - **Retiring a slot** (a stream down for days with no replacement; slot order is frozen, so never remove it): in `overrides.json`
   give it `"hidden": true, "kind": "unmanaged", "retired": "<date>: <reason>"`. It leaves the checks, the replacement search,
   the daily summary, the mass-outage count and Grafana; drop the entry to bring it back. Five retired 2026-10-29 (owner).
-- **A slot the monitor hid** comes back by itself when its stream is live again (outages), or after a swap. A flash-fail hide
-  stays until you clear it: `sqlite3 /var/lib/japharsworld-yt-monitor/monitor.db "UPDATE slots SET auto_hidden=0, auto_reason=NULL WHERE key='...'"`
-  (only once the stream is replaced or rechecked).
+- **A slot the monitor hid** comes back by itself when its stream is live again (outages), or after a swap.
+- **A flash-fail hide holds until a person clears it** (Everything-is-OK#776, 2026-11-16): through the stream ending, the
+  channel's next stream, the daily pass, a hand playlist edit and a restart. A held slot gets no replacement search and
+  no swap, so its playlist, emptied at the fail, stays empty. While it plays a stream other than the one that failed
+  (retroworld-ps1 from 2026-11-15) that stream is still sampled once a day, so there is a record to judge by. The record
+  of the hide is the `events` table: a `flash_fail` event with no later `flash_cleared` event. Every pass and every publish
+  puts the hide back if anything wrote over it, so an `UPDATE slots ...` by hand is undone within one pass. To clear it,
+  on the Linode as root: `slotmon clear-flash <key>`. It writes the `flash_cleared` event and publishes at once.
+  - If the slot still plays the stream that failed, or its stream is down, it stays hidden as an ordinary down slot: the
+    next pass looks for a replacement on the same channel, and one goes in after a single passing flash check (60 s; a
+    same-title restart is taken at any age). For more than one sample, queue the candidate yourself first
+    (`slotmon queue <videoId> --slot <key>`) and read `slotmon report`. The stream that failed never counts as up again.
+  - If it plays another stream, one that has passed a flash check (retroworld-ps1's from 2026-11-15), it is shown from
+    that publish, unless `overrides.json` hides it. A stream with no passing check yet (a `channels.json` change moved
+    the slot to it) is not cleared: queue it, wait for the result, then clear again (exit code 1 until then).
+  - A stream that once failed stays failed, even if a later sample by hand passes.
+  - A retired slot (kind `unmanaged`) stays hidden after the clear and no replacement is looked for, as for any retired
+    slot.
+  - `clear-flash` reads and writes in one write transaction, so it waits for a pass or a worker's submit that is writing
+    and never clears a fail committed beside it.
+  - `slotmon status` shows `AUTO-HIDDEN: flash fail`; `slotmon report` lists the flash rows and the `flash_fail`,
+    `flash_hold` (a hide put back), `swap_held` and `flash_cleared` events. A retired slot keeps its hold too.
 
 Tests: `cd monitor && python -m unittest test_slotmon`.

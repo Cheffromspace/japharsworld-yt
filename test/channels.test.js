@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -10,19 +10,24 @@ import { createApp } from '../src/server.js';
 import { Store } from '../src/store.js';
 import { config as base } from '../src/config.js';
 
-// A monitor.db with the slots table's columns the lookup reads (monitor/slotmon).
-function monitorDb(t) {
+const fetch2 = (url) => fetch(url, { redirect: 'manual', headers: { 'user-agent': 'AVProMobileVideo/2026.3.3p2 (Linux;Android 14) ExoPlayer' } });
+
+// A monitor.db made by the monitor's own schema (monitor/slotmon/db.py SCHEMA, the text slotmon runs), so the lookup is
+// tested against the columns production has, not a hand-written table (#776, coordinator 2026-11-16).
+const SCHEMA = /SCHEMA = """([\s\S]*?)"""/.exec(readFileSync(new URL('../monitor/slotmon/db.py', import.meta.url), 'utf8'))[1];
+function monitorDb(t, rows = []) {
   const dir = mkdtempSync(join(tmpdir(), 'ch-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, 'monitor.db');
   const db = new DatabaseSync(path);
-  db.exec('CREATE TABLE slots (key TEXT PRIMARY KEY, idx INTEGER, kind TEXT, current_video TEXT, baked_video TEXT, auto_hidden INTEGER DEFAULT 0)');
-  const put = db.prepare('INSERT INTO slots (key, idx, kind, current_video, baked_video, auto_hidden) VALUES (?, ?, ?, ?, ?, ?)');
-  put.run('lofi-sleep-chill', 1, 'live', 'JD-kMIpDfnY', 'JD-kMIpDfnY', 0);
-  put.run('jack-oblivion', 2, 'live', 'iVTPoB2GelQ', '2f5CjnKt6oI', 1); // swapped, and hidden while down
-  put.run('pink-noise-black', 3, 'video', '2wgg7KtzTrU', '2wgg7KtzTrU', 0);
-  put.run('spare-01', 4, 'live', null, null, 0);
-  put.run('playlist-test', 5, 'removed', null, null, 0);
+  db.exec(SCHEMA);
+  const put = db.prepare('INSERT INTO slots (key, idx, kind, current_video, baked_video, baked_hidden, auto_hidden, auto_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+  put.run('lofi-sleep-chill', 1, 'live', 'JD-kMIpDfnY', 'JD-kMIpDfnY', 0, 0, null);
+  put.run('jack-oblivion', 2, 'live', 'iVTPoB2GelQ', '2f5CjnKt6oI', 0, 0, null); // swapped by the monitor
+  put.run('pink-noise-black', 3, 'video', '2wgg7KtzTrU', '2wgg7KtzTrU', 0, 0, null);
+  put.run('spare-01', 4, 'live', null, null, 1, 0, null);
+  put.run('playlist-test', 5, 'removed', null, null, 0, 0, null);
+  for (const r of rows) put.run(...r);
   db.close();
   return { path, db: () => new DatabaseSync(path) };
 }
@@ -46,7 +51,7 @@ test('channel slots: the current video for live and video slots; spares and remo
   assert.deepEqual(new ChannelSlots({ monitorDb: '/nope/monitor.db' }).lookup('lofi-sleep-chill'), { error: 'monitor_unreadable' });
 });
 
-test('channel slots with no monitor database (staging, world #376): the baked link; hidden, linkless and unknown slots as before', (t) => {
+test('channel slots with no monitor database and an upstream set (staging, world #376): the baked link; hidden, linkless and unknown slots as before', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'jyt-baked-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const baked = join(dir, 'channels.json');
@@ -55,16 +60,201 @@ test('channel slots with no monitor database (staging, world #376): the baked li
     { key: 'hidden', url: 'https://www.youtube.com/watch?v=iVTPoB2GelQ', hidden: true },
     { key: 'list-only', url: 'https://www.youtube.com/playlist?list=PLabc' },
   ] }));
-  const ch = new ChannelSlots({ monitorDb: '/nope/monitor.db', baked });
+  const upstream = 'http://up.invalid'; // lookup() reads the baked file; only resolve() asks the upstream
+  const ch = new ChannelSlots({ monitorDb: '/nope/monitor.db', baked, upstream });
   assert.deepEqual(ch.lookup('shown'), { id: 'JD-kMIpDfnY' });
   assert.deepEqual(ch.lookup('hidden'), { error: 'channel_unavailable' });
   assert.deepEqual(ch.lookup('list-only'), { error: 'channel_unavailable' });
   assert.deepEqual(ch.lookup('nope'), { error: 'unknown_channel' });
-  assert.deepEqual(new ChannelSlots({ monitorDb: '/nope/monitor.db', baked: join(dir, 'gone.json') }).lookup('shown'), { error: 'monitor_unreadable' });
+  assert.deepEqual(new ChannelSlots({ monitorDb: '/nope/monitor.db', baked: join(dir, 'gone.json'), upstream }).lookup('shown'), { error: 'monitor_unreadable' });
   // With a database, the monitor decides.
   const m = monitorDb(t);
   assert.deepEqual(new ChannelSlots({ monitorDb: m.path, baked }).lookup('nope'), { error: 'unknown_channel' });
   assert.deepEqual(new ChannelSlots({ monitorDb: m.path, baked }).lookup('shown'), { error: 'unknown_channel' });
+});
+
+// #776 (2026-11-16): /v1/ch refuses every slot sleep-list.json hides (slotmon publish.status_doc: baked_hidden or
+// auto_hidden), with the answer a spare gets. Rows shaped as production's on 2026-11-16 (read-only read, mode=ro).
+const HIDDEN_ROWS = [
+  ['shown-down', 10, 'live', 'AAAAAAAAAAA', 'AAAAAAAAAAA', 0, 1, 'down'], // the monitor's: stream down, waiting for a replacement
+  ['shown-flash', 11, 'live', 'BBBBBBBBBBB', 'BBBBBBBBBBB', 0, 1, 'flash fail'], // the monitor's: failed its flash check
+  ['owner-hidden', 12, 'live', 'CCCCCCCCCCC', 'CCCCCCCCCCC', 1, 0, null], // retroworld-ps1: overrides.json hidden, row not hidden
+  ['retired-flash', 13, 'unmanaged', 'DDDDDDDDDDD', 'DDDDDDDDDDD', 1, 1, 'flash fail'], // gta-vice-city: retired, stream still live
+  ['retired-down', 14, 'unmanaged', 'EEEEEEEEEEE', 'EEEEEEEEEEE', 1, 0, null], // jack-stardew: retired
+  ['spare-shown', 15, 'live', 'FFFFFFFFFFF', 'FFFFFFFFFFF', 0, 0, null], // lofi-study: a baked spare overrides.json shows
+];
+
+test('channel slots (#776): a slot the list hides is refused (the monitor\'s hide, the owner\'s, a retired slot); shown slots play; the reason is logged without the key', (t) => {
+  const m = monitorDb(t, HIDDEN_ROWS);
+  const lines = [];
+  let now = 0;
+  const ch = new ChannelSlots({ monitorDb: m.path, now: () => now, log: (o) => lines.push(o) });
+  for (const key of ['shown-down', 'shown-flash', 'owner-hidden', 'retired-flash', 'retired-down']) {
+    assert.deepEqual(ch.lookup(key), { error: 'channel_unavailable' }, key);
+  }
+  assert.deepEqual(ch.lookup('spare-shown'), { id: 'FFFFFFFFFFF' }, 'a spare the owner shows plays');
+  assert.deepEqual(ch.lookup('lofi-sleep-chill'), { id: 'JD-kMIpDfnY' });
+  assert.deepEqual(lines.map((l) => [l.event, l.why]), [
+    ['channel_refused', 'hidden_by_monitor'], ['channel_refused', 'hidden_by_monitor'], ['channel_refused', 'hidden_by_owner'],
+    ['channel_refused', 'hidden_by_monitor'], ['channel_refused', 'hidden_by_owner']]);
+  const logged = JSON.stringify(lines).replace(/hidden_by_(owner|monitor)/g, '');
+  for (const leak of ['shown', 'owner', 'retired', 'AAAAAAAAAAA', 'DDDDDDDDDDD']) assert.ok(!logged.includes(leak), `no ${leak} in the log`);
+  // A hide reaches the answer within the 30 s cache, and so does the clear.
+  assert.deepEqual(ch.lookup('jack-oblivion'), { id: 'iVTPoB2GelQ' });
+  let db = m.db(); db.prepare("UPDATE slots SET auto_hidden = 1, auto_reason = 'flash fail' WHERE key = 'jack-oblivion'").run(); db.close();
+  now += 29_000;
+  assert.deepEqual(ch.lookup('jack-oblivion'), { id: 'iVTPoB2GelQ' }, 'cached up to 30 s');
+  now += 2_000;
+  assert.deepEqual(ch.lookup('jack-oblivion'), { error: 'channel_unavailable' }, 'refused once the 30 s are over');
+  db = m.db(); db.prepare("UPDATE slots SET auto_hidden = 0, auto_reason = NULL WHERE key = 'jack-oblivion'").run(); db.close();
+  now += 31_000;
+  assert.deepEqual(ch.lookup('jack-oblivion'), { id: 'iVTPoB2GelQ' }, 'cleared: plays again');
+});
+
+test('channel slots (#776): a status that can\'t be read refuses (fail closed), is never cached, and is logged apart from a hide, once a minute', (t) => {
+  // A slots table without the hide columns: the select throws, so the slot is refused, not played.
+  const dir = mkdtempSync(join(tmpdir(), 'ch-old-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, 'monitor.db');
+  let db = new DatabaseSync(path);
+  db.exec('CREATE TABLE slots (key TEXT PRIMARY KEY, idx INTEGER, kind TEXT, current_video TEXT)');
+  db.prepare("INSERT INTO slots VALUES ('lofi-sleep-chill', 1, 'live', 'JD-kMIpDfnY')").run();
+  db.close();
+  const lines = [];
+  let now = 0;
+  const ch = new ChannelSlots({ monitorDb: path, now: () => now, log: (o) => lines.push(o) });
+  assert.deepEqual(ch.lookup('lofi-sleep-chill'), { error: 'monitor_unreadable' });
+  assert.deepEqual(ch.lookup('lofi-sleep-chill'), { error: 'monitor_unreadable' });
+  now += 10_000;
+  assert.deepEqual(ch.lookup('lofi-sleep-chill'), { error: 'monitor_unreadable' });
+  assert.equal(lines.length, 1, 'one line a minute');
+  assert.equal(lines[0].event, 'channel_refused');
+  assert.equal(lines[0].why, 'status_unreadable');
+  assert.equal(lines[0].source, 'monitor');
+  assert.match(lines[0].error, /baked_hidden|auto_hidden/);
+  assert.ok(!JSON.stringify(lines).includes('lofi') && !JSON.stringify(lines).includes('JD-kMIpDfnY'), 'no key or video');
+  now += 60_000;
+  ch.lookup('lofi-sleep-chill');
+  assert.equal(lines.length, 2);
+  assert.equal(lines[1].more, 2, 'the two refusals the minute stood for');
+  // Not cached: once the status reads again, the next play has it.
+  db = new DatabaseSync(path);
+  db.exec('ALTER TABLE slots ADD COLUMN baked_hidden INTEGER; ALTER TABLE slots ADD COLUMN auto_hidden INTEGER DEFAULT 0');
+  db.close();
+  now += 1_000;
+  assert.deepEqual(ch.lookup('lofi-sleep-chill'), { id: 'JD-kMIpDfnY' });
+});
+
+test('channel slots with no monitor database and an upstream set (#776): overrides.json\'s hidden wins over the baked flag; a file of the wrong shape refuses every slot, a wrong entry its own slot', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'jyt-ov-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const baked = join(dir, 'channels.json');
+  const overrides = join(dir, 'overrides.json');
+  writeFileSync(baked, JSON.stringify({ slots: [
+    { key: 'shown', url: 'https://www.youtube.com/watch?v=JD-kMIpDfnY' },
+    { key: 'retired', url: 'https://www.youtube.com/watch?v=AMwnj-pSbLo' }, // gta-vice-city: shown in the bake
+    { key: 'owner-hidden', url: 'https://www.youtube.com/watch?v=lHa4PnLnFEI' }, // retroworld-ps1
+    { key: 'spare-shown', url: 'https://www.youtube.com/watch?v=rFZHOHl-L8A', hidden: true }, // lofi-study
+    { key: 'spare', url: 'https://www.youtube.com/watch?v=CwPCy1GLS38', hidden: true },
+  ] }));
+  const upstream = 'http://up.invalid';
+  const lines = [];
+  const slots = (ov) => {
+    if (ov === undefined) rmSync(overrides, { force: true });
+    else writeFileSync(overrides, ov);
+    const c = new ChannelSlots({ monitorDb: '/nope/monitor.db', baked, overrides, upstream, log: (o) => lines.push(o) });
+    return Object.fromEntries(['shown', 'retired', 'owner-hidden', 'spare-shown', 'spare'].map((k) => [k, c.lookup(k).id ?? c.lookup(k).error]));
+  };
+  const good = { slots: {
+    retired: { hidden: true, kind: 'unmanaged', retired: '2026-11-15: flash fail' },
+    'owner-hidden': { hidden: true },
+    'spare-shown': { hidden: false },
+    shown: { title: 'Renamed' },
+  } };
+  // With a byte-order mark, as slotmon accepts it (utf-8-sig).
+  assert.deepEqual(slots(String.fromCharCode(0xfeff) + JSON.stringify(good)), {
+    shown: 'JD-kMIpDfnY', retired: 'channel_unavailable', 'owner-hidden': 'channel_unavailable', 'spare-shown': 'rFZHOHl-L8A', spare: 'channel_unavailable' });
+  assert.equal(lines.length, 0);
+  // No "slots" at all: no owner edits (as slotmon reads it), so the baked flags.
+  assert.deepEqual(slots(JSON.stringify({ notice: '' })), {
+    shown: 'JD-kMIpDfnY', retired: 'AMwnj-pSbLo', 'owner-hidden': 'lHa4PnLnFEI', 'spare-shown': 'channel_unavailable', spare: 'channel_unavailable' });
+  // A file that vouches for no slot: every slot refused.
+  const none = { shown: 'monitor_unreadable', retired: 'monitor_unreadable', 'owner-hidden': 'monitor_unreadable', 'spare-shown': 'monitor_unreadable', spare: 'monitor_unreadable' };
+  for (const bad of ['{ not json', '{"slots": {"shown": {"hidden": NaN}}}', '{"notice": Infinity}', 'null', '[]', '"x"', JSON.stringify({ slots: [] }), JSON.stringify({ slots: null }), JSON.stringify({ slots: 'x' })]) {
+    assert.deepEqual(slots(bad), none, bad);
+  }
+  assert.deepEqual(slots(undefined), none, 'a missing overrides file');
+  // An entry that is not an object refuses its own slot only; the rest follow the file.
+  for (const entry of [null, 'x', [], 1]) {
+    const doc = structuredClone(good);
+    doc.slots.shown = entry;
+    doc.slots.spare = entry;
+    assert.deepEqual(slots(JSON.stringify(doc)), {
+      shown: 'monitor_unreadable', retired: 'channel_unavailable', 'owner-hidden': 'channel_unavailable', 'spare-shown': 'rFZHOHl-L8A', spare: 'monitor_unreadable' }, JSON.stringify(entry));
+  }
+  assert.ok(lines.length > 0 && lines.every((l) => l.event === 'channel_refused' && l.why === 'status_unreadable' && l.source === 'baked'));
+  assert.ok(!JSON.stringify(lines).match(/shown|retired|spare|JD-kMIpDfnY/), 'no key or video in the log');
+});
+
+test('GET /v1/ch/<key> (#776): a hidden or retired slot answers 503 channel_unavailable, as a spare does', async (t) => {
+  const m = monitorDb(t, HIDDEN_ROWS);
+  const config = { ...base, shards: 2, pool: 50, monitorDb: m.path, metricsPath: '' };
+  const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
+  const server = http.createServer(createApp({ config, store, captions: { async get() { return {}; } }, log: () => {} }));
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const get = (p) => fetch(`http://127.0.0.1:${server.address().port}${p}`, { redirect: 'manual', headers: { 'user-agent': 'AVProMobileVideo/2026.3.3p2 (Linux;Android 14) ExoPlayer' } });
+  for (const key of ['shown-flash', 'owner-hidden', 'retired-flash', 'retired-down', 'shown-down']) {
+    const r = await get(`/v1/ch/${key}`);
+    assert.equal(r.status, 503, key);
+    assert.equal(r.headers.get('location'), null, key);
+    assert.equal((await r.json()).error, 'channel_unavailable', key);
+  }
+  assert.equal((await get('/v1/ch/spare-shown')).headers.get('location'), 'https://www.youtube.com/watch?v=FFFFFFFFFFF');
+});
+
+test('channel slots (#776, verifier M2): no upstream set and the monitor database missing or unreadable: every slot refused, logged as status_missing once a minute, never cached; with an upstream set (staging) the baked link as before', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ch-m2-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const baked = join(dir, 'channels.json');
+  writeFileSync(baked, JSON.stringify({ slots: [
+    { key: 'lofi-sleep-chill', url: 'https://www.youtube.com/watch?v=JD-kMIpDfnY' },
+    { key: 'flash-hidden', url: 'https://www.youtube.com/watch?v=BBBBBBBBBBB' }, // shown in the bake, hidden by the monitor
+  ] }));
+  const path = join(dir, 'gone', 'monitor.db'); // the file, and its folder, missing
+  const lines = [];
+  let now = 0;
+  const prod = new ChannelSlots({ monitorDb: path, baked, now: () => now, log: (o) => lines.push(o) });
+  for (const key of ['lofi-sleep-chill', 'flash-hidden', 'flash-hidden']) assert.deepEqual(await prod.resolve(key), { error: 'monitor_unreadable' }, key);
+  now += 10_000;
+  assert.deepEqual(prod.lookup('lofi-sleep-chill'), { error: 'monitor_unreadable' });
+  assert.deepEqual(lines, [{ event: 'channel_refused', why: 'status_missing', source: 'monitor', error: 'the monitor database is missing or not readable', more: 0 }]);
+  now += 60_000;
+  prod.lookup('flash-hidden');
+  assert.deepEqual(lines.map((l) => [l.why, l.more]), [['status_missing', 0], ['status_missing', 3]]);
+  // Never cached: once the monitor's database is there, the next play reads it.
+  mkdirSync(join(dir, 'gone'));
+  const db = new DatabaseSync(path);
+  db.exec(SCHEMA);
+  db.prepare("INSERT INTO slots (key, idx, kind, current_video, baked_hidden, auto_hidden, auto_reason) VALUES ('flash-hidden', 1, 'live', 'BBBBBBBBBBB', 0, 1, 'flash fail'), ('lofi-sleep-chill', 2, 'live', 'JD-kMIpDfnY', 0, 0, NULL)").run();
+  db.close();
+  now += 1_000;
+  assert.deepEqual(prod.lookup('flash-hidden'), { error: 'channel_unavailable' });
+  assert.deepEqual(prod.lookup('lofi-sleep-chill'), { id: 'JD-kMIpDfnY' });
+  // Staging: an upstream set and no database: its answers come from the upstream; a failed upstream falls back to the baked link.
+  const fetch = async () => { throw new Error('upstream down'); };
+  const staging = new ChannelSlots({ monitorDb: join(dir, 'none.db'), baked, upstream: 'http://up.invalid', fetch });
+  assert.deepEqual(await staging.resolve('lofi-sleep-chill'), { id: 'JD-kMIpDfnY' });
+  // Through the route (production's config: no CHANNELS_UPSTREAM): a 503, not a redirect.
+  const config = { ...base, shards: 2, pool: 50, monitorDb: join(dir, 'missing.db'), channelsUpstream: '', metricsPath: '' };
+  const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
+  const server = http.createServer(createApp({ config, store, captions: { async get() { return {}; } }, log: () => {} }));
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const r = await fetch2(`http://127.0.0.1:${server.address().port}/v1/ch/lofi-sleep-chill`);
+  assert.equal(r.status, 503);
+  assert.equal(r.headers.get('location'), null);
+  assert.equal((await r.json()).error, 'channel_unavailable');
 });
 
 test('GET /v1/ch/<key>: 302 to the watch link, no-store; 404 unknown, 503 unavailable', async (t) => {
@@ -158,13 +348,13 @@ test('channel upstream (world #519): its 302, 404 and 503 are the answer and cac
   assert.deepEqual(up.calls.slice(9), ['down']);
 });
 
-test('channel upstream unset, or a monitor database present: no upstream call, the lookup as before', async (t) => {
+test('channel upstream unset, or a monitor database present: no upstream call; with neither, refused (#776 M2)', async (t) => {
   const baked = bakedFile(t);
   let calls = 0;
   const fetch = async () => { calls++; throw new Error('must not be called'); };
   const plain = new ChannelSlots({ monitorDb: '/nope/monitor.db', baked, fetch });
-  assert.deepEqual(await plain.resolve('live'), { id: '2f5CjnKt6oI' });
-  assert.deepEqual(await plain.resolve('unhidden'), { error: 'channel_unavailable' });
+  assert.deepEqual(await plain.resolve('live'), { error: 'monitor_unreadable' }, 'not the baked link');
+  assert.deepEqual(await plain.resolve('unhidden'), { error: 'monitor_unreadable' });
   const m = monitorDb(t);
   const withDb = new ChannelSlots({ monitorDb: m.path, baked, upstream: 'http://127.0.0.1:9/', fetch });
   assert.deepEqual(await withDb.resolve('jack-oblivion'), { id: 'iVTPoB2GelQ' });

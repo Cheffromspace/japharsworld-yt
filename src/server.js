@@ -12,6 +12,8 @@
 //   GET /v1/<shard>/q[/<720|1080>]                    the room's playback quality for search videos (read, or pick on the tablet)
 //   GET /v1/<shard>/r/<who>/<kind>                    a video report (world #353): 200 {"ok":true} at once; logged with this
 //                                                      shard's play and counted (who: visitor|tester; kinds in src/metrics.js)
+//   GET /v1/o/<who>/<platform>/<plan>/<outcome>       one play's outcome (world #274): 200 {"ok":true} at once, counted,
+//                                                      with no shard, ticket or video (sets in src/metrics.js)
 //   GET /v1/ch/<key>                                  a Channels slot (key from channels.json): 302 to its current
 //                                                      youtube.com/watch link, for Quest (src/channels.js)
 //   GET /hls/<token>.m3u8, /hls/<token>/<q>.m3u8          adaptive playlists a played ticket leads to (src/adaptive.js)
@@ -51,7 +53,7 @@ import { Relay, RelayError } from './relay.js';
 import { DataApi } from './dataapi.js';
 import { makeSearch } from './search.js';
 import { RefusalWatch } from './refusal.js';
-import { Metrics, noMetrics, lengthBucket, secondsBucket, sizeBucket, recordPoll, getMeta, setMeta, dayOf, REPORT_WHO, REPORT_KINDS } from './metrics.js';
+import { Metrics, noMetrics, lengthBucket, secondsBucket, sizeBucket, recordPoll, getMeta, setMeta, dayOf, REPORT_WHO, REPORT_KINDS, OUTCOME_WHO, OUTCOME_PLATFORMS, OUTCOME_PLANS, OUTCOMES } from './metrics.js';
 import { Adaptive, Pacer } from './adaptive.js';
 import { TunelioProbe } from './probe.js';
 import { EventRing, opsRoute, gitHead } from './ops.js';
@@ -175,13 +177,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const cookieWatch = new CookieWatch({ alert, hours: config.cookieNudgeHours, log: logJson });
   home ??= new Home({ relay, dir: join(dirname(config.dbPath), 'home'), base: `${config.publicUrl}/home`, enabled: config.homeRelay && relay.enabled,
     dailyBuilds: config.homeDailyBuilds, dailyMb: config.homeDailyMb, hourBuilds: config.homeHourBuilds, hourMb: config.homeHourMb,
-    hourMbExemptSeconds: config.homeHourMbExemptHours * 3600, startGapMs: config.homeStartGapMs,
+    hourMbExemptSeconds: config.homeHourMbExemptHours * 3600, startGapMs: config.homeStartGapMs, av1GapMs: config.homeAv1GapMs,
     itemMaxMb: config.homeItemTooBig === 'tunelio' ? config.homeItemMaxGb * 1000 : 0, keepHours: config.homeKeepHours, maxGb: config.homeMaxGb, freeFloorGb: config.homeFreeFloorGb, readyMs: config.homeReadyMs,
     segmentHoldMs: config.homeSegmentHoldMs,
-    startPrecise: config.homeAndroidGrowing, tz: config.metricsTz, log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
+    startPrecise: config.homeAndroidGrowing, seekWant: config.homeSeekWant, tz: config.metricsTz, log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
   if (home.enabled) setInterval(() => home.sweep(), 10 * 60_000).unref();
   channels ??= new ChannelSlots({ monitorDb: config.monitorDb, baked: new URL('../monitor/channels.json', import.meta.url),
-    upstream: config.channelsUpstream, log: logJson });
+    overrides: new URL('../monitor/overrides.json', import.meta.url), upstream: config.channelsUpstream, log: logJson });
   // The Linode's own bytes sent, every minute (the transfer alerts, src/net.js).
   const txDelta = new TxDelta();
   if (txBytes() != null) {
@@ -201,6 +203,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // YouTube refusals (src/refusal.js): counted by where and class; 3 or more bot/rate/potoken refusals at the home relay
   // within 15 minutes alert Discord, and an hour without one sends the all-clear (checkWorkers).
   const refusals = new RefusalWatch();
+  // A refusal at home within its 15 min window keeps AV1 plays to the start gap (src/home.js hammering, #764). Set here,
+  // not in the constructor, as a home passed in by a test or built above comes before the watch.
+  if (home) home.refusedRecently = () => refusals.recent();
   function refused(where, cls) {
     metrics.inc('yt_refusal', `${where}:${cls}`);
     if (where === 'home') cookieWatch.refused(cls);
@@ -260,15 +265,35 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // without dropping an active IP's count (src/spend.js touch). Logged once per IP and minute when it starts refusing.
   const routed = new Map(); // "via:videoId" → when its build_route was last counted
   // Every minute: per-minute IP counts older than a minute go (here, in the spend gate, the lookup-warm cap), and the
-  // day's allowance at the day's end, so the privacy page's "about a minute" and "the end of the day" hold.
-  setInterval(() => {
+  // day's allowance at the day's end, so the privacy page's "up to two minutes" (a minute of counts plus up to a minute to the next sweep) and "until
+  // the end of the day" hold.
+  function sweep() {
     const now = Date.now();
-    for (const map of [hits, ticketHits, playerHits, lookupWarms]) for (const [k, l] of map) if (!l.some((at) => now - at < 60_000)) map.delete(k);
+    for (const map of [hits, ticketHits, playerHits, lookupWarms, outcomeHits]) for (const [k, l] of map) if (!l.some((at) => now - at < 60_000)) map.delete(k);
     spend?.sweep?.();
     allowance.sweep?.();
     adaptive.sweep?.();
     ipKeys.sweep(); // a new day's key even with no request
-  }, 60_000).unref();
+    // pcYoutube's marks hold a client code (Everything-is-OK#782): gone when their window ends, and at the day's key
+    // change at the latest (a new day's code never matches one, so nothing changes for anyone).
+    for (const [k, v] of pcYoutube) if (v.until <= now || v.day !== ipKeys.day) pcYoutube.delete(k);
+    pruneCaptions(now);
+  }
+  setInterval(sweep, 60_000).unref();
+  // Caption rows no reader would answer from any more go: older than CAPTION_CACHE_DAYS, the age every caption source
+  // reads its cache with (or CAPTION_EMPTY_MINUTES, were that set longer). Until 2026-11-10 nothing called the prune, so
+  // tickets.db kept every track ever fetched. On the sweep's first run after a start and then hourly, not every minute:
+  // `fetched` has no index, so a pass reads the whole table (~130 ms for 300 MB on a dev PC, 2026-11-10), and the first
+  // one after this change removes the whole backlog in one statement. The file doesn't shrink; freed pages are reused.
+  let captionsPrunedAt = -Infinity;
+  function pruneCaptions(now) {
+    if (!store.pruneCaptions || now - captionsPrunedAt < 3600_000) return;
+    captionsPrunedAt = now;
+    try {
+      const rows = store.pruneCaptions(Math.max((config.captionCacheDays ?? 7) * 86400_000, (config.captionEmptyMinutes ?? 30) * 60_000));
+      if (rows) logJson({ event: 'captions_pruned', rows, ms: Date.now() - now });
+    } catch (err) { logJson({ event: 'captions_prune_failed', message: String(err?.message ?? err).slice(0, 200) }); }
+  }
   const ticketHits = new Map(); // ip → timestamps
   const playerHits = new Map(); // the same for video players' loads (their own limit)
   function ticketLimited(ip, hits = ticketHits, perMinute = config.ticketsPerMinutePerIp, kind = 'ticket') {
@@ -288,12 +313,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return !touch(ticketHits, ip, list, config.rateKeysMax ?? 10_000, now);
   }
 
+  // Searches a minute per IP (SEARCHES_PER_MINUTE). Bounded like the ticket limit, without dropping an active IP's count
+  // (src/spend.js touch): past RATE_KEYS_MAX the least recently active go first, and a new IP is refused while every
+  // kept one was active in the last minute. Until 2026-11-10 the map was cleared past its bound, every count with it.
   function rateLimited(ip) {
     const now = Date.now();
     const list = (hits.get(ip) ?? []).filter((t) => now - t < 60_000);
     list.push(now);
-    hits.set(ip, list);
-    if (hits.size > 10_000) hits.clear();
+    if (!touch(hits, ip, list, config.rateKeysMax ?? 10_000, now)) return true;
     return list.length > perIp(config.searchesPerMinutePerIp, ip);
   }
 
@@ -488,6 +515,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       onCall: ({ path, ok }) => { if (ok && path === '/create') metrics.inc('credits', 'probe', 10); } });
     probe = new TunelioProbe({
       tunelio: probeTunelio, quality: config.tunelioProbeQuality, intervalMinutes: config.tunelioProbeMinutes, log: logJson,
+      dropMinutes: config.tunelioDropMinutes, dropCount: (key, n) => metrics.inc('tunelio_drop', key, n),
       search: (query, limit) => (relay.enabled && relay.online('search').length ? relay.search(query, limit, { timeoutMs: config.relayWaitMs }) : null),
       busy: () => busy() + (Date.now() < (playback.pausedUntil ?? 0) ? 1 : 0),
       record: (source, values) => {
@@ -763,6 +791,21 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   const lastAnswer = new Map(); // shard → { n, via, reason, quality, hls, mode }
   const pinKey = (shard, n, hlsTicket, kind, android = false) => `${shard}:${n}:${hlsTicket ? 'm3u8' : android ? 'plain-android' : 'plain'}:${kind}`;
   const pinWindow = (data) => (data.seconds ?? 0) * 1000 + config.ticketPinMarginMs;
+  // Everything-is-OK#749: a Quest refused on a plain ticket for AV1 ("shard:n" → { id, until }). The Quest's tablet asks the
+  // ticket's status on its .m3u8 address (the Android build's own loads, urls.Ticket), which knows nothing of the plain
+  // ticket's mp4, so without this the world never hears too_long and VizVid retries the 403 until it gives up. Kept for
+  // the pin's window; the same ticket number asked for another video doesn't match.
+  const questRefused = new Map();
+  // #749 (verifier rounds 4-5): a PC player of a plain ticket last answered with youtube.com, for any reason
+  // ("shard:n:<client key>" → { id, until, reason }): that client's resolver gets youtube.com too, before any home or AV1
+  // rule could send it on. VRChat's resolver is what plays a watch link on a PC (#741 T2 run 3, 2026-11-13: AVPro failed on
+  // it, the resolver played it), so a resolver sent on while its player gets youtube.com never plays. Per client (the
+  // daily IP code, clientKey): a PC's resolver and player ask from the same address, and one visitor's own limit (allowance,
+  // cap) must not reach another's resolver. Cleared when that client's PC player gets a file or home; kept for the pin's
+  // window. A Quest behind the same address (a household, every desk test) shares it: its resolver, which sends a PC's
+  // UA, then gets youtube.com too. The minute sweep drops a mark when its window ends or the day's key changes, whichever
+  // comes first (Everything-is-OK#782): it holds a client code, and the privacy page lists how long.
+  const pcYoutube = new Map();
   function pinned(key, data, { touch = true } = {}) {
     if (!config.ticketPin) return null;
     const p = pins.get(key);
@@ -796,7 +839,66 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (s) return s.state !== 'failed';
     // No session: a new one must get a worker and not be one home refuses anyway (size or hour, a recent no-room), else
     // the pin would be dropped and set again on every retry for the same Tunelio answer (#625 verifier).
-    return Boolean(home.worker()) && !home.blocks?.(data, hq) && !(homeRefused.get(data.id) > Date.now());
+    // An AV1 play may start inside the start gap unless home is hammering YouTube (src/home.js limit, #764).
+    return Boolean(home.worker({ av1: true })) && !home.blocks?.(data, hq) && !(homeRefused.get(data.id) > Date.now());
+  }
+  // Why av1HomeFor said no (#764, verifier L4: the log says why, not just whether home was hammering): 'hammering' (the
+  // start gap, held for an AV1 play only then), 'cap_day', 'cap_hour', 'slots' (every stream taken or no worker),
+  // 'size' or 'hour_mb' (blocks), 'no_room' (a recent no-room refusal), else 'other'.
+  function av1Declined(data, hq) {
+    const l = home.limit?.({ av1: true });
+    if (l) return l === 'gap' ? 'hammering' : l === 'day' ? 'cap_day' : 'cap_hour';
+    if (!home.worker({ av1: true })) return 'slots';
+    const b = home.blocks?.(data, hq);
+    if (b) return b === 'big' ? 'size' : 'hour_mb';
+    if (homeRefused.get(data.id) > Date.now()) return 'no_room';
+    return 'other';
+  }
+  // #764 E, round 2 (owner 2026-11-14, time to first frame): a Quest's AV1 HLS play's lower rungs, all started at once
+  // when the read says AV1 instead of one after another (a 720p HLS of 170 MB took 33 s, claude/play-latency.md; three in
+  // a row could pass the 90 s hold). Each is held within the play's hold, then its codec read is capped at
+  // QUEST_AV1_HLS_READ_SECONDS (4) and the hold: a read that times out or fails plays unread (most rungs below an AV1
+  // build are H.264, #749), the read carrying on for the next ask. -> [{ q, promise -> { ok, unread, where, job } |
+  // { pending } (still building at the hold's end) | {} (failed, refused or AV1) }], best first.
+  function questRungsStart(data, from, started) {
+    const deadline = started + config.ticketPlayerHoldMs;
+    const rungs = [...new Set([adaptive.lower, ...config.questAv1Qualities])].filter((q) => q && parseInt(q, 10) < parseInt(from, 10));
+    return rungs.map((q) => ({ q, promise: (async () => {
+      const w = await playback.location(data, { holdMs: Math.max(0, deadline - Date.now()), quality: q, hls: true });
+      if (w.ready === false) return { q, pending: true };
+      const job = w.via === 'tunelio' ? playback.peek(data, q, { hls: true }) : null;
+      if (!job || job.url !== w.location) return { q };
+      let timer;
+      const capMs = Math.max(0, Math.min(config.questAv1HlsReadMs, deadline - Date.now()));
+      const codec = await Promise.race([Promise.resolve(adaptive.codec?.(job) ?? null).catch(() => null), new Promise((r) => { timer = setTimeout(() => r('timeout'), capMs); })]).finally(() => clearTimeout(timer));
+      if (codec === 'av1') return { q };
+      return { q, ok: true, unread: !codec || codec === 'timeout', where: w, job };
+    })().catch((err) => { logJson({ event: 'quest_rung_error', id: data.id, quality: q, message: String(err?.message ?? err).slice(0, 200) }); return { q }; }) }));
+  }
+  // The rung to answer with: the highest ready and not AV1 once every rung above it has settled, or after
+  // QUEST_AV1_GRACE_SECONDS (5) from the first good one, the best good one by then (a lower rung builds faster, so the
+  // Quest needn't wait the whole 720p build for a small step up); at the hold's end, the best good one so far.
+  // -> { ok, q, where, job, unread } or { ok: false, pending } (pending: a rung was still building at the hold's end).
+  function questRungPick(rungs, deadline) {
+    const results = Array(rungs.length).fill(undefined); // filled, not sparse: every() skips holes
+    return new Promise((resolve) => {
+      let grace = null, hold = null, done = false;
+      const finish = () => {
+        if (done) return;
+        done = true; clearTimeout(grace); clearTimeout(hold);
+        const best = results.find((r) => r?.ok);
+        resolve(best ? { ...best, ok: true } : { ok: false, pending: results.some((r) => !r || r.pending) });
+      };
+      const check = () => {
+        const first = results.findIndex((r) => r?.ok);
+        if (first < 0) { if (results.every(Boolean)) finish(); return; }
+        if (results.slice(0, first).every(Boolean)) return finish();
+        grace ??= setTimeout(finish, config.questAv1GraceMs);
+      };
+      hold = setTimeout(finish, Math.max(0, deadline - Date.now()));
+      if (!rungs.length) return finish();
+      rungs.forEach((r, i) => r.promise.then((v) => { results[i] = v; check(); }));
+    });
   }
   // A home session for this play, counted once by why it went home (a session that is already there is just used),
   // and once as `stepdown` when it is 720p only for its length.
@@ -814,16 +916,17 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const fresh = !home.peek(data, quality);
     const ip = spendScope.getStore()?.ip;
     const homeMb = Math.round((data.seconds ?? 0) * mbPerSecond(quality)); // at the session's own quality
-    if (fresh && home.worker()) {
+    const av1 = why === 'av1'; // an AV1 play: may start inside the start gap (src/home.js limit, #764)
+    if (fresh && home.worker({ av1 })) {
       // The route a refusal hands on: 'home_mb' when only this session's size doesn't fit (the allowance isn't used up,
       // so Tunelio may still take the play within its credits), else 'allowance' or 'cap' (no build anywhere).
       const over = allowance.over(ip, { home: true, homeMb, route: spendScope.getStore()?.answer });
       const no = over === 'home_mb_fit' ? 'home_mb' : over ? 'allowance' : spend?.rateCap?.(data.id) ?? null;
       if (no) { const ctx = spendScope.getStore(); if (ctx) ctx.route = no; return null; }
     }
-    const s = home.start(data, quality);
+    const s = home.start(data, quality, { av1 });
     // null with a worker free: home.start's #room said no (a size or hourly MB limit, home.refusal big/hour, isn't kept). Without a worker it has made no room check.
-    if (!s && home.worker() && (home.refusal ?? 'room') === 'room') {
+    if (!s && home.worker({ av1 }) && (home.refusal ?? 'room') === 'room') {
       homeRefused.set(data.id, Date.now() + HOME_REFUSED_MS);
       if (homeRefused.size > 5000) homeRefused.delete(homeRefused.keys().next().value);
     }
@@ -834,6 +937,21 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (quality !== homePick(shard)) { metrics.inc('home', 'stepdown'); logJson({ event: 'home_stepdown', id: data.id, from: homePick(shard), quality, seconds: data.seconds }); }
     }
     return s;
+  }
+  // #749 (verifier round 4): whether startHome would start (or reuse) a session for this play now: the same checks, with
+  // no side effect but the limit logs startHome writes too. The resolver on a plain ticket is sent on to its player only
+  // then; otherwise it takes the usual path (Tunelio, else youtube.com), as before. home.start's own room check can still
+  // say no afterwards: then the player gets youtube.com and the pcYoutube mark answers the resolver's next ask.
+  function homeCanStart(data, quality) {
+    const s = home.peek(data, quality);
+    if (s) return s.state !== 'failed';
+    if (home.blocks?.(data, quality)) return false; // too big for the hour's MB or HOME_ITEM_MAX_GB (homeWhy checks it too, not tunelio_slow)
+    if ((homeRefused.get(data.id) ?? 0) > Date.now()) return false;
+    if (!home.worker()) return false;
+    const ip = spendScope.getStore()?.ip;
+    const homeMb = Math.round((data.seconds ?? 0) * mbPerSecond(quality));
+    if (allowance.over(ip, { home: true, homeMb, route: spendScope.getStore()?.answer })) return false;
+    return !spend?.rateCap?.(data.id);
   }
   // A ready home session that went home only for being long and whose playlist grows (uneven keyframes, not due to
   // finish within HOME_SETTLE_SECONDS): given up for Tunelio while the pacer allows (#127 a, owner 2026-10-24). Home
@@ -1058,6 +1176,38 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     return res.end('{"ok":true}');
   }
 
+  // One play's outcome from the world (world #274): a count, with nothing about the room or the video. The world can only
+  // load baked addresses, so the address is the whole message. A fixed ceiling per minute keeps a script from swamping the
+  // rate on the dashboard; over it the answer is the same and nothing is counted. Only a tester's outcome gets a log line,
+  // for lining up a test run: a visitor's leaves the plain request line alone.
+  // Per client too (OUTCOME_PER_MINUTE_PER_IP, on the keyed code): `who` is the client's own word, so without it one script
+  // could use up the ceiling and silence everyone's counts, or write tester log lines without end (verifier P2 on
+  // 9fbda4e, 2026-10-31). A client over its own limit gets the same answer, is not counted, takes nothing from the
+  // ceiling and writes no log line (src/config.js has the default's reasoning).
+  const outcomeCap = config.outcomeCapPerMinute ?? 600;
+  let outcomeMinute = 0, outcomeSeen = 0;
+  const outcomeHits = new Map(); // code(ip) → timestamps
+  function outcomeOverIp(ip) {
+    const limit = perIp(config.outcomePerMinutePerIp ?? 30, ip);
+    if (!(limit > 0)) return false;
+    const now = Date.now();
+    const list = (outcomeHits.get(ip) ?? []).filter((t) => now - t < 60_000);
+    if (list.length >= limit) return true;
+    return !touch(outcomeHits, ip, [...list, now], config.rateKeysMax ?? 10_000, now);
+  }
+  function playOutcome(req, res, who, platform, plan, outcome) {
+    if (!outcomeOverIp(clientKey(req))) {
+      const minute = Math.floor(Date.now() / 60_000);
+      if (minute !== outcomeMinute) { outcomeMinute = minute; outcomeSeen = 0; }
+      const counted = ++outcomeSeen <= outcomeCap;
+      if (counted) metrics.inc('play_outcome', `${who}:${platform}:${plan}:${outcome}`);
+      if (who === 'tester') logJson({ event: 'play_outcome', who, platform, plan, outcome, counted });
+    }
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    if (req.method === 'HEAD') return res.end();
+    return res.end('{"ok":true}');
+  }
+
   // A video ticket's status for the tablet: starts its build (a warm) unless one is there, and says how it goes; or
   // 'too_long' for a .m3u8 ticket Tunelio and home both refused. The restricted and over-cap checks come before it.
   // `reason` names who asked, for the warm's log line: 'tablet' (a ticket's own status load: a row selected, a queued
@@ -1065,6 +1215,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // link's search, Everything-is-OK#449). A cached build is no warm and costs nothing.
   // `gate` (lookups only): asked before a new Tunelio build starts; false skips it and the answer is 'cap'.
   async function tabletStatus(shard, n, t, hlsTicket, reason, gate = null) {
+    const refused = hlsTicket ? questRefused.get(`${shard}:${n}`) : null;
+    if (refused?.id === t.data.id && refused.until > Date.now()) return 'too_long';
     // A ticket being played reports the source its players were given (TICKET_PIN), not a new decision.
     const pin = pinned(pinKey(shard, n, hlsTicket, 'avpro'), t.data, { touch: false });
     if (pin?.session) return { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(pin.session), ...meta(t.data) };
@@ -1169,8 +1321,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // then told "this is not a video" (a plain page), which makes VRChat hand the URL straight to AVPro.
       const resolver = kind === 'ytdlp';
       const android = isAndroidPlayer(req.headers['user-agent']);
-      // The Quest's resolver on a plain ticket: a Chrome-like UA with Android in it, so not isAndroidPlayer, but the link it
-      // gets goes to the Quest's AVPro (playPlatform counts it android). It has its own pin, skips home and gets the 720p cap
+      // The Quest's resolver on a plain ticket, when its UA names Android: a Chrome-like UA with Android in it, so not
+      // isAndroidPlayer, but the link it gets goes to the Quest's AVPro (playPlatform counts it android). A real Quest's
+      // resolver sent a PC's Windows Chrome UA instead (staging 2026-11-13, Everything-is-OK#749), so it is a PC resolver
+      // here and the plain-ticket resolver rules below (sent on, the player decides) cover it; this match stays as before. It has its own pin, skips home and gets the 720p cap
       // as the Quest's player does, and is sent on where that player gets too_long (Everything-is-OK#652 verifier, 2026-11-08:
       // a PC resolver's pinned 1080p mp4 reached the Quest resolver on the same ticket).
       const questResolver = resolver && !hlsTicket && /Android/i.test(String(req.headers['user-agent'] ?? ''));
@@ -1202,6 +1356,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       const pin = pinned(key, t.data);
       if (pin) return answerPin(pin);
       let where = null;
+      if (resolver && !hlsTicket) {
+        const yt = pcYoutube.get(`${shard}:${n}:${clientKey(req)}`);
+        if (yt?.id === t.data.id && yt.until > Date.now()) where = { location: `https://www.youtube.com/watch?v=${t.data.id}`, via: 'youtube', reason: yt.reason, ready: true };
+      }
       // Home relay first when it applies. HLS only, so never for an Android player on a plain ticket (f331bcc); on a
       // .m3u8 ticket (the world's Android build, which opens HLS) only with HOME_ANDROID=on (2026-10-23, to be verified
       // on the Quest). The resolver is sent on at once (it would only pick the playlist apart); the player waits for
@@ -1210,7 +1368,20 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       // Unity's Android player on a .m3u8 ticket (#584): it plays only files, so never home's HLS; always the mp4 below.
       const unityPlayer = config.questMp4 && hlsTicket && android && kind === 'other' && !t.data.live;
       const homeOk = hlsTicket ? config.homeAndroid && !unityPlayer : !android && !questResolver;
-      const why = homeOk ? homeWhy(t.data, hq, hlsTicket) : null;
+      const why = !where && homeOk ? homeWhy(t.data, hq, hlsTicket) : null;
+      // Everything-is-OK#749: on a plain ticket VRChat's resolver can't be told apart: a Quest's sends the same Windows
+      // Chrome UA as a PC's (staging 2026-11-13 18:26Z), and only the player that asks next shows which it is
+      // (AVProMobileVideo vs NSPlayer). So the resolver never starts a new home session there: it is sent on, and the
+      // player starts it (a PC about 1 s later than before) or, a Quest, takes its mp4. An existing session still answers
+      // (reuse). Prod 2026-11-06..13: 2 resolver-started long-video sessions got only Android players and no home play.
+      const resolverPlain = resolver && !hlsTicket;
+      if (resolverPlain && why && why !== 'reuse' && homeCanStart(t.data, hq)) {
+        metrics.inc('home', 'defer');
+        logJson({ event: 'play_defer', shard, n, id: t.data.id, held: 0, home: true, reason: 'player' });
+        const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+        return res.end(body);
+      }
       let hs = why ? homeKeep(t.data, hq, startHome(shard, t.data, hq, why)) : null;
       if (hs && hs.state !== 'failed') {
         if (resolver) {
@@ -1234,10 +1405,29 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       let c = null;
       let hlsQ = null; // the HLS build's quality of a .m3u8 ticket's Tunelio play (#584)
       let av1Play = false; // a Quest answered with Tunelio's AV1 build while home is on: its pin gives way to home (#625)
+      // Everything-is-OK#749: an mp4 codec read (#741's, or the Quest's below) that failed or timed out leaves job.codec
+      // undefined and the answer as before. That answer is not pinned, so the next ask reads again instead of keeping a
+      // possibly AV1 file for the pin's window (staging 2026-11-13 18:23Z: the Quest's 720p read timed out at 3 s, the AV1
+      // file was pinned, and the Quest sat on "Connecting").
+      let codecUnread = false;
+      let rungPending = false; // #764 E: a rung still building at the hold's end: the AV1 answer isn't pinned (verifier M1)
+      const readCodec = async (job, opts) => {
+        const codec = await adaptive.codec?.(job, opts);
+        if (adaptive.codec && job?.state === 'ready' && job.format === 'progressive' && job.codec === undefined) codecUnread = true;
+        return codec;
+      };
       if (!where) {
         c = await choice(shard, t.data);
         // The plan's own /create (or another play's) just timed out: home now, not another /create that would likely
         // time out too (2026-10-23: two 12 s timeouts in a row, 48 s from pick to picture).
+        if (resolverPlain && homeOk && !hs && tunelioSlow() && home.worker() && homeCanStart(t.data, hq)) {
+          // As above (#749): the player starts home, the resolver is sent on.
+          metrics.inc('home', 'defer');
+          logJson({ event: 'play_defer', shard, n, id: t.data.id, held: Date.now() - started, home: true, reason: 'player' });
+          const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+          return res.end(body);
+        }
         const slow = homeOk && !hs && tunelioSlow() && home.worker() ? startHome(shard, t.data, hq, 'tunelio_slow') : null;
         if (slow && slow.state !== 'failed') {
           if (resolver) {
@@ -1330,17 +1520,66 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         // An AV1 build on a .m3u8 ticket: the Quest 2 can't decode AV1 (Everything-is-OK #101), and home is always
         // H.264 + AAC (relay/media.js). Counted whether or not HOME_ANDROID is on, to show how often it happens.
         let homeFor = null;
+        let questHlsAv1 = null; // #764: the AV1 HLS build's quality, for E below when home doesn't take the play
+        let questRungs = null; // #764 round 2: E's rung builds, started the moment the read says AV1 (questRungsStart)
+        let declined = null; // #764: why home didn't take that play (logged with E's answer)
         if (hlsTicket && !resolver && where.ready && where.via === 'tunelio' && c.hls) {
           const codec = await adaptive.codec?.(playback.peek(t.data, c.quality, { hls: true }));
           if (codec === 'av1') {
             metrics.inc('adaptive', 'android_av1');
             logJson({ event: 'android_av1', shard, n, id: t.data.id, quality: c.quality, home: homeOk && home.enabled });
-            if (homeOk && home.enabled) {
+            if (config.questAv1 && c.single) {
+              questHlsAv1 = c.quality;
+              // Started now, before any home wait, so they build while home gets ready (round 2: time to first frame is the
+              // owner's priority, 2026-11-14; credits aren't). When home takes the play they are warmed builds nobody waits on.
+              questRungs = questRungsStart(t.data, questHlsAv1, started);
+            }
+            if (!(homeOk && home.enabled)) declined = 'home_off';
+            else {
               av1Play = true;
               // Not when this request already held on a home session (hs, slow or the race; it missed HOME_READY_SECONDS):
               // one hold, not two. Its Tunelio answer is pinned as AV1, so the next request goes home.
-              if (av1HomeFor(t.data, hq) && !waited.home) homeFor = 'av1';
+              if (waited.home) declined = 'home_ready';
+              else if (av1HomeFor(t.data, hq)) homeFor = 'av1';
+              else declined = av1Declined(t.data, hq);
             }
+          }
+        }
+        // Everything-is-OK#741: an AV1 build for a PC player on a plain ticket (VRChat's resolver or AVPro). Tunelio's
+        // 1080p is sometimes AV1 (prod 2026-10-30 to 11-13: 18 Quest 1080p plays found it so), and a PC alone in the room
+        // got that mp4 and never showed a frame (staging 2026-11-13, the AV1 extension installed). With a Quest in the room
+        // it played, but only because the Quest's own AV1 check had started home first. So the PC's build is read too:
+        // home (always H.264) when it can take it, as for the Quest: the resolver is sent on at once and AVPro reuses the
+        // session; else the 720p rung, read as well; else youtube.com, which VRChat resolves itself. Before the pin's last
+        // check below, so the players of a ticket still end on one source.
+        let pcAv1 = null; // the AV1 build's quality
+        if (config.pcAv1 && !hlsTicket && !android && !questResolver && !c.hls && where.ready && where.via === 'tunelio') {
+          const job = playback.peek?.(t.data, c.quality);
+          const codec = job?.url === where.location ? await readCodec(job) : null;
+          // #749 (verifier round 4): a resolver whose read failed or timed out may be a Quest's handed an AV1 file: sent on,
+          // and the player reads with its own limit (a Quest's 10 s).
+          if (resolver && adaptive.codec && job?.url === where.location && job.format === 'progressive' && job.codec === undefined) {
+            logJson({ event: 'play_defer', shard, n, id: t.data.id, held: Date.now() - started, reason: 'unread' });
+            const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+            res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+            return res.end(body);
+          }
+          if (codec === 'av1') {
+            pcAv1 = c.quality;
+            metrics.inc('adaptive', 'pc_av1');
+            // Not when this request already held on a home session (one hold, not two, as for the Quest above): that is a
+            // session that missed HOME_READY_SECONDS, or one leaveHome gave up (uneven keyframes), so the 720p rung instead.
+            // #749: the resolver may be a Quest's (the same Windows UA), whose answer differs (480p/360p, never home), so it
+            // is sent on and the player decides by its own UA; the player starts home. Once a PC player of this ticket got
+            // youtube.com, the resolver gets that before reaching here (pcYoutube).
+            if (resolver) {
+              logJson({ event: 'pc_av1', shard, n, id: t.data.id, quality: pcAv1, client: kind, to: 'player' });
+              logJson({ event: 'play_defer', shard, n, id: t.data.id, held: Date.now() - started, reason: 'av1' });
+              const body = Buffer.from('<!doctype html><title>Preparing</title><p>The video is still being prepared. Play it again in a moment.</p>');
+              res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': body.length, 'cache-control': 'no-store' });
+              return res.end(body);
+            }
+            if (homeOk && home.enabled && av1HomeFor(t.data, hq) && !waited.home) homeFor = 'av1';
           }
         }
         // Tunelio's build failed: home before youtube.com's 360p, for a player that can take home's HLS, when a worker is free.
@@ -1349,13 +1588,114 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
           // homeKeep: the video's session at another quality when this one can't be had (av1HomeFor counted it).
           const fallback = homeKeep(t.data, hq, startHome(shard, t.data, hq, homeFor));
           // Refused (allowance, caps, no room): home can't help this play, so its Tunelio pin stays as it is (#625 verifier).
-          if (homeFor === 'av1' && !fallback) av1Play = false;
+          if (homeFor === 'av1' && !fallback) {
+            av1Play = false;
+            const route = spendScope.getStore()?.route;
+            declined = /^(home_mb|allowance|cap)$/.test(route ?? '') ? route : 'no_room';
+          }
           if (fallback && fallback.state !== 'failed') {
             holding++;
             try { await home.wait(fallback, config.homeReadyMs); } finally { holding--; }
             if (fallback.state === 'ready') where = await homeWhere(fallback);
+            // Missed HOME_READY_SECONDS (home fails such a session with reason timeout, or it is still building): home_ready.
+            else if (homeFor === 'av1') declined = fallback.state === 'failed' && fallback.reason !== 'timeout' ? 'home_failed' : 'home_ready';
+          } else if (homeFor === 'av1' && fallback) declined = 'home_failed';
+        }
+        // Everything-is-OK#764 (E, owner 2026-11-13 "D A unless we're hammering then E"; on cost, 2026-11-14: "we're nowhere
+        // near using all our tunelio credits per month, i'm mostly worried about latency to first frame"): home didn't take
+        // a Quest's AV1 HLS play (hammering YouTube, a day or hour cap, every stream taken, a refusal, HOME_ANDROID off, or
+        // home started but missed HOME_READY_SECONDS): the best rung below it that isn't AV1, instead of the AV1 file the
+        // Quest can't decode (staging 2026-11-13 23:29Z: it sat on a spinner and never asked again, so #625's pin that
+        // yields to home on the next ask never came into play). The rungs (720p, then QUEST_AV1_QUALITIES, 480p and 360p)
+        // were started together at the AV1 read (questRungsStart); questRungPick takes the highest whose build is ready and
+        // not AV1. None: the AV1 answer as before, pinned only when every rung is settled (one still building at the end of
+        // the hold leaves it unpinned, so the Quest's retry gets the rung: verifier M1).
+        if (questHlsAv1 && questRungs && where.ready && where.via === 'tunelio') {
+          holding++;
+          let pick;
+          try { pick = await questRungPick(questRungs, started + config.ticketPlayerHoldMs); } finally { holding--; }
+          if (pick.ok) {
+            c = { ...c, quality: pick.q };
+            where = { ...pick.where, location: adaptive.single(t.data, pick.job) };
+            av1Play = false; // a playable source: a plain pin, which home doesn't take over mid-play
+            if (pick.unread) codecUnread = true; // read again on the next ask, as #749's unread rungs
+          } else rungPending = pick.pending;
+          logJson({ event: 'quest_av1', shard, n, id: t.data.id, quality: questHlsAv1, ...(pick.ok ? { rung: pick.q } : {}), client: kind,
+            to: pick.ok ? 'lower' : pick.pending ? 'building' : 'none', hls: true, declined, ...(pick.unread ? { reason: 'unread' } : {}), held: Date.now() - started });
+        }
+        // #741: home didn't take the PC's AV1 play: the 720p rung within what is left of the hold, unless that is AV1 too
+        // (staging 2026-10-30 to 11-13: 4 of 30 Quest AV1 finds were 720p builds), then youtube.com. A 720p build that
+        // fails or is still building gets the usual answers below (youtube.com, or build_timeout's). Only players get here:
+        // the resolver was sent on at the gate (#749).
+        if (pcAv1 && where.via === 'tunelio') {
+          if (c.quality !== adaptive.lower) {
+            c = { ...c, quality: adaptive.lower };
+            const left = Math.max(0, (resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs) - (Date.now() - started));
+            holding++;
+            try { where = await playback.location(t.data, { holdMs: left, quality: c.quality, hls: false }); } finally { holding--; }
+          }
+          let to = where.via === 'tunelio' ? 'lower' : where.via;
+          const job = where.ready && where.via === 'tunelio' ? playback.peek?.(t.data, c.quality) : null;
+          if (job?.url === where.location && (c.quality === pcAv1 || await readCodec(job) === 'av1')) {
+            where = { location: `https://www.youtube.com/watch?v=${t.data.id}`, via: 'youtube', reason: 'av1', ready: true };
+            to = 'youtube';
+          }
+          logJson({ event: 'pc_av1', shard, n, id: t.data.id, quality: pcAv1, client: kind, to, ...(where.ready === false ? { reason: 'building' } : {}) });
+        } else if (pcAv1) logJson({ event: 'pc_av1', shard, n, id: t.data.id, quality: pcAv1, client: kind, to: where.via });
+        // Everything-is-OK#749: the Quest's player on a plain ticket (a pasted link, #590's long rows; Unity's player too),
+        // read the same way. Its resolver sends a PC's UA and takes the PC path above (sent on for AV1); an Android-UA
+        // resolver (questResolver) would be read here as well. Its 720p mp4 can be AV1 too (staging 2026-11-13 15:43Z: spinner, only an audio decoder made), and #741's
+        // ladder has no step it can take: home is HLS, which it can't open behind a plain ticket (f331bcc); 720p is already
+        // its cap; youtube.com it can't open and re-asks every ~6 s (#420). So the rungs below (QUEST_AV1_QUALITIES), read as
+        // well: staging 2026-11-13, the 480p and 360p mp4s of the 15:43Z video, whose 720p read AV1, read avc1. Else "can't be played
+        // here" (too_long's answer: the world stops this client alone when someone else picked the video, and skips it for
+        // the room on the Quest's own pick, as for restricted; world #420), not pinned, and
+        // the ticket's .m3u8 status says too_long too (questRefused), as that is where the Quest's world hears it.
+        if (config.questAv1 && !hlsTicket && (android || questResolver) && !c.hls && where.ready && where.via === 'tunelio') {
+          // The Quest's player is held up to 90 s, so its read gets QUEST_AV1_READ_SECONDS (10) instead of 3 s: a 720p
+          // build first read cold took over 3 s (staging 2026-11-13 18:23Z). The resolver keeps 3 s (its 12 s hold).
+          const questRead = resolver ? {} : { timeoutMs: config.questAv1ReadMs };
+          const job = playback.peek?.(t.data, c.quality);
+          if (job?.url === where.location && await readCodec(job, questRead) === 'av1') {
+            const from = c.quality;
+            metrics.inc('adaptive', 'quest_av1');
+            let to = 'none', rung = null, unreadRung = false;
+            // The rungs below it in order (QUEST_AV1_QUALITIES, 480p then 360p; owner 2026-11-13: "We can't do better than
+            // 360p?"): each read, the first that isn't AV1 played and pinned. A failed, HLS or AV1 rung goes on to the next.
+            for (const low of config.questAv1Qualities.filter((q) => parseInt(q, 10) < parseInt(from, 10))) {
+              c = { ...c, quality: low };
+              const left = Math.max(0, (resolver ? config.ticketResolverHoldMs : config.ticketPlayerHoldMs) - (Date.now() - started));
+              holding++;
+              try { where = await playback.location(t.data, { holdMs: left, quality: low, hls: false }); } finally { holding--; }
+              const lowJob = where.ready && where.via === 'tunelio' ? playback.peek?.(t.data, low) : null;
+              // Still building at the end of the hold (90 s for the player; 480p and 360p mp4s took 1.4-3.5 s, 2026-11-13): the
+              // usual answers below, the resolver sent on and the player build_timeout's youtube.com; its retry finds the rung.
+              if (where.ready === false) { to = 'building'; rung = low; break; }
+              if (where.via === 'youtube' && overOwnLimit(where.reason)) {
+                // Over the visitor's own limits: the player gets daily_limit's answer below; the resolver is sent on to it.
+                logJson({ event: 'quest_av1', shard, n, id: t.data.id, quality: from, rung: low, client: kind, to: 'limit' });
+                if (questResolver) return sendOn(res, shard, n, t, started, kind);
+                to = null;
+                break;
+              }
+              if (lowJob?.url === where.location && !/[?&]hls=1$/.test(where.location) && await readCodec(lowJob, questRead) !== 'av1') {
+                // A rung whose read failed plays unread (most rungs below an AV1 720p were H.264, 2026-11-13) and unpinned,
+                // so the next ask reads it again; logged reason 'unread' so the count shows it.
+                to = 'lower'; rung = low; unreadRung = lowJob.codec === undefined; break;
+              }
+            }
+            if (to) logJson({ event: 'quest_av1', shard, n, id: t.data.id, quality: from, ...(rung ? { rung } : {}), client: kind, to, ...(unreadRung ? { reason: 'unread' } : {}) });
+            if (to === 'none') {
+              logJson({ event: 'quest_no_source', shard, n, id: t.data.id, client: kind, reason: 'av1' });
+              for (const [k, v] of questRefused) if (v.until <= Date.now()) questRefused.delete(k); // lapsed ones, when a new one comes
+              questRefused.set(`${shard}:${n}`, { id: t.data.id, until: Date.now() + pinWindow(t.data) });
+              return questResolver ? sendOn(res, shard, n, t, started, kind) : tooLongAnswer(res, kind, shard, n, t);
+            }
           }
         }
+        // A refusal can lift: it isn't pinned, and a failed rung's build may build on the next ask. A Quest answered with a
+        // ready Tunelio file here clears the mark, so the .m3u8 status no longer stops it.
+        if (!hlsTicket && (android || questResolver) && where.ready && where.via === 'tunelio') questRefused.delete(`${shard}:${n}`);
       }
       const held = Date.now() - started;
       metrics.latency('ticket_hold_ms', held);
@@ -1413,10 +1753,18 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       if (where.ready === false) { location = `https://www.youtube.com/watch?v=${t.data.id}`; via = 'youtube'; reason = 'build_timeout'; metrics.inc('ticket_timeout'); }
       logJson({ event: 'play', shard, n, id: t.data.id, via, reason, client: kind, held, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
       if (via === 'youtube' && /^(budget|cap|allowance)$/.test(reason ?? '')) routeEvent('youtube', reason, { id: t.data.id });
+      // A PC player of a plain ticket: its resolver mirrors a youtube.com answer (pcYoutube, above). Not build_timeout's: the
+      // build is still coming, and the next ask finds it.
+      if (!hlsTicket && !resolver && !android && !questResolver) {
+        if (via === 'youtube' && where.ready !== false) {
+          for (const [k, v] of pcYoutube) if (v.until <= Date.now()) pcYoutube.delete(k);
+          pcYoutube.set(`${shard}:${n}:${clientKey(req)}`, { id: t.data.id, until: Date.now() + pinWindow(t.data), reason, day: ipKeys.day });
+        } else if (via !== 'youtube') pcYoutube.delete(`${shard}:${n}:${clientKey(req)}`);
+      }
       countPlay(shard, t.data, { via, reason, location }, playPlatform(req.headers['user-agent'], hlsTicket));
       lastAnswer.set(shard, { n, via, reason, quality: where.session?.quality ?? c?.quality, hls: where.session ? true : c?.hls, mode: c?.mode });
       if (warmed.delete(`${shard}:${t.data.id}`)) metrics.inc('warm_played');
-      if (config.ticketPin && via !== 'youtube') {
+      if (config.ticketPin && via !== 'youtube' && !codecUnread && !rungPending) {
         const session = via === 'home' ? where.session ?? null : null;
         const job = !session && c ? playback.peek?.(t.data, c.quality, { hls: c.hls }) : null;
         if (session || job?.url) {
@@ -1546,9 +1894,14 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const m = url.pathname.match(/^\/relay\/media\/([a-f0-9]{18})\/([\w.-]{1,32})$/);
     if (m && req.method === 'PUT') {
       let body;
-      try { body = await readBody(req, 64 << 20); } catch { return fail(res, 413, 'too_large', 'Too large.'); }
-      const status = home.put(m[1], m[2], body, { cached: req.headers['x-media-cached'] === '1' });
-      if (status === 204) { res.writeHead(204); return res.end(); }
+      // Only a body over the limit is a 413 (the worker gives up on it); a read that broke off is worth another try (503).
+      try { body = await readBody(req, 64 << 20); } catch (err) {
+        return err?.message === 'body too large' ? fail(res, 413, 'too_large', 'Too large.') : fail(res, 503, 'upload_broken', 'Upload broke off.');
+      }
+      // x-media-failed: the worker's closing playlist of a copy that isn't whole (Everything-is-OK#781).
+      const status = home.put(m[1], m[2], body, { cached: req.headers['x-media-cached'] === '1', failed: req.headers['x-media-failed'] === '1' });
+      // The segment players are waiting for, so the worker sends it next (Everything-is-OK#367, src/home.js).
+      if (status === 204) { const want = home.want(m[1]); res.writeHead(204, want == null ? {} : { 'x-media-want': String(want) }); return res.end(); }
       return fail(res, status, status === 410 ? 'gone' : status === 413 ? 'too_large' : 'bad_file', 'Not stored.');
     }
     return fail(res, 404, 'not_found', 'Unknown path.');
@@ -1568,7 +1921,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         route = 'stats';
         return statsRoute(req, res, url, { token: config.statsToken, metricsPath: config.metricsPath, monitorDb: config.monitorDb, tz: config.metricsTz, renewDay: config.tunelioRenewsDay, metrics });
       }
-      if (url.pathname.startsWith('/ops/')) { route = 'ops'; return opsRoute(req, res, url, { token: config.statsToken, ring, state: opsState, slots, adaptive, forced, caller: () => clientKey(req) }); }
+      if (url.pathname.startsWith('/ops/')) { route = 'ops'; return opsRoute(req, res, url, { token: config.statsToken, ring, state: opsState, slots, adaptive, playback, forced, caller: () => clientKey(req) }); }
       if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'method', 'GET only.');
       if (url.pathname.startsWith('/hls-test/')) { route = 'hls-test'; return await hlsTest(req, res, url); }
       if (url.pathname.startsWith('/hls/')) { route = 'hls'; return await hlsRoute(req, res, url); }
@@ -1614,6 +1967,13 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         route = 'search';
         return await search(req, res, shard, url, lang, Boolean(c[3]));
       }
+      const o = url.pathname.match(/^\/v1\/o\/([a-z]{1,16})\/([a-z]{1,16})\/([a-z]{1,16})\/([a-z0-9]{1,16})\/?$/);
+      if (o) {
+        const [, who, platform, plan, outcome] = o;
+        if (!OUTCOME_WHO.includes(who) || !OUTCOME_PLATFORMS.includes(platform) || !OUTCOME_PLANS.includes(plan) || !OUTCOMES.includes(outcome)) return fail(res, 404, 'not_found', 'Unknown path.');
+        route = 'outcome';
+        return playOutcome(req, res, who, platform, plan, outcome);
+      }
       const m = url.pathname.match(/^\/v1\/(\d+)\/(s(?:\.m3u8)?|q(?:\/(?:\d{3,4}|auto))?|cc(?:\/(?:[A-Za-z-]+|\d{1,3}))?|r\/[a-z]{1,16}\/[a-z]{1,16}|\d+(?:\.m3u8)?)\/?$/);
       if (!m) return fail(res, 404, 'not_found', 'Unknown path.');
       const shard = Number(m[1]);
@@ -1655,22 +2015,66 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }
   }
   // kept(): everything that remembers a visitor past the request, for the tests that check no raw IP is in it.
-  const kept = () => ({ hits, ticketHits, playerHits, lookupWarms, allowance, spend, adaptive, playback });
-  return Object.assign(handler, { relay, checkWorkers, metrics, probe, refusals, home, kept });
+  const kept = () => ({ hits, ticketHits, playerHits, lookupWarms, outcomeHits, allowance, spend, adaptive, playback, pcYoutube });
+  return Object.assign(handler, { relay, checkWorkers, sweep, metrics, probe, refusals, home, kept, logJson });
+}
+
+// A promise rejected with nobody waiting on it ends a Node process by default, and with this one every held player and
+// build in flight. Installed by the entry point below (not by createApp, so tests keep Node's default): the service
+// logs one `unhandled_rejection` line, counts it (metric unhandled_rejection, src/metrics.js) and carries on.
+// The line says what kind of error and where in the code, never its message: a message can quote a URL, a query or a
+// video ID. `where` is the first stack frames as dir/file:line. An uncaught exception still ends the process.
+// A stack begins with the error's name and message, and a message can hold lines shaped like frames, so only the lines
+// after the message are read; when the message can't be found in the stack, none are.
+function stackFrames(err) {
+  let stack = '', message = '';
+  try { stack = String(err.stack ?? ''); message = String(err.message ?? ''); } catch { return ''; }
+  let frames = null;
+  if (!message) frames = stack.slice(stack.search(/\r?\n|$/));
+  else for (let i = stack.indexOf(message); i >= 0 && frames === null; i = stack.indexOf(message, i + 1)) {
+    const after = stack.slice(i + message.length);
+    if (/^(\r?\n\s+at |$)/.test(after)) frames = after;
+  }
+  return (frames ?? '').split(/\r?\n/)
+    .map((l) => /^\s+at .*?([\w.@-]+[\\/])?([\w.@-]+):(\d+):\d+\)?$/.exec(l)).filter(Boolean).slice(0, 4)
+    .map((m) => `${m[1] ? `${m[1].slice(0, -1)}/` : ''}${m[2]}:${m[3]}`).join(' < ');
+}
+// A failed fetch is a TypeError with no frames and no code of its own (Node 24, 2026-11-10); what failed is in its
+// `cause`. So the code and, when the error has no frames, `where` come from the cause (or its cause): codes and code
+// locations only, never a cause's message either.
+export function rejectionShape(reason) {
+  if (!(reason instanceof Error)) return { error: reason === null ? 'null' : typeof reason };
+  const chain = [reason, reason.cause, reason.cause?.cause];
+  const code = chain.map((e) => e?.code).find((c) => typeof c === 'string' && /^[A-Z][A-Z0-9_]{0,40}$/.test(c));
+  const where = chain.filter((e) => e instanceof Error).map(stackFrames).find(Boolean) ?? '';
+  return { error: /^[A-Za-z][A-Za-z0-9_]{0,40}$/.test(reason.name ?? '') ? reason.name : 'Error', ...(code ? { code } : {}), where };
+}
+export function catchRejections(proc, { log, metrics } = {}) {
+  const onRejection = (reason) => {
+    try { metrics?.inc?.('unhandled_rejection'); } catch { /* counting must not end the process either */ }
+    try { log?.({ event: 'unhandled_rejection', ...rejectionShape(reason) }); } catch { /* nor logging */ }
+  };
+  proc.on('unhandledRejection', onRejection);
+  return onRejection;
+}
+
+// What SIGTERM/SIGINT do (deploys restart the service): answer the relay workers' held polls first, write the last
+// minute's counts and today's home use (so the daily caps count across the restart), then exit after a short wait that
+// lets those 204s reach Caddy. Exported so the tests cover it without a child process (SV-053).
+export function shutdown(app, server, { exit = (code) => process.exit(code), waitMs = 200 } = {}) {
+  app.relay?.drain();
+  app.probe?.stop?.();
+  server?.close();
+  app.metrics.close();
+  app.home?.flush?.();
+  setTimeout(() => exit(0), waitMs);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const app = createApp();
-  // Write the last minute's counts before systemd stops us (deploys restart the service), and answer the relay
-  // workers' held polls first; the short wait lets those 204s reach Caddy before the process exits.
+  catchRejections(process, { log: app.logJson, metrics: app.metrics });
   let server;
-  for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {
-    app.relay?.drain();
-    server.close();
-    app.metrics.close();
-    app.home?.flush?.(); // today's home use, so the daily caps count across the restart
-    setTimeout(() => process.exit(0), 200);
-  });
+  for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => shutdown(app, server));
   server = http.createServer(app).listen(defaults.port, defaults.host, () => {
     console.log(`japharsworld-yt listening on ${defaults.host}:${defaults.port} (${defaults.shards} shards × ${defaults.pool} tickets)`);
   });

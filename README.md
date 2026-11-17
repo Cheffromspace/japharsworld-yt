@@ -10,7 +10,9 @@ This service works within that rule:
   the service reads it as the raw rest of the address, so a pasted link's own `&` and `+` stay in it.
 - **Tickets.** The world bakes `https://yt.japharsworld.com/v1/<shard>/<n>` for every shard and `n < POOL`.
   A search binds the next free tickets to its videos, its thumbnail sheet and its next page, and answers with
-  ticket numbers. Loading a video ticket is a 302 to the video; no video passes through this server.
+  ticket numbers. Loading a video ticket is a 302 to the video. A Tunelio or youtube.com video never passes through
+  this server; a home relay play does (*Home relay playback* below): the home worker uploads its segments here and
+  players fetch them from this server.
 - **HD playback (Tunelio).** With `TUNELIO_API_KEY` set, an ordinary video's ticket redirects to a
   [Tunelio](https://tunelio.dev) tunnel link (720p/1080p): a progressive mp4 (full seeking) up to
   `TUNELIO_PROGRESSIVE_MAX_MINUTES` (720) and `TUNELIO_PROGRESSIVE_MAX_MB` (6000), Tunelio's HLS playlist for longer
@@ -64,7 +66,7 @@ This service works within that rule:
 | `GET /v1/<shard>/<n>` | video: 302 to a Tunelio link or YouTube (from a `UnityPlayer` UA: JSON `t`, `state` = `building`/`ready`/`failed`/`live`/`youtube`, `format`, `quality`, `mb`, `elapsed`, `eta`, `progress`, on a home session `growing` (true while the playlist listed so far has no end marker; a hint about the next player to open it, not exact: the settle hold can still hand that player the end marker, and a Quest already playing probably stays on an infinite duration after it turns false (inferred, not yet seen in a client); Everything-is-OK#393), and the video's `title`, `channel`, `desc`, `seconds` as stored when the results were published, `""` and `0` for older tickets, `seconds` also `0` when the length isn't known; Everything-is-OK#114) · sheet: JPEG, cell *i* = result *i*, row-major · page: JSON like a search |
 | `GET /v1/<shard>/q` · `/v1/<shard>/q/<720|1080|auto>` | JSON `quality` (the room's playback quality for search videos), `pick` (`720p`/`1080p`/`auto`), `default`, `options`; the second form picks it (kept `QUALITY_HOURS`, 12; `auto` clears it: with playback plans on, 1080p when Tunelio is fast, else 720p). The tablet's ticket status carries it as `room` |
 | `GET /v1/<shard>/r/<who>/<kind>` | A video report from the world (world #353): `who` is `visitor` or `tester`, `kind` one of `frozen` `stutter` `sync` `sound` `load` `quality` (the Tester tab's problem buttons), `resync` (a Resync press) or `autoresync` (the world's stall watchdog reloaded). Answers `200 {"ok":true}` at once and does nothing else; anything off those lists is `404 not_found`. Logged as `video_report` with the device class and what the service knows about the shard's play (last ticket, route and why, plan, quality, rung, also after a youtube.com fallback, which has no pin; `/ops/events?event=video_report`) and counted as `video_report` `<who>:<kind>` (at most once per shard, who and kind per 10 s), exported as `eiok_video_report_total{who,kind}`. Grafana's `eiok-tester-report` fires on the six problem kinds only |
-| `GET /v1/ch/<key>` | a Channels slot by its `channels.json` key: `302` to `https://www.youtube.com/watch?v=<id>`, the slot's current video in the link monitor's DB (`slots.current_video`, so swaps apply; on a host with no monitor, such as staging, the answer of `CHANNELS_UPSTREAM`'s `/v1/ch/<key>` asked server-side (2 s, cached 5 min per slot; world #519), else its baked link in `monitor/channels.json`), `no-store`. For Quest, where VRChat resolves watch links but not the PC's `playlist?list=` links (#145). `404 unknown_channel`; `503 channel_unavailable` for a spare without a video or a removed slot |
+| `GET /v1/ch/<key>` | a Channels slot by its `channels.json` key: `302` to `https://www.youtube.com/watch?v=<id>`, the slot's current video in the link monitor's DB (`slots.current_video`, so swaps apply; on a host with no monitor, such as staging, the answer of `CHANNELS_UPSTREAM`'s `/v1/ch/<key>` asked server-side (2 s, cached 5 min per slot; world #519), else its baked link in `monitor/channels.json`, hidden where `monitor/overrides.json` hides it; every slot refused when that overrides file is missing, is not strict JSON (`NaN` or `Infinity` included, which slotmon's own reader accepts) or has not slotmon's shape (`slots` null, a list or a string), and a slot whose entry is not an object; slotmon itself reads a missing file as no edits, so this rule is stricter on purpose), `no-store`. For Quest, where VRChat resolves watch links but not the PC's `playlist?list=` links (#145). `404 unknown_channel`; `503 channel_unavailable` for a spare without a video, a removed slot, or a slot the published list hides (the monitor's hide: down or flash fail; the owner's: `overrides.json` hidden, retired slots too; Everything-is-OK#776), and when the monitor's status can't be read (fail closed: logged as `channel_refused` `status_unreadable`, one line a minute), or, with no `CHANNELS_UPSTREAM` set (production), when its database file is missing or not readable (`status_missing`, one line a minute; a hide is logged as `hidden_by_monitor` / `hidden_by_owner`, without the key) |
 | `GET /hls/<token>.m3u8` · `/hls/<token>/<360p|720p|1080p>.m3u8` | adaptive playlists a played ticket redirects to when its plan is adaptive (`ADAPTIVE_HLS`, src/adaptive.js); the tablet's ticket status then carries `plan` (`lower`/`direct`/`adaptive`/`start`: adaptive from a 360p first rung, `ADAPTIVE_START`), and for `adaptive`/`start` also `rung` (the highest build the session's players were actually given: `360p`/`720p`/`1080p`, `null` before any; a fallback counts as what it is) and `top` (`pending`/`served`/`failed`), because AVPro reports the top variant's size from the start. A rung still building is held up to `ADAPTIVE_HOLD_SECONDS` (1; 8 stalled AVPro's picture every 8 s, 2026-10-23), then 404 |
 | `GET /v1/<shard>/cc/<lang>` | JSON: `t`, `id`, `available`, `source` (`manual`/`auto`/`translated`), `lines` = `[[start, dur, text], …]`, `tracks` = `[{i, code, name, auto}]`, `track` (index shown, `-1` = none), `reason` when unavailable |
 | `GET /v1/<shard>/cc/<i>?l=<lang>` | the same for track *i* |
@@ -252,7 +254,53 @@ one, f331bcc) and never for live streams:
 6. on a `.m3u8` ticket with `HOME_ANDROID=on`: Tunelio's HLS build is AV1 (read from its init segment), which the
    Quest 2 can't decode; home is always H.264 + AAC. Counted as `adaptive`/`android_av1` whether or not the flag is on.
    A higher rung of an adaptive master that turns out AV1 is answered, for a Quest player, with the best H.264 rung
-   below it (`android_av1_rung`), so the play tops out lower instead of failing at the step up,
+   below it (`android_av1_rung`), so the play tops out lower instead of failing at the step up. When home doesn't take
+   the AV1 play (hammering YouTube, below; a day or hour cap; every stream taken; `HOME_ANDROID=off`), the Quest player
+   gets the best rung below it that isn't AV1 (Everything-is-OK#764: a Quest handed the AV1 build sits on a spinner and
+   never asks again). For time to first frame (the owner's priority, 2026-11-14; credits aren't a concern) the rungs,
+   720p then `QUEST_AV1_QUALITIES` (480p, 360p), all start building as HLS the moment the read says AV1, before any home
+   wait, and each is answered within the player's hold: the highest ready one that isn't AV1 once the rungs above it
+   have settled, or the best ready one `QUEST_AV1_GRACE_SECONDS` (5) after the first good one. Each rung's codec read
+   is capped at `QUEST_AV1_HLS_READ_SECONDS` (4) and the hold; one that times out or fails plays unread and unpinned (the
+   next ask reads again). None: the AV1 build as before, pinned only when every rung has settled; one still building at
+   the hold's end leaves it unpinned, so the retry gets the rung. Logged `quest_av1` with `hls: true`, `to`
+   (lower, building, none) and `declined`: why home didn't take the play (`hammering`, `cap_day`, `cap_hour`, `slots`,
+   `size`, `hour_mb`, `no_room`, `allowance`, `home_mb`, `cap`, `home_ready`, `home_failed`, `home_off`). When home
+   does take the play the rung builds were started anyway: up to 3 paid builds nobody waits on,
+   And on a plain ticket for a PC player (`PC_AV1=on`, the default; Everything-is-OK#741): Tunelio's mp4 build is AV1, read
+   from 64 KB of the file's head (the `stsd` sample entry). The resolver is sent on and AVPro reuses the home session.
+   When home can't take it: the 720p rung, or youtube.com when that is AV1 as well. Counted as `adaptive`/`pc_av1`.
+   The resolver is sent on even then (the owner's pick, 2026-11-13, #764: a Quest's resolver looks the same, and its
+   player keeps the 480p rung), so such a PC pays one AVPro error round: its player opens the ticket, gets the
+   youtube.com 302, which AVPro can't play ("Loading failed"), and only the retry's resolver gets youtube.com (through
+   the mirror below) and plays it, about 16 s later (staging 2026-11-13 23:29Z).
+   A Quest's player on a plain ticket (a pasted link, the long rows of Everything-is-OK#590) has its 720p mp4
+   read the same way (`QUEST_AV1=on`, the default; Everything-is-OK#749), but home is no use to it (HLS behind a plain
+   ticket, see above) and neither is youtube.com: an AV1 build gets the first of `QUEST_AV1_QUALITIES` (480p, then 360p)
+   whose mp4 isn't AV1, each read as well, else "can't be played here" (too_long's answer, not pinned; the resolver is sent
+   on; the ticket's `.m3u8` status, which the Quest's tablet asks, says `too_long` too for the pin's window). The world
+   then stops only the Quest when someone else picked the video, and skips it for the room on the Quest's own pick, as it
+   does for too_long and restricted (world #420). Each Quest plain-ticket build's first play waits on that read, up to
+   3 s, once per build (cached); an AV1 video's first play can read three builds (720p, 480p, 360p): for the Quest's
+   player up to 10 s each, so up to ~30 s of reads plus the lower rungs' builds, which the reads don't count against the
+   90 s hold. The Quest player's reads may take `QUEST_AV1_READ_SECONDS` (10; resolvers 3 s; 0 counts as 10): a cold
+   720p read took over 3 s on staging (2026-11-13). A read that fails or times out (Quest or PC) leaves the answer as
+   before but not pinned, so the next ask reads again. Counted as `adaptive`/`quest_av1`.
+   **The resolver on a plain ticket** can't be told apart: a Quest's sends the same Windows Chrome UA as a PC's (staging
+   2026-11-13). So there it never starts a new home session: where home would answer and could start (the same limits
+   `startHome` checks), it is sent on (`play_defer` reason `player`) and the player starts it; where home couldn't, it
+   takes the usual path. It is also sent on when #741's read finds AV1 (`pc_av1` `to=player`) or the read fails
+   (reason `unread`); the player that asks next decides by its own UA (PC: home, 720p, youtube.com; Quest: 480p,
+   360p, "can't be played here"). A PC whose resolver used to start home now has its player start it, up to about 1 s
+   later (inferred, not measured; the tablet's status poll often starts home before either asks). An existing home
+   session still answers the resolver. Once a PC player of the ticket was answered with youtube.com (for any reason),
+   its resolver gets youtube.com too, until a PC player gets a file or home again: VRChat's resolver is what plays the
+   watch link on a PC. This is per client (the daily IP code): a Quest behind the same address (a household, every desk
+   test) shares it, so after that PC's youtube.com its resolver gets youtube.com too, and VRChat on the Quest then
+   resolves the watch link itself (observed for live streams, world #270; inferred for videos). If that plays, the
+   Quest's player never asks the ticket. With
+   `PC_AV1=off` there is no read on that path, so a Quest's resolver (a PC UA) gets the plan's mp4, AV1 or not, as before
+   #749.
 7. on a `.m3u8` ticket with `HOME_ANDROID=on`, `HOME_ANDROID_GROWING=on` and `HOME_RACE_SECONDS` above 0 (default 0, off): Tunelio's build is still
    running after that many seconds (`slow_build`). Home starts beside it and the player gets whichever is ready first
    (`home`/`race_won` when home wins). The build carries on for the next play. With `TICKET_PIN` all players of the ticket
@@ -271,6 +319,16 @@ to Tunelio, and its `build_route` says why (`home_hour`, `home_gap`, `home_day`,
 `HOME_HOUR_MB_EXEMPT_HOURS` (4) and longer skip the MB check, because Tunelio fails on them (#577) and would leave
 youtube.com's 360p; they still count in the hour and meet the build cap and the gap. The hour is kept in memory only, so
 a restart forgets it. Each is off at 0. `/ops/state` shows the hour's builds and MB and the limit holding now.
+A build the worker serves from its own cache asked nothing of YouTube, so it also gives the gap back: the gap then runs
+from the last real download (Everything-is-OK#764: a queue warm's cached build held the gap on staging, and the AV1
+plays after it found no worker).
+**AV1 plays and the gap** (Everything-is-OK#764, the owner's thresholds, 2026-11-13): an AV1 play (a Quest's
+`android_av1`, a PC's #741 read) has no other source its players can show, so its home build may start inside
+`HOME_START_GAP_SECONDS` unless home is hammering YouTube: a real download (not a cache upload) started in the last
+`HOME_AV1_GAP_SECONDS` (10; 0 keeps the whole gap for AV1 plays too), 4 or more real downloads in the rolling hour, or a
+bot, rate or potoken refusal at home in the last 15 minutes. Only the gap: the day and hour caps, the hour's MB and the
+free streams still hold. Such a start logs `home_av1_gap` (how long after the last real download); `/ops/state` shows
+`hammering`. When hammering, the Quest gets its H.264 rung (item 6) and the PC its 720p or youtube.com.
 
 **Quality and concurrency** (owner, 2026-10-25): home builds the room's own pick, or `HOME_QUALITY` (1080p) when
 the room hasn't picked, but 720p for a video whose 1080p files would be over `HOME_ITEM_MAX_GB` (6 GB by default since #576, about 2.9 h at
@@ -288,7 +346,19 @@ resolver gets the "not a video" page. VizVid shows a playlist that is still grow
 for the whole play, so when the first 8 segments are all the same length (an encode with evenly spaced keyframes, like
 long mixes) the worker uploads the whole playlist, `#EXT-X-ENDLIST` included, at once, and a segment asked for before
 it arrives is held up to `HOME_SEGMENT_HOLD_SECONDS` (20). Other videos (keyframes at scene cuts) get the growing
-playlist: no seek bar on the first play, one for replays and late joiners once the upload is done. Media Foundation
+playlist: no seek bar on the first play, one for replays and late joiners once the upload is done. With
+`RELAY_SPLIT_BY_TIME=on` in the worker's env file (world #250, 2026-10-27; off by default) ffmpeg cuts every 4 s
+whether or not a keyframe is there (`-hls_flags split_by_time`, still no re-encode), so every video gets the whole
+playlist and a seek bar from the first second: a seek resumes the picture at the next keyframe, a second or two later.
+A job that fails after players were sent closes the playlist at its last uploaded segment, and the server marks that
+session failed (`cut_short`), so the next play starts over. Whole or short is judged by running time, not segment count:
+a copy within 10 s of the video's length is whole even with fewer segments than predicted (Everything-is-OK#780), the
+rule the worker cache uses too. A worker that knows its copy isn't whole (an upload refused, ffmpeg failing or ending
+short of the video) sends its closing playlist with `x-media-failed: 1`, and the server fails that session even when its
+playlist was growing or had already ended (Everything-is-OK#781). A copy whose only failure was its closing playlist
+upload (every segment sent, within 10 s of the video) is closed unmarked and cached. A failed session someone is still
+playing is set aside, not deleted, when the next play of its video starts a new one (`home_set_aside`): its players
+play on to where it ends, and the sweep removes it once nobody has fetched from it for 5 minutes. Media Foundation
 opens a growing playlist as live, at its end, with the clock from 0 (2026-10-23, Everything-is-OK#111: picture ~7 min
 ahead of the captions), so a player is held up to `HOME_SETTLE_SECONDS` (10) when the upload rate says the rest is due
 by then, and gets the finished playlist (`home`/`settled`; `home_first_segment` logs where each session's first
@@ -306,20 +376,41 @@ space, less what the unfinished builds and it will still grow, stays above it (f
 first, `home_evict` why `disk`; otherwise `home_no_room` and the play goes elsewhere), and a build is stopped when free
 space falls under half of it (2026-10-30: two long 1080p plays filled the Linode's disk).
 
+**Seeking ahead** (Everything-is-OK#367; `HOME_SEEK_WANT=on`, default off, so production keeps the in-order upload while
+Everything-is-OK#727, a black screen after far seeks on staging, is open; off is the pre-#367 upload on a keyframe-cut
+worker, while one with `RELAY_SPLIT_BY_TIME=on` still starts the fill runs below when run 0 stops short): a segment a player waits for that isn't next in line (a seek past the upload)
+is the session's want (`home_want`), named in every answer to the worker's uploads (`x-media-want`) until it is here. A
+copy from the worker's cache jumps there and sends the skipped segments at the end (`media_jump`). With players at
+different points, the newest want goes first, then any other segment a player is still held for; only segments the
+playlist lists are wanted. An upload that fails for good after a jump ends the job as before, but the hole is then
+before the end, not after it: those segments 404 after the hold, and the session never ends, so the next play after
+`STALE_MS` starts over.
+
+A fresh build with a whole (predicted) playlist does the same with a second ffmpeg: for a want no run will reach within
+a few seconds, the run heading there stops at it and a new one starts at it (`-copyts -ss`, `-start_number`; `media_jump`
+with `cached: false`), at most two at once. When none is left, fill runs (`media_run`) make what is still missing, so the
+whole copy still reaches the worker's cache. A growing playlist has no far segments to want and stays one run.
+
 **The worker's cache** (`relay/cache.js`, owner 2026-10-23: "be aggressive, the Optiplex has lots of disk"): every
 stream that finishes whole stays on the Optiplex too, one folder per video and quality, least recently used out above
-`RELAY_CACHE_GB` (40; 0 = off; in the worker's env file). A later home job for it, after the Linode's copy expired, is
+`RELAY_CACHE_GB` (40; 0 = off; in the worker's env file; 440 on the Optiplex's 492 GB volume, #242). A later home job for it, after the Linode's copy expired, is
 uploaded from that disk without yt-dlp or YouTube: faster, and no download from the home IP. Those uploads carry
 `x-media-cached: 1`, so the server counts them as `home`/`cache_hit` and `home_today`/`cache_mb`, not against
 `HOME_DAILY_BUILDS`/`HOME_DAILY_MB` (which exist for YouTube downloads). It lives in systemd's `CacheDirectory`,
 `/var/cache/japharsworld-yt-relay/media`, or `RELAY_CACHE_DIR`. The Optiplex's root volume is 100 GB of a 954 GB disk
 (the rest is unallocated in `ubuntu-vg`, 2026-10-23); a bigger cache wants its own volume mounted there (below). The
 server's daily cap is checked before the job, so once it is reached even a cached video isn't asked for.
+Each copy records its stream format (`FORMAT` in `relay/cache.js`, 3 since 2026-10-30); a copy of another format is
+deleted when it is looked up and made again. `RELAY_CACHE_KEEP_FORMAT_2=on` (production's worker only, off by default;
+owner on Everything-is-OK#787, 2026-11-15) serves format 2 copies as they are instead: production's worker has only
+ever made single-run keyframe builds, the same as this code with split-by-time off, so its ~440 GB cache isn't
+downloaded again from the home IP. Staging's worker leaves it off (its format 2 copies may be jumped builds). The
+worker's `start` log line shows it as `cacheKeepFormats: [2]`.
 
     sudo lvcreate -L 500G -n media ubuntu-vg && sudo mkfs.ext4 -L jyt-media /dev/ubuntu-vg/media
     echo 'LABEL=jyt-media /var/cache/japharsworld-yt-relay ext4 defaults,noatime 0 2' | sudo tee -a /etc/fstab
     sudo systemctl stop japharsworld-yt-relay && sudo mkdir -p /var/cache/japharsworld-yt-relay && sudo mount /var/cache/japharsworld-yt-relay
-    echo RELAY_CACHE_GB=450 | sudo tee -a /etc/japharsworld-yt-relay.env && sudo systemctl start japharsworld-yt-relay
+    echo RELAY_CACHE_GB=440 | sudo tee -a /etc/japharsworld-yt-relay.env && sudo systemctl start japharsworld-yt-relay
 
 Fresh stream URLs often answer `403` for a while before they work (0.1–2.6 s, once 22 s, 2026-10-23); the worker's
 proxy keeps asking every second for up to 30 s, so a start can take up to `HOME_READY_SECONDS` (40).

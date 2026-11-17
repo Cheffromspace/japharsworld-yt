@@ -25,17 +25,38 @@ node tools/ops.mjs state                  # live service state without SSH (STAT
 Node >= 22.13, ESM, no build step, no linter, no TypeScript. Only two dependencies (`youtubei.js`, `sharp`); SQLite is
 the built-in `node:sqlite` (`DatabaseSync`). Keep it that way unless asked.
 
-## Deploying = pushing to `main`
+## Deploying: a push to `main` is production
 
-There is no CI. `japharsworld-yt-update.timer` on the Linode pulls `main` every 5 minutes, restarts the service and
-rolls back if `/healthz` fails (`deploy/update.sh`). The Optiplex relay pulls `main` too (`deploy/relay-update.sh`).
-So a push to `main` is a production deploy: run `npm test` first. The Linode's monitor also commits `docs/`
-("Channels status: …") to `main` on its own, so always `git pull --rebase origin main` before pushing
-(`deploy-now.cmd` does pull, test, push).
+**A push to `main` is a production deploy and needs the owner's explicit go for that push.** Green tests are not a go.
+`japharsworld-yt-update.timer` on the Linode fetches `main` every 5 minutes and runs `deploy/update.sh`, and the
+Optiplex relay pulls `main` too (`deploy/relay-update.sh`). GitHub Actions (`.github/workflows/test.yml`) runs `npm test`
+on every push and pull request to `main` and `staging`, but nothing waits for it: a red run does not stop a deploy.
 
-`deploy/update.sh` decides what to restart from the changed paths: commits touching only `docs/`, `monitor/`,
-`relay/`, `metrics/` or the related `deploy/` files do not restart the search service. When adding a new file
-or unit, check those regexes in `update.sh`.
+Before any push:
+
+1. Work on a branch. Changes are tried first on the `staging` branch and its server, which deploys that branch with the
+   same script (`DEPLOY_BRANCH`); `node tools/ops.mjs --staging …` reads it. `staging` is `main` plus what is being
+   tested (owner, Everything-is-OK#712): a change goes to `staging` first and reaches `main` by merge, never by
+   cherry-pick, and `main`'s own commits reach `staging` by merge too. The branches last converged on 2026-11-10 (#700).
+2. Run `npm test` (offline). The link monitor's Python tests are separate: `cd monitor && python -m unittest test_slotmon`.
+3. Report your claims, one per line, each with its evidence. An independent verifier checks every batch before any push.
+4. `main` moves only on the owner's go. The Linode's monitor commits `docs/` ("Channels status: …") to `main` on its
+   own, so merge `origin/main` in just before that push (never rebase or cherry-pick: that copies commits and the
+   branches drift apart again).
+
+What a deploy does (`deploy/update.sh`): it decides what to restart from the changed paths. Commits touching only
+`docs/`, `monitor/`, `relay/`, `metrics/`, `public/`, `test/`, `tools/`, `claude/`, `grafana/`, `infra-check/`,
+`README.md`, `CLAUDE.md`, `.gitignore`, `.github/` or the related `deploy/` files don't restart the search service; anything else
+does (`src/`, the packages, the env example, a new file at the root). A restart drops held players and builds in
+flight, so it waits while the service is busy (up to 30 minutes); then `/healthz` is checked for 20 s, and a failure
+rolls back to the commit before. When adding a file or unit, check those regexes in `update.sh`.
+
+`node tools/grafana.mjs push` overwrites the shared Grafana dashboards and alert rules by uid. Never run it from a
+branch that is behind the other (`staging` is ahead of `main` while changes are tested, and a push from the one behind
+puts old rules back), and only on the coordinator's say-so. `build` only rewrites `grafana/*.json`.
+
+The work log, decisions and role rules live in the private world repo, `Cheffromspace/Everything-is-OK`
+(`NEXT-SESSION.md`, `docs/decisions.md`, `docs/roles/`). Issues are filed there too, because this repo is public.
 
 ## Architecture
 

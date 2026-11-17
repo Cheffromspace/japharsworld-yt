@@ -28,8 +28,8 @@ BACKUP_AWS_SECRET_ACCESS_KEY=
 BACKUP_PROM_URL=
 BACKUP_PROM_USER=
 BACKUP_PROM_TOKEN=
-# tickets.db holds search results (video IDs, titles) that public/privacy.html keeps "for up to a day": off unless the
-# owner decides otherwise and the privacy page says so.
+# tickets.db holds search results (video IDs, titles, under room numbers), kept with no time limit, which
+# public/privacy.html doesn't list for S3: off unless the owner decides otherwise and the privacy page says so.
 BACKUP_TICKETS=off
 EOT
 fi

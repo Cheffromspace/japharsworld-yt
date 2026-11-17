@@ -23,9 +23,19 @@ test('ops redaction: allowlisted fields only, IDs and query strings masked', () 
   assert.equal(redact({ event: 'dQw4w9WgXcQ' }).event, '…', 'an event field that holds an ID is still masked');
   assert.deepEqual(redact({ event: 'play', id: 'dQw4w9WgXcQ', n: 67, via: 'home', held: 0, pinned: true }),
     { event: 'play', via: 'home', held: 0, pinned: true }, 'a pinned play says so (#293)');
+  assert.deepEqual(redact({ event: 'tunelio_drop_cut', id: 'dQw4w9WgXcQ', url: 'https://tunelio.dev/x?k=1', kind: 'reset', error: 'ECONNRESET', connS: 275, pos: 0.4, readMb: 120, lastByteAt: '2026-10-30T00:00:00.000Z' }),
+    { event: 'tunelio_drop_cut', kind: 'reset', error: 'ECONNRESET', connS: 275, pos: 0.4, readMb: 120, lastByteAt: '2026-10-30T00:00:00.000Z' }, 'the drop check keeps numbers and clock times (#361)');
   assert.deepEqual(redact({ event: 'video_report', shard: 1, n: 67, kind: 'frozen', who: 'tester', device: 'android', ago: 42, via: 'tunelio', mode: 'adaptive', rung: '720p', top: 'pending', quality: '1080p', hls: true, counted: true }),
     { event: 'video_report', kind: 'frozen', who: 'tester', device: 'android', ago: 42, via: 'tunelio', mode: 'adaptive', rung: '720p', top: 'pending', quality: '1080p', hls: true, counted: true },
     'a video report keeps what it says about the play, never its shard or ticket (#353)');
+  // The housekeeping events of 2026-11-10 (Everything-is-OK#680, #681) keep their own fields and nothing else: rows
+  // (a count) and where (code locations) are on the list; table columns, the error's text and objects are not.
+  assert.deepEqual(redact({ event: 'captions_pruned', rows: 1234, ms: 40, video_id: 'dQw4w9WgXcQ', key: 'c:en:auto', json: '{"cues":[]}', fetched: 1, maxAgeMs: 604800000 }),
+    { event: 'captions_pruned', rows: 1234, ms: 40 }, 'the count of pruned rows reaches /ops/events');
+  assert.deepEqual(redact({ event: 'captions_pruned', rows: { video_id: 'dQw4w9WgXcQ' } }), { event: 'captions_pruned', rows: undefined }, 'never an object');
+  assert.equal(redact({ event: 'captions_pruned', rows: 'dQw4w9WgXcQ' }).rows, '…', 'a string there is masked like any other');
+  assert.deepEqual(redact({ event: 'unhandled_rejection', error: 'TypeError', code: 'ECONNRESET', where: 'src/server.js:120 < src/relay.js:44', stack: 'x', cause: 'y', reason: undefined, query: 'rain', q: 'rain', name: 'x', id: 'dQw4w9WgXcQ', shard: 1, n: 5, ua: 'Mozilla/5.0', url: 'https://example.invalid/' }),
+    { event: 'unhandled_rejection', error: 'TypeError', code: 'ECONNRESET', where: 'src/server.js:120 < src/relay.js:44', reason: undefined });
   const ring = new EventRing(3);
   for (let i = 0; i < 5; i++) ring.push(JSON.stringify({ at: new Date(1000 + i).toISOString(), event: i % 2 ? 'a' : 'b', i }));
   ring.push('{"route":"ticket","status":302}'); // request lines are not events
@@ -107,6 +117,15 @@ test('ops routes: token required, state and redacted events', async (t) => {
   assert.ok(Date.parse(set.body.forced[0].until) - Date.now() <= 240 * 60_000 + 1000, 'at most 4 hours');
   assert.equal((await get('/ops/plan')).body.forced.length, 1);
   assert.deepEqual((await post('id=AbCdEfGh1jK&mode=clear')).body.forced, []);
+  // Everything-is-OK#783: a plan or a clear for a video Tunelio really refused as age-restricted keeps that verdict.
+  playback.restrictedIds.set('ZzAgeGate01', Date.now() + 3600_000); // as a real refusal leaves it
+  for (const mode of ['lower', 'direct', 'adaptive', 'start', 'clear']) {
+    assert.equal((await post(`id=ZzAgeGate01&mode=${mode}`)).status, 200);
+    assert.equal(playback.restricted('ZzAgeGate01'), true, `after mode=${mode}`);
+  }
+  assert.equal((await post('id=ZzAgeGate01&mode=restricted&minutes=5')).status, 200);
+  await post('id=ZzAgeGate01&mode=clear');
+  assert.equal(playback.restricted('ZzAgeGate01'), true, 'a forced plan cleared: the real verdict is back');
 
   // Without a token configured the routes don't exist.
   const off = createApp({ config: { ...config, statsToken: '' }, store, youtube, tunelio, log: () => {} });

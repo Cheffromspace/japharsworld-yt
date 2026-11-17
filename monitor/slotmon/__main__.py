@@ -8,6 +8,7 @@
   python -m slotmon report [--days 14]     baseline report (Markdown)
   python -m slotmon publish [--thumbs]     publish sleep-list.json (and the thumbnail sheet) now
   python -m slotmon queue VIDEO [--slot K] queue a flash check by hand
+  python -m slotmon clear-flash KEY        a person clears a slot's flash-fail hold (#776), then publishes
   python -m slotmon seed FILE              load a seed file made by seed-pack
   python -m slotmon seed-pack WORLD OUT    (PC) pack the 2026-10-17 hand checks from the world repo
   python -m slotmon alert-test             send a test message to Discord
@@ -146,6 +147,21 @@ def cmd_queue(con, a):
     con.commit()
 
 
+def cmd_clear_flash(con, a):
+    if not lock():
+        print("a pass is running; try again in a minute")
+        return 1
+    line = core.clear_flash(con, a.key)
+    print(line)
+    if ": cleared." not in line:
+        return 1  # no such slot, or no hold to clear
+    if db.get_meta(con, "publish_now", False):
+        slots, ov = core.load_slots(), core.load_overrides()
+        core.sync_slots(con, slots, ov)
+        print("published" if core.publish_pass(con, slots, ov) else "nothing to publish (or publishing is off)")
+    return 0
+
+
 def cmd_seed(con, a):
     from . import seed
     core.sync_slots(con, core.load_slots(), core.load_overrides())
@@ -166,6 +182,7 @@ def main():
     p = sub.add_parser("report"); p.add_argument("--days", type=int, default=14)
     p = sub.add_parser("publish"); p.add_argument("--thumbs", action="store_true")
     p = sub.add_parser("queue"); p.add_argument("video"); p.add_argument("--slot")
+    p = sub.add_parser("clear-flash"); p.add_argument("key")
     p = sub.add_parser("seed"); p.add_argument("file")
     p = sub.add_parser("seed-pack"); p.add_argument("world"); p.add_argument("out")
     a = ap.parse_args()

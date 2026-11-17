@@ -2106,6 +2106,114 @@
   ]
  },
  {
+  "uid": "eiok-tunelio-reopen-fail",
+  "title": "Tunelio open or reopen failed",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "0m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "In the last 6 hours the speed probe could not resume a cut Tunelio link at the byte reached, or could not open one at all (three tries): a reset would then be a visible freeze for players, and a failed open can mean Tunelio stopped honouring Range. The cause can be the Linode's own network, because any fetch error counts, not only an answer from Tunelio. The details: `node tools/ops.mjs events --event tunelio_drop_open,tunelio_drop_cut,tunelio_drop_reopen,tunelio_drop`."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "sum(increase(eiok_tunelio_probe_reopen_fail_total{env!=\"staging\"}[6h])) + sum(increase(eiok_tunelio_probe_open_fail_total{env!=\"staging\"}[6h]))",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-play-failures",
+  "title": "Many plays failing for visitors",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "0m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "Over 30 % of visitors' plays failed in the last 3 hours. By class and plan: the \"What visitors saw\" row, or eiok_play_outcome_total."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "(sum(increase(eiok_play_outcome_total{env!=\"staging\",who=\"visitor\",outcome=~\"e.*|timeout|after\"}[3h])) / sum(increase(eiok_play_outcome_total{env!=\"staging\",who=\"visitor\"}[3h])) - 0.3) and sum(increase(eiok_play_outcome_total{env!=\"staging\",who=\"visitor\"}[3h])) >= 5",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
   "uid": "eiok-backup-missing",
   "title": "Daily backup missing",
   "folderUID": "everything-is-ok",

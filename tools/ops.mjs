@@ -4,7 +4,7 @@
 //   node tools/ops.mjs events [--event tunelio_link,build_failed] [--minutes 1440] [--limit 500]
 //   node tools/ops.mjs slots                              what the player test slots hold and when their links expire
 //   node tools/ops.mjs refill [--id <video>] [--force]    refill them (20 credits) and wait for the builds (~0.5–3 min)
-//   node tools/ops.mjs plan [--id <video> --mode start|adaptive|direct|lower|clear] [--minutes 60]
+//   node tools/ops.mjs plan [--id <video> --mode start|adaptive|direct|lower|restricted|clear] [--minutes 60]
 //                                                         force a video's play plan for a while (max 240 min); no --id lists
 //   node tools/ops.mjs limit --staging [--mode daily_limit|rate_limited|clear (--id <video> | --me)] [--minutes 30]
 //                                                         staging only (Everything-is-OK#545): answer as over the limit for

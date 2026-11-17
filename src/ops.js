@@ -1,7 +1,8 @@
 // Operator routes, read only except the slot refill and test plans (owner, 2026-10-21: query the Linode without SSH, which Claude's sessions can't use):
 //   GET /ops/state                                      what the service is doing now (builds, holds, relay, probe, version)
 //   GET /ops/events?event=a,b&minutes=1440&limit=500    recent log events from memory, newest last
-//   GET /ops/plan, POST /ops/plan?id=&mode=&minutes=     test plans: force a video's play plan for a while (src/adaptive.js force)
+//   GET /ops/plan, POST /ops/plan?id=&mode=&minutes=     test plans: force a video's play plan for a while (src/adaptive.js force;
+//                                                       mode restricted: src/playback.js forceRestricted)
 //   GET /ops/limit, POST /ops/limit?mode=&id=|me=1&minutes=  staging only (src/forced.js): force daily_limit or
 //                                                       rate_limited for a video or the caller's visitor key; 403 elsewhere
 //   GET /ops/slots, POST /ops/slots/refill?id=&force=1  the player test slots (src/slots.js); refills are
@@ -21,7 +22,7 @@ const FIELDS = new Set(['at', 'event', 'via', 'reason', 'client', 'held', 'quali
   'route', 'ms', 'results', 'failed', 'worker', 'from', 'to', 'kind', 'lang', 'text', 'units', 'pair',
   'cached', 'rungs', 'mode', 'why', 'predicted', 'lowerMb', 'lowerPredicted', 'allowance', 'spent', 'file', 'ended', 'eta',
   'qLen', 'attempt', 'pad', 'arrow', 'before', 'prompt', 'after', 'len', 'chars', 'control', 'device', 'ses', 'seg', 'found', 'range', 'pinned',
-  'who', 'rung', 'top', 'ago', 'counted', 'freeMb', 'growthMb', 'floorGb', 'trusted', 'homeActive', 'homeMax', 'tunelioBuilding', 'hour', 'day', 'month', 'window', 'limit', 'by', 'answer', 'forced']); // play_plan: the plan and why (2026-10-23); search_shape: no search text (#143, 2026-10-24); pinned: a play answered from its ticket's pin (#293, 2026-10-28); video_report: who, rung, top, ago, counted (world #353, 2026-10-29); home_no_room: freeMb, growthMb, floorGb (2026-10-30)
+  'who', 'rung', 'top', 'ago', 'counted', 'freeMb', 'growthMb', 'floorGb', 'jumps', 'minutes', 'cuts', 'reopenOk', 'reopenFail', 'readMb', 'rate', 'connS', 'pos', 'lastByteAt', 'offsetOk', 'ttfbMs', 'platform', 'plan', 'outcome', 'trusted', 'homeActive', 'homeMax', 'tunelioBuilding', 'hour', 'day', 'month', 'window', 'limit', 'by', 'answer', 'forced', 'rows', 'where', 'afterMs', 'declined']); // play_plan: the plan and why (2026-10-23); search_shape: no search text (#143, 2026-10-24); pinned: a play answered from its ticket's pin (#293, 2026-10-28); video_report: who, rung, top, ago, counted (world #353, 2026-10-29); home_no_room: freeMb, growthMb, floorGb (2026-10-30); media_done jumps (#367); tunelio_drop, tunelio_drop_cut, tunelio_drop_reopen: numbers and clock times, no link or video (#361); play_outcome: platform, plan, outcome (#274); trusted: a capped request from a TRUSTED_IPS address, true only (2026-11-03); build_route: homeActive, homeMax, tunelioBuilding and the credits so far (hour, day, month); spend_budget window; ticket_limited limit; spend_cap and play_daily_limit by (ip, shard, allowance, cap), build_route answer (2026-11-04); home_av1_gap afterMs, quest_av1 declined: why home didn't take the play (Everything-is-OK#764)
 
 // An 11-character YouTube-ID-shaped token with a digit, "-", "_" or an inner capital (so ordinary words such as
 // "unavailable" or "Information" stay), and URL query strings (v=, sig=, tokens).
@@ -78,7 +79,7 @@ export function gitHead(dir = new URL('../.git', import.meta.url)) {
   } catch { return null; }
 }
 
-export function opsRoute(req, res, url, { token, ring, state, slots, adaptive, forced = null, caller = () => null }) {
+export function opsRoute(req, res, url, { token, ring, state, slots, adaptive, playback, forced = null, caller = () => null }) {
   const send = (status, body) => {
     const buf = Buffer.from(JSON.stringify(body));
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': buf.length, 'cache-control': 'no-store', 'x-robots-tag': 'noindex' });
@@ -108,11 +109,14 @@ export function opsRoute(req, res, url, { token, ring, state, slots, adaptive, f
       const id = url.searchParams.get('id') ?? '';
       const mode = url.searchParams.get('mode') ?? '';
       if (!/^[A-Za-z0-9_-]{11}$/.test(id)) return send(400, { v: 1, error: 'bad_id', message: 'id: an 11-character video id.' });
-      if (!['lower', 'direct', 'adaptive', 'start', 'clear'].includes(mode)) return send(400, { v: 1, error: 'bad_mode', message: 'mode: lower, direct, adaptive, start or clear.' });
+      const modes = ['lower', 'direct', 'adaptive', 'start', ...(playback?.forceRestricted ? ['restricted'] : []), 'clear'];
+      if (!modes.includes(mode)) return send(400, { v: 1, error: 'bad_mode', message: `mode: ${modes.join(', ')}.` });
       const minutes = Math.min(240, Math.max(1, Number.parseInt(url.searchParams.get('minutes') ?? '', 10) || 60));
-      adaptive.force(id, mode === 'clear' ? null : mode, minutes);
+      // restricted (#305) is the playback's verdict, not a plan: it and a plan can't both hold, so one clears the other.
+      playback?.forceRestricted?.(id, mode === 'restricted' ? minutes : 0);
+      adaptive.force(id, mode === 'clear' || mode === 'restricted' ? null : mode, minutes);
     }
-    return send(200, { v: 1, at: new Date().toISOString(), forced: adaptive.forcedPlans() });
+    return send(200, { v: 1, at: new Date().toISOString(), forced: [...adaptive.forcedPlans(), ...(playback?.forcedRestrictions?.() ?? [])] });
   }
   if (p === '/ops/limit') {
     // Everything-is-OK#545: never on production (src/forced.js allowedHere); there the server passes no `forced`.

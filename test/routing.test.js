@@ -538,6 +538,9 @@ test('no raw client IP in anything the service keeps after the request; limits a
   const all = strings(a.app.kept());
   for (const ip of ips) assert.equal(all.some((x) => x.includes(ip)), false, `${ip} kept somewhere`);
   assert.ok(a.app.kept().allowance.state().ips >= 3, 'counted per visitor, by code');
+  // #782 (verifier L7): each IP's third play is over its cap and goes to youtube.com, so the scan above covered three
+  // pcYoutube marks (observed 2026-11-15); this keeps that coverage from going quietly.
+  assert.equal(a.app.kept().pcYoutube.size, 3, 'a pcYoutube mark per visitor, scanned above');
 });
 
 test('allowance defaults (owner, 2026-11-04): 1500 credits, 25 home sessions, 60000 MB per IP, each under the home daily caps (40, 120000)', () => {

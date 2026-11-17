@@ -175,6 +175,34 @@ test('Playback: a video Tunelio refuses as age-restricted is remembered: restric
   assert.equal((await other.location({ id: 'gone' })).via, 'youtube');
 });
 
+// Everything-is-OK#783 (review 2026-11-15): every POST /ops/plan calls forceRestricted(id, 0); it must not wipe Tunelio's
+// real verdict, or the next play makes another /create that is refused again.
+test('Playback: a test plan clears only its own restricted verdict, never the real one from Tunelio (#783)', async () => {
+  let now = 1_000_000;
+  const calls = [];
+  const tunelio = { enabled: true, async create(id) { calls.push(id); const e = new Error('This video is age-restricted and cannot be downloaded.'); e.status = 404; e.code = e.message; throw e; } };
+  const p = new Playback({ tunelio, now: () => now, restrictedHours: 24 });
+  assert.equal((await p.location({ id: 'agegate', seconds: 600 })).via, 'restricted');
+  p.forceRestricted('agegate', 0); // what /ops/plan mode=lower, direct, adaptive, start or clear does
+  assert.equal(p.restricted('agegate'), true, 'the real verdict stays');
+  now += 60_000; // past the 30 s a failed job is kept
+  assert.equal((await p.location({ id: 'agegate', seconds: 600 })).via, 'restricted');
+  assert.equal(calls.length, 1, 'no second /create');
+  // A plan over the real verdict keeps the later one and gives the real one back when cleared.
+  p.forceRestricted('agegate', 5);
+  assert.deepEqual(p.forcedRestrictions().map((f) => f.id), ['agegate']);
+  p.forceRestricted('agegate', 0);
+  assert.equal(p.restricted('agegate'), true, 'cleared: the real verdict is back');
+  assert.deepEqual(p.forcedRestrictions(), []);
+  // A plan alone is cleared as before.
+  p.forceRestricted('plainvideo1', 5);
+  assert.equal(p.restricted('plainvideo1'), true);
+  p.forceRestricted('plainvideo1', 0);
+  assert.equal(p.restricted('plainvideo1'), false);
+  now += 25 * 3600_000;
+  assert.equal(p.restricted('agegate'), false, 'the real verdict still ends after its day');
+});
+
 test('server: an age-restricted video answers restricted to the tablet and fails fast for players (world #305)', async (t) => {
   const store = new Store({ path: ':memory:', shards: 1, pool: 50, pinHours: 24 });
   const youtube = { async search() { return { videos: [{ id: 'AAAAAAAAAAA', title: 'a', channel: 'c', length: '1:00', seconds: 60, views: '', age: '', live: false, cc: false }], more: null }; }, thumbnailUrl: (id) => id };
@@ -200,6 +228,36 @@ test('server: an age-restricted video answers restricted to the tablet and fails
   const st = await (await get(ticket, unity)).json();
   assert.deepEqual([st.t, st.state, st.error, st.title], [r.results[0].t, 'failed', 'restricted', 'a']);
   assert.equal(calls.length, 1, 'repeat plays never ask Tunelio again');
+});
+
+test('server: /ops/plan mode restricted makes a video answer restricted for a while, with no Tunelio call (#305 test plan)', async (t) => {
+  const store = new Store({ path: ':memory:', shards: 1, pool: 50, pinHours: 24 });
+  const youtube = { async search() { return { videos: [{ id: 'AAAAAAAAAAA', title: 'a', channel: 'c', length: '1:00', seconds: 60, views: '', age: '', live: false, cc: false }], more: null }; }, thumbnailUrl: (id) => id };
+  const calls = [];
+  const tunelio = { enabled: true, async create(id) { calls.push(id); return { url: `https://cdn.example/${id}.mp4`, quality: '720p', mb: 10 }; } };
+  const playback = new Playback({ tunelio });
+  const app = createApp({ config: { ...base, shards: 1, pool: 50, statsToken: 'tok' }, store, youtube, playback, tunelio: { enabled: true }, log: () => {} });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const at = (p) => `http://127.0.0.1:${server.address().port}${p}`;
+  const get = (p, ua) => fetch(at(p), { redirect: 'manual', headers: { 'user-agent': ua } });
+  const plan = async (qs) => (await fetch(at(`/ops/plan?${qs}`), { method: 'POST', headers: { authorization: 'Bearer tok' } })).json();
+  const unity = 'UnityPlayer/2022.3.22f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)';
+  const mf = 'NSPlayer/12.00.26100.1234 WMFSDK/12.00.26100.1234';
+  const set = await plan('id=AAAAAAAAAAA&mode=restricted&minutes=30');
+  assert.deepEqual(set.forced.map((x) => [x.id, x.mode]), [['AAAAAAAAAAA', 'restricted']], 'listed with the plans');
+  const r = await (await get('/v1/0/s?q=x', unity)).json();
+  const ticket = `/v1/0/${r.results[0].t}`;
+  const st = await (await get(ticket, unity)).json();
+  assert.deepEqual([st.state, st.error], ['failed', 'restricted'], 'the tablet sees it as restricted');
+  const play = await get(ticket, mf);
+  assert.equal(play.status, 403);
+  assert.equal((await play.json()).error, 'restricted');
+  assert.equal(calls.length, 0, 'no paid call for a forced verdict');
+  assert.deepEqual((await plan('id=AAAAAAAAAAA&mode=clear')).forced, [], 'clear lifts it');
+  const after = await get(ticket, mf);
+  assert.equal(after.status, 302, 'plays as usual once cleared');
 });
 
 test('alerts are throttled per kind', () => {
@@ -333,7 +391,10 @@ test('server: tickets answer the tablet, the resolver and the player differently
   const playback = new Playback({ tunelio: fakeTunelio({ expires: Math.floor(Date.now() / 1000) + 3600 }), probe });
   const counted = [];
   const metrics = { inc: (m, k) => counted.push(k ? `${m}:${k}` : m), gauge() {}, latency(m) { counted.push(m); }, shard() {}, flush() {}, start() { return this; }, close() {} };
-  const app = createApp({ config: { ...base, shards: 1, pool: 50, ticketResolverHoldMs: 50, ticketPlayerHoldMs: 5000 }, store, youtube, playback, metrics, tunelio: { enabled: true }, log: () => {} });
+  // pcAv1 off: this test isn't about AV1, and with it on the PC codec read fetched the fake tunnel link over the network
+  // (a 422 from tunelio.dev, 2026-11-13); a failed read now sends the resolver on (Everything-is-OK#749), so line 399's 302
+  // depended on that network answer.
+  const app = createApp({ config: { ...base, shards: 1, pool: 50, ticketResolverHoldMs: 50, ticketPlayerHoldMs: 5000, pcAv1: false }, store, youtube, playback, metrics, tunelio: { enabled: true }, log: () => {} });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());

@@ -75,6 +75,9 @@ test('keys outside each metric\'s allowed set are counted as "other"', () => {
   assert.equal(checkedKey('video_report', 'visitor:autoresync'), 'visitor:autoresync');
   assert.equal(checkedKey('video_report', 'owner:frozen'), 'other');
   assert.equal(checkedKey('video_report', 'tester:bogus'), 'other');
+  assert.equal(checkedKey('tunelio_drop', 'reopen_fail'), 'reopen_fail'); // #361: fixed keys
+  assert.equal(checkedKey('tunelio_drop', 'open_fail'), 'open_fail');
+  assert.equal(checkedKey('tunelio_drop', 'dQw4w9WgXcQ'), 'other');
   assert.throws(() => checkedKey('query_text', 'x'));
 });
 
@@ -332,6 +335,12 @@ test('poll rows: one per poll, daily min/max/last, old rows pruned after 90 days
   assert.equal(db.prepare('SELECT COUNT(*) n FROM polls').get().n, 1);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM poll_daily').get().n, 3); // kept forever
   assert.match(exportCsv(db), /poll_daily,2026-07-01,world:prod,occupants,,,1,5,1/);
+});
+
+test('play_outcome keys: fixed sets only, nothing free-form reaches the database (world #274)', () => {
+  assert.equal(checkedKey('play_outcome', 'visitor:android:home:f20'), 'visitor:android:home:f20');
+  assert.equal(checkedKey('play_outcome', 'tester:pc:unknown:left'), 'tester:pc:unknown:left');
+  for (const k of ['visitor:android:home', 'visitor:android:home:f7', 'owner:pc:home:f5', 'visitor:pc:abcdefghijk:f5', '3:visitor:pc:home:f5']) assert.equal(checkedKey('play_outcome', k), 'other', k);
 });
 
 test('privacy: cc_outcome takes its two keys only, never a video ID', () => {

@@ -48,7 +48,7 @@ async function start(over = {}) {
     const body = type.includes('json') ? await res.json() : Buffer.from(await res.arrayBuffer());
     return { status: res.status, headers: res.headers, body };
   };
-  return { server, get, youtube, captionCalls, store, base: `http://127.0.0.1:${port}` };
+  return { app, server, get, youtube, captionCalls, store, base: `http://127.0.0.1:${port}` };
 }
 
 test('search → tickets → redirect, sheet, next page, captions', async (t) => {
@@ -364,6 +364,32 @@ test('rate limits searches per IP', async (t) => {
   assert.equal((await s.get('/v1/0/s?q=again')).body.error, 'rate_limited');
 });
 
+test('the search limit stays bounded and an IP over its limit keeps its count', async (t) => {
+  const s = await start();
+  t.after(() => s.server.close());
+  const max = config.rateKeysMax;
+  const hits = s.app.kept().hits;
+  const from = async (ip) => (await fetch(`${s.base}/v1/0/s?q=`, { headers: { 'x-forwarded-for': ip } })).status;
+  // Almost full of IPs that have been quiet for over a minute.
+  const fillers = Array.from({ length: max - 1 }, (_, i) => `quiet-${i}`);
+  for (const k of fillers) hits.set(k, [Date.now() - 120_000]);
+  // The bare search address (the world's join ping) counts as a search: 400 empty_query, then 429 over the limit of 5.
+  for (let i = 0; i < 5; i++) assert.equal(await from('192.0.2.1'), 400);
+  assert.equal(await from('192.0.2.1'), 429);
+  assert.equal(hits.size, max);
+  // One more IP: the least recently active quiet one makes room; nobody else's count goes.
+  const fresh = await from('192.0.2.2');
+  assert.equal(await from('192.0.2.1'), 429, 'the IP over its limit is still over it');
+  assert.equal(fresh, 400, 'a new IP gets its search while quiet IPs can make room');
+  assert.equal(hits.size, max);
+  assert.ok(!hits.has(fillers[0]) && hits.has(fillers[1]), 'the oldest went, only that one');
+  // Every kept IP active in the last minute: a new one is refused instead of anyone being dropped.
+  for (const k of fillers) if (hits.has(k)) hits.set(k, [Date.now()]);
+  assert.equal(await from('192.0.2.3'), 429, 'no room among active IPs');
+  assert.equal(await from('192.0.2.1'), 429);
+  assert.equal(hits.size, max);
+});
+
 test('the default search limit leaves room for the next video after a restricted play from two clients (world #450)', async (t) => {
   const s = await start({ config: { ...config, searchesPerMinutePerIp: base.searchesPerMinutePerIp } });
   t.after(() => s.server.close());
@@ -532,4 +558,63 @@ test('pasted link search doesn\'t list: its length, live state and title come fr
   api.video = async () => { throw new Error('not called'); };
   const n = (await s.get(`/v1/1/s?q=${encodeURIComponent('https://youtu.be/NoKeyLook01')}`)).body;
   assert.equal(n.results[0].title, 'NoKeyLook01');
+});
+
+// World #274: a play's outcome. Nothing about the room or the video exists on this route.
+test('play outcomes /v1/o/<who>/<platform>/<plan>/<outcome>: 200 at once, counted, no shard, tester only in the log', async (t) => {
+  const lines = [];
+  const incs = [];
+  const shards = [];
+  const metrics = { inc: (m, k) => incs.push(`${m}:${k}`), gauge() {}, latency() {}, shard: (n) => shards.push(n), flush() { return 0; }, start() { return this; }, close() {} };
+  const s = await start({ log: (l) => lines.push(l), metrics, config: { ...config, outcomeCapPerMinute: 4 } });
+  t.after(() => s.server.close());
+  const outcomes = () => lines.map((l) => JSON.parse(l)).filter((e) => e.event === 'play_outcome');
+  const r = await s.get('/v1/o/visitor/android/home/f20');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.ok, true);
+  assert.deepEqual(incs.filter((x) => x.startsWith('play_outcome:')), ['play_outcome:visitor:android:home:f20']);
+  assert.deepEqual(shards, [], 'no room is counted as active');
+  assert.equal(outcomes().length, 0, 'a visitor gets only the plain request line');
+  const plain = lines.map((l) => JSON.parse(l)).find((l) => l.route === 'outcome');
+  assert.deepEqual(Object.keys(plain).sort(), ['at', 'ms', 'route', 'status'], 'the request line says nothing else');
+  await s.get('/v1/o/tester/pc/link/eplayer');
+  assert.deepEqual(outcomes().map(({ who, platform, plan, outcome, counted }) => ({ who, platform, plan, outcome, counted })), [{ who: 'tester', platform: 'pc', plan: 'link', outcome: 'eplayer', counted: true }]);
+  for (const p of ['/v1/o/owner/pc/link/f5', '/v1/o/tester/mac/link/f5', '/v1/o/tester/pc/x/f5', '/v1/o/tester/pc/link/f7', '/v1/o/tester/pc/link', '/v1/o/tester/pc/link/f5/x']) {
+    assert.equal((await s.get(p)).status, 404, p);
+  }
+  // The ceiling: the answer stays the same, nothing more is counted.
+  for (let i = 0; i < 6; i++) assert.equal((await s.get('/v1/o/visitor/pc/link/left')).status, 200);
+  assert.ok(incs.filter((x) => x === 'play_outcome:visitor:pc:link:left').length <= 4);
+});
+
+// #274 verifier P2 (2026-10-31): `who` is the client's word, so one client must not use up the ceiling or write tester
+// lines without end. Over its own limit: the same answer, no count, no log line, and the ceiling is left for others.
+test('play outcomes: a per-client limit (OUTCOME_PER_MINUTE_PER_IP) keeps one client from the ceiling and the log', async (t) => {
+  const lines = [];
+  const incs = [];
+  const metrics = { inc: (m, k) => incs.push(`${m}:${k}`), gauge() {}, latency() {}, shard() {}, flush() { return 0; }, start() { return this; }, close() {} };
+  const s = await start({ log: (l) => lines.push(l), metrics, config: { ...config, outcomeCapPerMinute: 5, outcomePerMinutePerIp: 3 } });
+  t.after(() => s.server.close());
+  const from = (ip, p) => fetch(`${s.base}${p}`, { headers: { 'x-forwarded-for': ip } });
+  for (let i = 0; i < 6; i++) {
+    const r = await from('203.0.113.7', '/v1/o/tester/pc/link/f5');
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { ok: true });
+  }
+  const counted = () => incs.filter((x) => x.startsWith('play_outcome:')).length;
+  assert.equal(counted(), 3, 'one client: its own 3, not the ceiling of 5');
+  assert.equal(lines.map((l) => JSON.parse(l)).filter((e) => e.event === 'play_outcome').length, 3, 'no tester line past its limit');
+  for (let i = 0; i < 2; i++) await from('198.51.100.9', '/v1/o/visitor/android/home/f10');
+  assert.equal(counted(), 5, 'another client still counts: the first one took only 3 of the ceiling');
+  assert.ok(!lines.some((l) => l.includes('203.0.113.7') || l.includes('198.51.100.9')), 'no address in any line');
+  // Kept by the day's code, never the address, and gone with the other per-minute counts once a minute has passed
+  // (the privacy page: "up to two minutes after your last request").
+  const kept = s.app.kept().outcomeHits;
+  assert.equal(kept.size, 2);
+  assert.ok(![...kept.keys()].some((k) => k.includes('203.0.113') || k.includes('198.51.100')), 'codes, not addresses');
+  s.app.sweep();
+  assert.equal(kept.size, 2, 'active this minute: kept');
+  for (const [k, l] of kept) kept.set(k, l.map((at) => at - 61_000));
+  s.app.sweep();
+  assert.equal(kept.size, 0, 'a minute idle: gone');
 });

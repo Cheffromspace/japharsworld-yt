@@ -52,8 +52,8 @@ function fakeTunelio() {
   };
 }
 
-async function start({ tunelio = fakeTunelio(), realWordsOnly = false } = {}) {
-  const store = new Store({ path: ':memory:', shards: config.shards, pool: config.pool, pinHours: 24 });
+async function start({ tunelio = fakeTunelio(), realWordsOnly = false, now } = {}) {
+  const store = new Store({ path: ':memory:', shards: config.shards, pool: config.pool, pinHours: 24, ...(now ? { now } : {}) });
   const logs = [];
   const log = (l) => logs.push(typeof l === 'string' ? JSON.parse(l) : l);
   const relay = new Relay({ token: TOKEN, pollMs: 300 });
@@ -77,7 +77,7 @@ async function start({ tunelio = fakeTunelio(), realWordsOnly = false } = {}) {
     info.seen -= 60_000;
   };
   const close = () => { workers.forEach((w) => w.stop()); server.closeAllConnections(); server.close(); };
-  return { get, store, relay, chain, logs, tunelio, startWorker, waitOnline, offline, close };
+  return { app, get, store, relay, chain, logs, tunelio, startWorker, waitOnline, offline, close };
 }
 
 test('captions come from the worker with word timing; the picker lists uploader tracks then the original auto track', async (t) => {
@@ -325,4 +325,52 @@ test('every source throwing: temporarily_unavailable from get and tracks, no cc_
   assert.equal((await chain.get('vidA', 'en')).reason, 'temporarily_unavailable');
   assert.equal((await chain.tracks('vidA', 'en')).reason, 'temporarily_unavailable');
   assert.deepEqual(incs, []);
+});
+
+// Everything-is-OK#680: nothing called Store.pruneCaptions, so tickets.db kept every caption track ever fetched.
+test('the sweep removes caption rows older than the cache reads (CAPTION_CACHE_DAYS), keeps fresh ones, about hourly', async (t) => {
+  const DAY = 86400_000;
+  let now = Date.parse('2026-11-01T00:00:00Z');
+  const s = await start({ now: () => now });
+  t.after(s.close);
+  const rows = (id) => s.store.db.prepare('SELECT COUNT(*) n FROM captions WHERE video_id = ?').get(id).n;
+  const fetches = (id) => s.tunelio.calls.filter((c) => c[1] === id).length;
+  const cc = async (id) => { s.store.markPlayed(0, 1, id); return (await s.get('/v1/0/cc/en')).body; };
+  assert.equal(config.captionCacheDays, 7);
+
+  assert.equal((await cc('oldVideo001')).available, true);
+  now += 6 * DAY;
+  assert.equal((await cc('newVideo002')).available, true);
+  assert.ok(rows('oldVideo001') > 0 && rows('newVideo002') > 0);
+  assert.deepEqual([fetches('oldVideo001'), fetches('newVideo002')], [1, 1]);
+
+  // Two days on: the first video's rows are 8 days old, past any reader; the second's are 2 days old.
+  now += 2 * DAY;
+  let prunes = 0;
+  const prune = s.store.pruneCaptions.bind(s.store);
+  s.store.pruneCaptions = (ms) => { prunes++; return prune(ms); };
+  s.app.sweep();
+  assert.equal(rows('oldVideo001'), 0, 'rows older than CAPTION_CACHE_DAYS are gone');
+  assert.ok(rows('newVideo002') > 0, 'fresh rows stay');
+  assert.deepEqual(s.logs.filter((l) => l.event === 'captions_pruned').map((l) => l.rows > 0), [true]);
+  assert.equal((await cc('newVideo002')).available, true);
+  assert.equal(fetches('newVideo002'), 1, 'and are still answered from the cache');
+
+  // A pruned video's captions are fetched and cached again like any new video's.
+  const again = await cc('oldVideo001');
+  assert.deepEqual([again.available, again.lines.length > 0], [true, true]);
+  assert.equal(fetches('oldVideo001'), 2);
+  assert.ok(rows('oldVideo001') > 0);
+  await cc('oldVideo001');
+  assert.equal(fetches('oldVideo001'), 2, 'cached again');
+
+  // The sweep runs every minute; the prune reads the whole table, so it runs at most hourly. A failing prune is logged
+  // and never thrown out of the timer.
+  s.app.sweep();
+  assert.equal(prunes, 1);
+  const quiet = await start();
+  t.after(quiet.close);
+  quiet.store.pruneCaptions = () => { throw new Error('database is locked'); };
+  quiet.app.sweep();
+  assert.deepEqual(quiet.logs.filter((l) => l.event === 'captions_prune_failed').map((l) => l.message), ['database is locked']);
 });

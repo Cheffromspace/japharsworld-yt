@@ -1,0 +1,8 @@
+[Unit]
+Description=Update the japharsworld-yt STAGING relay worker from GitHub staging (#160)
+
+[Service]
+Type=oneshot
+# deploy/relay-update.sh with the staging switches: its own checkout, branch and units; the shared steps stay with prod.
+Environment=RELAY_APP=/opt/japharsworld-yt-relay-staging RELAY_BRANCH=staging RELAY_UNIT=japharsworld-yt-relay-staging RELAY_SETUP=off
+ExecStart=/bin/bash /opt/japharsworld-yt-relay-staging/deploy/relay-update.sh

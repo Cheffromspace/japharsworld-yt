@@ -21,6 +21,19 @@
 // (8 GB: 1080p sessions are 0.6–1.6 GB and the Linode's / is 25 GB, 2026-10-25), never one building or being played;
 // a build counts its expected size against maxGb from its start (#expectedMb), so room is made before it grows.
 //
+// Segments on demand (Everything-is-OK#367): the worker uploads in order, so a player that seeks far ahead of the upload
+// (resuming a long video part way) asks for a segment minutes away. Prod, 2026-10-30 00:37Z: a 4.1 h 1080p play from
+// the worker's cache went up in order at ~6.9 MB/s (8404 MB in 1220 s), the player's seg550 would have come ~250 s in,
+// each request was held 20 s and the world reloaded every ~30 s, so it froze for good. Now a segment a player waits for
+// that isn't next in line becomes the session's want, and every answer to the worker's uploads names it (x-media-want,
+// server.js) until it is here; the worker sends it next (relay/media.js).
+// Behind HOME_SEEK_WANT (seekWant, default off; Everything-is-OK#727, coordinator 2026-11-13): the owner saw a black
+// screen after far seeks on staging (2026-11-12 00:46Z) with every segment the player asked for answered 200 within
+// 3.8 s, so the cause wasn't found on the service side; off keeps the release on the old in-order upload (no want, no
+// x-media-want, so no cache jump, no wanted-first upload and no seek run on the worker) until that is understood. That
+// is the pre-phase-1 upload on a keyframe-cut worker (prod's). A worker with RELAY_SPLIT_BY_TIME=on still starts phase
+// 2's fill runs when run 0 stops short, wants or not (relay/media.js fill; the #727 play went through one at seg415).
+//
 // The disk itself (freeFloorGb, HOME_FREE_FLOOR_GB): maxGb is a target, not a limit, since a session being played or
 // built stays. Prod, 2026-10-30 00:58Z: an 8.4 GB played session and a 10.7 GB build over a 12 GB cap filled the
 // Linode's 24.6 GB disk (Alloy's WAL broke, the build failed on ENOSPC). So a build starts only if the disk's free space,
@@ -32,6 +45,10 @@ import { join } from 'node:path';
 import { dayOf } from './metrics.js';
 
 const SEGMENT = /^seg\d{1,5}\.ts$/;
+const segIndex = (file) => Number(file.slice(3, -3));
+// A segment a player waits for more than this past the last one uploaded, or before it (a gap left by a jump), is
+// wanted; the next ones in line are coming anyway.
+const WANT_AHEAD = 2;
 const TOKEN = /^[a-f0-9]{18}$/;
 const MAX_SEGMENT_BYTES = 64 << 20;
 const DAY_SAVE_MS = 30_000; // today's use goes to day.json at most this often while segments arrive (#saveDaySoon)
@@ -39,6 +56,10 @@ const RETRY_MS = 60_000; // a failed session is tried again after this long
 // An unfinished session with no upload for this long has no worker stream behind it any more (it died or was stopped);
 // a live one uploads every few seconds, and a server restart only pauses it for seconds (the worker retries).
 const STALE_MS = 5 * 60_000;
+// A copy this much shorter than the video is short (cut_short below): relay/cache.js's SHORT_S, the worker's rule, kept
+// here rather than imported so the search service runs nothing from relay/ (deploy/update.sh restarts it for src/ only;
+// test/cut-short.test.js checks the two match).
+export const SHORT_S = 10;
 // A session a player fetched from this recently is being played: the sweep leaves it alone. Players fetch a segment
 // every few seconds, and a paused one picks up where it was.
 const PLAYING_MS = 5 * 60_000;
@@ -54,9 +75,9 @@ const FREE_CHECK_MS = 5_000; // a build's uploads look at the disk's free space 
 
 export class Home {
   constructor({ relay, dir, base = 'https://yt.japharsworld.com/home', enabled = false, dailyBuilds = 40, dailyMb = 10_000,
-    hourBuilds = 0, hourMb = 0, hourMbExemptSeconds = 0, startGapMs = 0, itemMaxMb = 0, keepHours = 12, maxGb = 8, freeFloorGb = 0, freeMb = null, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, tz = 'America/Chicago',
+    hourBuilds = 0, hourMb = 0, hourMbExemptSeconds = 0, startGapMs = 0, av1GapMs = 0, av1HourBuilds = 4, refusedRecently = () => false, itemMaxMb = 0, keepHours = 12, maxGb = 8, freeFloorGb = 0, freeMb = null, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, seekWant = false, tz = 'America/Chicago',
     now = () => Date.now(), log = () => {}, onEvent = () => {} }) {
-    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, hourBuilds, hourMb, hourMbExemptSeconds, startGapMs, itemMaxMb, keepHours, maxGb, freeFloorGb, readyMs, segmentHoldMs, startPrecise, tz, now, log, onEvent });
+    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, hourBuilds, hourMb, hourMbExemptSeconds, startGapMs, av1GapMs, av1HourBuilds, refusedRecently, itemMaxMb, keepHours, maxGb, freeFloorGb, readyMs, segmentHoldMs, startPrecise, seekWant, tz, now, log, onEvent });
     // The disk's free MB where the sessions are (injectable for tests); Infinity when it can't be read.
     this.freeMb = freeMb ?? (() => { try { const f = statfsSync(this.dir); return (f.bavail * f.bsize) / 1e6; } catch { return Infinity; } });
     this.freeCheckedMs = 0;
@@ -73,7 +94,7 @@ export class Home {
   }
 
   // Sessions, today's use and the uneven videos from before a restart. Folders without a readable meta.json are removed,
-  // and so are sessions that failed or were given up, and unfinished ones whose worker stream is gone (STALE_MS):
+  // and so are sessions that failed (but for a cut_short one with files, set aside below) or were given up, and unfinished ones whose worker stream is gone (STALE_MS):
   // 2026-10-25, a session given up as uneven after 13 of a 90-minute video's segments came back after a deploy as
   // ready, and a Quest replay was sent to its ~65 s growing playlist, which never grew (6 of the 8 sessions on disk).
   #load() {
@@ -90,10 +111,19 @@ export class Home {
       const folder = join(this.dir, token);
       try {
         const m = JSON.parse(readFileSync(join(folder, 'meta.json'), 'utf8'));
-        if (m.state === 'failed') throw new Error('failed');
         const s = this.#session({ ...m, token });
-        for (const f of readdirSync(folder)) if (SEGMENT.test(f)) { s.stored.add(f); s.mb += statSync(join(folder, f)).size / 1e6; }
+        for (const f of readdirSync(folder)) if (SEGMENT.test(f)) { s.stored.add(f); s.mb += statSync(join(folder, f)).size / 1e6; s.last = Math.max(s.last, segIndex(f)); }
         try { this.#playlist(s, readFileSync(join(folder, 'index.m3u8'), 'utf8')); } catch { /* none yet */ }
+        // A copy failed as cut_short, with files, is kept set aside (M1, verifier 2026-11-15): never offered to a new play
+        // (not in sessions), only to players that hold its token, so a deploy doesn't cut them off before the cut;
+        // counted as played for PLAYING_MS from the restart, then sweep() drops it once nobody fetches from it. Other
+        // failures (given up, no room, worker failed) go as before.
+        if (m.state === 'failed') {
+          if (m.reason !== 'cut_short' || !s.stored.size) throw new Error('failed');
+          Object.assign(s, { state: 'failed', reason: m.reason ?? null, endedMs: m.endedMs ?? 0, lastGetMs: this.now() });
+          this.byToken.set(s.token, s);
+          continue;
+        }
         if (s.state !== 'ready') throw new Error('never ready');
         if (this.#stale(s)) throw new Error('stream gone');
         this.sessions.set(`${s.id}@${s.quality}`, s);
@@ -107,7 +137,7 @@ export class Home {
     return { token: f.token, id: f.id, quality: f.quality, seconds: f.seconds ?? 0, worker: f.worker ?? null, state: 'building',
       startedMs: f.startedMs ?? this.now(), readyMs: 0, endedMs: 0, lastPutMs: f.lastPutMs ?? 0, ended: false, mb: 0, segments: 0,
       listed: [], listedSeconds: 0, stored: new Set(), reason: null, waiters: [], endWaiters: [], segmentWaiters: new Map(),
-      firstSegmentMs: 0, firstServed: null, lastGetMs: 0, why: f.why ?? null };
+      firstSegmentMs: 0, firstServed: null, lastGetMs: 0, why: f.why ?? null, want: null, last: -1 };
   }
 
   // Not finished, and no upload for STALE_MS: nothing will arrive any more.
@@ -141,9 +171,10 @@ export class Home {
   // worker already runs as many streams as it takes (the mediaMax it announces, RELAY_MEDIA_MAX: 4 at home). Without
   // that last check a fifth stream went to a 4-stream worker and only its "busy" answer sent the play on to Tunelio,
   // after the player's hold. The one with the most free streams first.
-  worker() {
+  // av1: the build is for an AV1 play (Everything-is-OK#764), which may start inside the start gap (limit).
+  worker({ av1 = false } = {}) {
     if (!this.enabled || !this.relay?.enabled) return null;
-    if (this.limit()) return null;
+    if (this.limit({ av1 })) return null;
     const max = this.relay.mediaMax?.() ?? {};
     let best = null, left = 0;
     for (const n of this.relay.capable?.('media') ?? []) {
@@ -174,13 +205,30 @@ export class Home {
   // build waits for room in a rolling hour (hourBuilds builds, hourMb expected MB) and starts at least startGapMs after
   // the last one; a play that meets a limit goes to Tunelio (owner 2026-11-04: shift load, don't answer busy).
   // → null, or why no new build may start now: 'day', 'hour' or 'gap'.
-  limit() {
+  // av1 (Everything-is-OK#764, owner 2026-11-13 "D A unless we're hammering then E"): a build for an AV1 play, whose
+  // players have no other source they can play (a Quest can't decode AV1; a PC's AVPro shows no frame of it), may start
+  // inside the gap unless home is hammering YouTube (hammering). Only the gap: the day, the hour and the slots still hold.
+  // Staging 2026-11-13 23:29Z: a queue warm's build 11 s and 23 s before a Quest's and a PC's AV1 play left the Quest on
+  // Tunelio's AV1 HLS and the PC (its 720p AV1 too) on the youtube.com 302, and the room never played.
+  limit({ av1 = false } = {}) {
     if (this.capped()) return 'day';
     const h = this.#hour();
     // The hour's MB is checked per video (blocks), so the videos exempt from it are never held back by it.
     if (this.hourBuilds > 0 && h.builds >= this.hourBuilds) return 'hour';
-    if (this.startGapMs > 0 && this.now() - this.lastStartMs < this.startGapMs) return 'gap';
+    if (this.startGapMs > 0 && this.now() - this.lastStartMs < this.startGapMs && !(av1 && !this.hammering())) return 'gap';
     return null;
+  }
+  // Whether home is pulling hard on YouTube now, so an AV1 play keeps the start gap (owner's OK of the thresholds,
+  // 2026-11-13, #764): a real download (not a cache upload, which leaves `recent` and gives the gap back) started in the
+  // last av1GapMs (HOME_AV1_GAP_SECONDS, 10; 0 turns the AV1 exception off), so two downloads never start closer than
+  // that (#576's refusals came after two builds a second apart); av1HourBuilds (4) or more real downloads in the rolling
+  // hour, twice #576's pace (15 builds in 7 h before the refusals); or a bot, rate or potoken refusal at home in the last
+  // 15 min (refusedRecently, the server's RefusalWatch window).
+  hammering() {
+    if (!(this.av1GapMs > 0)) return true;
+    if (this.now() - this.lastStartMs < this.av1GapMs) return true;
+    if (this.av1HourBuilds > 0 && this.#hour().builds >= this.av1HourBuilds) return true;
+    return Boolean(this.refusedRecently());
   }
   #hour() {
     const t = this.now();
@@ -260,12 +308,13 @@ export class Home {
   }
 
   // The session for a video, started if there is none (and a worker is free and under the cap); null otherwise.
-  start(data, quality) {
+  // av1: for an AV1 play, which may start inside the start gap (limit, #764).
+  start(data, quality, { av1 = false } = {}) {
     const hit = this.peek(data, quality);
     if (hit) return hit;
-    const worker = this.worker();
+    const worker = this.worker({ av1 });
     if (!worker) {
-      const why = this.enabled ? this.limit() : null;
+      const why = this.enabled ? this.limit({ av1 }) : null;
       if (why) this.onEvent(why === 'day' ? 'capped' : why === 'hour' ? 'capped_hour' : 'spaced');
       return null;
     }
@@ -274,7 +323,15 @@ export class Home {
     this.refusal = this.blocks(data, quality);
     if (this.refusal) { if (this.refusal === 'hour') this.onEvent('capped_hour'); return null; }
     const expected = this.expectedMb(data, quality);
-    this.#drop(this.sessions.get(`${data.id}@${quality}`));
+    // The old session for this video and quality (failed, stale or past keepHours: peek didn't take it) makes way. One
+    // a player fetched from in the last PLAYING_MS is only set aside: its token and files stay, so that player plays on
+    // to where it ends, and sweep() drops it once nobody is on it (verifier 2026-11-15, M1: since #781 a failed session
+    // can have players, and a late joiner, a Resync or a pin re-plan 60 s later deleted it under them).
+    const old = this.sessions.get(`${data.id}@${quality}`);
+    if (old && this.#playing(old)) {
+      this.sessions.delete(`${data.id}@${quality}`);
+      this.log({ event: 'home_set_aside', id: old.id, quality, state: old.state, reason: old.reason ?? undefined });
+    } else this.#drop(old);
     const s = this.#session({ token: randomBytes(9).toString('hex'), id: data.id, quality, seconds: data.seconds ?? 0, worker });
     this.sessions.set(`${s.id}@${quality}`, s);
     this.byToken.set(s.token, s);
@@ -287,6 +344,8 @@ export class Home {
     }
     this.#today().builds++;
     this.#saveDay();
+    // An AV1 build let through the start gap (#764): logged with how long after the last real download it started.
+    if (av1 && this.startGapMs > 0 && this.now() - this.lastStartMs < this.startGapMs) this.log({ event: 'home_av1_gap', id: s.id, quality, afterMs: this.now() - this.lastStartMs });
     this.recent.push({ t: this.now(), mb: expected, token: s.token });
     this.lastStartMs = this.now();
     this.onEvent('start');
@@ -349,10 +408,26 @@ export class Home {
     });
   }
 
+  // The segment players wait for that the worker should send next (see the top), or null. The newest want first; once
+  // it is here, any other segment a player is still held for that isn't next in line (two players at different points:
+  // the one whose want was overwritten would wait the full hold otherwise; phase 1 review, 2026-10-30).
+  want(token) {
+    const s = this.byToken.get(token);
+    if (!s || !this.seekWant) return null;
+    if (s.want != null && !s.stored.has(`seg${s.want}.ts`)) return s.want;
+    let other = null;
+    for (const file of s.segmentWaiters.keys()) if (!s.stored.has(file) && this.#far(s, segIndex(file)) && s.listed.includes(file)) other = segIndex(file);
+    return other;
+  }
+
+  // Not among the next segments in line (WANT_AHEAD).
+  #far(s, n) { return n > s.last + WANT_AHEAD || n < s.last; }
+
   url(s) { return `${this.base}/${s.token}/index.m3u8`; }
 
   // A playlist from the worker (or from disk): which segments it lists, ready at the first one, ended when complete.
-  #playlist(s, text) {
+  #playlist(s, text, failed = false) {
+    const before = s.listed.length, beforeSeconds = s.listedSeconds;
     const lines = text.split(/\r?\n/).filter(Boolean);
     s.listed = lines.filter((l) => !l.startsWith('#'));
     s.listedSeconds = lines.reduce((a, l) => a + (Number(/^#EXTINF:([\d.]+)/.exec(l)?.[1]) || 0), 0);
@@ -361,6 +436,21 @@ export class Home {
     if (s.state === 'building' && s.segments > 0 && s.stored.size > 0) {
       s.state = 'ready';
       s.readyMs = this.now();
+    }
+    // Fewer segments than before, closed, and SHORT_S (10 s) or more shorter: the worker cut a predicted (whole) playlist
+    // back to what it uploaded after failing part way (relay/media.js closedAt). Players already on it end there; the
+    // session is failed, not done, so the next play starts over instead of getting the short copy (coordinator,
+    // 2026-10-27). By running time, not by count (Everything-is-OK#780, review 2026-11-15): a whole build can have fewer
+    // segments than predicted (a `dur=` past the media's end adds a tail segment; a median GOP below the real one adds one
+    // per GOP of drift), and its real playlist, as long as the video, was failed here and rebuilt on every play. A real cut
+    // under SHORT_S is taken as done: the video ends up to 10 s early, the rule the worker cache already uses. That
+    // comparison is the fallback for a worker that doesn't say: a worker that knows its copy isn't whole marks the closing
+    // playlist failed (x-media-failed, #781), a growing one too, and a session already ended as done is then failed too.
+    // A player already on it keeps what is here and ends at the cut; the next play builds it again.
+    if (s.endlist && (failed || (s.segments < before && s.listedSeconds < beforeSeconds - SHORT_S)) && !this.loading && s.state !== 'failed') {
+      this.#fail(s, 'cut_short', failed ? `worker: not whole, ${s.segments} segments` : `${s.segments} of ${before} segments`);
+      for (const [file, ws] of s.segmentWaiters) if (!s.stored.has(file)) { for (const w of ws) w(); s.segmentWaiters.delete(file); }
+      return;
     }
     this.#checkEnded(s);
   }
@@ -379,7 +469,8 @@ export class Home {
   // A worker's upload. → HTTP status: 204 stored, 400 bad name or playlist, 410 no such session any more (the worker
   // stops), 413 too large. cached: uploaded from the worker's own cache (relay/cache.js), not downloaded from YouTube,
   // so it counts as a cache hit and its MB as cacheMb, not against dailyBuilds / dailyMb.
-  put(token, file, body, { cached = false } = {}) {
+  // failed: the worker's closing playlist of a copy that isn't whole (x-media-failed, Everything-is-OK#781).
+  put(token, file, body, { cached = false, failed = false } = {}) {
     const s = this.byToken.get(token);
     if (!s || s.state === 'failed') return 410;
     if (cached && !s.cached) {
@@ -387,8 +478,13 @@ export class Home {
       const d = this.#today();
       d.builds = Math.max(0, d.builds - 1);
       d.cacheHits = (d.cacheHits ?? 0) + 1;
-      // From the worker's own cache: nothing asked of YouTube, so it leaves the hour's count too (not the start gap).
+      // From the worker's own cache: nothing asked of YouTube, so it leaves the hour's count too.
       this.recent = this.recent.filter((r) => r.token !== s.token);
+      // ...and gives the start gap back (Everything-is-OK#764): the gap spaces YouTube downloads from the home IP, and this
+      // one asked nothing of YouTube. It runs from the last real download still in the hour instead. Staging 2026-11-13
+      // 23:29Z: a queue warm's build, ready in 607 ms (a cache upload, inferred), held the gap, so a Quest's and a PC's AV1
+      // play 11 s and 23 s later found no worker: the Quest got Tunelio's AV1 HLS, the PC the youtube.com 302.
+      this.lastStartMs = this.recent.reduce((m, r) => Math.max(m, r.t), -Infinity);
       this.onEvent('cache_hit');
     }
     if (file === 'index.m3u8') {
@@ -397,7 +493,7 @@ export class Home {
       if (lines[0] !== '#EXTM3U' || lines.some((l) => !l.startsWith('#') && !SEGMENT.test(l))) return 400;
       this.#write(s, file, Buffer.from(text));
       const was = s.state;
-      this.#playlist(s, text);
+      this.#playlist(s, text, failed);
       if (was === 'building' && s.state === 'ready') this.#ready(s);
       return 204;
     }
@@ -422,6 +518,8 @@ export class Home {
       if (s.cached) d.cacheMb = (d.cacheMb ?? 0) + body.length / 1e6; else d.mb += body.length / 1e6;
       this.#saveDaySoon();
     }
+    s.last = segIndex(file);
+    if (s.want === s.last) s.want = null;
     const ws = s.segmentWaiters.get(file);
     if (ws) { s.segmentWaiters.delete(file); for (const w of ws) w(); }
     if (s.state === 'building' && s.segments > 0) { s.state = 'ready'; s.readyMs = this.now(); this.#ready(s); }
@@ -456,9 +554,20 @@ export class Home {
     if (!s || !(file === 'index.m3u8' || SEGMENT.test(file))) return null;
     s.lastGetMs = this.now();
     if (file !== 'index.m3u8' && !s.stored.has(file) && !s.ended && s.state !== 'failed') {
+      const n = segIndex(file);
+      // Only a segment the playlist lists: one past the end or never listed will not come.
+      if (this.seekWant && this.#far(s, n) && s.want !== n && s.listed.includes(file)) {
+        s.want = n;
+        this.log({ event: 'home_want', ses: s.token.slice(0, 4), quality: s.quality, seg: n, top: s.last });
+      }
       await new Promise((resolve) => {
         const ws = s.segmentWaiters.get(file) ?? [];
-        const timer = setTimeout(done, this.segmentHoldMs);
+        // A hold that runs out leaves the list, so want() never names a segment nobody waits for any more.
+        const timer = setTimeout(() => {
+          const left = (s.segmentWaiters.get(file) ?? []).filter((w) => w !== done);
+          if (left.length) s.segmentWaiters.set(file, left); else s.segmentWaiters.delete(file);
+          resolve();
+        }, this.segmentHoldMs);
         function done() { clearTimeout(timer); resolve(); }
         ws.push(done);
         s.segmentWaiters.set(file, ws);
@@ -480,6 +589,9 @@ export class Home {
     if (s.ended) text = text.replace('#EXT-X-PLAYLIST-TYPE:EVENT', '#EXT-X-PLAYLIST-TYPE:VOD');
     return { body: Buffer.from(text), type: 'application/vnd.apple.mpegurl' };
   }
+
+  // A player fetched from it in the last PLAYING_MS.
+  #playing(s, now = this.now()) { return s.lastGetMs > 0 && now - s.lastGetMs < PLAYING_MS; }
 
   #drop(s) {
     if (!s) return;
@@ -529,11 +641,13 @@ export class Home {
   // building or being played stays.
   sweep() {
     const now = this.now();
-    const playing = (s) => s.lastGetMs > 0 && now - s.lastGetMs < PLAYING_MS;
+    const playing = (s) => this.#playing(s, now);
     const evict = (s, why) => { this.log({ event: 'home_evict', id: s.id, quality: s.quality, why, mb: Math.round(s.mb) }); this.#drop(s); };
     for (const s of [...this.byToken.values()]) {
       const last = s.lastPutMs || s.endedMs || s.startedMs;
       if (now - last > this.keepHours * 3600_000 && !playing(s)) evict(s, 'age');
+      // Set aside by start() for a newer session of its video (M1): gone once nobody plays it.
+      else if (this.sessions.get(`${s.id}@${s.quality}`) !== s && !playing(s)) evict(s, 'replaced');
     }
     const done = [...this.byToken.values()].filter((s) => (s.ended || s.state === 'failed') && !playing(s))
       .sort((a, b) => (a.lastPutMs || a.startedMs) - (b.lastPutMs || b.startedMs));
@@ -551,9 +665,10 @@ export class Home {
       today: { builds: d.builds, mb: Math.round(d.mb), cacheHits: d.cacheHits ?? 0, cacheMb: Math.round(d.cacheMb ?? 0) },
       cap: { builds: this.dailyBuilds, mb: this.dailyMb, storedGb: this.maxGb },
       hour: (() => { const h = this.#hour(); return { builds: h.builds, mb: Math.round(h.mb), capBuilds: this.hourBuilds, capMb: this.hourMb }; })(),
-      limit: this.enabled ? this.limit() : null, startGapS: Math.round(this.startGapMs / 1000), hourMbExemptS: this.hourMbExemptSeconds, itemMaxMb: this.itemMaxMb,
+      limit: this.enabled ? this.limit() : null, startGapS: Math.round(this.startGapMs / 1000), av1GapS: this.av1GapMs / 1000, hammering: this.enabled ? this.hammering() : null, hourMbExemptS: this.hourMbExemptSeconds, itemMaxMb: this.itemMaxMb,
       building: all.filter((s) => s.state === 'building').length, ready: all.filter((s) => s.state === 'ready' && !s.ended).length,
-      ended: all.filter((s) => s.ended).length, failed: all.filter((s) => s.state === 'failed').length,
+      // A session ended as done and then failed (an old worker's late failure mark) counts once, as failed (verifier L6).
+      ended: all.filter((s) => s.ended && s.state !== 'failed').length, failed: all.filter((s) => s.state === 'failed').length,
       storedMb: Math.round(this.#storedMb()),
       expectedMb: Math.round([...this.byToken.values()].reduce((n, s) => n + this.#expectedMb(s), 0)) };
   }

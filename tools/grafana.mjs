@@ -112,23 +112,32 @@ const OK = '#9ece6a', WARN = '#e0af68', BAD = '#f7768e', INK = '#7aa2f7', SURFAC
 // neutral before the neutral lines do, and repeats fall only on neutral lines, each sharing with a neutral line's colour
 // from the last one back, so the first lines of a panel stay unique (coordinator's ruling, 2026-11-17, #868). Past 18
 // lines (only Home relay) that can't hold: there the neutral lines keep the neutrals and a meaning line repeats its
-// own family, so a shared colour still means the same kind of line. p50 and p95 lines come in fixed pairs (a panel's
-// first group blue and magenta, its second cyan and purple). Lines whose names aren't known when this builds (no
-// 'names' entry in the series() call) keep series()'s default, shades of INK, picked by series index.
+// own family, so a shared colour still means the same kind of line. A signal line (SIGNALS: the freeze proxy) takes
+// its family's first colour before the other lines of that family. p50 and p95 lines come in fixed pairs (a panel's
+// first group blue and magenta, its second cyan and fg, its third blue1 and blue6). Lines whose names aren't known when
+// this builds (no 'names' entry in the series() call) keep series()'s default, shades of INK, picked by series index.
+// A line meaning a failure, warning or health whose family has run out wears a neutral: it keeps a colour of its own
+// but loses the meaning colour (accepted, coordinator 2026-11-17: failure outcomes, fallbacks, Home relay's overflow).
+// Colours follow the order of the names (KEYS) and the panel's line count: a key added mid-list, or a panel passing 18
+// lines, recolours the lines after it in that panel (claude/monitoring.md).
+// All colours are from the project palette (ProjectGuidelines.md) except magenta2 #ff007c (tokyonight.nvim's; owner,
+// 2026-11-18 00:04Z: "probably fine hot pink can stay").
 export const LINE = {
   bad: [BAD, '#db4b4b', '#ff007c'],   // red, red1, magenta2
   warn: [WARN, '#ff9e64'],   // yellow, orange
-  ok: [OK, '#73daca', '#1abc9c'],   // green, green1, teal
-  neutral: [INK, '#bb9af7', '#7dcfff', '#9d7cd8', '#2ac3de', '#89ddff', '#c0caf5', '#737aa2', '#b4f9f8', '#41a6b5'],   // blue, magenta, cyan, purple, blue1, blue5, fg, dark5, blue6, green2 (teal-blue, last)
+  ok: [OK, '#73daca', '#41a6b5', '#1abc9c'],   // green, green1, green2, teal (green1 and teal, a near pair, apart)
+  // The near pairs (cyan and blue5, magenta and purple) sit far apart, so a panel gets both only past 7 neutrals.
+  neutral: [INK, '#bb9af7', '#7dcfff', '#c0caf5', '#2ac3de', '#737aa2', '#b4f9f8', '#9d7cd8', '#89ddff'],   // blue, magenta, cyan, fg, blue1, dark5, blue6, purple, blue5
 };
 const P50 = [LINE.neutral[0], LINE.neutral[2], LINE.neutral[4]], P95 = [LINE.neutral[1], LINE.neutral[3], LINE.neutral[6]];
+const SIGNALS = ['reload_after_upgrade'];   // reloads after a 1080p step-up: the freeze proxy (src/adaptive.js)
 // First match wins; anything else is neutral.
 const MEANING = [
   ['neutral', /fast-fails \(normal/],   // normal while a build runs, as its own name says
   ['warn', /^fallback: /],                // sent on to youtube.com: the play still happened
   ['bad', /^unavailable: (failed|temporarily_unavailable|list_unavailable)$/],
   ['neutral', /^unavailable: /],          // the video has no such captions: not a fault
-  ['bad', /fail|error|timeout|refus|unreachable|could not|^cuts$|^e(invalid|denied|rate|player|unknown)$|^after$|^capped|no_room|too_big/],
+  ['bad', /fail|error|timeout|refus|could not|^cuts$|^e(invalid|denied|rate|player|unknown)$|^after$|^capped|no_room|too_big/],
   ['warn', /defer|slow|^oldest|paced|pacer|stepdown|skip|reload_after|uneven|spaced|budget|: cap$|too_long|estimated|^videos: none$/],
   ['ok', /^ok$|^ready$|played|served|cache_hit|^pass$|real$|^videos: tracks$|^settled$|race_won|^stayed$/],
 ];
@@ -155,7 +164,8 @@ export function lineColours(lines) {
   const rest = lines.filter((l) => !colour.has(l));
   const neutral = (l) => meaningOf(label(l)) === 'neutral';
   const meant = rest.filter((l) => !neutral(l)), plain = rest.filter(neutral);
-  for (const l of meant) take(l, LINE[meaningOf(label(l))]);                 // a meaning line: its own family
+  const signalsFirst = [...meant.filter((l) => SIGNALS.includes(label(l))), ...meant.filter((l) => !SIGNALS.includes(label(l)))];
+  for (const l of signalsFirst) take(l, LINE[meaningOf(label(l))]);          // a meaning line: its own family
   const spare = () => meant.forEach((l) => colour.has(l) || take(l, LINE.neutral));   // ran out: a spare neutral
   if (lines.length <= 18) spare();                                            // before the neutral lines take them
   for (const l of plain) take(l, LINE.neutral);
@@ -191,7 +201,7 @@ export const KEYS = {
   quality_pick: ['auto', '720p', '1080p'],   // TUNELIO_QUALITIES' default (src/config.js); another quality draws in shades
   outcome: ['einvalid', 'edenied', 'erate', 'eplayer', 'eunknown', 'timeout', 'after', 'left'],   // OUTCOME_FAILS and left
   probe: ['tunelio:progressive', 'tunelio:hls', 'tunelio:pair720', 'tunelio:pair1080'],   // src/probe.js run sources
-  verdict: ['pass', 'fail', 'unreachable', 'none'],   // the monitor's flash verdicts; none: no verdict stored
+  verdict: ['pass', 'fail', 'none'],   // the monitor's flash verdicts; none: the exporter's label for a check stored without one
   reason: ['daily', 'other'],
   host: ['linode', 'optiplex'],
   job: [{ re: '.*search-healthz' }, { re: '.*short-healthz' }, { re: '.*pages-sleep-list' }],   // deploy/alloy/linode.alloy

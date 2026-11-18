@@ -122,6 +122,7 @@ test('graph lines: failures red, the freeze signal a colour of its own, and ever
   const freeze = adaptive.reload_after_upgrade;
   assert.ok(freeze, 'reload_after_upgrade has a colour');
   assert.deepEqual(Object.entries(adaptive).filter(([, c]) => c === freeze).map(([n]) => n), ['reload_after_upgrade']);
+  assert.ok(['#e0af68', '#ff9e64'].includes(freeze), `the freeze signal wears a warning colour, not ${freeze}`);
   assert.equal(byTitle('Flash checks (per 6 h)').pass, '#9ece6a');
   for (const p of graphs()) assert.equal(p.fieldConfig.defaults.color?.fixedColor, '#7aa2f7', p.title);
 });
@@ -139,6 +140,13 @@ test('graph lines: the key lists match the key checks in src/metrics.js, so a ne
   for (const k of [...KEYS.yt_refusal, ...KEYS.quality_pick]) assert.ok(METRICS.yt_refusal[1](k) || METRICS.quality_pick[1](k), k);
   assert.equal(KEYS.yt_refusal.length, 18);
   assert.deepEqual(KEYS.outcome, [...OUTCOME_FAILS, 'left']);
+  // The probe's sources, from src/probe.js: tunelio:<format> for both formats and tunelio:pair<n> per pair quality.
+  const probe = readFileSync(new URL('../src/probe.js', import.meta.url), 'utf8');
+  const formats = probe.match(/const format = n % 2 \? '(\w+)' : '(\w+)'/).slice(1);
+  const pairs = [...probe.match(/pairQualities = \[([^\]]*)\]/)[1].matchAll(/'(\d+)p'/g)].map((x) => x[1]);
+  assert.match(probe, /`tunelio:\$\{format\}`/);
+  assert.match(probe, /`tunelio:pair\$\{Number\.parseInt\(q, 10\)\}`/);
+  assert.deepEqual([...KEYS.probe].sort(), [...formats.map((f) => `tunelio:${f}`), ...pairs.map((q) => `tunelio:pair${q}`)].sort());
   // Every metric a graph splits by key is one of those lists.
   for (const p of graphs()) {
     for (const t of p.targets) {
@@ -157,11 +165,18 @@ test('graph lines: every line has a palette colour by meaning; colours repeat on
     const c = lineColour(p);
     lines += Object.keys(c).length;
     // Every legend is coloured: a fixed name, or a template with its values listed (the one exception has two labels).
-    for (const t of p.targets) {
-      if (t.legendFormat === '{{host}} {{name}}') continue;
-      const [pre, post = ''] = t.legendFormat.split(/\{\{\w+\}\}/);
-      assert.ok(Object.keys(c).some((n) => (t.legendFormat.includes('{{') ? n.startsWith(pre) && n.endsWith(post) : n === t.legendFormat)
-        || (n.startsWith('^.*') && n.endsWith(`${post}$`))), `${p.title}: ${t.legendFormat}`);
+    // A name counts for a template only if no fixed legend or other template of the panel claims it, so a bare
+    // '{{key}}' with no names list fails.
+    const legends = p.targets.map((t) => t.legendFormat);
+    const fits = (n, legend) => {
+      if (!legend.includes('{{')) return n === legend;
+      const [pre, post = ''] = legend.split(/\{\{\w+\}\}/);
+      return (n.startsWith(pre) && n.endsWith(post)) || (n.startsWith('^.*') && n.endsWith(`${post}$`));
+    };
+    for (const legend of legends) {
+      if (legend === '{{host}} {{name}}') continue;
+      const others = legends.filter((x) => x !== legend && (!x.includes('{{') || x.replace(/\{\{\w+\}\}/, '') !== ''));
+      assert.ok(Object.keys(c).some((n) => fits(n, legend) && !others.some((x) => fits(n, x))), `${p.title}: ${legend} has no coloured line`);
     }
     for (const [name, colour] of Object.entries(c)) {
       assert.ok(palette.includes(colour), `${p.title}: ${name} ${colour}`);
@@ -184,7 +199,7 @@ test('graph lines: every line has a palette colour by meaning; colours repeat on
     if (c.p50) assert.deepEqual([c.p50, c.p95], ['#7aa2f7', '#bb9af7'], p.title);
   }
   const ttff = lineColour(graphs().find((p) => p.title === 'Time to first frame, visitors'));
-  assert.deepEqual([ttff['p50 pc'], ttff['p95 pc'], ttff['p50 android'], ttff['p95 android']], ['#7aa2f7', '#bb9af7', '#7dcfff', '#9d7cd8']);
+  assert.deepEqual([ttff['p50 pc'], ttff['p95 pc'], ttff['p50 android'], ttff['p95 android']], ['#7aa2f7', '#bb9af7', '#7dcfff', '#c0caf5']);
   // Meanings, including the names that would mislead a plain word match.
   assert.equal(meaningOf('failed builds'), 'bad');
   assert.equal(meaningOf('resolver fast-fails (normal while building)'), 'neutral');

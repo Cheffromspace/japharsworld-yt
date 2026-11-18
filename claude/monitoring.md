@@ -141,6 +141,13 @@ line icons from the service's Pages (`docs/icons/*.svg`), coloured through their
   `alloy validate deploy/alloy/linode.alloy` (and `alloy fmt`).
 - **New exporter metric:** `metrics/exporter.js` and `test/exporter.test.js`; `update.sh` restarts the exporter when
   `metrics/exporter.js` or `src/metrics.js` changes.
+- **Graph line colours** (#868, 2026-11-17): every line on "Everything is OK" has a Tokyo Night colour by what it means
+  (`lineColours` in `tools/grafana.mjs`: failures red, warnings amber, healthy green, the rest neutrals), so a line's
+  name must be known when the dashboard builds. A new key in a `oneOf(...)` list in `src/metrics.js` needs the same key
+  in `KEYS` in `tools/grafana.mjs` (`test/grafana.test.js` fails until it is there), and a new probe source in
+  `src/probe.js` likewise. Colours follow the order of `KEYS` and the panel's line count: a key added mid-list, or a
+  panel passing 18 lines, moves the colours of the lines after it in that panel. A line nobody listed draws in shades of
+  blue picked by series order. The four no-state stats are solid #24283b tiles (#866).
 
 ## Weekly infra check (Optiplex agent)
 

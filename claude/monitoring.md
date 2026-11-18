@@ -221,7 +221,7 @@ rule above forbids those either way; the owner reinstalls the narrowed files.
 `infra-check/hypercare.mjs` and the `yt-hypercare` user timer (world #208, owner 2026-10-26; it replaced the
 coordinator's 30-minute loop). Every hour at :17, read only and without Claude, it checks the last hour: the search
 service and Caddy active on the Linode and the public `/healthz` answering 200; the Linode's `/` use; in the search
-service's journal the 5xx answers, error and `*_failed` events, `youtube_error` and `backoff` events, `captions_via`
+service's journal the 5xx answers (Channels 503s apart, below), error and `*_failed` events, `youtube_error` and `backoff` events, `captions_via`
 (lookups in the hour, and distinct videos with and without tracks over 6 hours), `home_evict` and `home_over_cap`; fail2ban's currently banned sshd count; on the
 Optiplex the relay worker, `bgutil-pot-relay` and the flash worker's timer active and its last run successful.
 MediaMTX is its own project (media-mtx) and not checked here (owner, 2026-10-28, #38). The journal is counted on the Linode with `awk` over `ssh linode-check`, so no log line,
@@ -230,6 +230,18 @@ or backoff at all), each overridable as `HYPERCARE_<NAME>` in the same `.env`. T
 critical level: hypercare reads `df` once an hour, so a passing minute at 80 % (2026-10-27 22:17, before a home cache
 eviction) is left to Grafana's 15-minute 80 % warning. Captions fire only at 5 or more distinct videos with no tracks and no
 video with tracks over 6 hours (world #401): many videos have no captions, and replays ask again.
+
+Channels (Everything-is-OK#863, folding in #521): since the production deploy of 2026-11-17 a slot the published list
+hides answers `503 channel_unavailable` on purpose (#776), so a `route channel` 503 request line is not counted as a
+5xx; the deploy's own three hidden-slot checks had filed a false 5xx card (#862). Those 503s are counted apart
+(`ch503`, limit `CH503` 10 an hour: production saw at most 5 channel requests and 3 channel 503s in any hour from
+2026-11-10 to 11-18, and one visitor on a stale list retries about six loads, so 9 stays quiet) and a burst files
+"Many Channels plays were refused". Any other 5xx on that route (a 500 from a throw) still counts as a 5xx. The real
+fault behind the same 503, a monitor status the service can't read (every Quest Channels play is refused meanwhile),
+is counted from the service's `channel_refused` lines with `why` `status_unreadable` or `status_missing` (`chmon`,
+limit `CHMON` 1: those lines are written once a minute at most, so one visitor's retries are one line), and files
+"The search service can't read the Channels monitor's status". A hide (`hidden_by_monitor`, `hidden_by_owner`) is not
+counted. Both run where hypercare reads, production's journal only; Grafana has no rule on channel answers.
 
 Grafana's `eiok-captions-empty` (world #428) has the same rule, so a silent failure, where every lookup answers
 `no_captions` with no error, stays watched after hypercare ends, and `eiok-captions-failing` covers every source throwing. It is a slow one: replayed over 121 runs of real

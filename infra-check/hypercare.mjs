@@ -44,7 +44,17 @@ const OPTIPLEX_UNITS = ['japharsworld-yt-relay', 'bgutil-pot-relay', 'japharswor
 // comes back empty over those runs, 1 h takes a median of 8 h and at most 52 h to fire, 6 h a median of 6 h and at most
 // 20 h, with no false firing in either. This is the only detector of that silent failure: see claude/monitoring.md.
 export const CAP_HOURS = 6;
-export const LIMITS = { DISK: 88, S5: 3, ERRORS: 5, YT: 3, BACKOFF: 1, CAP0: 5, EVICT: 20, OVERCAP: 1, BANNED: 20 };
+// Channels (Everything-is-OK#863, folding in #521): since the production deploy of 2026-11-17 a slot the list hides
+// answers 503 on purpose (#776), and the deploy's own three hidden-slot checks raised a false 5xx card (#862). So a
+// `route channel` 503 is not a 5xx here; CH503 counts them apart. Since 2026-11-10 production saw at most 5 channel
+// requests in an hour and at most 3 channel 503s (those checks, 2026-11-17 22:04Z; journal read 2026-11-18). One visitor
+// on a stale list retries about six loads (the coordinator's figure for the public build), so 10 lets that and our own
+// checks pass (9) and still shows a burst: many plays refused, as when the published list stops matching the monitor.
+// Those 503s also hide the real fault, a monitor status the service can't read, which refuses every Quest Channels play.
+// The service logs that as `channel_refused` with why status_unreadable (or status_missing: no database on production),
+// one line a minute; CHMON fires on the first, as the 5xx count did for 3 such plays before (nothing else logs those why
+// values, and none were seen in the journal since 2026-11-10). A hide is `hidden_by_monitor` / `hidden_by_owner`, not counted.
+export const LIMITS = { DISK: 88, S5: 3, ERRORS: 5, YT: 3, BACKOFF: 1, CAP0: 5, EVICT: 20, OVERCAP: 1, BANNED: 20, CH503: 10, CHMON: 1 };
 export function limits(env = process.env) {
   return Object.fromEntries(Object.entries(LIMITS).map(([k, v]) => {
     const n = Number(env[`HYPERCARE_${k}`]);
@@ -60,14 +70,15 @@ for u in ${LINODE_UNITS.join(' ')}; do echo "unit:$u $(systemctl is-active $u)";
 echo "disk $(df --output=pcent / | tail -1 | tr -dc 0-9)"
 echo "banned $(sudo -n fail2ban-client status sshd 2>/dev/null | sed -n 's/.*Currently banned:[[:space:]]*//p')"
 journalctl -u japharsworld-yt --since -60min -o cat --no-pager | awk '
-/"status":5[0-9][0-9]/ { s5++ }
+/"status":5[0-9][0-9]/ { if (/"route":"channel"/ && /"status":503[,}]/) ch503++; else s5++ }
+/"event":"channel_refused"/ && /"why":"status_(unreadable|missing)"/ { chmon++ }
 /"event":"(error|[a-z_]*_error|[a-z_]*_failed)"/ && !(/"event":"build_failed"/ && /"reason":"tunelio_failed"/) { errors++ }
 /"event":"youtube_error"/ { yt++ }
 /"event":"backoff"/ { backoff++ }
 /"event":"captions_via"/ { if (/"tracks":0[,}]/) cap0++; else if (/"tracks":[1-9]/) cap1++ }
 /"event":"home_evict"/ { evict++ }
 /"event":"home_over_cap"/ { overcap++ }
-END { printf "s5 %d\\nerrors %d\\nyt %d\\nbackoff %d\\ncap0 %d\\ncap1 %d\\nevict %d\\novercap %d\\njournal ok\\n", s5, errors, yt, backoff, cap0, cap1, evict, overcap }'
+END { printf "s5 %d\\nch503 %d\\nchmon %d\\nerrors %d\\nyt %d\\nbackoff %d\\ncap0 %d\\ncap1 %d\\nevict %d\\novercap %d\\njournal ok\\n", s5, ch503, chmon, errors, yt, backoff, cap0, cap1, evict, overcap }'
 journalctl -u japharsworld-yt --since -${CAP_HOURS * 60}min -o cat --no-pager | awk '
 /"event":"captions_via"/ { vid = match($0, /"id":"[^"]*"/) ? substr($0, RSTART, RLENGTH) : "none"; if (/"tracks":0[,}]/) v0[vid] = 1; else if (/"tracks":[1-9]/) v1[vid] = 1 }
 END { for (v in v0) if (!(v in v1)) capv0++; for (v in v1) capv1++; printf "capv0 %d\\ncapv1 %d\\n", capv0, capv1 }'
@@ -108,7 +119,9 @@ export function evaluate(m, lim) {
     if (l.journal !== 'ok') add('linode:journal', false, 'Hypercare can\'t count the search service\'s journal', 'The journal count on the Linode printed nothing.');
     const over = (v, limit) => Number(v) >= limit;
     if (over(l.disk, lim.DISK)) add('linode:disk', true, `The Linode's disk is ${l.disk} % full`, `Limit ${lim.DISK} %.`);
-    if (over(l.s5, lim.S5)) add('linode:5xx', false, 'The search service answered 5xx', `${l.s5} in the last hour (limit ${lim.S5}).`);
+    if (over(l.s5, lim.S5)) add('linode:5xx', false, 'The search service answered 5xx', `${l.s5} in the last hour (limit ${lim.S5}; Channels 503s are counted apart).`);
+    if (over(l.chmon, lim.CHMON)) add('linode:channel-status', false, 'The search service can\'t read the Channels monitor\'s status', `${l.chmon} channel_refused lines with why status_unreadable or status_missing in the last hour (one a minute at most; limit ${lim.CHMON}): every Quest Channels play is refused while it lasts.`);
+    if (over(l.ch503, lim.CH503)) add('linode:channel-refused', false, 'Many Channels plays were refused', `${l.ch503} Channels 503 answers in the last hour (limit ${lim.CH503}): slots the list hides (stale lists, our own checks) or a status that can't be read.`);
     if (over(l.errors, lim.ERRORS)) add('linode:errors', false, 'Error events in the search service\'s journal', `${l.errors} error or *_failed events in the last hour (limit ${lim.ERRORS}).`);
     if (over(l.yt, lim.YT)) add('linode:youtube', false, 'YouTube is refusing the search service', `${l.yt} youtube_error events in the last hour (limit ${lim.YT}).`);
     if (over(l.backoff, lim.BACKOFF)) add('linode:backoff', false, 'The search service backed off from YouTube', `${l.backoff} backoff events in the last hour (limit ${lim.BACKOFF}).`);
@@ -129,7 +142,7 @@ export function logLine(m, findings, at = new Date().toISOString()) {
   }
   return JSON.stringify({ at, event: 'hypercare', ok: findings.length === 0, findings: findings.map((x) => x.key),
     healthz: m.healthz?.ok ?? null, units,
-    disk: l.disk ?? null, s5: l.s5 ?? null, errors: l.errors ?? null, yt: l.yt ?? null, backoff: l.backoff ?? null,
+    disk: l.disk ?? null, s5: l.s5 ?? null, ch503: l.ch503 ?? null, chmon: l.chmon ?? null, errors: l.errors ?? null, yt: l.yt ?? null, backoff: l.backoff ?? null,
     cap0: l.cap0 ?? null, cap1: l.cap1 ?? null, capv0: l.capv0 ?? null, capv1: l.capv1 ?? null, evict: l.evict ?? null, overcap: l.overcap ?? null, banned: l.banned ?? null });
 }
 

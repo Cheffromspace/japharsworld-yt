@@ -1,13 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import http from 'node:http';
+import { ChannelSlots } from '../src/channels.js';
+import { config } from '../src/config.js';
+import { createApp } from '../src/server.js';
 import { CAP_HOURS, END_AFTER, LIMITS, LINODE_PROBE, evaluate, issueBody, issueTitle, limits, logLine, parseProbe, plan, posts, streak, webhookFor } from '../infra-check/hypercare.mjs';
 
 const kit = (f) => readFileSync(new URL(`../infra-check/${f}`, import.meta.url), 'utf8');
 
 const normal = () => ({
-  linode: parseProbe('unit:japharsworld-yt active\nunit:caddy active\ndisk 39\nbanned 0\ns5 0\nerrors 1\nyt 0\nbackoff 0\ncap0 1\ncap1 8\ncapv0 1\ncapv1 7\nevict 0\novercap 0\njournal ok\n'),
+  linode: parseProbe('unit:japharsworld-yt active\nunit:caddy active\ndisk 39\nbanned 0\ns5 0\nch503 0\nchmon 0\nerrors 1\nyt 0\nbackoff 0\ncap0 1\ncap1 8\ncapv0 1\ncapv1 7\nevict 0\novercap 0\njournal ok\n'),
   optiplex: { 'unit:japharsworld-yt-relay': 'active', 'unit:bgutil-pot-relay': 'active', 'unit:japharsworld-yt-slotworker.timer': 'active', slotworker_result: 'success' },
   healthz: { ok: true, detail: 'HTTP 200.' },
 });
@@ -24,13 +31,13 @@ test('hypercare: a normal hour has no findings and logs one line of counts', () 
 
 test('hypercare: each abnormal reading is one finding, and only owner actions become owner tasks', () => {
   const m = normal();
-  Object.assign(m.linode, { 'unit:caddy': 'failed', disk: 91, s5: 4, errors: 9, yt: 5, backoff: 1, cap0: 6, cap1: 0, capv0: 6, capv1: 0, evict: 30, overcap: 2, banned: 25 });
+  Object.assign(m.linode, { 'unit:caddy': 'failed', disk: 91, s5: 4, ch503: 10, chmon: 1, errors: 9, yt: 5, backoff: 1, cap0: 6, cap1: 0, capv0: 6, capv1: 0, evict: 30, overcap: 2, banned: 25 });
   m.optiplex['unit:bgutil-pot-relay'] = 'inactive';
   m.optiplex.slotworker_result = 'exit-code';
   m.healthz = { ok: false, detail: 'HTTP 502.' };
   const f = evaluate(m, LIMITS);
   const keys = f.map((x) => x.key).sort();
-  assert.deepEqual(keys, ['healthz', 'linode:5xx', 'linode:backoff', 'linode:banned', 'linode:captions', 'linode:disk', 'linode:errors',
+  assert.deepEqual(keys, ['healthz', 'linode:5xx', 'linode:backoff', 'linode:banned', 'linode:captions', 'linode:channel-refused', 'linode:channel-status', 'linode:disk', 'linode:errors',
     'linode:evict', 'linode:overcap', 'linode:unit:caddy', 'linode:youtube', 'optiplex:slotworker-result', 'optiplex:unit:bgutil-pot-relay']);
   assert.deepEqual(f.filter((x) => x.owner).map((x) => x.key).sort(), ['healthz', 'linode:disk', 'linode:unit:caddy', 'optiplex:unit:bgutil-pot-relay']);
   // An unreachable host is one finding, not a unit storm.
@@ -182,4 +189,112 @@ test('hypercare: the probe reads counts only, read only, and the units run the c
   assert.doesNotMatch(src, /\b\d{1,3}(\.\d{1,3}){3}\b/, 'no addresses in the repo');
   assert.match(kit('yt-hypercare.service'), /^ExecStart=\/usr\/bin\/node \/opt\/japharsworld-yt-relay\/infra-check\/hypercare\.mjs$/m);
   assert.match(kit('yt-hypercare.timer'), /^OnCalendar=\*-\*-\* \*:17:00$/m);
+});
+
+// Everything-is-OK#863 (folding in #521): the journal lines come from the real server (its request lines and the
+// channel refusal lines, src/channels.js), so the event name and the request line's shape are pinned across both files.
+const hourlyProbe = () => LINODE_PROBE.match(/awk '([^']*)'/)[1];
+const countJournal = (lines) => {
+  const r = spawnSync('awk', [hourlyProbe()], { input: `${lines.join('\n')}\n`, encoding: 'utf8' });
+  return r.error ? null : parseProbe(r.stdout);
+};
+const reqLine = (route, status) => JSON.stringify({ at: '2026-11-17T22:04:51.757Z', route, status, ms: 3 });
+const findingsFor = (counts) => evaluate({ linode: { ...normal().linode, ...counts } }, LIMITS).map((x) => x.key);
+
+// The search service with a monitor database whose slots table is `rows`, or none at `monitorDb` when rows is null.
+async function channelServer(t, rows) {
+  const dir = mkdtempSync(join(tmpdir(), 'hc-ch-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const monitorDb = join(dir, 'monitor.db');
+  if (rows) {
+    const db = new DatabaseSync(monitorDb);
+    db.exec(rows.schema);
+    for (const r of rows.slots) db.prepare(`INSERT INTO slots VALUES (${r.map(() => '?').join(', ')})`).run(...r);
+    db.close();
+  }
+  const lines = [];
+  const channels = new ChannelSlots({ monitorDb, log: (o) => lines.push(JSON.stringify({ at: new Date().toISOString(), ...o })) });
+  const app = createApp({ config: { ...config, monitorDb, channelsUpstream: '', metricsPath: '' }, channels, log: (l) => lines.push(l) });
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise((r) => server.close(r)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const requests = () => lines.filter((l) => l.includes('"route"')).length;
+  const get = async (key) => {
+    const before = requests();
+    const res = await fetch(`${base}/v1/ch/${key}`, { redirect: 'manual' });
+    await res.arrayBuffer();
+    // The request line is written on 'finish', which can come just after the client has the answer.
+    for (let i = 0; i < 200 && requests() === before; i++) await new Promise((r) => setTimeout(r, 5));
+    return res.status;
+  };
+  return { get, lines };
+}
+
+const SLOTS = 'CREATE TABLE slots (key TEXT PRIMARY KEY, kind TEXT, current_video TEXT, baked_hidden INTEGER, auto_hidden INTEGER)';
+
+test('hypercare (#863): three refused hidden Channels slots (503 by design) are not a 5xx finding; they are counted apart', async (t) => {
+  if (!countJournal(['x'])) return t.skip('no awk here');
+  const s = await channelServer(t, { schema: SLOTS, slots: [
+    ['gta-vice-city', 'live', 'AAAAAAAAAAA', 0, 1], ['retroworld-ps1', 'live', 'BBBBBBBBBBB', 0, 1], ['jack-stardew', 'live', 'CCCCCCCCCCC', 1, 0],
+    ['lofi-sleep-chill', 'live', 'DDDDDDDDDDD', 0, 0]] });
+  // #862's hour: the deploy's three hidden-slot checks, and a shown slot playing.
+  for (const key of ['gta-vice-city', 'retroworld-ps1', 'jack-stardew']) assert.equal(await s.get(key), 503, key);
+  assert.equal(await s.get('lofi-sleep-chill'), 302);
+  assert.equal(s.lines.filter((l) => /"route":"channel","status":503/.test(l)).length, 3, 'the real request lines');
+  const c = countJournal(s.lines);
+  assert.deepEqual([c.s5, c.ch503, c.chmon, c.errors], [0, 3, 0, 0]);
+  assert.deepEqual(findingsFor(c), [], 'no "The search service answered 5xx" card (#862)');
+  assert.doesNotMatch(JSON.stringify(c), /gta|retro|stardew|lofi|AAAA|DDDD/, 'counts only');
+});
+
+test('hypercare (#863): other 5xx still count, a Channels 5xx that is not 503 too', (t) => {
+  const three502 = countJournal([reqLine('ticket', 502), reqLine('ticket', 502), reqLine('ticket', 502)]);
+  if (!three502) return t.skip('no awk here');
+  assert.deepEqual([three502.s5, three502.ch503], [3, 0]);
+  assert.deepEqual(findingsFor(three502), ['linode:5xx']);
+  // A throw on the channel route answers 500: that is a fault, not a refusal.
+  const thrown = countJournal([reqLine('channel', 500), reqLine('channel', 500), reqLine('channel', 503), reqLine('search', 502)]);
+  assert.deepEqual([thrown.s5, thrown.ch503], [3, 1]);
+  assert.deepEqual(findingsFor(thrown), ['linode:5xx']);
+});
+
+test('hypercare (#863, #521): a monitor status the service can\'t read still raises a finding, from one visitor\'s single play', async (t) => {
+  if (!countJournal(['x'])) return t.skip('no awk here');
+  // A database without the hide columns: every slot refused, logged as status_unreadable (one line a minute).
+  const old = await channelServer(t, { schema: 'CREATE TABLE slots (key TEXT PRIMARY KEY, kind TEXT, current_video TEXT)', slots: [['lofi-sleep-chill', 'live', 'DDDDDDDDDDD']] });
+  assert.equal(await old.get('lofi-sleep-chill'), 503);
+  let c = countJournal(old.lines);
+  assert.ok(old.lines.some((l) => /"event":"channel_refused".*"why":"status_unreadable"/.test(l)));
+  assert.deepEqual([c.s5, c.ch503, c.chmon], [0, 1, 1]);
+  assert.deepEqual(findingsFor(c), ['linode:channel-status'], 'one refused play is enough: every Quest Channels play fails meanwhile');
+  // One visitor retrying six loads in that minute: still one finding, the right one (six 503s, one status line).
+  for (let i = 0; i < 5; i++) assert.equal(await old.get('lofi-sleep-chill'), 503);
+  c = countJournal(old.lines);
+  assert.deepEqual([c.s5, c.ch503, c.chmon], [0, 6, 1]);
+  assert.deepEqual(findingsFor(c), ['linode:channel-status']);
+  // Production with no database file at all: status_missing, the same finding.
+  const gone = await channelServer(t, null);
+  assert.equal(await gone.get('lofi-sleep-chill'), 503);
+  assert.ok(gone.lines.some((l) => /"event":"channel_refused".*"why":"status_missing"/.test(l)));
+  assert.deepEqual(findingsFor(countJournal(gone.lines)), ['linode:channel-status']);
+  // A hide is not a monitor fault.
+  assert.equal(countJournal(['{"event":"channel_refused","why":"hidden_by_monitor"}', '{"event":"channel_refused","why":"hidden_by_owner"}']).chmon, 0);
+  const [f] = evaluate({ linode: { ...normal().linode, chmon: 1 } }, LIMITS);
+  assert.equal(f.owner, false);
+  assert.match(f.detail, /status_unreadable or status_missing/);
+});
+
+test('hypercare (#863): a burst of refused Channels slots over the limit raises its own finding', (t) => {
+  const burst = (n) => countJournal(Array.from({ length: n }, () => reqLine('channel', 503)));
+  const nine = burst(9);
+  if (!nine) return t.skip('no awk here');
+  assert.deepEqual(findingsFor(nine), [], 'one visitor\'s six retries and our three checks');
+  const ten = burst(10);
+  assert.deepEqual([ten.s5, ten.ch503], [0, 10]);
+  assert.deepEqual(findingsFor(ten), ['linode:channel-refused']);
+  assert.deepEqual([LIMITS.CH503, LIMITS.CHMON], [10, 1]);
+  assert.deepEqual(evaluate({ linode: { ...normal().linode, ch503: 4 } }, limits({ HYPERCARE_CH503: '4' })).map((x) => x.key), ['linode:channel-refused'], 'overridable');
+  const line = JSON.parse(logLine({ linode: { ...normal().linode, ...ten } }, []));
+  assert.deepEqual([line.s5, line.ch503, line.chmon], [0, 10, 0]);
 });

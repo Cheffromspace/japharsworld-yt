@@ -9,6 +9,7 @@ import http from 'node:http';
 import { ChannelSlots } from '../src/channels.js';
 import { config } from '../src/config.js';
 import { createApp } from '../src/server.js';
+import { Store } from '../src/store.js';
 import { CAP_HOURS, END_AFTER, LIMITS, LINODE_PROBE, evaluate, issueBody, issueTitle, limits, logLine, parseProbe, plan, posts, streak, webhookFor } from '../infra-check/hypercare.mjs';
 
 const kit = (f) => readFileSync(new URL(`../infra-check/${f}`, import.meta.url), 'utf8');
@@ -214,7 +215,12 @@ async function channelServer(t, rows) {
   }
   const lines = [];
   const channels = new ChannelSlots({ monitorDb, log: (o) => lines.push(JSON.stringify({ at: new Date().toISOString(), ...o })) });
-  const app = createApp({ config: { ...config, monitorDb, channelsUpstream: '', metricsPath: '' }, channels, log: (l) => lines.push(l) });
+  // Only the channel route runs; the rest are fakes, as in server.test.js, so nothing is written outside `dir`.
+  const store = new Store({ path: ':memory:', shards: config.shards, pool: config.pool, pinHours: 24 });
+  const youtube = { async search() { throw new Error('not used'); }, thumbnailUrl: (id) => id };
+  const captions = { async get() { throw new Error('not used'); }, async tracks() { throw new Error('not used'); }, warm() {} };
+  const app = createApp({ config: { ...config, monitorDb, dbPath: join(dir, 'tickets.db'), channelsUpstream: '', metricsPath: '' },
+    store, youtube, captions, channels, log: (l) => lines.push(l) });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => new Promise((r) => server.close(r)));

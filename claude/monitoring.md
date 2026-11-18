@@ -144,10 +144,16 @@ line icons from the service's Pages (`docs/icons/*.svg`), coloured through their
 - **Graph line colours** (#868, 2026-11-17): every line on "Everything is OK" has a Tokyo Night colour by what it means
   (`lineColours` in `tools/grafana.mjs`: failures red, warnings amber, healthy green, the rest neutrals), so a line's
   name must be known when the dashboard builds. A new key in a `oneOf(...)` list in `src/metrics.js` needs the same key
-  in `KEYS` in `tools/grafana.mjs` (`test/grafana.test.js` fails until it is there), and a new probe source in
-  `src/probe.js` likewise. Colours follow the order of `KEYS` and the panel's line count: a key added mid-list, or a
-  panel passing 18 lines, moves the colours of the lines after it in that panel. A line nobody listed draws in shades of
-  blue picked by series order. The four no-state stats are solid #24283b tiles (#866).
+  in `KEYS` in `tools/grafana.mjs` (`test/grafana.test.js` fails until it is there). For the speed probe the test
+  reads `src/probe.js`: it fails when the two formats or the default `pairQualities` differ from `KEYS.probe`, and when
+  the code holds any `tunelio:` source literal other than the two templates (`tunelio:${format}`,
+  `tunelio:pair${…}`); a source named some other way (built from a variable, set in another file) it cannot see. A
+  key added mid-list moves the colours of the lines after it in that panel; a panel passing 18 lines (the palette's
+  size) switches to the other assignment, so every line in it can change colour. Limits: a failure, warning or healthy
+  line whose colour family has run out wears a neutral colour of its own (unique, but not its meaning colour), and in
+  Home relay (29 lines) such lines repeat their own family's colours. A line nobody listed draws in shades of blue
+  picked by series order, stable only while the same series come back. The four no-state stats are solid #24283b
+  tiles (#866).
 
 ## Weekly infra check (Optiplex agent)
 

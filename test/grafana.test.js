@@ -144,8 +144,9 @@ test('graph lines: the key lists match the key checks in src/metrics.js, so a ne
   const probe = readFileSync(new URL('../src/probe.js', import.meta.url), 'utf8');
   const formats = probe.match(/const format = n % 2 \? '(\w+)' : '(\w+)'/).slice(1);
   const pairs = [...probe.match(/pairQualities = \[([^\]]*)\]/)[1].matchAll(/'(\d+)p'/g)].map((x) => x[1]);
-  assert.match(probe, /`tunelio:\$\{format\}`/);
-  assert.match(probe, /`tunelio:pair\$\{Number\.parseInt\(q, 10\)\}`/);
+  // Every tunelio: source literal in probe.js's code is one of these two, so a source under a new name fails here.
+  const code = probe.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  assert.deepEqual([...code.matchAll(/(['"`])tunelio:[^'"`]*\1/g)].map((m) => m[0]), ['`tunelio:${format}`', '`tunelio:pair${Number.parseInt(q, 10)}`']);
   assert.deepEqual([...KEYS.probe].sort(), [...formats.map((f) => `tunelio:${f}`), ...pairs.map((q) => `tunelio:pair${q}`)].sort());
   // Every metric a graph splits by key is one of those lists.
   for (const p of graphs()) {
@@ -159,6 +160,11 @@ test('graph lines: the key lists match the key checks in src/metrics.js, so a ne
 test('graph lines: every line has a palette colour by meaning; colours repeat only between neutral lines (past 18 lines, within a kind)', () => {
   const palette = [...LINE.bad, ...LINE.warn, ...LINE.ok, ...LINE.neutral];
   assert.equal(new Set(palette).size, 18);
+  // The meaning colours, written out here so a colour moved between families fails: red, red1, magenta2; yellow,
+  // orange; green, green1, green2, teal (green2 is a green in the project palette, verifier round 1).
+  const MEANING_HEXES = ['#f7768e', '#db4b4b', '#ff007c', '#e0af68', '#ff9e64', '#9ece6a', '#73daca', '#41a6b5', '#1abc9c'];
+  assert.deepEqual([...LINE.bad, ...LINE.warn, ...LINE.ok].sort(), [...MEANING_HEXES].sort());
+  assert.deepEqual(LINE.neutral.filter((c) => MEANING_HEXES.includes(c)), [], 'no meaning colour among the neutrals');
   let lines = 0;
   for (const p of graphs()) {
     assert.deepEqual(p.fieldConfig.defaults.color, { mode: 'shades', fixedColor: '#7aa2f7' }, `${p.title}: unlisted lines in shades of INK`);
@@ -181,7 +187,7 @@ test('graph lines: every line has a palette colour by meaning; colours repeat on
     for (const [name, colour] of Object.entries(c)) {
       assert.ok(palette.includes(colour), `${p.title}: ${name} ${colour}`);
       const m = meaningOf(name);
-      if (m === 'neutral') assert.ok(LINE.neutral.includes(colour), `${p.title}: neutral ${name} took a meaning colour`);
+      if (m === 'neutral') assert.ok(LINE.neutral.includes(colour) && !MEANING_HEXES.includes(colour), `${p.title}: neutral ${name} took a meaning colour`);
       else assert.ok([...LINE[m], ...LINE.neutral].includes(colour), `${p.title}: ${m} ${name} took another meaning's colour`);
     }
     // Repeats: in up to 18 lines only between neutral lines; past 18, a meaning line shares only with its own kind.

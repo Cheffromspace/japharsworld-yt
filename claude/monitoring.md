@@ -234,7 +234,8 @@ wants done becomes an issue for the coordinator (the Everything is OK coordinati
      systemctl is-active japharsworld-yt japharsworld-yt-exporter alloy caddy bgutil-pot fail2ban'`.
    - **The Optiplex** is the same on that machine with `sudo` (`sudo unattended-upgrade -v`, `ls /var/run/reboot-required`,
      `sudo reboot`, check `ls /var/run/reboot-required; systemctl is-active japharsworld-yt-relay bgutil-pot-relay
-     alloy`), warned as "the relay worker is down for a minute; searches fall back to the Linode meanwhile". Before it
+     alloy`), warned as "the relay worker is down for a minute; searches fall back to the Linode meanwhile" (the wording and the
+     minute are not measured, coordinator 2026-11-19). Before it
      names that command the check reads the Optiplex's own `/etc/apt/apt.conf.d/50unattended-upgrades` (allowed
      origins) and `20auto-upgrades`: the Linode's facts are not assumed there. If the security origins are not allowed
      there, the card gives no install command, says that, and tells the owner to ask the coordinator.

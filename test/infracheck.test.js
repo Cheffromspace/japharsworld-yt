@@ -42,6 +42,33 @@ test('infra check: both prompts file owner tasks in the private world repo, secu
   assert.match(rules, /Every comment it posts on an `owner-task` issue ends with the line `<!-- coordinator -->`/);
 });
 
+// Owner, 2026-11-19 (Everything-is-OK#906): pending security updates go on a card on the owner's board every week.
+test('infra check: pending security updates get an owner-task card per host, count only, never installed by the check (2026-11-19)', () => {
+  const p = kit('prompt.md');
+  assert.match(p, /grep -c security/);
+  assert.doesNotMatch(p, /pending security updates \(report only\)/);
+  assert.match(p, /"Install security updates on <host> \(<date>\)"/);
+  assert.match(p, /the count only \("N security updates pending"\), no package names, versions or CVEs/);
+  assert.match(p, /ending with `<!-- coordinator -->` on that host's open card instead of a new one/);
+  assert.match(p, /You never install or reboot anything yourself/);
+  // Coordinator, 2026-11-19 (#914): security origins only; the Linode holds 58 other upgrades back on purpose.
+  assert.match(p, /`unattended-upgrade -v` \(security origins only\), never a plain `apt-get upgrade -y`/);
+  assert.match(p, /read its own `\/etc\/apt\/apt\.conf\.d\/50unattended-upgrades` before you name the command/);
+  assert.match(p, /\/var\/log\/unattended-upgrades\//);
+  const rules = readFileSync(new URL('../claude/monitoring.md', import.meta.url), 'utf8');
+  assert.match(rules, /\*\*Security updates card\*\* \(owner, 2026-11-19/);
+  assert.match(rules, /`ssh linode 'unattended-upgrade -v'`/);
+  assert.doesNotMatch(rules, /ssh linode 'apt-get/, 'never a plain upgrade on the card');
+  assert.match(rules, /unattended-upgrades` runs daily\s+on the Linode/);
+  assert.match(rules, /the owner's real job is usually the reboot/);
+  assert.match(rules, /\/var\/log\/unattended-upgrades\//);
+  assert.match(rules, /reads the Optiplex's own `\/etc\/apt\/apt\.conf\.d\/50unattended-upgrades`/);
+  assert.match(rules, /ls \/var\/run\/reboot-required;\s+systemctl is-active japharsworld-yt japharsworld-yt-exporter alloy caddy bgutil-pot fail2ban/);
+  assert.match(rules, /search is\s+down about 2 minutes, pick a quiet moment/);
+  assert.match(rules, /No package names, versions or CVEs on GitHub/);
+  assert.match(rules, /It never installs, upgrades or reboots anything itself/);
+});
+
 test('infra check: the README has no step that writes a placeholder key (2026-10-25)', () => {
   const readme = kit('README.md');
   assert.doesNotMatch(readme, /echo '<paste/);

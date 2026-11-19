@@ -202,6 +202,46 @@ wants done becomes an issue for the coordinator (the Everything is OK coordinati
    scope as of 2026-10-26), create it without `--project` and say so in the report. A security finding gets at most a
    card titled "Security finding on <host>, see the local report of <date>", with no details. No secrets, tokens or
    webhook URLs there either.
+6. **Security updates card** (owner, 2026-11-19, Everything-is-OK#906 and #914: "Can we make sure that future pending
+   security updates go on a task card on my board?"; before this the check only reported them, and a card came only
+   with a red item such as a reboot pending for a security update): every week a host (Linode or Optiplex) has any
+   pending security update, or `/var/run/reboot-required`, it files one `owner-task` card for that host (item 5's
+   format and `gh` command), titled "Install security updates on <host> (<date>)". Pending updates alone are yellow in
+   the report; the card is filed either way.
+   - **One card per host, one per job.** Search the open `owner-task` issues for "Install security updates on <host>"
+     first. If one is open, it comments there with this week's count, ending with `<!-- coordinator -->`, and files no
+     new card. A pending reboot goes on the same card, never on a second one, and a reboot pending for a security
+     update is not also filed as a "Security finding" card. The red "Security finding on <host>" card stays for every
+     other red security item.
+   - **Count only.** The card says "N security updates pending" (`apt list --upgradable 2>/dev/null | grep -c security`,
+     which needs no sudo on either host). No package names, versions or CVEs on GitHub (they stay in the local
+     security report), and no IP addresses or account names. When the updates are installed but a reboot is still
+     pending, the card says so and keeps only the reboot and check steps.
+   - **Say what usually happens** (coordinator, 2026-11-19, from the Linode's config): `unattended-upgrades` runs daily
+     on the Linode (`APT::Periodic::Unattended-Upgrade "1"`), so a pending security update is often installed by
+     itself within a day, and the owner's real job is usually the reboot. The card says that plainly, near the top.
+     If the same update is still pending a week later (last week's local security report lists it, or an open card
+     from last week is still there with a count), the card or its comment says `unattended-upgrades` may be failing
+     and points at `/var/log/unattended-upgrades/` (no names, just that it is the same update).
+   - **Steps on the card: security updates only, never a plain `apt-get upgrade -y`** (the Linode holds 58 other
+     upgrades back on purpose, among them nodesource's Node and apt.grafana.com's Alloy). The command is
+     `unattended-upgrade -v`, which installs only the origins the host allows (noble, noble-security, ESM apps and
+     infra security; `/etc/apt/apt.conf.d/50unattended-upgrades` on the Linode, read 2026-11-19 17:52Z). Why/Time/Where/Do
+     first up front, numbered checkboxes with one copyable block each. Linode, as root (`ssh linode`): (1)
+     `ssh linode 'unattended-upgrade -v'`; (2) check for a reboot with `ssh linode 'ls /var/run/reboot-required'`
+     ("No such file" means none: skip step 3); (3) only if that file exists, `ssh linode reboot`, warned as "search is
+     down about 2 minutes, pick a quiet moment"; (4) the check that ends it: `ssh linode 'ls /var/run/reboot-required;
+     systemctl is-active japharsworld-yt japharsworld-yt-exporter alloy caddy bgutil-pot fail2ban'`.
+   - **The Optiplex** is the same on that machine with `sudo` (`sudo unattended-upgrade -v`, `ls /var/run/reboot-required`,
+     `sudo reboot`, check `ls /var/run/reboot-required; systemctl is-active japharsworld-yt-relay bgutil-pot-relay
+     alloy`), warned as "the relay worker is down for a minute; searches fall back to the Linode meanwhile". Before it
+     names that command the check reads the Optiplex's own `/etc/apt/apt.conf.d/50unattended-upgrades` (allowed
+     origins) and `20auto-upgrades`: the Linode's facts are not assumed there. If the security origins are not allowed
+     there, the card gives no install command, says that, and tells the owner to ask the coordinator.
+   - **Done when:** `apt list --upgradable 2>/dev/null | grep -c security` prints 0 on that host (security updates only:
+     other held-back upgrades don't count), there is no `/var/run/reboot-required` and the check's units all say
+     `active`. Then "close this issue when done", as item 5 says.
+   - **It stays read only.** It never installs, upgrades or reboots anything itself; the card is the whole action.
 
 **Public repo:** reports and issues are public. No secrets, tokens or webhook URLs, no IP addresses or SSH account
 names, no visitor data (search text, video IDs from visitors' plays, VRChat user or instance IDs). Counts and

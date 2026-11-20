@@ -302,7 +302,8 @@ Both bursts were tablet warm-ups of long videos at 720p HLS, and both hours also
 - **Accepted gap:** builds partly timing out while others still succeed raise no hypercare card. The dashboard's
   "failed builds" series (`eiok_events_total{metric="build",key="failed"}`) still shows them; Grafana has no rule on it.
   `built` ignores the format too: one mp4 (progressive) link that built quiets an hour in which every HLS build
-  timed out, and a Quest's .m3u8 ticket builds HLS unless the video is long or its HLS build failed (#584's mp4).
+  timed out, and a Quest tablet's warm-up of a .m3u8 ticket builds HLS unless the video is long or its HLS build
+  failed (with `QUEST_MP4` on, the Quest's Unity player itself always gets the mp4, src/server.js, #584).
   So Tunelio's HLS builds failing for a whole hour while its mp4 builds work raise no card either. The 11-20 hour was
   quieted by just such a link (a 720p mp4), so this gap covers "every Quest HLS warm-up failing", not only "a few".
   A `build_failed` with any other status (503, or 0 for no answer) is still an error event, as before (pinned by a test).

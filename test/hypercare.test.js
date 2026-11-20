@@ -376,11 +376,15 @@ test('hypercare (#904): one burst of build timeouts raises one card at most, and
 });
 
 test('hypercare (#904): only a 524 leaves the error count; a failed build with status 503 or 0 (no answer) is still an error event', (t) => {
-  const failed = (id, status, error) => JSON.stringify({ at: AT, event: 'build_failed', id, quality: '720p', hls: false, mb: 500, buildMs: 115000, seconds: 1500, reason: 'build_failed', status, ...(error ? { error } : {}) });
-  const c = countJournal([failed('c1', 503), failed('c2', 0, 'TimeoutError'), timedOut('c3')]);
+  // Shapes a broadened exclusion could catch: an HLS 503 (like the 524s, "hls":true) and our own probe's timeout,
+  // status 0 after its full 150 s (src/playback.js linkProbe), so a rule by run time or by format fails here too.
+  const failed = (id, status, { hls = false, buildMs = 115000, error } = {}) => JSON.stringify({ at: AT, event: 'build_failed', id, quality: '720p', hls, mb: 500, buildMs, seconds: 1500, reason: 'build_failed', status, ...(error ? { error } : {}) });
+  const hls503 = (id) => failed(id, 503, { hls: true });
+  const ownTimeout = (id) => failed(id, 0, { hls: true, buildMs: 150004, error: 'TimeoutError' });
+  const c = countJournal([hls503('c1'), ownTimeout('c2'), timedOut('c3')]);
   if (!c) return t.skip('no awk here');
   assert.deepEqual([c.errors, c.timeouts, c.s5], [2, 1, 0]);
-  const five = countJournal([failed('c1', 503), failed('c2', 503), failed('c3', 0, 'TimeoutError'), failed('c4', 0, 'TimeoutError'), failed('c5', 503)]);
+  const five = countJournal([hls503('c1'), failed('c2', 503), ownTimeout('c3'), failed('c4', 0, { buildMs: 150002, error: 'TimeoutError' }), failed('c5', 503)]);
   assert.deepEqual(findingsFor(five), ['linode:errors'], 'five real build failures still file the errors card');
 });
 

@@ -262,7 +262,7 @@ rule above forbids those either way; the owner reinstalls the narrowed files.
 `infra-check/hypercare.mjs` and the `yt-hypercare` user timer (world #208, owner 2026-10-26; it replaced the
 coordinator's 30-minute loop). Every hour at :17, read only and without Claude, it checks the last hour: the search
 service and Caddy active on the Linode and the public `/healthz` answering 200; the Linode's `/` use; in the search
-service's journal the 5xx answers (Channels 503s apart, below), error and `*_failed` events, `youtube_error` and `backoff` events, `captions_via`
+service's journal the 5xx answers on request lines (Channels 503s apart, below), Tunelio build timeouts (below), error and `*_failed` events, `youtube_error` and `backoff` events, `captions_via`
 (lookups in the hour, and distinct videos with and without tracks over 6 hours), `home_evict` and `home_over_cap`; fail2ban's currently banned sshd count; on the
 Optiplex the relay worker, `bgutil-pot-relay` and the flash worker's timer active and its last run successful.
 MediaMTX is its own project (media-mtx) and not checked here (owner, 2026-10-28, #38). The journal is counted on the Linode with `awk` over `ssh linode-check`, so no log line,
@@ -283,6 +283,46 @@ is counted from the service's `channel_refused` lines with `why` `status_unreada
 limit `CHMON` 1: those lines are written once a minute at most, so one visitor's retries are one line), and files
 "The search service can't read the Channels monitor's status". A hide (`hidden_by_monitor`, `hidden_by_owner`) is not
 counted. Both run where hypercare reads, production's journal only; Grafana has no rule on channel answers.
+
+Build timeouts (Everything-is-OK#904; the coordinator's call, 2026-11-20). The 5xx count used to take every journal
+line with `"status":5xx`, event lines too. A `build_failed` with status 524 (Tunelio's answer when a build runs past
+about 125 s; the service's own probe waits 150 s) was therefore filed as "The search service answered 5xx" (#903,
+2026-11-19: 3 in an hour) and counted again as an error event: #931 and #932 (2026-11-20) were the same six lines.
+Both bursts were tablet warm-ups of long videos at 720p HLS, and both hours also had builds that worked. Since then:
+- `s5` counts request lines only: the server's `{"at","route","status","ms"}` line, which has a `route` and no `event`.
+  Event lines can carry a `route` (`youtube_error`, `forced_limit`, `error`), and several carry an upstream status.
+- A `build_failed` with status 524 is counted only as `timeouts`, not as an error event, so one burst files one card
+  at most. "Video builds are timing out at Tunelio" fires at `BUILD524` (3) timeouts in the hour **when no new Tunelio
+  build succeeded in that hour**: no `tunelio_link` line without `cached` (Tunelio building nothing). Home builds
+  (`home_ready`) and the speed probe's own builds are not counted as built. A cached link (the
+  service's guess from the speed, `cachedBuild` in src/playback.js: under 3 s or over 120 MB/s) only shows Tunelio
+  serving a file it already had, so it does not count. 7 event lines with status 524 were seen in the 7 days before
+  2026-11-17, and 3 and 6 timeouts in one hour in the two bursts. Replayed over the hours behind #903 and #931/#932, the new count files nothing:
+  each hour had a fresh link.
+- **Accepted gap:** builds partly timing out while others still succeed raise no hypercare card. The dashboard's
+  "failed builds" series (`eiok_events_total{metric="build",key="failed"}`) still shows them; Grafana has no rule on it.
+  `built` ignores the format too: one mp4 (progressive) link that built quiets an hour in which every HLS build
+  timed out, and a Quest's .m3u8 ticket builds HLS unless the video is long or its HLS build failed (#584's mp4).
+  So Tunelio's HLS builds failing for a whole hour while its mp4 builds work raise no card either. The 11-20 hour was
+  quieted by just such a link (a 720p mp4), so this gap covers "every Quest HLS warm-up failing", not only "a few".
+  A `build_failed` with any other status (503, or 0 for no answer) is still an error event, as before (pinned by a test).
+- Event lines that left every hypercare count with this change (they had counted only through the old 5xx match, and
+  only when their status was 5xx):
+  - `build_retry` (a progressive build asked again after a 503): the build still ends in a `build_failed` or
+    `tunelio_link` line, which is counted (observed in code, src/playback.js `#build`).
+  - `channel_upstream` (the answer from the Channels upstream): written only where `CHANNELS_UPSTREAM` is set (it
+    defaults to off, src/config.js), and a 503 there is a hidden slot by design (observed in code). Whether production
+    sets it was not read on the host (inferred off: Everything-is-OK#519's comment of 2026-11-05 says it "is set only
+    on staging", and production's monitor database wins even if it were set). Re-check:
+    `ssh linode 'grep -c CHANNELS_UPSTREAM= /etc/japharsworld-yt.env'`.
+  - `tunelio_probe` with `ok: false` (the speed probe's own `/create` or its own build failed, src/probe.js): a
+    dashboard panel only, no alert
+    (observed in code: tools/grafana.mjs has no rule on it). A visitor's failed `/create` is a `tunelio_error`, still
+    an error event, and raises the service's own "Tunelio is failing" Discord alert at 5xx (src/playback.js).
+  - `tunelio_drop_open` / `tunelio_drop_reopen`: Grafana's `eiok-tunelio-reopen-fail` rule watches the same failures
+    through `eiok_tunelio_probe_open_fail_total` and `eiok_tunelio_probe_reopen_fail_total` (observed in code).
+  Re-check which log lines carry a status (the line after each call too, since `build_failed`'s status is on the next
+  line): `grep -nE "this\.log\(|logJson\(|log\(JSON" -A1 src/*.js | grep status`.
 
 Grafana's `eiok-captions-empty` (world #428) has the same rule, so a silent failure, where every lookup answers
 `no_captions` with no error, stays watched after hypercare ends, and `eiok-captions-failing` covers every source throwing. It is a slow one: replayed over 121 runs of real

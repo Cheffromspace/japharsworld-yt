@@ -9,13 +9,14 @@ import http from 'node:http';
 import { ChannelSlots } from '../src/channels.js';
 import { config } from '../src/config.js';
 import { createApp } from '../src/server.js';
+import { Playback } from '../src/playback.js';
 import { Store } from '../src/store.js';
 import { CAP_HOURS, END_AFTER, LIMITS, LINODE_PROBE, evaluate, issueBody, issueTitle, limits, logLine, parseProbe, plan, posts, streak, webhookFor } from '../infra-check/hypercare.mjs';
 
 const kit = (f) => readFileSync(new URL(`../infra-check/${f}`, import.meta.url), 'utf8');
 
 const normal = () => ({
-  linode: parseProbe('unit:japharsworld-yt active\nunit:caddy active\ndisk 39\nbanned 0\ns5 0\nch503 0\nchmon 0\nerrors 1\nyt 0\nbackoff 0\ncap0 1\ncap1 8\ncapv0 1\ncapv1 7\nevict 0\novercap 0\njournal ok\n'),
+  linode: parseProbe('unit:japharsworld-yt active\nunit:caddy active\ndisk 39\nbanned 0\ns5 0\nch503 0\nchmon 0\ntimeouts 0\nbuilt 4\nerrors 1\nyt 0\nbackoff 0\ncap0 1\ncap1 8\ncapv0 1\ncapv1 7\nevict 0\novercap 0\njournal ok\n'),
   optiplex: { 'unit:japharsworld-yt-relay': 'active', 'unit:bgutil-pot-relay': 'active', 'unit:japharsworld-yt-slotworker.timer': 'active', slotworker_result: 'success' },
   healthz: { ok: true, detail: 'HTTP 200.' },
 });
@@ -32,13 +33,13 @@ test('hypercare: a normal hour has no findings and logs one line of counts', () 
 
 test('hypercare: each abnormal reading is one finding, and only owner actions become owner tasks', () => {
   const m = normal();
-  Object.assign(m.linode, { 'unit:caddy': 'failed', disk: 91, s5: 4, ch503: 10, chmon: 1, errors: 9, yt: 5, backoff: 1, cap0: 6, cap1: 0, capv0: 6, capv1: 0, evict: 30, overcap: 2, banned: 25 });
+  Object.assign(m.linode, { 'unit:caddy': 'failed', disk: 91, s5: 4, ch503: 10, chmon: 1, timeouts: 3, built: 0, errors: 9, yt: 5, backoff: 1, cap0: 6, cap1: 0, capv0: 6, capv1: 0, evict: 30, overcap: 2, banned: 25 });
   m.optiplex['unit:bgutil-pot-relay'] = 'inactive';
   m.optiplex.slotworker_result = 'exit-code';
   m.healthz = { ok: false, detail: 'HTTP 502.' };
   const f = evaluate(m, LIMITS);
   const keys = f.map((x) => x.key).sort();
-  assert.deepEqual(keys, ['healthz', 'linode:5xx', 'linode:backoff', 'linode:banned', 'linode:captions', 'linode:channel-refused', 'linode:channel-status', 'linode:disk', 'linode:errors',
+  assert.deepEqual(keys, ['healthz', 'linode:5xx', 'linode:backoff', 'linode:banned', 'linode:build-timeouts', 'linode:captions', 'linode:channel-refused', 'linode:channel-status', 'linode:disk', 'linode:errors',
     'linode:evict', 'linode:overcap', 'linode:unit:caddy', 'linode:youtube', 'optiplex:slotworker-result', 'optiplex:unit:bgutil-pot-relay']);
   assert.deepEqual(f.filter((x) => x.owner).map((x) => x.key).sort(), ['healthz', 'linode:disk', 'linode:unit:caddy', 'optiplex:unit:bgutil-pot-relay']);
   // An unreachable host is one finding, not a unit storm.
@@ -199,7 +200,7 @@ const countJournal = (lines) => {
   const r = spawnSync('awk', [hourlyProbe()], { input: `${lines.join('\n')}\n`, encoding: 'utf8' });
   return r.error ? null : parseProbe(r.stdout);
 };
-const reqLine = (route, status) => JSON.stringify({ at: '2026-11-17T22:04:51.757Z', route, status, ms: 3 });
+const reqLine = (route, status) => JSON.stringify({ at: '2026-01-01T00:00:00.000Z', route, status, ms: 3 });
 const findingsFor = (counts) => evaluate({ linode: { ...normal().linode, ...counts } }, LIMITS).map((x) => x.key);
 
 // The search service with a monitor database whose slots table is `rows`, or none at `monitorDb` when rows is null.
@@ -303,4 +304,111 @@ test('hypercare (#863): a burst of refused Channels slots over the limit raises 
   assert.deepEqual(evaluate({ linode: { ...normal().linode, ch503: 4 } }, limits({ HYPERCARE_CH503: '4' })).map((x) => x.key), ['linode:channel-refused'], 'overridable');
   const line = JSON.parse(logLine({ linode: { ...normal().linode, ...ten } }, []));
   assert.deepEqual([line.s5, line.ch503, line.chmon], [0, 10, 0]);
+});
+
+// Everything-is-OK#904: the 5xx count took every journal line with "status":5xx, event lines too, so a provider build
+// timeout (`build_failed` with status 524, Tunelio's answer after about 125 s) read as "The search service answered
+// 5xx" (#903; #931) and was counted again as an error event (#932). The sample lines are made up, in the shapes of
+// src/playback.js #finish and src/server.js's request line; no value comes from a real journal.
+const AT = '2026-01-02T03:04:05.000Z';
+const timedOut = (id) => JSON.stringify({ at: AT, event: 'build_failed', id, quality: '720p', hls: true, mb: 500, buildMs: 126000, seconds: 1500, reason: 'build_failed', status: 524 });
+const linkLine = (id, cached = false) => JSON.stringify({ at: AT, event: 'tunelio_link', id, quality: '720p', hls: false, mb: 400, buildMs: cached ? 800 : 15000, seconds: 1200, reason: null, ...(cached ? { cached: true } : {}) });
+const sixTimeouts = () => ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'].map(timedOut);
+
+test('hypercare (#904): three provider build timeouts are neither a 5xx nor error events; three ticket 502s still are a 5xx', (t) => {
+  const c = countJournal([timedOut('a1'), timedOut('a2'), timedOut('a3'), linkLine('b1')]);
+  if (!c) return t.skip('no awk here');
+  assert.deepEqual([c.s5, c.errors, c.timeouts, c.built], [0, 0, 3, 1]);
+  assert.deepEqual(findingsFor(c), [], '#903\'s hour: no "The search service answered 5xx" card');
+  const three502 = countJournal([reqLine('ticket', 502), reqLine('ticket', 502), reqLine('ticket', 502)]);
+  assert.deepEqual([three502.s5, three502.timeouts], [3, 0]);
+  assert.deepEqual(findingsFor(three502), ['linode:5xx'], 'a real 5xx answer still fires');
+});
+
+test('hypercare (#904): a 5xx is a request line; an event line with a route and a 5xx status is not, a request line with 524 is', (t) => {
+  // Event lines can carry a route (youtube_error, forced_limit, error: src/server.js), so "has a route" is not enough.
+  const ev = JSON.stringify({ at: AT, event: 'youtube_error', route: 'search', status: 503, message: 'x' });
+  const c = countJournal([ev, ev, ev]);
+  if (!c) return t.skip('no awk here');
+  assert.equal(c.s5, 0);
+  assert.equal(c.yt, 3, 'still a YouTube refusal');
+  // No route answers 524 today (inferred from src/), but a request line that did is a 5xx answer like any other.
+  const r = countJournal([reqLine('hls', 524), reqLine('ticket', 524), reqLine('ticket', 500)]);
+  assert.deepEqual([r.s5, r.timeouts], [3, 0]);
+  assert.deepEqual(findingsFor(r), ['linode:5xx']);
+});
+
+test('hypercare (#904): events carrying an upstream status are not 5xx answers; the *_error ones are still error events', (t) => {
+  const lines = [
+    { event: 'tunelio_error', id: 'a1', status: 503, code: 'x', message: 'x' },
+    { event: 'transcript_error', id: 'a2', lang: 'en', type: 'x', status: 502, code: 'x', message: 'x' },
+    { event: 'adaptive_codec_error', id: 'a3', quality: '720p', status: 500, ms: 5 },
+    { event: 'build_retry', id: 'a4', quality: '720p', mb: 900, attempt: 1, status: 503, ms: 115000 },
+    { event: 'channel_upstream', outcome: 'unavailable', status: 503, ms: 40, fallback: false },
+    { event: 'tunelio_probe', format: 'hls', pair: 'x', quality: '720p', id: 'a5', ok: false, step: 'create', status: 500, code: 'x' },
+    { event: 'tunelio_drop_open', ok: false, attempt: 1, status: 502, offsetOk: false, ttfbMs: 0, error: 'x' },
+  ].map((o) => JSON.stringify({ at: AT, ...o }));
+  const c = countJournal(lines);
+  if (!c) return t.skip('no awk here');
+  assert.deepEqual([c.s5, c.errors, c.timeouts], [0, 3, 0]);
+  assert.deepEqual(findingsFor(c), []);
+});
+
+test('hypercare (#904): one burst of build timeouts raises one card at most, and only when no new Tunelio build succeeded in the hour', (t) => {
+  const ok = (n) => Array.from({ length: n }, () => reqLine('ticket', 200));
+  // #931's hour: six timeouts, a fresh build that worked, normal requests: no card (it filed two).
+  const burst = countJournal([...ok(5), ...sixTimeouts(), linkLine('b1'), ...ok(5)]);
+  if (!burst) return t.skip('no awk here');
+  assert.deepEqual([burst.s5, burst.errors, burst.timeouts, burst.built], [0, 0, 6, 1]);
+  assert.deepEqual(findingsFor(burst), []);
+  // No build succeeded: one card, never the 5xx or error card as well.
+  const dead = countJournal([...ok(5), ...sixTimeouts()]);
+  assert.deepEqual(findingsFor(dead), ['linode:build-timeouts']);
+  const [f] = evaluate({ linode: { ...normal().linode, ...dead } }, LIMITS);
+  assert.equal(f.owner, false);
+  assert.equal(issueTitle(f), 'Hypercare: Video builds are timing out at Tunelio');
+  assert.equal(f.detail, '6 video builds timed out at Tunelio (build_failed, status 524) in the last hour and no new Tunelio build succeeded (limit 3 with none built). A 524 is Tunelio\'s answer after about 125 s, not this service\'s.');
+  assert.deepEqual(findingsFor(countJournal([timedOut('a1'), timedOut('a2')])), [], 'two are under the limit');
+  assert.equal(LIMITS.BUILD524, 3);
+  assert.deepEqual(evaluate({ linode: { ...normal().linode, timeouts: 2, built: 0 } }, limits({ HYPERCARE_BUILD524: '2' })).map((x) => x.key), ['linode:build-timeouts'], 'overridable');
+  const line = JSON.parse(logLine({ linode: { ...normal().linode, ...dead } }, [f]));
+  assert.deepEqual([line.s5, line.errors, line.timeouts, line.built], [0, 0, 6, 0]);
+});
+
+test('hypercare (#904): only a 524 leaves the error count; a failed build with status 503 or 0 (no answer) is still an error event', (t) => {
+  const failed = (id, status, error) => JSON.stringify({ at: AT, event: 'build_failed', id, quality: '720p', hls: false, mb: 500, buildMs: 115000, seconds: 1500, reason: 'build_failed', status, ...(error ? { error } : {}) });
+  const c = countJournal([failed('c1', 503), failed('c2', 0, 'TimeoutError'), timedOut('c3')]);
+  if (!c) return t.skip('no awk here');
+  assert.deepEqual([c.errors, c.timeouts, c.s5], [2, 1, 0]);
+  const five = countJournal([failed('c1', 503), failed('c2', 503), failed('c3', 0, 'TimeoutError'), failed('c4', 0, 'TimeoutError'), failed('c5', 503)]);
+  assert.deepEqual(findingsFor(five), ['linode:errors'], 'five real build failures still file the errors card');
+});
+
+test('hypercare (#904): a cached link is not a new build, so timeouts with only cached links in the hour still fire', (t) => {
+  const c = countJournal([...sixTimeouts(), linkLine('b1', true), linkLine('b2', true)]);
+  if (!c) return t.skip('no awk here');
+  assert.deepEqual([c.timeouts, c.built], [6, 0]);
+  assert.deepEqual(findingsFor(c), ['linode:build-timeouts']);
+});
+
+test('hypercare (#904): the real Playback\'s own lines: a timed-out build counts as a timeout, a fresh link as built, a cached one not', async (t) => {
+  if (!countJournal(['x'])) return t.skip('no awk here');
+  // Playback logs through the injected log; src/server.js wraps each object as logJson does ({ at, ...o }).
+  const lines = [];
+  let now = 1_000_000;
+  let answer = { ok: false, refused: false, status: 524 };
+  let buildMs = 126_000;
+  const tunelio = { enabled: true, async create(id, quality) { return { url: `https://tunelio.invalid/tunnel?id=${id}`, expires: 9e9, quality, fileSize: 500e6 }; } };
+  const probe = async () => { now += buildMs; return answer; };
+  const playback = new Playback({ tunelio, quality: '720p', probe, now: () => now, log: (o) => lines.push(JSON.stringify({ at: AT, ...o })) });
+  await playback.start({ id: 'v1', seconds: 1500 }, '720p', { hls: true }).promise;
+  answer = { ok: true, refused: false, status: 200 };
+  buildMs = 20_000;
+  await playback.start({ id: 'v2', seconds: 1500 }, '720p', { hls: true }).promise;
+  buildMs = 500;
+  await playback.start({ id: 'v3', seconds: 1500 }, '720p', { hls: true }).promise;
+  assert.ok(lines.some((l) => /"event":"build_failed".*"status":524/.test(l)), 'the real line carries status 524');
+  assert.ok(lines.some((l) => /"event":"tunelio_link".*"cached":true/.test(l)), 'and the real cached flag');
+  const c = countJournal(lines);
+  assert.deepEqual([c.s5, c.errors, c.timeouts, c.built], [0, 0, 1, 1]);
 });

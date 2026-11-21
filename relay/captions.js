@@ -8,11 +8,11 @@
 //   warnings?: yt-dlp's WARNING lines, retried?: true when the list was asked for again (EMPTY_RETRY) }
 // Cues are src/cues.js cues; the server orders the list, caches and chunks (src/captionchain.js, src/blocks.js).
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, readdir, rm, access } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { escapeRe } from '../src/captions.js';
+import { escapeRe, readCapped, INFO_MAX_BYTES, TRACK_MAX_BYTES } from '../src/captions.js';
 import { cuesFrom, tracksFromInfo, codeOfKey, keyFor } from '../src/cues.js';
 import { orderTracks, pickTrack } from '../src/transcripts.js';
 
@@ -45,19 +45,20 @@ export async function findYtdlp(env = process.env) {
 }
 export const ytdlpArgs = (env = process.env) => (env.YTDLP_ARGS ?? '--js-runtimes node').split(' ').filter(Boolean);
 
-export async function captionsJob(job, { ytdlp, extraArgs = [], runner = runWarn, scripts, tmp = tmpdir(), timeoutMs = 60_000, log = () => {} } = {}) {
-  const videoId = String(job.videoId ?? '');
-  if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) throw new Error('bad videoId');
+// The list step (yt-dlp --write-info-json, then the parse) in its own temp folder: { dir, infoFile, full, info, warnings,
+// retried }. The folder is removed here when the step fails, else by the last job using it (captionsJob).
+async function listStep(videoId, { ytdlp, extraArgs, runner, tmp, timeoutMs, maxInfoBytes }) {
   const dir = await mkdtemp(join(tmp, 'jyt-cc-'));
   try {
-    const common = [...extraArgs, '--no-cache-dir', '--skip-download', '--no-playlist', '-o', join(dir, '%(id)s')];
     const warnings = [];
-    // A runner answers yt-dlp's stdout, or { stdout, warnings } (runWarn).
-    const call = async (args) => { const r = await runner(ytdlp, args, timeoutMs); if (r?.warnings) warnings.push(...r.warnings); return r; };
     const infoFile = join(dir, `${videoId}.info.json`);
     const readInfo = async (more) => {
-      await call([...common, ...more, '--write-info-json', '--no-write-comments', '--', `https://www.youtube.com/watch?v=${videoId}`]);
-      const full = JSON.parse(await readFile(infoFile, 'utf8'));
+      const r = await runner(ytdlp, [...extraArgs, '--no-cache-dir', '--skip-download', '--no-playlist', '-o', join(dir, '%(id)s'), ...more,
+        '--write-info-json', '--no-write-comments', '--', `https://www.youtube.com/watch?v=${videoId}`], timeoutMs);
+      if (r?.warnings) warnings.push(...r.warnings);
+      // Over maxInfoBytes: TooLarge before any of it is read, so neither the retry below nor the track's
+      // --load-info-json (yt-dlp loading the same file) runs (Everything-is-OK#968).
+      const full = JSON.parse(await readCapped(infoFile, maxInfoBytes, 'info_too_large'));
       return { full, info: { language: full.language ?? null, manual: Object.keys(full.subtitles ?? {}).filter((k) => k !== 'live_chat'), auto: Object.keys(full.automatic_captions ?? {}) } };
     };
     let { full, info } = await readInfo([]);
@@ -67,9 +68,43 @@ export async function captionsJob(job, { ytdlp, extraArgs = [], runner = runWarn
       await rm(infoFile, { force: true });
       ({ full, info } = await readInfo(EMPTY_RETRY));
     }
-    const extra = { ...(warnings.length ? { warnings } : {}), ...(retried ? { retried } : {}) };
+    return { dir, infoFile, full, info, warnings, retried };
+  } catch (err) {
+    await rm(dir, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+// lists (the worker's, shared by its poll loops): video id → the list step in flight. A second caption job for the same
+// video joins it instead of running yt-dlp and the parse again (Everything-is-OK#968: the server sent a second job for
+// the crash video 40 s after the first, which the worker was still running). The key is the video alone: the
+// list does not depend on `want`; each job then fetches its own track into its own folder.
+export async function captionsJob(job, { ytdlp, extraArgs = [], runner = runWarn, scripts, tmp = tmpdir(), timeoutMs = 60_000, log = () => {},
+  lists = null, maxInfoBytes = INFO_MAX_BYTES, maxTrackBytes = TRACK_MAX_BYTES } = {}) {
+  const videoId = String(job.videoId ?? '');
+  if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) throw new Error('bad videoId');
+  let entry = lists?.get(videoId);
+  if (!entry) {
+    entry = { users: 0, step: listStep(videoId, { ytdlp, extraArgs, runner, tmp, timeoutMs, maxInfoBytes }) };
+    if (lists) {
+      lists.set(videoId, entry);
+      // Settled: later jobs run their own list step (the signed URLs in it age).
+      const drop = () => { if (lists.get(videoId) === entry) lists.delete(videoId); };
+      entry.step.then(drop, drop);
+    }
+  }
+  entry.users++;
+  let list = null;
+  let out = null;
+  try {
+    list = await entry.step;
+    const { infoFile, full, info, retried } = list;
+    const warnings = [...list.warnings];
+    // A runner answers yt-dlp's stdout, or { stdout, warnings } (runWarn).
+    const call = async (args) => { const r = await runner(ytdlp, args, timeoutMs); if (r?.warnings) warnings.push(...r.warnings); return r; };
+    const extra = () => ({ ...(warnings.length ? { warnings } : {}), ...(retried ? { retried } : {}) });
     const done = (answer) => {
-      const out = { ...answer, ...extra };
+      const out = { ...answer, ...extra() };
       if (retried || warnings.length) log({ event: 'captions_list', id: videoId, retried, manual: info.manual.length, auto: info.auto.length, warnings });
       return out;
     };
@@ -84,16 +119,19 @@ export async function captionsJob(job, { ytdlp, extraArgs = [], runner = runWarn
     } else target = { code: want.code, auto: Boolean(want.auto) };
     const key = keyFor(full, target);
     if (!key) return done({ info, track: null, cues: null, reason: 'no_track_in_language' });
-    await call([...common, '--load-info-json', infoFile, target.auto ? '--write-auto-subs' : '--write-subs',
-      '--sub-langs', `^${escapeRe(key)}$`, '--sub-format', FORMATS.join('/')]);
-    const files = await readdir(dir);
+    // This job's own folder for the track, so jobs sharing the list never see each other's files.
+    out = await mkdtemp(join(tmp, 'jyt-cc-'));
+    await call([...extraArgs, '--no-cache-dir', '--skip-download', '--no-playlist', '-o', join(out, '%(id)s'), '--load-info-json', infoFile,
+      target.auto ? '--write-auto-subs' : '--write-subs', '--sub-langs', `^${escapeRe(key)}$`, '--sub-format', FORMATS.join('/')]);
+    const files = await readdir(out);
     let found = null;
     for (const f of FORMATS) { const name = files.find((x) => x.startsWith(`${videoId}.`) && x.endsWith(`.${f}`)); if (name) { found = { name, format: f }; break; } }
     if (!found) return done({ info, track: { key, code: codeOfKey(key), auto: target.auto, format: null }, cues: null, reason: 'temporarily_unavailable' });
-    const cues = cuesFrom(found.format, await readFile(join(dir, found.name), 'utf8'));
-    log({ event: 'captions_job', id: videoId, key, format: found.format, cues: cues.length, ...extra });
+    const cues = cuesFrom(found.format, await readCapped(join(out, found.name), maxTrackBytes, 'track_too_large'));
+    log({ event: 'captions_job', id: videoId, key, format: found.format, cues: cues.length, ...extra() });
     return done({ info, track: { key, code: codeOfKey(key), auto: target.auto, format: found.format }, cues });
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    if (out) await rm(out, { recursive: true, force: true });
+    if (--entry.users === 0 && list) await rm(list.dir, { recursive: true, force: true });
   }
 }

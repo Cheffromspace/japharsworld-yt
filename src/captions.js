@@ -18,6 +18,40 @@ import { refusalClass, RESTRICTED } from './refusal.js';
 
 const INFO_MAX_AGE_MS = 60 * 60_000; // signed caption URLs inside the info JSON expire after a few hours
 const MAX_LINES = 6000;
+
+// Caption files are read whole and parsed whole, so a file over these sizes is refused unread (Everything-is-OK#968:
+// the home worker died out of heap parsing the info JSON of a multi-hour livestream recording YouTube had not finished
+// processing; for such a video yt-dlp lists every stream fragment of every format, inferred, not measured).
+// INFO_MAX_BYTES: an ordinary 76-minute video with 173 auto-caption languages and 118 formats wrote a 6.82 MB info JSON
+// (measured with yt-dlp 2026.08.19 on a development PC, 2026-11-21; 6.5 MB of it is automatic_captions, which does not
+// grow with the video's length) and needed a 20-24 MB heap to parse; a synthetic fragment-list file needed about 3.5x
+// its size (17.7 MB: 48-64 MB, 33.4 MB: 96-128 MB). 40 MB is about 6x that file and costs about 150 MB of heap a parse.
+// 40 MB relies on the home worker's explicit 2 GB heap (deploy/japharsworld-yt-relay.service, NODE_OPTIONS): without it
+// Node sizes the heap from the cgroup (about 550 MB at 1G) and this limit should be about 16 MB. The search service's
+// own yt-dlp path (Captions below) uses it too, but that path is built only with CAPTION_LOCAL_YTDLP=on or with Tunelio
+// off (src/server.js); there a near-limit parse costs about 150 MB against the service's 400M cap, so whoever switches
+// that path on lowers the limit first.
+// TRACK_MAX_BYTES: a json3 track for 5 h of speech is about 3-6 MB (inferred: ~150 words a minute, ~50 bytes a word,
+// not measured), so the 12 h video cap (VIDEO_MAX_HOURS) gives about 13 MB at most; 32 MB is far above that.
+export const INFO_MAX_BYTES = 40 * 1024 * 1024;
+export const TRACK_MAX_BYTES = 32 * 1024 * 1024;
+// The clean error for a refused file, code 'info_too_large' or 'track_too_large'. The relay worker sends the code as its
+// job's error with no refusal class (YouTube refused nothing), and the caption chain goes on to its next source, so a
+// visitor gets what a failed worker gives today (temporarily_unavailable).
+export const TOO_LARGE = ['info_too_large', 'track_too_large'];
+export class TooLarge extends Error {
+  constructor(code, bytes) {
+    super(code);
+    this.code = code;
+    this.bytes = bytes;
+  }
+}
+// The file as text, or TooLarge when it is over max bytes (stat first: none of it is read).
+export async function readCapped(path, max, code) {
+  const { size } = await stat(path);
+  if (size > max) throw new TooLarge(code, size);
+  return readFile(path, 'utf8');
+}
 export const DEFAULT_ATTEMPTS = [
   ['--force-ipv6'],
   ['--extractor-args', 'youtube:player_client=tv_simply,android_vr,mweb'],
@@ -118,7 +152,7 @@ export function parseJson3(raw) {
 
 export class Captions {
   constructor({ store, ytdlp, extraArgs = [], attempts = DEFAULT_ATTEMPTS, dataDir = 'data', cacheDays = 7, runner = run,
-    sourcePrefix = '', blockedMinutes = 10, now = () => Date.now(), onRefusal = () => {} }) {
+    sourcePrefix = '', blockedMinutes = 10, now = () => Date.now(), onRefusal = () => {}, maxInfoBytes = INFO_MAX_BYTES, maxTrackBytes = TRACK_MAX_BYTES }) {
     // YouTube answers "Sign in to confirm you're not a bot" to some requests from datacenter IPv4.
     // Each attempt adds its own arguments to extraArgs; the one that last worked is tried first.
     this.attempts = attempts.length ? attempts : [[]];
@@ -127,6 +161,8 @@ export class Captions {
     this.ytdlp = ytdlp;
     this.extraArgs = extraArgs;
     this.infoDir = join(dataDir, 'info');
+    this.maxInfoBytes = maxInfoBytes; // #968 (tests set smaller ones)
+    this.maxTrackBytes = maxTrackBytes;
     this.subsDir = join(dataDir, 'subs');
     this.maxAgeMs = cacheDays * 86400_000;
     // Every failed yt-dlp run is counted by class (yt_refusal linode:<class>, src/refusal.js).
@@ -159,8 +195,11 @@ export class Captions {
     if (!this.sourcePrefix || this.addresses.has(videoId)) {
       try {
         const s = await stat(file);
-        if (Date.now() - s.mtimeMs < INFO_MAX_AGE_MS) return { file, info: JSON.parse(await readFile(file, 'utf8')) };
-      } catch { /* not cached */ }
+        if (Date.now() - s.mtimeMs < INFO_MAX_AGE_MS) return { file, info: JSON.parse(await readCapped(file, this.maxInfoBytes, 'info_too_large')) };
+      } catch (err) {
+        // Not cached, or an oversized copy: that one is deleted and refused.
+        if (err instanceof TooLarge) { await rm(file, { force: true }); throw err; }
+      }
     }
     const order = this.attempts.map((_, i) => (i + this.preferred) % this.attempts.length);
     let lastError;
@@ -185,7 +224,12 @@ export class Captions {
     }
     // yt-dlp writes <id>.info.json; keep a stable name.
     const written = join(this.infoDir, `${videoId}.info.json`);
-    const info = JSON.parse(await readFile(written, 'utf8'));
+    let info;
+    // An oversized file is deleted, never kept for the next lookup in data/info.
+    try { info = JSON.parse(await readCapped(written, this.maxInfoBytes, 'info_too_large')); } catch (err) {
+      if (err instanceof TooLarge) await rm(written, { force: true });
+      throw err;
+    }
     await rm(file, { force: true });
     await rename(written, file);
     return { file, info };
@@ -199,9 +243,7 @@ export class Captions {
     const name = (await readdir(this.subsDir)).find((f) => f.startsWith(`${videoId}.`) && f.endsWith(`.${track.key}.json3`))
       ?? `${videoId}.${track.key}.json3`;
     const path = join(this.subsDir, name);
-    const raw = await readFile(path, 'utf8');
-    await rm(path, { force: true });
-    return parseJson3(raw);
+    try { return parseJson3(await readCapped(path, this.maxTrackBytes, 'track_too_large')); } finally { await rm(path, { force: true }); }
   }
 
   // True while a bot-wall refusal has paused lookups (the caption chain then skips this source at once).
@@ -219,9 +261,7 @@ export class Captions {
       const name = files.find((x) => x.startsWith(`${videoId}.`) && x.endsWith(`.${track.key}.${f}`));
       if (!name) continue;
       const path = join(this.subsDir, name);
-      const raw = await readFile(path, 'utf8');
-      await rm(path, { force: true });
-      return cuesFrom(f, raw);
+      try { return cuesFrom(f, await readCapped(path, this.maxTrackBytes, 'track_too_large')); } finally { await rm(path, { force: true }); }
     }
     throw new Error(`yt-dlp wrote no ${formats.join('/')} file for ${videoId} ${track.key}`);
   }
@@ -250,7 +290,8 @@ export class Captions {
     try {
       ({ file, info } = await this.info(videoId));
     } catch (err) {
-      if (err.blocked) return this.blockedAnswer(videoId, lang); // not cached: try again after the pause
+      // Not cached: try again after the pause. An oversized file (#968): the same "not available right now".
+      if (err.blocked || err instanceof TooLarge) return this.blockedAnswer(videoId, lang);
       throw err;
     }
     const track = chooseTrack(info, lang);
@@ -264,6 +305,7 @@ export class Captions {
       } catch (err) {
         // YouTube throttles machine-translated tracks first. Say "not available" instead of failing,
         // and remember it for an hour so each visitor doesn't wait for the same refusal.
+        if (err instanceof TooLarge) return this.blockedAnswer(videoId, lang);
         if (isBotWall(err)) { this.blockedUntil = this.now() + this.blockedMs; return this.blockedAnswer(videoId, lang); }
         if (track.source !== 'translated') throw err;
         const answer = { id: videoId, lang, available: false, reason: 'translation_unavailable', original: originalLanguage(info) };

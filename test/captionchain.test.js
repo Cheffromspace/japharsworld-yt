@@ -374,3 +374,32 @@ test('the sweep removes caption rows older than the cache reads (CAPTION_CACHE_D
   quiet.app.sweep();
   assert.deepEqual(quiet.logs.filter((l) => l.event === 'captions_prune_failed').map((l) => l.message), ['database is locked']);
 });
+
+// Everything-is-OK#968, end to end through the server: a worker whose caption job meets an info JSON over the limit. The
+// visitor gets today's "not available right now" (temporarily_unavailable), at once instead of after the 40 s wait, the
+// worker is not paused, and no empty list is cached (that would read as no_captions).
+test('#968: a caption file too large for the worker reaches the visitor as temporarily_unavailable, no pause, nothing cached', async (t) => {
+  const { captionsJob } = await import('../relay/captions.js');
+  const { writeFile } = await import('node:fs/promises');
+  const s = await start({ tunelio: null });
+  t.after(s.close);
+  const padded = { language: 'en', subtitles: {}, automatic_captions: {}, formats: [{ fragments: Array.from({ length: 300 }, (_, i) => ({ url: 'u'.repeat(900) + i })) }] };
+  let lists = 0;
+  const runner = async (cmd, args) => {
+    if (args.includes('--write-info-json')) { lists++; await writeFile(`${args[args.indexOf('-o') + 1].replace('%(id)s', 'dQw4w9WgXcQ')}.info.json`, JSON.stringify(padded)); }
+    return { stdout: '', warnings: [] };
+  };
+  s.startWorker((job) => captionsJob(job, { ytdlp: 'yt-dlp', runner, maxInfoBytes: 64 * 1024 }));
+  await s.waitOnline();
+  s.store.markPlayed(1, 7, 'dQw4w9WgXcQ');
+  const t0 = Date.now();
+  const r = await s.get('/v1/1/cc/en');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.available, false);
+  assert.equal(r.body.reason, 'temporarily_unavailable');
+  assert.ok(Date.now() - t0 < 1500, 'answered without waiting out the worker timeout');
+  assert.equal(lists, 1, 'one yt-dlp list call: no retry');
+  assert.deepEqual(s.relay.online('captions'), ['optiplex'], 'the worker did not pause captions');
+  assert.deepEqual(s.logs.filter((l) => l.event === 'captions_source_failed').map((l) => [l.via, l.message]), [['worker', 'info_too_large']]);
+  assert.equal(s.chain.list('dQw4w9WgXcQ'), null, 'no empty list cached');
+});

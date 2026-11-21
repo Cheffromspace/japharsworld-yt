@@ -18,7 +18,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { youtube as defaultYoutube, resetClient } from '../src/youtube.js';
 import { captionsJob, findYtdlp, ytdlpArgs, runWarn } from './captions.js';
-import { run as runPlain } from '../src/captions.js';
+import { run as runPlain, TOO_LARGE } from '../src/captions.js';
 import { CookieJar } from './cookies.js';
 import { mediaJob } from './media.js';
 import { MediaCache, keepFormatsFor } from './cache.js';
@@ -33,14 +33,16 @@ export const PAUSE_KINDS = ['search', 'captions', 'media'];
 const pauseKind = (kind) => (kind === 'more' ? 'search' : kind);
 
 export function createWorker({ url, token, name = 'worker', version = '', polls = 3, youtube = defaultYoutube, reset = resetClient,
-  txBytes = defaultTxBytes, captions = null, ytdlp = null, ytdlpExtraArgs = ytdlpArgs(), media = null, caps = [], mediaMax = 4, ffmpeg = 'ffmpeg', cache = null, splitByTime = false,
+  txBytes = defaultTxBytes, captions = null, captionOpts = {}, ytdlp = null, ytdlpExtraArgs = ytdlpArgs(), media = null, caps = [], mediaMax = 4, ffmpeg = 'ffmpeg', cache = null, splitByTime = false,
   backoffMinutes = 10, backoffMaxMinutes = 120, jar = null, fetcher = fetch, log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o })), now = () => Date.now(),
   sleep = (ms, signal) => new Promise((r) => { const t = setTimeout(r, ms); signal?.addEventListener('abort', () => { clearTimeout(t); r(); }); }) }) {
-  // Caption jobs: an injected function (tests) or yt-dlp, found once on first use.
+  // Caption jobs: an injected function (tests) or yt-dlp, found once on first use. captionOpts: more options for
+  // relay/captions.js (tests: a fake runner, smaller size limits).
   let ytdlpPath = ytdlp;
+  const lists = new Map(); // video id → its caption list step in flight, joined by a second job (relay/captions.js, #968)
   const runCaptions = captions ?? (async (job) => {
     ytdlpPath ??= await findYtdlp();
-    return captionsJob(job, { ytdlp: ytdlpPath, extraArgs: ytdlpExtraArgs, log, ...(jar ? { runner: jar.wrap(runWarn) } : {}) });
+    return captionsJob(job, { ytdlp: ytdlpPath, extraArgs: ytdlpExtraArgs, log, lists, ...(jar ? { runner: jar.wrap(runWarn) } : {}), ...captionOpts });
   });
   const base = String(url).replace(/\/+$/, '');
   const headers = { authorization: `Bearer ${token}` };
@@ -164,6 +166,12 @@ export function createWorker({ url, token, name = 'worker', version = '', polls 
       log({ event: 'job', kind: job.kind, ms: now() - started, results: page.videos.length });
       return { id: job.id, ok: true, page: { videos: page.videos, cont: keep(page.more) } };
     } catch (err) {
+      // A caption file too large to read (Everything-is-OK#968): no refusal class, as YouTube refused nothing, so no pause
+      // and no yt_refusal count; the server's chain goes on to its next source. One line, the size in whole MB, no id.
+      if (job.kind === 'captions' && TOO_LARGE.includes(err?.code)) {
+        log({ event: 'job_failed', kind: job.kind, ms: now() - started, message: err.code, mb: Math.round((Number(err.bytes) || 0) / 1048576) });
+        return { id: job.id, ok: false, error: err.code };
+      }
       const message = String(err?.message ?? err).slice(0, 300);
       const refusal = refusalClass(err); // the server counts the class only (yt_refusal)
       log({ event: 'job_failed', kind: job.kind, ms: now() - started, refusal, message });

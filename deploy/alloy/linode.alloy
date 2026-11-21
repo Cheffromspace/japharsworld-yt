@@ -29,6 +29,8 @@ prometheus.exporter.unix "host" {
   }
   systemd {
     unit_include = "(japharsworld-yt.*|bgutil-pot|caddy|ssh|fail2ban|alloy)\\.(service|timer)"
+    // systemd's NRestarts per service, the restarts its Restart= made: eiok-unit-restarted (Everything-is-OK#967, #968).
+    enable_restarts = true
   }
 }
 prometheus.scrape "host" {
@@ -40,7 +42,7 @@ prometheus.scrape "host" {
 prometheus.relabel "host" {
   rule {
     source_labels = ["__name__"]
-    regex         = "node_(cpu_seconds_total|load1|load5|memory_MemAvailable_bytes|memory_MemTotal_bytes|filesystem_avail_bytes|filesystem_size_bytes|network_(receive|transmit)_bytes_total|boot_time_seconds|systemd_unit_state|time_seconds|uname_info)|eiok_(deploy|ssh|sshd|fail2ban|security|ufw)_.*"
+    regex         = "node_(cpu_seconds_total|load1|load5|memory_MemAvailable_bytes|memory_MemTotal_bytes|filesystem_avail_bytes|filesystem_size_bytes|network_(receive|transmit)_bytes_total|boot_time_seconds|systemd_unit_state|systemd_service_restart_total|time_seconds|uname_info)|eiok_(deploy|ssh|sshd|fail2ban|security|ufw)_.*"
     action        = "keep"
   }
   forward_to = [prometheus.remote_write.cloud.receiver]

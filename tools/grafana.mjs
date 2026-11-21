@@ -37,7 +37,7 @@ const CRITICAL_RECEIVER = 'Everything is OK Discord critical';
 // 2026-10-26), so staging never shows on the dashboard or fires a production alert.
 const PROD = 'env!="staging"';
 export function prodOnly(expr) {
-  return expr.replace(/\b((?:eiok|probe|node)_[A-Za-z0-9_]+)(\{)?/g, (m, name, brace) => (brace ? `${name}{${PROD},` : `${name}{${PROD}}`));
+  return expr.replace(/\b((?:eiok|probe|node|namedprocess)_[A-Za-z0-9_]+)(\{)?/g, (m, name, brace) => (brace ? `${name}{${PROD},` : `${name}{${PROD}}`));
 }
 const scoped = (o) => (Array.isArray(o) ? o.map(scoped)
   : o && typeof o === 'object' ? Object.fromEntries(Object.entries(o).map(([k, v]) => [k, k === 'expr' && typeof v === 'string' ? prodOnly(v) : scoped(v)]))
@@ -611,10 +611,13 @@ export function alertRules(dsUid, { critical = false } = {}) {
     rule('eiok-captions-empty', 'No video has caption tracks', 'sum(increase(eiok_events_total{metric="cc_outcome",key="none"}[6h])) >= 5 unless on() sum(increase(eiok_events_total{metric="cc_outcome",key="tracks"}[6h])) >= 0.5', { forM: 0, summary: 'Over the last 6 hours, 5 or more videos looked up had no caption tracks and none had any: caption lookups may be failing silently. See `node tools/ops.mjs events --event captions_via,captions_source_failed` and the Captions panel.' }),
     // Every source throwing, which eiok-captions-empty can't see: resolve returns null, so nothing reaches cc_outcome, and
     // the answer is temporarily_unavailable. failed is a throw that reached the route. Not list_unavailable: no free source
-    // online (15 on 10-28), which the worker alerts cover. Neither key had ever counted by 2026-10-31 (7 days of rows, 82
-    // list requests; 1 captions_source_failed in 5.8 days of journal), so any threshold replays as 0 firings and 3 is a
-    // judgement. It moves only when someone asks for captions, about 12 times a day, so a quiet day can hide a failure.
-    rule('eiok-captions-failing', 'Caption lookups failing', 'sum(increase(eiok_events_total{metric="cc_unavailable",key=~"temporarily_unavailable|failed"}[6h])) >= 3', { forM: 0, summary: '3 or more caption requests got no captions (one video or room can account for all of them). See `node tools/ops.mjs events --event captions_source_failed` and the Captions panel.' }),
+    // online (15 on 10-28), which the worker alerts cover. Neither key had ever counted by 2026-10-31.
+    // Everything-is-OK#967 (2026-11-21): it fired at 16:14Z on 4 requests from one room for one video, a livestream archive
+    // YouTube had not finished, during the home worker's crash (#968). The count is per request, and Prometheus can't
+    // tell videos apart (no per-video label, by design), so it also needs the caption fetches to have stopped: none of the
+    // sources (cc_via: home worker, yt-dlp here, Tunelio) answered one in 2 h. A play's warm-up fetches captions too, so on
+    // a day with plays a working source shows up within the 2 h. At 16:14Z fetches had worked 20 to 50 minutes before.
+    rule('eiok-captions-failing', 'Caption lookups failing', 'sum(increase(eiok_events_total{metric="cc_unavailable",key=~"temporarily_unavailable|failed"}[6h])) >= 3 unless on() sum(increase(eiok_events_total{metric="cc_via"}[2h])) >= 0.5', { forM: 0, summary: 'Captions are failing: {{ humanize $values.A.Value }} caption requests in the last 6 hours got none, and no caption fetch worked in the last 2 hours (from the home worker, this server or Tunelio). One video YouTube can\'t serve does not fire this while other videos\' captions still work. Look: `node tools/ops.mjs events --event captions_source_failed,captions_via`, the Captions panel, and whether the home worker restarted (eiok-unit-restarted).' }),
     // Owner, 2026-10-26: the flash worker's YouTube refusals (metrics/exporter.js, yt_refusal flash:<class>), which the
     // search service's own refusal alert (src/refusal.js, the relay worker's) never sees. As there: 3 or more bot, rate,
     // PO-token or 403 refusals, here within 30 minutes (the worker runs every 20).
@@ -626,6 +629,31 @@ export function alertRules(dsUid, { critical = false } = {}) {
     rule('eiok-home-cap', 'Home relay MB near its daily cap', 'max(eiok_home_today{key="mb"}) / max(eiok_home_today{key="cap_mb"}) >= 0.75', { forM: 5, summary: 'The home relay has used 75 % of HOME_DAILY_MB today. At the cap (reset at midnight Chicago), long videos go to Tunelio (credits; long HLS builds can fail on Quest) or youtube.com. `node tools/ops.mjs state` shows both caps.' }),
     rule('eiok-home-builds', 'Home relay builds near their daily cap', 'max(eiok_home_today{key="builds"}) / max(eiok_home_today{key="cap_builds"}) >= 0.9', { forM: 5, summary: 'The home relay has used 90 % of HOME_DAILY_BUILDS today. At the cap (reset at midnight Chicago), long videos go to Tunelio (credits; long HLS builds can fail on Quest) or youtube.com. `node tools/ops.mjs state` shows both caps.' }),
     rule('eiok-home-worker', 'Home relay has no worker', '1 - max(eiok_home_today{key="workers"})', { forM: 15, summary: 'No media worker (the Optiplex relay) connected for 15 minutes: home relay plays fall back to Tunelio or youtube.com.' }),
+    // Everything-is-OK#967 (2026-11-21, the owner: stop the hourly hypercare timer and fold what is useful into Grafana).
+    // These were hypercare's journal counts; Grafana sees only the exported counters, which carry no video, so a rule
+    // can't count different videos. Each one fires only when the thing also stopped working altogether in the hour
+    // (nothing built, nothing ready), which one video that can't be fetched never does.
+    // Builds: plays that went to youtube.com because their Tunelio build failed (play_fallback build_failed or
+    // build_timeout: counted once per room and video, src/server.js countPlay; the provider refusing a video is
+    // tunelio_failed and not counted, and warm-ups nobody played aren't plays). Hypercare's version counted 524s.
+    rule('eiok-builds-failing', 'Video builds failing at Tunelio', 'sum(increase(eiok_events_total{metric="play_fallback",key=~"build_failed|build_timeout"}[1h])) >= 3 unless on() sum(increase(eiok_events_total{metric="build",key="ok"}[1h])) >= 0.5', { forM: 0, summary: 'Tunelio builds are failing: {{ humanize $values.A.Value }} plays went to youtube.com in the last hour because their build failed or timed out, and no Tunelio build succeeded in that hour. One video Tunelio refuses does not fire this. Look: `node tools/ops.mjs events --event build_failed,tunelio_error,tunelio_link` and the failed builds on the dashboard.' }),
+    // Home: sessions that failed (src/home.js #fail, not a growing playlist given up on purpose), with none ready.
+    rule('eiok-home-failing', 'Home relay plays failing', 'sum(increase(eiok_events_total{metric="home",key="failed"}[1h])) >= 3 unless on() sum(increase(eiok_events_total{metric="home",key="ready"}[1h])) >= 0.5', { forM: 0, summary: 'The home relay is failing: {{ humanize $values.A.Value }} home plays failed in the last hour and none got ready. One video that fails at home does not fire this. Look: `node tools/ops.mjs events --event home_failed,home_ready`, then `journalctl -u japharsworld-yt-relay -n 80` on the Optiplex.' }),
+    // Channels: a hidden slot answers 503 by design (#776); hypercare's limit, 10 in an hour (#863: one visitor on a stale
+    // list retries about six times, our own checks add three). Its two firings ever (#520, #554) were our own sweeps.
+    rule('eiok-channels-refused', 'Many Channels plays refused', 'sum(increase(eiok_events_total{metric="channel",key="unavailable"}[1h])) >= 10', { forM: 0, summary: '{{ humanize $values.A.Value }} Channels plays were refused in the last hour (a slot the list hides, or a monitor status the service can\'t read). Look: `node tools/ops.mjs events --event channel_refused`; a why of status_unreadable or status_missing means every Quest Channels play is refused.' }),
+    // A crash (Everything-is-OK#967, #968): systemd restarts the search service in 3 s and the home worker in 5 s, between
+    // two 60 s scrapes, so nothing else sees it (on 2026-11-21 the worker died out of memory at 16:12Z and was
+    // back about 5 s later, and no alert named it). The counter is systemd's own NRestarts (Alloy's systemd enable_restarts,
+    // deploy/alloy/*.alloy), which counts the restarts its Restart= makes.
+    rule('eiok-unit-restarted', 'Service crashed and restarted', 'sum by (host, name) (increase(node_systemd_service_restart_total{name=~"japharsworld-yt.service|japharsworld-yt-relay.service"}[15m]))', { forM: 0, severity: 'critical', summary: '{{ $labels.name }} on {{ $labels.host }} stopped on its own and systemd started it again, in the 15 minutes before this alert ({{ humanize $values.A.Value }} time(s)). Plays and caption jobs it was holding were dropped. Look: `journalctl -u {{ $labels.name }} -n 80` on that host for why it stopped (out of memory, a crash).' }),
+    // The worker's memory (Everything-is-OK#967, #968): its unit caps it at MemoryMax=1G and it hit that limit 35k times
+    // (deploy/japharsworld-yt-relay.service); on 2026-11-21 V8 gave up at about 743 MB of heap ("Mark-Compact 743.0 (754.7)
+    // -> 552.2 MB", then "JavaScript heap out of memory"). Resident + swapped of the production worker's process (Alloy's
+    // process exporter, group relay, deploy/alloy/optiplex.alloy) over 70 % of the 1 GiB, about 750 MB, is that heap
+    // close to where it died; for 30 minutes, so one burst of big answers doesn't page. Not calibrated on normal days yet:
+    // the first days' readings say whether 70 % is quiet.
+    rule('eiok-home-worker-memory', 'Home worker memory at its limit', 'sum(namedprocess_namegroup_memory_bytes{host="optiplex",groupname="relay",memtype=~"resident|swapped"}) / 1073741824 > 0.7', { forM: 30, summary: 'The home worker\'s memory is at its limit: {{ humanizePercentage $values.A.Value }} of its 1 GiB for 30 minutes (it ran out at about 750 MB of heap on 2026-11-21 and crashed). Look: the Optiplex row; `systemctl status japharsworld-yt-relay` on the Optiplex. A restart frees it but drops the plays it holds.' }),
     // Spend rate (Everything-is-OK#478): fires at the service's home-first point of the hour budget (the defaults of
     // SPEND_HOUR_CREDITS and SPEND_HOME_FIRST_PERCENT, src/spend.js: 75 % of 1500 = 1125), where new plays start going
     // home first. Below it is normal use of the 100k a month plan (owner, 2026-11-04); the busiest real hour was ~310
@@ -640,7 +668,7 @@ export function alertRules(dsUid, { critical = false } = {}) {
     // about 27 % faster than that (10-25 to 10-31, cause unverified), so it can fire late.
     rule('eiok-credits-pace', 'Credits run out before renewal', '(sum(increase(eiok_events_total{metric="credits"}[3d])) / 3) * max(eiok_poll{source="tunelio_plan",metric="days_to_renewal"}) - max(eiok_credits_remaining) > 0', { forM: 60, summary: 'At the last 3 days’ spend, the Tunelio credits run out before the plan renews (TUNELIO_RENEWS_DAY). The pacer moves plays home while home has room; at 0 they go to youtube.com at 360p.' }),
     // Inputs the rules above and below need. Without them those rules see no data and stay quiet, which looks like health.
-    rule('eiok-alert-inputs-missing', 'Alert inputs missing', 'absent(eiok_home_today{key="cap_builds"}) or absent(eiok_service_memory_limit_bytes) or absent(eiok_poll{source="tunelio_plan",metric="days_to_renewal"}) or absent(eiok_events_total{metric="cc_outcome",key="none"})', { forM: 30, summary: 'A value that the build cap, service memory, credit pace or captions alert needs has been missing for 30 minutes, so that alert is blind. Expected while the search service is down. Otherwise check japharsworld-yt-exporter (STATS_TOKEN, cgroup) and the metrics poller on the Linode.' }),
+    rule('eiok-alert-inputs-missing', 'Alert inputs missing', 'absent(eiok_home_today{key="cap_builds"}) or absent(eiok_service_memory_limit_bytes) or absent(eiok_poll{source="tunelio_plan",metric="days_to_renewal"}) or absent(eiok_events_total{metric="cc_outcome",key="none"}) or absent(node_systemd_service_restart_total{host="linode",name="japharsworld-yt.service"}) or absent(node_systemd_service_restart_total{host="optiplex",name="japharsworld-yt-relay.service"}) or absent(namedprocess_namegroup_memory_bytes{host="optiplex",groupname="relay",memtype="resident"})', { forM: 30, summary: 'A value that the build cap, service memory, credit pace, captions, crash-restart or home worker memory alert needs has been missing for 30 minutes, so that alert is blind. Expected while the search service is down. Otherwise check japharsworld-yt-exporter (STATS_TOKEN, cgroup) and the metrics poller on the Linode.' }),
     // tunelio_plan is written mid-pass with no outside call needed (metrics/poll.js renewalPass). The timer is 15 min; the
     // widest gap in 523 passes to 2026-10-31 was 18 min. A pass stuck or failing before it leaves the old value exported, so
     // this sees it, but not a failure after it. A value missing altogether is eiok-alert-inputs-missing's.

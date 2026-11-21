@@ -114,9 +114,17 @@ systemctl --user list-timers yt-hypercare.timer
   Optiplex) (no restarts since 2026-10-25; reinstall them with step 5 / step 7 after a change). On the Optiplex this holds only while `jonflatt`'s normal sudo still asks for a password (the check always uses `sudo -n`, so anything outside the allowlist fails instead of prompting). On the Linode, `ytcheck` has no sudo beyond the allowlist.
 - Updating: nothing to copy. `run.sh`, `prompt.md` and the rules in `claude/monitoring.md` are read from the checkout at
   each run. Only a change to the units (copy them again, `daemon-reload`) or the sudoers files (reinstall them) needs a step.
+- Pending security updates on either host (or a `/var/run/reboot-required`) put one "Install security updates on
+  <host>" card on the owner's board each week, count only, no package names (owner, 2026-11-19; rules in
+  `claude/monitoring.md`, "Security updates card"). The check itself never installs or reboots anything.
 - Reports: `~/yt-infra-check/reports/`, raw run output: `~/yt-infra-check/logs/` (kept 26 weeks).
 - Hourly hypercare (`hypercare.mjs`, rules in `claude/monitoring.md`, "Hourly hypercare"): read-only counts every hour
   at :17; quiet when normal, otherwise Discord plus a world-repo issue (an `owner-task` card when you have to act).
+  Each limit can be overridden in `~/yt-infra-check/.env` as `HYPERCARE_<NAME>` (`LIMITS` in `hypercare.mjs`), e.g.
+  `HYPERCARE_CH503` for refused Channels slots, counted apart from other 5xx (Everything-is-OK#863). The 5xx count takes
+  the service's request lines only; a Tunelio build timeout (`build_failed`, status 524) is counted as `timeouts` and
+  files "Video builds are timing out at Tunelio" only when no new Tunelio build succeeded in the hour (`HYPERCARE_BUILD524`,
+  Everything-is-OK#904).
   After 7 clean days in a row it says so on Discord and world #208 and disables its own timer (world #236).
 - Severe-alert triage (`triage.mjs`, `triage-prompt.md`, rules in `claude/monitoring.md`, "Severe alert triage"):
   on a new firing `severity=critical` alert it runs a read-only Claude triage and posts "SEVERE: …" to Discord with the

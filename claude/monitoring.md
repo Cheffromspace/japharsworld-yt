@@ -141,6 +141,19 @@ line icons from the service's Pages (`docs/icons/*.svg`), coloured through their
   `alloy validate deploy/alloy/linode.alloy` (and `alloy fmt`).
 - **New exporter metric:** `metrics/exporter.js` and `test/exporter.test.js`; `update.sh` restarts the exporter when
   `metrics/exporter.js` or `src/metrics.js` changes.
+- **Graph line colours** (#868, 2026-11-17): every line on "Everything is OK" has a Tokyo Night colour by what it means
+  (`lineColours` in `tools/grafana.mjs`: failures red, warnings amber, healthy green, the rest neutrals), so a line's
+  name must be known when the dashboard builds. A new key in a `oneOf(...)` list in `src/metrics.js` needs the same key
+  in `KEYS` in `tools/grafana.mjs` (`test/grafana.test.js` fails until it is there). For the speed probe the test
+  reads `src/probe.js`: it fails when the two formats or the default `pairQualities` differ from `KEYS.probe`, and when
+  the code holds any `tunelio:` source literal other than the two templates (`tunelio:${format}`,
+  `tunelio:pair${…}`); a source named some other way (built from a variable, set in another file) it cannot see. A
+  key added mid-list moves the colours of the lines after it in that panel; a panel passing 18 lines (the palette's
+  size) switches to the other assignment, so every line in it can change colour. Limits: a failure, warning or healthy
+  line whose colour family has run out wears a neutral colour of its own (unique, but not its meaning colour), and in
+  Home relay (29 lines) such lines repeat their own family's colours. A line nobody listed draws in shades of blue
+  picked by series order, stable only while the same series come back. The four no-state stats are solid #24283b
+  tiles (#866).
 
 ## Weekly infra check (Optiplex agent)
 
@@ -189,6 +202,47 @@ wants done becomes an issue for the coordinator (the Everything is OK coordinati
    scope as of 2026-10-26), create it without `--project` and say so in the report. A security finding gets at most a
    card titled "Security finding on <host>, see the local report of <date>", with no details. No secrets, tokens or
    webhook URLs there either.
+6. **Security updates card** (owner, 2026-11-19, Everything-is-OK#906 and #914: "Can we make sure that future pending
+   security updates go on a task card on my board?"; before this the check only reported them, and a card came only
+   with a red item such as a reboot pending for a security update): every week a host (Linode or Optiplex) has any
+   pending security update, or `/var/run/reboot-required`, it files one `owner-task` card for that host (item 5's
+   format and `gh` command), titled "Install security updates on <host> (<date>)". Pending updates alone are yellow in
+   the report; the card is filed either way.
+   - **One card per host, one per job.** Search the open `owner-task` issues for "Install security updates on <host>"
+     first. If one is open, it comments there with this week's count, ending with `<!-- coordinator -->`, and files no
+     new card. A pending reboot goes on the same card, never on a second one, and a reboot pending for a security
+     update is not also filed as a "Security finding" card. The red "Security finding on <host>" card stays for every
+     other red security item.
+   - **Count only.** The card says "N security updates pending" (`apt list --upgradable 2>/dev/null | grep -c security`,
+     which needs no sudo on either host). No package names, versions or CVEs on GitHub (they stay in the local
+     security report), and no IP addresses or account names. When the updates are installed but a reboot is still
+     pending, the card says so and keeps only the reboot and check steps.
+   - **Say what usually happens** (coordinator, 2026-11-19, from the Linode's config): `unattended-upgrades` runs daily
+     on the Linode (`APT::Periodic::Unattended-Upgrade "1"`), so a pending security update is often installed by
+     itself within a day, and the owner's real job is usually the reboot. The card says that plainly, near the top.
+     If the same update is still pending a week later (last week's local security report lists it, or an open card
+     from last week is still there with a count), the card or its comment says `unattended-upgrades` may be failing
+     and points at `/var/log/unattended-upgrades/` (no names, just that it is the same update).
+   - **Steps on the card: security updates only, never a plain `apt-get upgrade -y`** (the Linode holds 58 other
+     upgrades back on purpose, among them nodesource's Node and apt.grafana.com's Alloy). The command is
+     `unattended-upgrade -v`, which installs only the origins the host allows (noble, noble-security, ESM apps and
+     infra security; `/etc/apt/apt.conf.d/50unattended-upgrades` on the Linode, read 2026-11-19 17:52Z). Why/Time/Where/Do
+     first up front, numbered checkboxes with one copyable block each. Linode, as root (`ssh linode`): (1)
+     `ssh linode 'unattended-upgrade -v'`; (2) check for a reboot with `ssh linode 'ls /var/run/reboot-required'`
+     ("No such file" means none: skip step 3); (3) only if that file exists, `ssh linode reboot`, warned as "search is
+     down about 2 minutes, pick a quiet moment"; (4) the check that ends it: `ssh linode 'ls /var/run/reboot-required;
+     systemctl is-active japharsworld-yt japharsworld-yt-exporter alloy caddy bgutil-pot fail2ban'`.
+   - **The Optiplex** is the same on that machine with `sudo` (`sudo unattended-upgrade -v`, `ls /var/run/reboot-required`,
+     `sudo reboot`, check `ls /var/run/reboot-required; systemctl is-active japharsworld-yt-relay bgutil-pot-relay
+     alloy`), warned as "the relay worker is down for a minute; searches fall back to the Linode meanwhile" (the wording and the
+     minute are not measured, coordinator 2026-11-19). Before it
+     names that command the check reads the Optiplex's own `/etc/apt/apt.conf.d/50unattended-upgrades` (allowed
+     origins) and `20auto-upgrades`: the Linode's facts are not assumed there. If the security origins are not allowed
+     there, the card gives no install command, says that, and tells the owner to ask the coordinator.
+   - **Done when:** `apt list --upgradable 2>/dev/null | grep -c security` prints 0 on that host (security updates only:
+     other held-back upgrades don't count), there is no `/var/run/reboot-required` and the check's units all say
+     `active`. Then "close this issue when done", as item 5 says.
+   - **It stays read only.** It never installs, upgrades or reboots anything itself; the card is the whole action.
 
 **Public repo:** reports and issues are public. No secrets, tokens or webhook URLs, no IP addresses or SSH account
 names, no visitor data (search text, video IDs from visitors' plays, VRChat user or instance IDs). Counts and
@@ -208,7 +262,7 @@ rule above forbids those either way; the owner reinstalls the narrowed files.
 `infra-check/hypercare.mjs` and the `yt-hypercare` user timer (world #208, owner 2026-10-26; it replaced the
 coordinator's 30-minute loop). Every hour at :17, read only and without Claude, it checks the last hour: the search
 service and Caddy active on the Linode and the public `/healthz` answering 200; the Linode's `/` use; in the search
-service's journal the 5xx answers, error and `*_failed` events, `youtube_error` and `backoff` events, `captions_via`
+service's journal the 5xx answers on request lines (Channels 503s apart, below), Tunelio build timeouts (below), error and `*_failed` events, `youtube_error` and `backoff` events, `captions_via`
 (lookups in the hour, and distinct videos with and without tracks over 6 hours), `home_evict` and `home_over_cap`; fail2ban's currently banned sshd count; on the
 Optiplex the relay worker, `bgutil-pot-relay` and the flash worker's timer active and its last run successful.
 MediaMTX is its own project (media-mtx) and not checked here (owner, 2026-10-28, #38). The journal is counted on the Linode with `awk` over `ssh linode-check`, so no log line,
@@ -217,6 +271,59 @@ or backoff at all), each overridable as `HYPERCARE_<NAME>` in the same `.env`. T
 critical level: hypercare reads `df` once an hour, so a passing minute at 80 % (2026-10-27 22:17, before a home cache
 eviction) is left to Grafana's 15-minute 80 % warning. Captions fire only at 5 or more distinct videos with no tracks and no
 video with tracks over 6 hours (world #401): many videos have no captions, and replays ask again.
+
+Channels (Everything-is-OK#863, folding in #521): since the production deploy of 2026-11-17 a slot the published list
+hides answers `503 channel_unavailable` on purpose (#776), so a `route channel` 503 request line is not counted as a
+5xx; the deploy's own three hidden-slot checks had filed a false 5xx card (#862). Those 503s are counted apart
+(`ch503`, limit `CH503` 10 an hour: production saw at most 5 channel requests and 3 channel 503s in any hour from
+2026-11-10 to 11-18, and one visitor on a stale list retries about six loads, so 9 stays quiet) and a burst files
+"Many Channels plays were refused". Any other 5xx on that route (a 500 from a throw) still counts as a 5xx. The real
+fault behind the same 503, a monitor status the service can't read (every Quest Channels play is refused meanwhile),
+is counted from the service's `channel_refused` lines with `why` `status_unreadable` or `status_missing` (`chmon`,
+limit `CHMON` 1: those lines are written once a minute at most, so one visitor's retries are one line), and files
+"The search service can't read the Channels monitor's status". A hide (`hidden_by_monitor`, `hidden_by_owner`) is not
+counted. Both run where hypercare reads, production's journal only; Grafana has no rule on channel answers.
+
+Build timeouts (Everything-is-OK#904; the coordinator's call, 2026-11-20). The 5xx count used to take every journal
+line with `"status":5xx`, event lines too. A `build_failed` with status 524 (Tunelio's answer when a build runs past
+about 125 s; the service's own probe waits 150 s) was therefore filed as "The search service answered 5xx" (#903,
+2026-11-19: 3 in an hour) and counted again as an error event: #931 and #932 (2026-11-20) were the same six lines.
+Both bursts were tablet warm-ups of long videos at 720p HLS, and both hours also had builds that worked. Since then:
+- `s5` counts request lines only: the server's `{"at","route","status","ms"}` line, which has a `route` and no `event`.
+  Event lines can carry a `route` (`youtube_error`, `forced_limit`, `error`), and several carry an upstream status.
+- A `build_failed` with status 524 is counted only as `timeouts`, not as an error event, so one burst files one card
+  at most. "Video builds are timing out at Tunelio" fires at `BUILD524` (3) timeouts in the hour **when no new Tunelio
+  build succeeded in that hour**: no `tunelio_link` line without `cached` (Tunelio building nothing). Home builds
+  (`home_ready`) and the speed probe's own builds are not counted as built. A cached link (the
+  service's guess from the speed, `cachedBuild` in src/playback.js: under 3 s or over 120 MB/s) only shows Tunelio
+  serving a file it already had, so it does not count. 7 event lines with status 524 were seen in the 7 days before
+  2026-11-17, and 3 and 6 timeouts in one hour in the two bursts. Replayed over the hours behind #903 and #931/#932, the new count files nothing:
+  each hour had a fresh link.
+- **Accepted gap:** builds partly timing out while others still succeed raise no hypercare card. The dashboard's
+  "failed builds" series (`eiok_events_total{metric="build",key="failed"}`) still shows them; Grafana has no rule on it.
+  `built` ignores the format too: one mp4 (progressive) link that built quiets an hour in which every HLS build
+  timed out, and a Quest tablet's warm-up of a .m3u8 ticket builds HLS unless the video is long or its HLS build
+  failed (with `QUEST_MP4` on, the Quest's Unity player itself always gets the mp4, src/server.js, #584).
+  So Tunelio's HLS builds failing for a whole hour while its mp4 builds work raise no card either. The 11-20 hour was
+  quieted by just such a link (a 720p mp4), so this gap covers "every Quest HLS warm-up failing", not only "a few".
+  A `build_failed` with any other status (503, or 0 for no answer) is still an error event, as before (pinned by a test).
+- Event lines that left every hypercare count with this change (they had counted only through the old 5xx match, and
+  only when their status was 5xx):
+  - `build_retry` (a progressive build asked again after a 503): the build still ends in a `build_failed` or
+    `tunelio_link` line, which is counted (observed in code, src/playback.js `#build`).
+  - `channel_upstream` (the answer from the Channels upstream): written only where `CHANNELS_UPSTREAM` is set (it
+    defaults to off, src/config.js), and a 503 there is a hidden slot by design (observed in code). Whether production
+    sets it was not read on the host (inferred off: Everything-is-OK#519's comment of 2026-11-05 says it "is set only
+    on staging", and production's monitor database wins even if it were set). Re-check:
+    `ssh linode 'grep -c CHANNELS_UPSTREAM= /etc/japharsworld-yt.env'`.
+  - `tunelio_probe` with `ok: false` (the speed probe's own `/create` or its own build failed, src/probe.js): a
+    dashboard panel only, no alert
+    (observed in code: tools/grafana.mjs has no rule on it). A visitor's failed `/create` is a `tunelio_error`, still
+    an error event, and raises the service's own "Tunelio is failing" Discord alert at 5xx (src/playback.js).
+  - `tunelio_drop_open` / `tunelio_drop_reopen`: Grafana's `eiok-tunelio-reopen-fail` rule watches the same failures
+    through `eiok_tunelio_probe_open_fail_total` and `eiok_tunelio_probe_reopen_fail_total` (observed in code).
+  Re-check which log lines carry a status (the line after each call too, since `build_failed`'s status is on the next
+  line): `grep -nE "this\.log\(|logJson\(|log\(JSON" -A1 src/*.js | grep status`.
 
 Grafana's `eiok-captions-empty` (world #428) has the same rule, so a silent failure, where every lookup answers
 `no_captions` with no error, stays watched after hypercare ends, and `eiok-captions-failing` covers every source throwing. It is a slow one: replayed over 121 runs of real

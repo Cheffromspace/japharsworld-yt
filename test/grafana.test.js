@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import * as grafana from '../tools/grafana.mjs';
 import { CHICAGO_HOUR, RETIRED_RULES, alertRules, contactPoint, dashboard, prodOnly, pushRule, tonight } from '../tools/grafana.mjs';
+import { METRICS, OUTCOME_FAILS } from '../src/metrics.js';
 
 // Staging (#160) sends the same metrics with env="staging": every selector of every query and rule leaves them out.
 test('every dashboard query and alert rule excludes staging', () => {
@@ -103,6 +105,136 @@ test('tonight: its own dashboard, refresh 1 min, the last 12 h in Chicago time, 
   assert.deepEqual(vibe.fieldConfig.defaults.mappings.map((m) => m.type), ['value', 'range', 'range'], 'quiet 0, cozy 1-3, lively 4+');
   // Only the existing aggregates: events_total keys, the VRChat poll, the hourly shard rows.
   for (const m of text.matchAll(/(eiok_[a-z_]+)/g)) assert.ok(['eiok_events_total', 'eiok_poll', 'eiok_shard_active_hours_total'].includes(m[1]), m[1]);
+});
+
+// Graph lines in the Tokyo Night palette, a colour per line by meaning (owner, 2026-11-17, #868).
+const lineColour = (p) => Object.fromEntries(p.fieldConfig.overrides.filter((o) => o.properties.some((x) => x.id === 'color'))
+  .map((o) => [o.matcher.options, o.properties.find((x) => x.id === 'color').value.fixedColor]));
+const graphs = () => dashboard().panels.filter((p) => p.type === 'timeseries');
+const { KEYS = {}, LINE = { bad: [], warn: [], ok: [], neutral: [] }, meaningOf = () => 'neutral' } = grafana;   // older builds lack them
+
+// From the built dashboard alone: what the owner sees.
+test('graph lines: failures red, the freeze signal a colour of its own, and every graph in Tokyo Night shades by default', () => {
+  const byTitle = (t) => lineColour(graphs().find((p) => p.title === t));
+  assert.equal(byTitle('Start-up problems (per 3 h)')['failed builds'], '#db4b4b');
+  assert.equal(byTitle('Start-up problems (per 3 h)')['player timeouts (got youtube.com)'], '#f7768e');
+  const adaptive = byTitle('Adaptive steps and Quest tickets (per 6 h)');
+  const freeze = adaptive.reload_after_upgrade;
+  assert.ok(freeze, 'reload_after_upgrade has a colour');
+  assert.deepEqual(Object.entries(adaptive).filter(([, c]) => c === freeze).map(([n]) => n), ['reload_after_upgrade']);
+  assert.ok(['#e0af68', '#ff9e64'].includes(freeze), `the freeze signal wears a warning colour, not ${freeze}`);
+  assert.equal(byTitle('Flash checks (per 6 h)').pass, '#9ece6a');
+  for (const p of graphs()) assert.equal(p.fieldConfig.defaults.color?.fixedColor, '#7aa2f7', p.title);
+});
+
+test('graph lines: the key lists match the key checks in src/metrics.js, so a new key needs a colour', () => {
+  // src/metrics.js keeps its keys in oneOf(...) closures; read the literal lists from its text (src/ stays untouched).
+  const text = readFileSync(new URL('../src/metrics.js', import.meta.url), 'utf8');
+  const listed = {};
+  for (const m of text.matchAll(/^ {2}(\w+): \['(?:daily|gauge|hourly)', oneOf\(([^)]*)\)\]/gm)) {
+    if (!m[2].includes('...')) listed[m[1]] = [...m[2].matchAll(/'([^']*)'/g)].map((x) => x[1]);
+  }
+  const fromMetrics = ['play_route', 'play_fallback', 'adaptive', 'ticket_client', 'home', 'home_why', 'credits', 'build_route', 'search_source',
+    'cc_via', 'cc_outcome', 'cc_words', 'cc_unavailable', 'play_platform'];
+  for (const k of fromMetrics) assert.deepEqual(KEYS[k], listed[k], k);
+  for (const k of [...KEYS.yt_refusal, ...KEYS.quality_pick]) assert.ok(METRICS.yt_refusal[1](k) || METRICS.quality_pick[1](k), k);
+  assert.equal(KEYS.yt_refusal.length, 18);
+  assert.deepEqual(KEYS.outcome, [...OUTCOME_FAILS, 'left']);
+  // The probe's sources, from src/probe.js: tunelio:<format> for both formats and tunelio:pair<n> per pair quality.
+  const probe = readFileSync(new URL('../src/probe.js', import.meta.url), 'utf8');
+  const formats = probe.match(/const format = n % 2 \? '(\w+)' : '(\w+)'/).slice(1);
+  const pairs = [...probe.match(/pairQualities = \[([^\]]*)\]/)[1].matchAll(/'(\d+)p'/g)].map((x) => x[1]);
+  // Every tunelio: source literal in probe.js's code is one of these two, so a source under a new name fails here.
+  const code = probe.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  assert.deepEqual([...code.matchAll(/(['"`])tunelio:[^'"`]*\1/g)].map((m) => m[0]), ['`tunelio:${format}`', '`tunelio:pair${Number.parseInt(q, 10)}`']);
+  assert.deepEqual([...KEYS.probe].sort(), [...formats.map((f) => `tunelio:${f}`), ...pairs.map((q) => `tunelio:pair${q}`)].sort());
+  // Every metric a graph splits by key is one of those lists.
+  for (const p of graphs()) {
+    for (const t of p.targets) {
+      const m = t.expr.match(/sum by \(key\) \(increase\(eiok_events_total\{[^}]*metric="(\w+)"/);
+      if (m) assert.ok(KEYS[m[1]], `${p.title}: ${m[1]}`);
+    }
+  }
+});
+
+test('graph lines: every line has a palette colour by meaning; colours repeat only between neutral lines (past 18 lines, within a kind)', () => {
+  const palette = [...LINE.bad, ...LINE.warn, ...LINE.ok, ...LINE.neutral];
+  assert.equal(new Set(palette).size, 18);
+  // The meaning colours, written out here so a colour moved between families fails: red, red1, magenta2; yellow,
+  // orange; green, green1, green2, teal (green2 is a green in the project palette, verifier round 1).
+  const MEANING_HEXES = ['#f7768e', '#db4b4b', '#ff007c', '#e0af68', '#ff9e64', '#9ece6a', '#73daca', '#41a6b5', '#1abc9c'];
+  assert.deepEqual([...LINE.bad, ...LINE.warn, ...LINE.ok].sort(), [...MEANING_HEXES].sort());
+  assert.deepEqual(LINE.neutral.filter((c) => MEANING_HEXES.includes(c)), [], 'no meaning colour among the neutrals');
+  let lines = 0;
+  for (const p of graphs()) {
+    assert.deepEqual(p.fieldConfig.defaults.color, { mode: 'shades', fixedColor: '#7aa2f7' }, `${p.title}: unlisted lines in shades of INK`);
+    const c = lineColour(p);
+    lines += Object.keys(c).length;
+    // Every legend is coloured: a fixed name, or a template with its values listed (the one exception has two labels).
+    // A name counts for a template only if no fixed legend or other template of the panel claims it, so a bare
+    // '{{key}}' with no names list fails.
+    const legends = p.targets.map((t) => t.legendFormat);
+    const fits = (n, legend) => {
+      if (!legend.includes('{{')) return n === legend;
+      const [pre, post = ''] = legend.split(/\{\{\w+\}\}/);
+      return (n.startsWith(pre) && n.endsWith(post)) || (n.startsWith('^.*') && n.endsWith(`${post}$`));
+    };
+    for (const legend of legends) {
+      if (legend === '{{host}} {{name}}') continue;
+      const others = legends.filter((x) => x !== legend && (!x.includes('{{') || x.replace(/\{\{\w+\}\}/, '') !== ''));
+      assert.ok(Object.keys(c).some((n) => fits(n, legend) && !others.some((x) => fits(n, x))), `${p.title}: ${legend} has no coloured line`);
+    }
+    for (const [name, colour] of Object.entries(c)) {
+      assert.ok(palette.includes(colour), `${p.title}: ${name} ${colour}`);
+      const m = meaningOf(name);
+      if (m === 'neutral') assert.ok(LINE.neutral.includes(colour) && !MEANING_HEXES.includes(colour), `${p.title}: neutral ${name} took a meaning colour`);
+      else assert.ok([...LINE[m], ...LINE.neutral].includes(colour), `${p.title}: ${m} ${name} took another meaning's colour`);
+    }
+    // Repeats: in up to 18 lines only between neutral lines; past 18, a meaning line shares only with its own kind.
+    const entries = Object.entries(c);
+    for (const [name, colour] of entries) {
+      const sharers = entries.filter(([n, x]) => n !== name && x === colour).map(([n]) => n);
+      if (!sharers.length || meaningOf(name) === 'neutral' && sharers.every((n) => meaningOf(n) === 'neutral')) continue;
+      assert.ok(entries.length > 18 && sharers.every((n) => meaningOf(n) === meaningOf(name)), `${p.title}: ${name} shares ${colour} with ${sharers}`);
+    }
+  }
+  assert.ok(lines > 150, `${lines} coloured lines`);
+  // p50 and p95: the same pair on every panel.
+  for (const p of graphs()) {
+    const c = lineColour(p);
+    if (c.p50) assert.deepEqual([c.p50, c.p95], ['#7aa2f7', '#bb9af7'], p.title);
+  }
+  const ttff = lineColour(graphs().find((p) => p.title === 'Time to first frame, visitors'));
+  assert.deepEqual([ttff['p50 pc'], ttff['p95 pc'], ttff['p50 android'], ttff['p95 android']], ['#7aa2f7', '#bb9af7', '#7dcfff', '#c0caf5']);
+  // Meanings, including the names that would mislead a plain word match.
+  assert.equal(meaningOf('failed builds'), 'bad');
+  assert.equal(meaningOf('resolver fast-fails (normal while building)'), 'neutral');
+  assert.equal(meaningOf('fallback: build_failed'), 'warn');
+  assert.equal(meaningOf('unavailable: no_captions'), 'neutral');
+  assert.equal(meaningOf('unavailable: failed'), 'bad');
+  assert.equal(meaningOf('pass'), 'ok');
+  assert.equal(meaningOf('home:bot'), 'neutral');
+  assert.equal(meaningOf('why: cap'), 'warn');
+  assert.equal(meaningOf('cap videos'), 'neutral');
+  // Tonight's one time series keeps its own Blue-Purple scheme, with no per-line colours.
+  const curve = tonight().panels.find((p) => p.type === 'timeseries');
+  assert.deepEqual([curve.fieldConfig.defaults.color, curve.fieldConfig.overrides], [{ mode: 'continuous-BlPu' }, []]);
+});
+
+// Stats with no state are quiet tiles on the Tokyo Night surface (owner, 2026-11-17, #866); every stat with a state
+// colour keeps its gradient fill, and Tonight's tiles keep theirs.
+test('stats: the four no-state tiles are solid #24283b, every other stat keeps its fill', () => {
+  const stats = (d) => d.panels.filter((p) => p.type === 'stat');
+  const main = stats(dashboard());
+  const quiet = main.filter((p) => p.options.colorMode === 'background_solid');
+  assert.deepEqual(quiet.map((p) => p.title), ['In the world now', 'Total visits (production)', 'Favorites (production)', 'Home relay today']);
+  for (const p of quiet) assert.deepEqual(p.fieldConfig.defaults.thresholds.steps, [{ color: '#24283b', value: null }], p.title);
+  for (const p of main.filter((x) => !quiet.includes(x))) {
+    assert.equal(p.options.colorMode, 'background', p.title);
+    assert.ok(p.fieldConfig.defaults.thresholds.steps.some((s) => s.color !== '#24283b'), p.title);
+  }
+  const night = Object.fromEntries(stats(tonight()).map((p) => [p.title, p.options.colorMode]));
+  assert.deepEqual(night, { 'People here': 'background', Rooms: 'background', 'Warmth, this range': 'background', 'Here lately': 'background_solid', 'Search languages': 'background_solid' });
 });
 
 // PromQL knows only UTC: "Stayed past 03:00" computes Chicago's hour with the US summer-time rule (#248). The same rule

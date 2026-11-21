@@ -88,12 +88,15 @@ export function metricsDbSeries(db, o, now = Date.now()) {
   }
   // Everything-is-OK#967, from 0 for the same reason: the alert rules that replaced the hourly hypercare timer read these
   // (tools/grafana.mjs): a 5xx the service did not mean to give, by route; different videos with trouble, by kind; a
-  // Channels monitor status it cannot read; and the plays sent to youtube.com because a build failed or timed out.
+  // Channels monitor status it cannot read; the plays sent to youtube.com because a build failed or timed out; and the
+  // builds and home sessions that worked, which those rules read as "unless" (the verifier of stage 1).
   const zero = (metric, keys) => { for (const key of keys) if (!totals.some((r) => r.metric === metric && r.key === key)) o.add('eiok_events_total', 'counter', 'Usage counts from the search service, all days summed (claude/metrics.md).', { metric, key }, 0); };
   zero('http_5xx', HTTP_ROUTES);
   zero('video_fail', ['captions', 'build', 'home']);
   zero('channel', ['unreadable', 'unavailable']);
   zero('play_fallback', ['build_failed', 'build_timeout']);
+  zero('build', ['ok']); // eiok-builds-failing: unless a build worked
+  zero('home', ['ready']); // eiok-home-failing: unless a home session got ready
   // Unhandled promise rejections the service survived (src/server.js catchRejections), from 0 for the same reason. No
   // alert rule reads it yet.
   if (!totals.some((r) => r.metric === 'unhandled_rejection')) {

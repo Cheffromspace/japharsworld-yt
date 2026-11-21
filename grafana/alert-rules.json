@@ -711,7 +711,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "Captions are failing: caption requests got none in {{ printf \"%.0f\" $values.A.Value }} different half-hours of the last 6 hours. One room asking many times about one video YouTube can't serve fills one half-hour and does not fire this. Look: `node tools/ops.mjs events --event captions_source_failed,captions_via`, the Captions panel, and whether the home worker restarted (eiok-unit-restarted)."
+   "summary": "Captions are failing: {{ printf \"%.0f\" $values.A.Value }} different videos got no captions when visitors asked, in the last 6 hours (each video counted once, however often it was asked for). One video YouTube can't serve does not fire this. Look: `node tools/ops.mjs events --event captions_source_failed,captions_via`, the Captions panel, and whether the home worker restarted (eiok-unit-restarted)."
   },
   "labels": {
    "project": "everything-is-ok",
@@ -730,7 +730,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "count_over_time((sum(increase(eiok_events_total{env!=\"staging\",metric=\"cc_unavailable\",key=~\"temporarily_unavailable|failed\"}[30m])) >= 0.5)[6h:30m]) >= 3",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"video_fail\",key=\"captions\"}[6h])) >= 3",
      "instant": true
     }
    },

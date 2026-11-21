@@ -613,14 +613,12 @@ export function alertRules(dsUid, { critical = false } = {}) {
     // the answer is temporarily_unavailable. failed is a throw that reached the route. Not list_unavailable: no free source
     // online (15 on 10-28), which the worker alerts cover. Neither key had ever counted by 2026-10-31.
     // Everything-is-OK#967 (2026-11-21): it fired at 16:14Z on 4 requests from one room for one video, a livestream archive
-    // YouTube had not finished, during the home worker's crash (#968): it counted requests, so one room's burst was enough.
-    // Until the service counts different videos (video_fail, stage 2 of #967), it counts half-hours instead: the answers
-    // must come in 3 different half-hours of the last 6 h (a subquery at the half-hour marks). One room's burst, however
-    // many requests, fills one half-hour (two if it crosses a mark), so it stays quiet; failures that last over an hour
-    // while people ask fire. It doesn't depend on other videos being fetched. In quiet hours: one room asking for the same
-    // stuck video across more than an hour can still fire it; a failure nobody asks about can't (it moves only on requests).
-    // At 0.5, as increase() extrapolates. Pushed within 6 h of failures in 3 half-hours, it fires at once.
-    rule('eiok-captions-failing', 'Caption lookups failing', 'count_over_time((sum(increase(eiok_events_total{metric="cc_unavailable",key=~"temporarily_unavailable|failed"}[30m])) >= 0.5)[6h:30m]) >= 3', { forM: 0, summary: 'Captions are failing: caption requests got none in {{ printf "%.0f" $values.A.Value }} different half-hours of the last 6 hours. One room asking many times about one video YouTube can\'t serve fills one half-hour and does not fire this. Look: `node tools/ops.mjs events --event captions_source_failed,captions_via`, the Captions panel, and whether the home worker restarted (eiok-unit-restarted).' }),
+    // YouTube had not finished, during the home worker's crash (#968): it counted requests. Now different videos: the
+    // service counts a video once per 6 h when a visitor's caption request got none (video_fail captions,
+    // src/videofail.js; the IDs stay in its memory). 3 different videos in 6 h: before 2026-11-21 neither key had ever
+    // counted, and that day's 4 answers were one video. Until this counter was live (stage 1 of #967) it counted failing
+    // half-hours; one room asking about one stuck video for hours can no longer fire it.
+    rule('eiok-captions-failing', 'Caption lookups failing', 'sum(increase(eiok_events_total{metric="video_fail",key="captions"}[6h])) >= 3', { forM: 0, summary: 'Captions are failing: {{ printf "%.0f" $values.A.Value }} different videos got no captions when visitors asked, in the last 6 hours (each video counted once, however often it was asked for). One video YouTube can\'t serve does not fire this. Look: `node tools/ops.mjs events --event captions_source_failed,captions_via`, the Captions panel, and whether the home worker restarted (eiok-unit-restarted).' }),
     // Owner, 2026-10-26: the flash worker's YouTube refusals (metrics/exporter.js, yt_refusal flash:<class>), which the
     // search service's own refusal alert (src/refusal.js, the relay worker's) never sees. As there: 3 or more bot, rate,
     // PO-token or 403 refusals, here within 30 minutes (the worker runs every 20).

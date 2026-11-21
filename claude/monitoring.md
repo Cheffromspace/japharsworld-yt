@@ -78,7 +78,7 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
 | Captions falling back to Tunelio | over 6 h, Tunelio answered more caption fetches (at least 3) than the home relay and local yt-dlp together, 30 min. Not "estimated timing above real": manual tracks never carry word timing, and that held on normal days (10-24: 104 estimated, 71 real) |
 | Tunelio open or reopen failed | `increase(eiok_tunelio_probe_reopen_fail_total[6h]) + increase(eiok_tunelio_probe_open_fail_total[6h]) > 0`, at once: the speed probe could not resume a cut link at the byte reached (another status, the wrong offset, or no first byte in 10 s), which would turn a reset into a visible freeze, or all three first opens of a read failed that way, which can mean Tunelio stopped honouring Range. The cause can be the Linode's own network, because any fetch error counts. The cut rate is only a panel until there is a baseline (Everything-is-OK#361) |
 | No video has caption tracks | over 6 h, 5 or more distinct videos had no tracks and none had any (`cc_outcome`, world #428), at once: a silent total failure. Stays after hypercare's own check of this ends. A partial failure, with some tracks still coming through, doesn't fire |
-| Caption lookups failing | caption requests answered `temporarily_unavailable` or `failed` in **3 or more different half-hours** of the last 6 h (a subquery at the half-hour marks, so up to 30 min late), at once: the sources stopped answering, which `cc_outcome` never sees. One room's burst for one stuck video fills one half-hour (two if it crosses a mark) and stays quiet; it doesn't depend on other videos being fetched. In quiet hours one room asking about the same stuck video across more than an hour can still fire it. Pushed within 6 h of failures in 3 half-hours, it fires at once (Everything-is-OK#967, below; until the per-video count of stage 2 is live) |
+| Caption lookups failing | 3 or more **different videos** in 6 h whose caption requests got none (`video_fail` `captions`: a request answered `temporarily_unavailable` or `failed`, each video once per 6 h), at once: the sources stopped answering, which `cc_outcome` never sees. One video YouTube can't serve doesn't fire it, however long its room keeps asking (Everything-is-OK#967, below; before stage 2, failing half-hours were counted instead) |
 | Video builds failing at Tunelio | 3 or more different videos in 1 h whose Tunelio build failed or timed out after `/create` accepted it (`video_fail` `build`), and no build succeeded in that hour (`build` `ok`), at once (#967) |
 | Home relay plays failing | 3 or more different videos failed at home in 1 h (`video_fail` `home`) and no home session got ready, at once (#967) |
 | Many Channels plays refused | 10 or more Channels answers `unavailable` in 1 h (slots the list hides), at once (#967, hypercare's limit of #863) |
@@ -105,10 +105,9 @@ count (#966), while the real fault in the same minutes, the home worker crashing
   twice across one. Until that counter is live (stage 2, a deploy), captions count half-hours: failures in 3 different
   half-hours of 6 h. A first version (stage 1, not pushed) asked "unless a caption fetch worked in 2 h", which the
   verifier showed would fire on the day's one stuck video from 17:55Z to 22:10Z had nobody else fetched captions.
-- Until stage 2's exporter sends `build` `ok`, `home` `ready` and `channel` `unavailable` from 0, a series that has
-  never counted on production starts at its first event, and `increase()` sees only the second one on: the builds,
-  home and Channels rules start counting from each such series' second event (and a missing `ok`/`ready` series reads
-  as "nothing worked", toward firing).
+- Stage 2's exporter sends `build` `ok`, `home` `ready` and `channel` `unavailable` (with the new keys) from 0, so
+  `increase()` sees the first event of a series that has never counted on production. Before it, those rules counted
+  from each such series' second event (and a missing `ok`/`ready` series read as "nothing worked", toward firing).
 - Builds count a video whose build `/create` accepted and then failed or timed out (`build_failed`: 524, 503, no
   answer; warm-ups included). A provider refusing a video (`tunelio_failed`, e.g. its 409 "not ready") isn't counted:
   the service alerts on its own when Tunelio fails (5xx, 401, 402: src/playback.js). `build` `ok` counts cached links

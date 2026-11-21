@@ -20,37 +20,32 @@ const fires = (uid, series, when) => firing(expr(uid), series, at(when));
 
 // The shape of 2026-11-21's captions counters (from the exporter's lines and the journal's caption events, 09:30Z-16:16Z):
 // four "not available right now" answers within a second, one room and one video, about two minutes before the alert;
-// seven fetches that worked earlier in the day, and (as the worst case) none after 15:50.
+// seven fetches that worked earlier in the day. With stage 2 the service also counts that one video once (video_fail).
 const captionsDay = () => [
   ev('cc_unavailable', 'temporarily_unavailable', ['16:12', '16:12', '16:12', '16:12']),
   ev('cc_unavailable', 'failed', []),
   ev('cc_via', 'worker', ['09:45', '10:05', '10:25', '11:10', '15:20', '15:25', '15:50']),
+  ev('video_fail', 'captions', ['16:12']),
 ];
 
-test('eiok-captions-failing (#967): one room\'s burst for one video is quiet all evening, with or without other fetches; the rule before #967 fired on it', () => {
+test('eiok-captions-failing (#967): one video in one room is quiet; the rule before #967 fired on it', () => {
   // The rule before #967 fired here (the 16:14Z alert): 4 answers >= 3.
   const before = 'sum(increase(eiok_events_total{env!="staging",metric="cc_unavailable",key=~"temporarily_unavailable|failed"}[6h])) >= 3';
   assert.equal(firing(before, captionsDay(), at('16:14')).length, 1, 'the old rule fires on the fixture');
-  // The verifier's case (M1): stage 1's first form fired 17:55Z-22:10Z here once no fetch had worked for 2 h.
-  for (const when of ['16:14', '16:30', '17:00', '18:00', '20:00', '22:00']) assert.deepEqual(fires('eiok-captions-failing', captionsDay(), when), [], when);
-  // The same room asking again an hour later about the same stuck video: two half-hours, still quiet.
-  const again = [...captionsDay().slice(1), ev('cc_unavailable', 'temporarily_unavailable', ['16:12', '16:12', '16:12', '16:12', '17:20', '17:21'])];
-  assert.deepEqual(fires('eiok-captions-failing', again, '18:00'), []);
-  // A burst that crosses a half-hour mark fills two half-hours: quiet.
-  assert.deepEqual(fires('eiok-captions-failing', [ev('cc_unavailable', 'temporarily_unavailable', ['16:28', '16:29', '16:31', '16:33'])], '17:00'), []);
+  assert.deepEqual(fires('eiok-captions-failing', captionsDay(), '16:14'), []);
+  assert.deepEqual(fires('eiok-captions-failing', captionsDay(), '17:00'), []);
+  // Two stuck videos in 6 h: still quiet.
+  assert.deepEqual(fires('eiok-captions-failing', [ev('video_fail', 'captions', ['12:00', '16:12'])], '16:14'), []);
 });
 
-test('eiok-captions-failing (#967): failures in 3 different half-hours of 6 h fire, whatever other videos do; at most half an hour late', () => {
-  // The home worker's captions break after 12:00Z; visitors keep asking.
-  const broken = [ev('cc_unavailable', 'temporarily_unavailable', ['12:10', '12:40', '12:45', '13:20']), ev('cc_unavailable', 'failed', []), ev('cc_via', 'worker', ['12:50', '13:10'])];
-  assert.deepEqual(fires('eiok-captions-failing', broken, '13:25'), [], 'two half-hours so far (13:20 is seen at the 13:30 mark)');
-  const f = fires('eiok-captions-failing', broken, '13:30');
+test('eiok-captions-failing (#967): 3 different videos with no captions in 6 h fire, even while other videos\' captions work', () => {
+  // The home worker's captions break after 12:00Z: each video visitors ask for afterwards counts once.
+  const broken = [ev('video_fail', 'captions', ['12:30', '13:10', '14:05']), ev('cc_via', 'worker', ['13:00', '13:50'])];
+  assert.deepEqual(fires('eiok-captions-failing', broken, '13:30'), [], 'two videos so far');
+  const f = fires('eiok-captions-failing', broken, '14:10');
   assert.equal(f.length, 1);
-  assert.equal(f[0].value, 3, 'three half-hours');
-  assert.equal(fires('eiok-captions-failing', broken, '18:00').length, 1, 'still inside 6 h');
-  assert.deepEqual(fires('eiok-captions-failing', broken, '19:00'), [], 'the first half-hour left the 6 h');
-  // A route that threw (cc_unavailable failed, 502) counts the same.
-  assert.equal(fires('eiok-captions-failing', [ev('cc_unavailable', 'failed', ['15:00', '15:40', '16:10'])], '16:30').length, 1);
+  assert.equal(f[0].value, 3);
+  assert.deepEqual(fires('eiok-captions-failing', broken, '19:00'), [], 'the first left the 6 h window');
 });
 
 test('eiok-builds-failing (#967): builds of 3 different videos failing fire only when nothing built in the hour', () => {
@@ -217,7 +212,7 @@ test('Alloy configs (#967): restart counters on every host; the Optiplex collect
 
 // The owner reads these on a phone (#967 brief, item 4): every summary of the rules that replaced hypercare, word for word.
 const SUMMARIES = {
-  "eiok-captions-failing": "Captions are failing: caption requests got none in {{ printf \"%.0f\" $values.A.Value }} different half-hours of the last 6 hours. One room asking many times about one video YouTube can't serve fills one half-hour and does not fire this. Look: `node tools/ops.mjs events --event captions_source_failed,captions_via`, the Captions panel, and whether the home worker restarted (eiok-unit-restarted).",
+  "eiok-captions-failing": "Captions are failing: {{ printf \"%.0f\" $values.A.Value }} different videos got no captions when visitors asked, in the last 6 hours (each video counted once, however often it was asked for). One video YouTube can't serve does not fire this. Look: `node tools/ops.mjs events --event captions_source_failed,captions_via`, the Captions panel, and whether the home worker restarted (eiok-unit-restarted).",
   "eiok-builds-failing": "Tunelio builds are failing: {{ printf \"%.0f\" $values.A.Value }} different videos' builds failed or timed out in the last hour, and no Tunelio build succeeded in that hour. One video Tunelio refuses does not fire this. Look: `node tools/ops.mjs events --event build_failed,tunelio_error,tunelio_link` and the failed builds on the dashboard.",
   "eiok-home-failing": "The home relay is failing: {{ printf \"%.0f\" $values.A.Value }} different videos failed at home in the last hour and none got ready. One video that fails at home does not fire this. Look: `node tools/ops.mjs events --event home_failed,home_ready`, then `journalctl -u japharsworld-yt-relay -n 80` on the Optiplex.",
   "eiok-channels-refused": "{{ printf \"%.0f\" $values.A.Value }} Channels plays were refused in the last hour: slots the list hides (stale lists, our own checks). Look: `node tools/ops.mjs events --event channel_refused`.",

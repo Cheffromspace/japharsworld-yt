@@ -69,8 +69,8 @@ import { trustedIps, limitFor } from './trusted.js';
 import { ForcedLimits, allowedHere } from './forced.js';
 import { VideoFails } from './videofail.js';
 
-// The 5xx answers this service gives on purpose (#967), left out of the http_5xx count: a search YouTube didn't answer
-// (eiok-search-502 alerts on those), captions that couldn't be fetched (counted as video_fail captions), a home upload
+// The 5xx answers this service gives on purpose (#967), left out of the http_5xx count: a search or a next page YouTube
+// didn't answer (counted as search_fail / more_fail 502; eiok-search-502 alerts on searches), captions that couldn't be fetched (counted as video_fail captions), a home upload
 // that broke off (the worker's own transfer), and a Channels slot the list hides (#776; the Channels rules count them).
 // What is left is a route that threw (500 server_error) or a 5xx from nowhere in our code.
 export const BY_DESIGN_5XX = new Set(['youtube_failed', 'captions_failed', 'upload_broken', 'channel_unavailable']);
@@ -1930,7 +1930,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
       log(JSON.stringify({ at: new Date().toISOString(), route, status: res.statusCode, ms: Date.now() - started }));
     });
     try {
-      const url = new URL(req.url, 'http://local');
+      // A path the URL parser refuses ("//" from a scanner threw here and answered 500) is an unknown path, not a fault
+      // of ours: eiok-server-errors pages on a real 500 (#967).
+      let url;
+      try { url = new URL(req.url, 'http://local'); } catch { return fail(res, 404, 'not_found', 'Unknown path.'); }
       if (url.pathname.startsWith('/relay/')) { route = 'relay'; return await relayRoute(req, res, url); }
       if (url.pathname === '/stats' || url.pathname.startsWith('/stats.') || url.pathname.startsWith('/stats/')) {
         route = 'stats';

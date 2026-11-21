@@ -152,6 +152,24 @@ test('http_5xx: a route that throws counts once per answer, by route; nothing el
   assert.ok(s.lines.some((l) => /"event":"error","route":"captions"/.test(l)));
 });
 
+test('http_5xx: scanner-shaped paths (//, bad percent-encoding, traversal) answer 4xx and count nothing; "//" answered 500 before', async (t) => {
+  const net = await import('node:net');
+  const s = await start();
+  t.after(() => s.server.close());
+  const { port } = s.server.address();
+  const raw = (path) => new Promise((done) => {
+    const c = net.connect(port, '127.0.0.1', () => c.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`));
+    let d = '';
+    c.on('data', (b) => { d += b; });
+    c.on('end', () => done(Number(d.split(' ')[1])));
+  });
+  for (const p of ['//', '//etc/passwd', '/%', '/v1/0/%E0%A4%A', '/v1/0/s?q=%', '/v1/ch/%', '/v1/0/cc/%', '/../../etc/passwd', '/home/%', '/hls/%']) {
+    assert.ok((await raw(p)) < 500, p);
+  }
+  assert.equal(await raw('//'), 404);
+  assert.deepEqual(s.incs.filter((x) => x.startsWith('http_5xx:')), []);
+});
+
 test('channels: a monitor status the service can\'t read is counted as unreadable, a hidden slot as unavailable; neither 503 is an http_5xx', async (t) => {
   const answers = { 'a-slot': { error: 'monitor_unreadable' }, 'b-slot': { error: 'channel_unavailable' }, 'c-slot': { error: 'unknown_channel' } };
   const s = await start({ channels: { resolve: async (key) => answers[key] } });

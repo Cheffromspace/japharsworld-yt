@@ -126,6 +126,8 @@ test('exporter: usage counters, histograms, polls, slots, flash checks, jobs, he
     has('eiok_events_total{metric="channel",key="unreadable"} 0');
     has('eiok_events_total{metric="play_fallback",key="build_failed"} 0');
     has('eiok_events_total{metric="play_fallback",key="build_timeout"} 0');
+    has('eiok_events_total{metric="build",key="ok"} 0');
+    has('eiok_events_total{metric="home",key="ready"} 0');
     has('eiok_jobs_pending 1');
     has('eiok_jobs_oldest_pending_seconds{reason="daily"} 0');
     has('eiok_jobs_oldest_pending_seconds{reason="other"} 600');

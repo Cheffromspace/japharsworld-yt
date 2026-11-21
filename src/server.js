@@ -67,6 +67,13 @@ import { Allowance } from './allowance.js';
 import { IpKeys } from './ipkey.js';
 import { trustedIps, limitFor } from './trusted.js';
 import { ForcedLimits, allowedHere } from './forced.js';
+import { VideoFails } from './videofail.js';
+
+// The 5xx answers this service gives on purpose (#967), left out of the http_5xx count: a search or a next page YouTube
+// didn't answer (counted as search_fail / more_fail 502; eiok-search-502 alerts on searches), captions that couldn't be fetched (counted as video_fail captions), a home upload
+// that broke off (the worker's own transfer), and a Channels slot the list hides (#776; the Channels rules count them).
+// What is left is a route that threw (500 server_error) or a 5xx from nowhere in our code.
+export const BY_DESIGN_5XX = new Set(['youtube_failed', 'captions_failed', 'upload_broken', 'channel_unavailable']);
 
 const API = 1;
 const PAGES = {
@@ -99,6 +106,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   store ??= new Store({ path: config.dbPath, shards: config.shards, pool: config.pool, pinHours: config.pinHours });
   const logJson = (o) => log(JSON.stringify({ at: new Date().toISOString(), ...o }));
   metrics ??= config.metricsPath ? new Metrics({ path: config.metricsPath, tz: config.metricsTz, log: logJson }).start() : noMetrics;
+  const videoFails = new VideoFails({ metrics }); // different videos with trouble, counted once each (src/videofail.js, #967)
   alert ??= makeAlert({ webhook: config.alertWebhook, log: logJson });
   tunelio ??= new Tunelio({ key: config.tunelioKey, createTimeoutMs: config.tunelioCreateTimeoutMs, onCredits: (left) => {
     metrics.gauge('credits_remaining', '', left);
@@ -144,8 +152,9 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     // Next to metrics.db (tests run without one, so they write nothing).
     stateFile: config.metricsPath ? join(dirname(config.metricsPath), 'build-speeds.json') : null,
     liveFile: config.metricsPath ? join(dirname(config.metricsPath), 'playback-live.json') : null,
-    onBuild: ({ format, quality, seconds, mb, buildMs, ok }) => {
+    onBuild: ({ id, format, quality, seconds, mb, buildMs, ok, reason }) => {
       metrics.inc('build', ok ? 'ok' : 'failed');
+      if (!ok && reason === 'build_failed') videoFails.count('build', id); // accepted by /create, then failed or timed out
       if (ok) { metrics.inc(format === 'hls' ? 'build_s_hls' : 'build_s_progressive', secondsBucket(buildMs)); metrics.inc('build_length', lengthBucket({ seconds })); metrics.inc('build_size', sizeBucket(mb)); metrics.inc('build_quality', quality); }
     } });
   // Every paid /create, on this server's Playback or an injected one: a Tunelio build_route, with why the play's
@@ -180,7 +189,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     hourMbExemptSeconds: config.homeHourMbExemptHours * 3600, startGapMs: config.homeStartGapMs, av1GapMs: config.homeAv1GapMs,
     itemMaxMb: config.homeItemTooBig === 'tunelio' ? config.homeItemMaxGb * 1000 : 0, keepHours: config.homeKeepHours, maxGb: config.homeMaxGb, freeFloorGb: config.homeFreeFloorGb, readyMs: config.homeReadyMs,
     segmentHoldMs: config.homeSegmentHoldMs,
-    startPrecise: config.homeAndroidGrowing, seekWant: config.homeSeekWant, tz: config.metricsTz, log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); } });
+    startPrecise: config.homeAndroidGrowing, seekWant: config.homeSeekWant, tz: config.metricsTz, log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); if (k === 'failed') videoFails.count('home', d?.id); } });
   if (home.enabled) setInterval(() => home.sweep(), 10 * 60_000).unref();
   channels ??= new ChannelSlots({ monitorDb: config.monitorDb, baked: new URL('../monitor/channels.json', import.meta.url),
     overrides: new URL('../monitor/overrides.json', import.meta.url), upstream: config.channelsUpstream, log: logJson });
@@ -390,7 +399,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': buf.length, 'cache-control': 'no-store' });
     res.end(buf);
   };
-  const fail = (res, status, error, message) => json(res, status, { v: API, error, message });
+  // The error code rides on the response, so the request count can leave out the 5xx answers given by design (#967).
+  const fail = (res, status, error, message) => { res.eiokError = error; return json(res, status, { v: API, error, message }); };
 
   function clientIp(req) {
     const remote = req.socket.remoteAddress ?? '';
@@ -1813,17 +1823,19 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     else if (listOnly) metrics.inc('cc_tracks');
     else { metrics.inc('cc_list'); metrics.inc('cc_list_lang', raw === 'native' ? 'native' : normalizeLang(raw)); }
     if ((byTrack && typeof captions.track !== 'function') || (listOnly && typeof captions.tracks !== 'function')) { metrics.inc('cc_unavailable', 'no_tracks'); return fail(res, 404, 'no_tracks', 'Caption tracks are not available.'); }
-    const lang = byTrack || listOnly ? normalizeLang(url.searchParams.get('l')) : raw === 'native' ? 'native' : (LANGS[raw] ? raw : normalizeLang(raw));
+    const lang = byTrack || listOnly ? normalizeLang(url.searchParams.get('l')) : raw === 'native' ? 'native' : (Object.hasOwn(LANGS, raw) ? raw : normalizeLang(raw));
     const last = store.lastPlayed(shard);
     if (!last) { metrics.inc('cc_unavailable', 'nothing_playing'); return fail(res, 404, 'nothing_playing', 'Nothing from search has played here yet.'); }
     try {
       const c = byTrack ? await captions.track(last.videoId, Number(raw), lang) : listOnly ? await captions.tracks(last.videoId, lang) : await captions.get(last.videoId, lang);
       if (!c.available) metrics.inc('cc_unavailable', c.reason ?? 'none');
       else if (byTrack) metrics.inc('cc_track_lang', String(c.key ?? '').replace(/-orig$/, ''));
+      if (!c.available && c.reason === 'temporarily_unavailable') videoFails.count('captions', last.videoId);
       return json(res, 200, { v: API, shard, t: last.n, ...c });
     } catch (err) {
       log(JSON.stringify({ at: new Date().toISOString(), event: 'captions_error', id: last.videoId, lang, message: errorLine(err) }));
       metrics.inc('cc_unavailable', 'failed');
+      videoFails.count('captions', last.videoId);
       return fail(res, 502, 'captions_failed', 'Captions are not available right now.');
     }
   }
@@ -1911,11 +1923,17 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const started = Date.now();
     let route = 'other';
     res.on('finish', () => {
+      // A 5xx this service didn't mean to give (a route that threw, #967): the by-design ones have alerts of their own or
+      // aren't faults (BY_DESIGN_5XX). Counted before the relay's idle polls are left out of the log.
+      if (res.statusCode >= 500 && !BY_DESIGN_5XX.has(res.eiokError)) metrics.inc('http_5xx', route);
       if (route === 'relay' && res.statusCode === 204) return; // idle long polls, several a minute
       log(JSON.stringify({ at: new Date().toISOString(), route, status: res.statusCode, ms: Date.now() - started }));
     });
     try {
-      const url = new URL(req.url, 'http://local');
+      // A path the URL parser refuses ("//" from a scanner threw here and answered 500) is an unknown path, not a fault
+      // of ours: eiok-server-errors pages on a real 500 (#967).
+      let url;
+      try { url = new URL(req.url, 'http://local'); } catch { return fail(res, 404, 'not_found', 'Unknown path.'); }
       if (url.pathname.startsWith('/relay/')) { route = 'relay'; return await relayRoute(req, res, url); }
       if (url.pathname === '/stats' || url.pathname.startsWith('/stats.') || url.pathname.startsWith('/stats/')) {
         route = 'stats';
@@ -1930,7 +1948,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         // A Channels slot for Quest (src/channels.js): 302 to its current watch link, which VRChat resolves itself.
         route = 'channel';
         const r = await channels.resolve(url.pathname.slice(7).replace(/\/$/, ''));
-        metrics.inc('channel', r.id ? 'redirect' : r.error === 'unknown_channel' ? 'unknown' : 'unavailable');
+        // unreadable: the monitor's status can't be read, so every Quest Channels play is refused (#967; before, unavailable).
+        metrics.inc('channel', r.id ? 'redirect' : r.error === 'unknown_channel' ? 'unknown' : r.error === 'monitor_unreadable' ? 'unreadable' : 'unavailable');
         if (!r.id) {
           if (r.error === 'unknown_channel') return fail(res, 404, 'unknown_channel', 'No such channel.');
           return fail(res, 503, 'channel_unavailable', 'This channel is not playing right now.');

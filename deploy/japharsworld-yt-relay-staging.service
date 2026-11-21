@@ -14,8 +14,11 @@ ExecStart=/usr/bin/node /opt/japharsworld-yt-relay-staging/relay/worker.js
 CacheDirectory=japharsworld-yt-relay-staging
 Restart=always
 RestartSec=5
-# The cgroup counts the page cache of the stream cache: 2026-10-25 at 300M it held 64 MB anon + 199 MB file, hit the
-# limit 35k times (memory.events max), throttled sockets 9k times and swapped 29 MB. The Optiplex has ~30 GB free.
+# Kept at 300M on purpose (Everything-is-OK#968, 2026-11-21), below production's 4G with its 2 GB heap: the staging worker
+# should run short of memory first. Node sizes its heap from this cap (about 150 MB, inferred): an ordinary caption info
+# JSON (about 7 MB, about 24 MB to parse) fits, but one near INFO_MAX_BYTES (40 MB in src/captions.js, about 140 MB to
+# parse) may not, so a staging crash on such a file is staging's, not a sign for production. The cgroup counts the
+# stream cache's page cache too.
 MemoryMax=300M
 NoNewPrivileges=true
 ProtectSystem=strict

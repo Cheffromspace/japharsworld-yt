@@ -88,6 +88,9 @@ export const OUTCOME_FRAMES = [...OUTCOME_FRAME_SECONDS.map((s) => `f${s}`), 'fm
 export const OUTCOME_FAILS = ['einvalid', 'edenied', 'erate', 'eplayer', 'eunknown', 'timeout', 'after'];
 export const OUTCOMES = [...OUTCOME_FRAMES, ...OUTCOME_FAILS, 'left'];
 
+// The request routes of src/server.js handler (its route = '…' names), for http_5xx.
+export const HTTP_ROUTES = ['captions', 'channel', 'health', 'hls', 'hls-test', 'home', 'ops', 'other', 'outcome', 'page', 'quality', 'relay', 'report', 'search', 'stats', 'ticket'];
+
 // metric → [table, key check]
 export const METRICS = {
   search: ['daily', none],
@@ -111,7 +114,14 @@ export const METRICS = {
   allowance: ['daily', oneOf('credits', 'home_builds', 'home_mb')],
   home_start_s: ['daily', isSBucket],
   // Today's home relay use against its cap and the media workers connected, set every minute (numbers only).
-  channel: ['daily', oneOf('redirect', 'unavailable', 'unknown')], // /v1/ch/<key> (src/channels.js)
+  // /v1/ch/<key> (src/channels.js). unreadable (#967): the monitor's status can't be read; it was unavailable before.
+  channel: ['daily', oneOf('redirect', 'unavailable', 'unknown', 'unreadable')],
+  // A request answered 5xx that the service didn't mean to give (a route that threw; src/server.js BY_DESIGN_5XX), by
+  // route (#967). Routes are the server's fixed names.
+  http_5xx: ['daily', oneOf(...HTTP_ROUTES)],
+  // Different videos the service had trouble fetching or captioning, each once per kind and window (src/videofail.js,
+  // #967). The IDs stay in the service's memory; only the kind is counted.
+  video_fail: ['daily', oneOf('captions', 'build', 'home')],
   transfer: ['daily', oneOf('linode', 'home')], // MB sent by each host (src/net.js)
   home_today: ['gauge', oneOf('mb', 'builds', 'cap_mb', 'workers', 'cache_mb', 'hour_mb', 'hour_builds')],
   // Playback plans (src/adaptive.js): which plan each video got, masters served, 1080p upgrades started / served /

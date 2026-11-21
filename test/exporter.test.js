@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { openMetricsDb, recordPoll } from '../src/metrics.js';
+import { HTTP_ROUTES, openMetricsDb, recordPoll } from '../src/metrics.js';
 import { render } from '../metrics/exporter.js';
 
 const NOW = Date.parse('2026-10-20T15:00:00Z');
@@ -120,6 +120,15 @@ test('exporter: usage counters, histograms, polls, slots, flash checks, jobs, he
     has('eiok_events_total{metric="cc_unavailable",key="temporarily_unavailable"} 0');
     has('eiok_events_total{metric="cc_unavailable",key="failed"} 0');
     has('eiok_events_total{metric="unhandled_rejection",key=""} 0'); // Everything-is-OK#681
+    // Everything-is-OK#967: what the rules that replaced hypercare read, from 0.
+    assert.equal(HTTP_ROUTES.length, 16);
+    for (const route of HTTP_ROUTES) has(`eiok_events_total{metric="http_5xx",key="${route}"} 0`);
+    for (const kind of ['captions', 'build', 'home']) has(`eiok_events_total{metric="video_fail",key="${kind}"} 0`);
+    has('eiok_events_total{metric="channel",key="unreadable"} 0');
+    has('eiok_events_total{metric="play_fallback",key="build_failed"} 0');
+    has('eiok_events_total{metric="play_fallback",key="build_timeout"} 0');
+    has('eiok_events_total{metric="build",key="ok"} 0');
+    has('eiok_events_total{metric="home",key="ready"} 0');
     has('eiok_jobs_pending 1');
     has('eiok_jobs_oldest_pending_seconds{reason="daily"} 0');
     has('eiok_jobs_oldest_pending_seconds{reason="other"} 600');

@@ -1,6 +1,10 @@
 // Grafana Cloud dashboard and alert rules for Everything is OK (claude/monitoring.md), kept in the repo.
 //   node tools/grafana.mjs build    writes grafana/dashboard.json, grafana/tonight.json and grafana/alert-rules.json
-//   node tools/grafana.mjs push     uploads them to the stack (and the Discord contact points)
+//   node tools/grafana.mjs push     uploads them to the stack (and the Discord contact points). Until the production
+//                                   deploy that carries 76c083d is live (Everything-is-OK#967), it refuses: rules go out
+//                                   only with push-rule from the checkouts the #967 push plan names, and a full push
+//                                   would fire "Alert inputs missing" and blind the rules that read the new series.
+//                                   Then, once the four series named at FULL_PUSH_WAITS_FOR show: push --after-deploy.
 //   node tools/grafana.mjs push-rule <uid> [--dry-run]   that one alert rule only (no dashboards, contact points or
 //                                   other rules); --dry-run prints the request and sends nothing
 // push reads its settings from the environment or the repo's .env (gitignored; the environment wins):
@@ -37,7 +41,7 @@ const CRITICAL_RECEIVER = 'Everything is OK Discord critical';
 // 2026-10-26), so staging never shows on the dashboard or fires a production alert.
 const PROD = 'env!="staging"';
 export function prodOnly(expr) {
-  return expr.replace(/\b((?:eiok|probe|node)_[A-Za-z0-9_]+)(\{)?/g, (m, name, brace) => (brace ? `${name}{${PROD},` : `${name}{${PROD}}`));
+  return expr.replace(/\b((?:eiok|probe|node|namedprocess)_[A-Za-z0-9_]+)(\{)?/g, (m, name, brace) => (brace ? `${name}{${PROD},` : `${name}{${PROD}}`));
 }
 const scoped = (o) => (Array.isArray(o) ? o.map(scoped)
   : o && typeof o === 'object' ? Object.fromEntries(Object.entries(o).map(([k, v]) => [k, k === 'expr' && typeof v === 'string' ? prodOnly(v) : scoped(v)]))
@@ -611,10 +615,14 @@ export function alertRules(dsUid, { critical = false } = {}) {
     rule('eiok-captions-empty', 'No video has caption tracks', 'sum(increase(eiok_events_total{metric="cc_outcome",key="none"}[6h])) >= 5 unless on() sum(increase(eiok_events_total{metric="cc_outcome",key="tracks"}[6h])) >= 0.5', { forM: 0, summary: 'Over the last 6 hours, 5 or more videos looked up had no caption tracks and none had any: caption lookups may be failing silently. See `node tools/ops.mjs events --event captions_via,captions_source_failed` and the Captions panel.' }),
     // Every source throwing, which eiok-captions-empty can't see: resolve returns null, so nothing reaches cc_outcome, and
     // the answer is temporarily_unavailable. failed is a throw that reached the route. Not list_unavailable: no free source
-    // online (15 on 10-28), which the worker alerts cover. Neither key had ever counted by 2026-10-31 (7 days of rows, 82
-    // list requests; 1 captions_source_failed in 5.8 days of journal), so any threshold replays as 0 firings and 3 is a
-    // judgement. It moves only when someone asks for captions, about 12 times a day, so a quiet day can hide a failure.
-    rule('eiok-captions-failing', 'Caption lookups failing', 'sum(increase(eiok_events_total{metric="cc_unavailable",key=~"temporarily_unavailable|failed"}[6h])) >= 3', { forM: 0, summary: '3 or more caption requests got no captions (one video or room can account for all of them). See `node tools/ops.mjs events --event captions_source_failed` and the Captions panel.' }),
+    // online (15 on 10-28), which the worker alerts cover. Neither key had ever counted by 2026-10-31.
+    // Everything-is-OK#967 (2026-11-21): it fired at 16:14Z on 4 requests from one room for one video, a livestream archive
+    // YouTube had not finished, during the home worker's crash (#968): it counted requests. Now different videos: the
+    // service counts a video once per 6 h when a visitor's caption request got none (video_fail captions,
+    // src/videofail.js; the IDs stay in its memory). 3 different videos in 6 h: before 2026-11-21 neither key had ever
+    // counted, and that day's 4 answers were one video. Until this counter was live (stage 1 of #967) it counted failing
+    // half-hours; one room asking about one stuck video for hours can no longer fire it.
+    rule('eiok-captions-failing', 'Caption lookups failing', 'sum(increase(eiok_events_total{metric="video_fail",key="captions"}[6h])) >= 3', { forM: 0, summary: 'Captions are failing: {{ printf "%.0f" $values.A.Value }} different videos got no captions when visitors asked, in the last 6 hours (each video counted once, however often it was asked for). One video YouTube can\'t serve does not fire this. Look: `node tools/ops.mjs events --event captions_source_failed,captions_via`, the Captions panel, and whether the home worker restarted (eiok-unit-restarted).' }),
     // Owner, 2026-10-26: the flash worker's YouTube refusals (metrics/exporter.js, yt_refusal flash:<class>), which the
     // search service's own refusal alert (src/refusal.js, the relay worker's) never sees. As there: 3 or more bot, rate,
     // PO-token or 403 refusals, here within 30 minutes (the worker runs every 20).
@@ -626,6 +634,35 @@ export function alertRules(dsUid, { critical = false } = {}) {
     rule('eiok-home-cap', 'Home relay MB near its daily cap', 'max(eiok_home_today{key="mb"}) / max(eiok_home_today{key="cap_mb"}) >= 0.75', { forM: 5, summary: 'The home relay has used 75 % of HOME_DAILY_MB today. At the cap (reset at midnight Chicago), long videos go to Tunelio (credits; long HLS builds can fail on Quest) or youtube.com. `node tools/ops.mjs state` shows both caps.' }),
     rule('eiok-home-builds', 'Home relay builds near their daily cap', 'max(eiok_home_today{key="builds"}) / max(eiok_home_today{key="cap_builds"}) >= 0.9', { forM: 5, summary: 'The home relay has used 90 % of HOME_DAILY_BUILDS today. At the cap (reset at midnight Chicago), long videos go to Tunelio (credits; long HLS builds can fail on Quest) or youtube.com. `node tools/ops.mjs state` shows both caps.' }),
     rule('eiok-home-worker', 'Home relay has no worker', '1 - max(eiok_home_today{key="workers"})', { forM: 15, summary: 'No media worker (the Optiplex relay) connected for 15 minutes: home relay plays fall back to Tunelio or youtube.com.' }),
+    // Everything-is-OK#967 (2026-11-21, the owner: stop the hourly hypercare timer and fold what is useful into Grafana).
+    // These were hypercare's journal counts. The service counts different videos for them (video_fail, once per video
+    // and hour: src/videofail.js; the IDs stay in its memory), and each fires only when the thing also stopped working in
+    // the hour (nothing built, nothing ready), so one video that can't be fetched, or a few among many that work, don't.
+    // Builds: different videos whose Tunelio build /create accepted then failed or timed out (build_failed: 524, 503, no
+    // answer; warm-ups included). The provider refusing a video (tunelio_failed, its 409 "not ready") is not counted:
+    // the service alerts on its own when Tunelio fails (5xx, 401, 402, src/playback.js). Hypercare's version counted 524s.
+    rule('eiok-builds-failing', 'Video builds failing at Tunelio', 'sum(increase(eiok_events_total{metric="video_fail",key="build"}[1h])) >= 3 unless on() sum(increase(eiok_events_total{metric="build",key="ok"}[1h])) >= 0.5', { forM: 0, summary: 'Tunelio builds are failing: {{ printf "%.0f" $values.A.Value }} different videos\' builds failed or timed out in the last hour, and no Tunelio build succeeded in that hour. One video Tunelio refuses does not fire this. Look: `node tools/ops.mjs events --event build_failed,tunelio_error,tunelio_link` and the failed builds on the dashboard.' }),
+    // Home: different videos whose home session failed (src/home.js #fail, not a growing playlist given up on purpose).
+    rule('eiok-home-failing', 'Home relay plays failing', 'sum(increase(eiok_events_total{metric="video_fail",key="home"}[1h])) >= 3 unless on() sum(increase(eiok_events_total{metric="home",key="ready"}[1h])) >= 0.5', { forM: 0, summary: 'The home relay is failing: {{ printf "%.0f" $values.A.Value }} different videos failed at home in the last hour and none got ready. One video that fails at home does not fire this. Look: `node tools/ops.mjs events --event home_failed,home_ready`, then `journalctl -u japharsworld-yt-relay -n 80` on the Optiplex.' }),
+    // Channels: a hidden slot answers 503 by design (#776); hypercare's limit, 10 in an hour (#863: one visitor on a stale
+    // list retries about six times, our own checks add three). Its two firings ever (#520, #554) were our own sweeps.
+    rule('eiok-channels-refused', 'Many Channels plays refused', 'sum(increase(eiok_events_total{metric="channel",key="unavailable"}[1h])) >= 10', { forM: 0, summary: '{{ printf "%.0f" $values.A.Value }} Channels plays were refused in the last hour: slots the list hides (stale lists, our own checks). Look: `node tools/ops.mjs events --event channel_refused`.' }),
+    // A monitor status the service can't read refuses every Quest Channels play (src/channels.js monitor_unreadable,
+    // logged at most once a minute); hypercare's CHMON fired on the first (#863). Counted as channel unreadable (#967).
+    rule('eiok-channels-unreadable', 'Channels status unreadable', 'sum(increase(eiok_events_total{metric="channel",key="unreadable"}[1h])) >= 0.5', { forM: 0, summary: 'The search service can\'t read the Channels monitor\'s status: {{ printf "%.0f" $values.A.Value }} Quest Channels plays were refused for it in the last hour, and every one will be until it is fixed. Look: `node tools/ops.mjs events --event channel_refused` (why status_unreadable or status_missing), then the monitor database on the Linode.' }),
+    // A request answered 5xx that the service didn't mean to give: a route that threw (src/server.js BY_DESIGN_5XX
+    // lists the 5xx answers given on purpose, which have alerts of their own or aren't faults). Hypercare counted these
+    // from the journal (3 an hour); none was seen in the reads of 2026-11-19 to 11-21. At the first one (#967, item 5).
+    rule('eiok-server-errors', 'Requests answered 5xx', 'sum by (key) (increase(eiok_events_total{metric="http_5xx"}[15m])) >= 0.5', { forM: 0, severity: 'critical', summary: '{{ printf "%.0f" $values.A.Value }} {{ $labels.key }} requests were answered 5xx in the last 15 minutes: a fault in the search service (a route that threw), not a refusal it gives on purpose. Look: `node tools/ops.mjs events --event error` for the route and the error.' }),
+    // A crash (Everything-is-OK#967, #968): systemd restarts the search service in 3 s and the home worker in 5 s, between
+    // two 60 s scrapes, so nothing else sees it (on 2026-11-21 the worker died out of memory at 16:12Z and was
+    // back about 5 s later, and no alert named it). The counter is systemd's own NRestarts (Alloy's systemd enable_restarts,
+    // deploy/alloy/*.alloy), which counts the restarts its Restart= makes.
+    rule('eiok-unit-restarted', 'Service crashed and restarted', 'sum by (host, name) (increase(node_systemd_service_restart_total{name=~"japharsworld-yt.service|japharsworld-yt-relay.service"}[15m]))', { forM: 0, severity: 'critical', summary: '{{ $labels.name }} on {{ $labels.host }} stopped on its own and systemd started it again, in the 15 minutes before this alert ({{ printf "%.0f" $values.A.Value }} time(s)). Plays and caption jobs it was holding were dropped. Look: `journalctl -u {{ $labels.name }} -n 80` on that host for why it stopped (out of memory, a crash).' }),
+    // The worker's memory (Everything-is-OK#967, #968): Alloy sends the production worker's resident and swapped bytes
+    // (namedprocess_namegroup_memory_bytes, group relay, deploy/alloy/optiplex.alloy), but no rule reads them yet: the
+    // run that crashed peaked at its 1G cap, so a threshold set now could fire the moment it is pushed. The rule comes as
+    // a follow-up once a day of the series has been read (the coordinator tracks it on #968).
     // Spend rate (Everything-is-OK#478): fires at the service's home-first point of the hour budget (the defaults of
     // SPEND_HOUR_CREDITS and SPEND_HOME_FIRST_PERCENT, src/spend.js: 75 % of 1500 = 1125), where new plays start going
     // home first. Below it is normal use of the 100k a month plan (owner, 2026-11-04); the busiest real hour was ~310
@@ -640,7 +677,7 @@ export function alertRules(dsUid, { critical = false } = {}) {
     // about 27 % faster than that (10-25 to 10-31, cause unverified), so it can fire late.
     rule('eiok-credits-pace', 'Credits run out before renewal', '(sum(increase(eiok_events_total{metric="credits"}[3d])) / 3) * max(eiok_poll{source="tunelio_plan",metric="days_to_renewal"}) - max(eiok_credits_remaining) > 0', { forM: 60, summary: 'At the last 3 days’ spend, the Tunelio credits run out before the plan renews (TUNELIO_RENEWS_DAY). The pacer moves plays home while home has room; at 0 they go to youtube.com at 360p.' }),
     // Inputs the rules above and below need. Without them those rules see no data and stay quiet, which looks like health.
-    rule('eiok-alert-inputs-missing', 'Alert inputs missing', 'absent(eiok_home_today{key="cap_builds"}) or absent(eiok_service_memory_limit_bytes) or absent(eiok_poll{source="tunelio_plan",metric="days_to_renewal"}) or absent(eiok_events_total{metric="cc_outcome",key="none"})', { forM: 30, summary: 'A value that the build cap, service memory, credit pace or captions alert needs has been missing for 30 minutes, so that alert is blind. Expected while the search service is down. Otherwise check japharsworld-yt-exporter (STATS_TOKEN, cgroup) and the metrics poller on the Linode.' }),
+    rule('eiok-alert-inputs-missing', 'Alert inputs missing', 'absent(eiok_home_today{key="cap_builds"}) or absent(eiok_service_memory_limit_bytes) or absent(eiok_poll{source="tunelio_plan",metric="days_to_renewal"}) or absent(eiok_events_total{metric="cc_outcome",key="none"}) or absent(node_systemd_service_restart_total{host="linode",name="japharsworld-yt.service"}) or absent(node_systemd_service_restart_total{host="optiplex",name="japharsworld-yt-relay.service"}) or absent(eiok_events_total{metric="video_fail",key="captions"}) or absent(eiok_events_total{metric="http_5xx",key="ticket"})', { forM: 30, summary: 'A value that the build cap, service memory, credit pace, captions, crash-restart or server-errors alert needs has been missing for 30 minutes, so that alert is blind. Expected while the search service is down, and for a restart counter while its host is off. Otherwise check japharsworld-yt-exporter (STATS_TOKEN, cgroup) and the metrics poller on the Linode, or, for the restart counters, Alloy on the Linode or the Optiplex (`systemctl status alloy`, `journalctl -u alloy`).' }),
     // tunelio_plan is written mid-pass with no outside call needed (metrics/poll.js renewalPass). The timer is 15 min; the
     // widest gap in 523 passes to 2026-10-31 was 18 min. A pass stuck or failing before it leaves the old value exported, so
     // this sees it, but not a failure after it. A value missing altogether is eiok-alert-inputs-missing's.
@@ -784,6 +821,24 @@ export async function pushRule(uid, { dryRun = false, call = api, dsUid = null, 
     state: live?.state ?? null, health: live?.health ?? null, lastEvaluation: live?.lastEvaluation ?? null };
 }
 
+// Everything-is-OK#967 (the verifier's R2-M1): the rules here read series production sends only after the deploy that
+// carries 76c083d (video_fail, http_5xx, channel unreadable) and after both hosts run the new Alloy configs (the restart
+// counters). A full `push` before then fires "Alert inputs missing" within 30 minutes and blinds the rules that read the
+// new series. So `push` refuses until it is told the deploy is live (--after-deploy); push-rule is not affected.
+// Before `push --after-deploy`, these four must show in Grafana (inputs-missing's new terms):
+//   node_systemd_service_restart_total{host="linode",name="japharsworld-yt.service"}
+//   node_systemd_service_restart_total{host="optiplex",name="japharsworld-yt-relay.service"}
+//   eiok_events_total{metric="video_fail",key="captions"}
+//   eiok_events_total{metric="http_5xx",key="ticket"}
+// Then remove the guard in a commit of its own: FULL_PUSH_WAITS_FOR = null here, and the guard test in
+// test/grafana.test.js and the push-step sentence in claude/monitoring.md with it. Until then every full push needs
+// the flag.
+export const FULL_PUSH_WAITS_FOR = { commit: '76c083d', issue: 'Everything-is-OK#967' };
+export function fullPushRefusal(args, waits = FULL_PUSH_WAITS_FOR) {
+  if (!waits || args.includes('--after-deploy')) return null;
+  return `push refused: these rules need the production deploy that carries ${waits.commit} (${waits.issue}) and the new Alloy configs on the Linode and the Optiplex; pushed earlier, "Alert inputs missing" fires and the rules that read the new series go blind. Push single rules with push-rule meanwhile (claude/monitoring.md, Setup). Once the deploy is live and its series show in Grafana: node tools/grafana.mjs push --after-deploy (and set FULL_PUSH_WAITS_FOR to null).`;
+}
+
 // promSource() through another API function (pushRule's injectable `call`).
 async function promSourceVia(call) {
   if (call === api) return promSource();
@@ -798,6 +853,8 @@ if (cmd === 'build') {
   writeFileSync('grafana/alert-rules.json', `${JSON.stringify(alertRules('${ds}', { critical: true }), null, 1)}\n`);
   console.log('wrote grafana/dashboard.json, grafana/tonight.json, grafana/alert-rules.json');
 } else if (cmd === 'push') {
+  const refused = fullPushRefusal(process.argv.slice(3));
+  if (refused) { console.error(refused); process.exit(2); }
   push().catch((err) => { console.error(err.message); process.exitCode = 1; });
 } else if (cmd === 'push-rule') {
   const args = process.argv.slice(3);
@@ -805,6 +862,6 @@ if (cmd === 'build') {
     .then((r) => console.log(JSON.stringify(r, null, 1)))
     .catch((err) => { console.error(err.message); process.exitCode = 1; });
 } else if (cmd) {
-  console.error('usage: node tools/grafana.mjs build|push|push-rule <uid> [--dry-run]');
+  console.error('usage: node tools/grafana.mjs build|push [--after-deploy]|push-rule <uid> [--dry-run]');
   process.exit(2);
 }

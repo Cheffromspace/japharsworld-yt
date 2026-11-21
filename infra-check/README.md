@@ -98,6 +98,8 @@ systemctl --user daemon-reload
 systemctl --user enable --now yt-infra-triage.timer
 journalctl --user -u yt-infra-triage -e                 # quiet while nothing critical fires
 
+# 11. Hourly hypercare: RETIRED 2026-11-21 (the timer was disabled at 17:04:04Z, Everything-is-OK#967); kept until
+#     the removal commit. Do not run these lines.
 # 11. Hourly hypercare (world #208; needs steps 1-8, no Claude, no sudo)
 node $KIT/hypercare.mjs --dry-run                       # the real checks; prints what it would post and file
 cp $KIT/yt-hypercare.service $KIT/yt-hypercare.timer ~/.config/systemd/user/
@@ -118,7 +120,8 @@ systemctl --user list-timers yt-hypercare.timer
   <host>" card on the owner's board each week, count only, no package names (owner, 2026-11-19; rules in
   `claude/monitoring.md`, "Security updates card"). The check itself never installs or reboots anything.
 - Reports: `~/yt-infra-check/reports/`, raw run output: `~/yt-infra-check/logs/` (kept 26 weeks).
-- Hourly hypercare (`hypercare.mjs`, rules in `claude/monitoring.md`, "Hourly hypercare"): read-only counts every hour
+- Retired 2026-11-21 (the timer was disabled at 17:04:04Z, Everything-is-OK#967); kept until the removal commit:
+  hourly hypercare (`hypercare.mjs`, rules in `claude/monitoring.md`, "Hourly hypercare"): read-only counts every hour
   at :17; quiet when normal, otherwise Discord plus a world-repo issue (an `owner-task` card when you have to act).
   Each limit can be overridden in `~/yt-infra-check/.env` as `HYPERCARE_<NAME>` (`LIMITS` in `hypercare.mjs`), e.g.
   `HYPERCARE_CH503` for refused Channels slots, counted apart from other 5xx (Everything-is-OK#863). The 5xx count takes

@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import * as grafana from '../tools/grafana.mjs';
 import { CHICAGO_HOUR, RETIRED_RULES, alertRules, contactPoint, dashboard, prodOnly, pushRule, tonight } from '../tools/grafana.mjs';
 import { METRICS, OUTCOME_FAILS } from '../src/metrics.js';
@@ -322,12 +326,14 @@ test('eiok-captions-empty and eiok-poller-stale: the thresholds, the input check
   assert.ok(expr('eiok-alert-inputs-missing').includes('metric="cc_outcome",key="none"'));
 });
 
-// The sources all throwing never reaches cc_outcome (test/captionchain.test.js pins the reason this reads).
-test('eiok-captions-failing: 3 in 6 h of the two keys that mean a failure, not list_unavailable or no_captions', () => {
+// The sources all throwing never reaches cc_outcome (test/captionchain.test.js pins the reason this reads). Since
+// Everything-is-OK#967 it reads different videos (video_fail captions: the server counts a video once per 6 h when a
+// request got temporarily_unavailable or failed, not list_unavailable or no_captions; test/videofail.test.js).
+test('eiok-captions-failing: 3 different videos in 6 h whose caption requests got none', () => {
   const r = alertRules('ds').find((x) => x.uid === 'eiok-captions-failing');
   const e = r.data[0].model.expr;
-  assert.match(e, /key=~"temporarily_unavailable\|failed"\}\[6h\]\)\) >= 3$/);
-  assert.doesNotMatch(e, /list_unavailable|no_captions/);
+  assert.equal(e, 'sum(increase(eiok_events_total{env!="staging",metric="video_fail",key="captions"}[6h])) >= 3');
+  assert.match(readFileSync(new URL('../src/server.js', import.meta.url), 'utf8'), /if \(!c\.available && c\.reason === 'temporarily_unavailable'\) videoFails\.count\('captions', last\.videoId\);/);
   assert.equal(r.labels.severity, 'warning');
 });
 
@@ -356,4 +362,28 @@ test('push-rule sends only that rule to the alert-rules API, and --dry-run sends
   assert.deepEqual([r.uid, r.state, r.health], ['eiok-spend-rate', 'inactive', 'ok']);
   assert.equal(writes.find(([m]) => m === 'POST') && calls.filter(([m, p]) => m === 'POST' && p.includes('alert-rules')).length, 1);
   await assert.rejects(pushRule('no-such-rule', { dryRun: true, call }), /no alert rule/);
+});
+
+// Everything-is-OK#967 (the verifier's R2-M1): a full push before the deploy that carries 76c083d would fire "Alert
+// inputs missing" and blind four rules, so `push` refuses until told the deploy is live; push-rule is not affected.
+test('push refuses until the deploy is live (--after-deploy), names why and what to do; push-rule is not guarded', () => {
+  const r = grafana.fullPushRefusal([]);
+  assert.match(r, /^push refused: these rules need the production deploy that carries 76c083d \(Everything-is-OK#967\)/);
+  assert.match(r, /push-rule/);
+  assert.match(r, /push --after-deploy/);
+  assert.equal(grafana.fullPushRefusal(['--after-deploy']), null);
+  assert.equal(grafana.fullPushRefusal([], null), null, 'after the deploy, FULL_PUSH_WAITS_FOR = null lifts it');
+  assert.deepEqual(grafana.FULL_PUSH_WAITS_FOR, { commit: '76c083d', issue: 'Everything-is-OK#967' });
+  // The command itself stops before any request (no Grafana settings needed to see it).
+  // The child runs in an empty folder (grafana.mjs reads .env from its working folder, so a checkout's real .env is out
+  // of reach) with GRAFANA_URL pointing at a closed local port: a regressed guard can never push anything from here
+  // (the round 3 verifier's R3-L4).
+  const empty = mkdtempSync(join(tmpdir(), 'grafana-guard-'));
+  const script = fileURLToPath(new URL('../tools/grafana.mjs', import.meta.url));
+  const run = spawnSync(process.execPath, [script, 'push'], { cwd: empty, encoding: 'utf8', timeout: 20_000,
+    env: { PATH: process.env.PATH, GRAFANA_URL: 'http://127.0.0.1:9', GRAFANA_SA_TOKEN: 'not-a-token' } });
+  try { rmSync(empty, { recursive: true, force: true }); } catch {}
+  assert.equal(run.status, 2, run.stderr);
+  assert.match(run.stderr, /^push refused: /);
+  assert.match(readFileSync(new URL('../claude/monitoring.md', import.meta.url), 'utf8'), /Until the production deploy that\s+carries 76c083d is live \(Everything-is-OK#967\), `push` refuses/);
 });

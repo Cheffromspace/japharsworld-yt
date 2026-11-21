@@ -202,3 +202,105 @@ test('bootstrap.sh: a new filter restarts Caddy, and an existing site file for t
   assert.ok(s.includes('if [ "$caddy_filter_added" = 1 ]; then systemctl restart caddy; else systemctl reload caddy; fi'));
   assert.ok(s.includes('grep -qF "$DOMAIN" /etc/caddy/sites/japharsworld-yt.caddy 2>/dev/null || echo "$site_block" >'));
 });
+
+// Everything-is-OK#967: a config Alloy can't load blinds every metric of the host at once, so alloy-config.sh checks it
+// with `alloy fmt` first and puts the previous one back if Alloy doesn't stay up. Fakes: `alloy fmt` refuses a file
+// with BAD-SYNTAX; Alloy "runs" only while the installed file has no BAD-ARG (as an unknown argument stops it at load).
+function runAlloyConfig(next, { prev = 'old config\n', restart = true, installFails = false } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'alloy-config-'));
+  try {
+    mkdirSync(join(dir, 'bin'));
+    // installFails: 'all' (every copy) or 'prev' (only putting .prev back). A failing copy writes part of the file
+    // first, as GNU install does on a full disk, so a test sees whether a part-written config could land in place.
+    if (installFails) writeFileSync(join(dir, 'bin', 'install'), `#!/usr/bin/env bash
+src="\${@: -2:1}"; dst="\${@: -1}"
+if [ "${installFails}" = all ] || [[ "$src" == *.prev ]]; then printf 'half a con' > "$dst"; echo "install: no space left" >&2; exit 1; fi
+exec /usr/bin/install "$@"
+`, { mode: 0o755 });
+    writeFileSync(join(dir, 'bin', 'alloy'), '#!/usr/bin/env bash\n[ "$1" = fmt ] && ! grep -q BAD-SYNTAX "$2"\n', { mode: 0o755 });
+    writeFileSync(join(dir, 'bin', 'sleep'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+    // Run from the temp folder, so the fake systemctl's files are relative.
+    writeFileSync(join(dir, 'bin', 'systemctl'), `#!/usr/bin/env bash
+echo "$*" >> calls
+case "$1" in
+  restart) exit 0 ;;
+  is-active) ! grep -q BAD-ARG config.alloy || { [ "$2" = --quiet ] || echo failed; exit 3; }; [ "$2" = --quiet ] || echo active ;;
+esac
+`, { mode: 0o755 });
+    if (prev != null) writeFileSync(join(dir, 'config.alloy'), prev);
+    writeFileSync(join(dir, 'new.alloy'), next);
+    writeFileSync(join(dir, 'deploy-alloy-config.sh'), script('alloy-config.sh'));
+    writeFileSync(join(dir, 'run.sh'), `PATH="$PWD/bin:$PATH"\nbash deploy-alloy-config.sh new.alloy config.alloy ${restart ? 'restart' : ''}\n`);
+    const r = spawnSync('bash', ['run.sh'], { cwd: dir, encoding: 'utf8' });
+    const read = (f) => (existsSync(join(dir, f)) ? readFileSync(join(dir, f), 'utf8') : null);
+    return { status: r.status, out: r.stdout + r.stderr, conf: read('config.alloy'), prev: read('config.alloy.prev'), calls: read('calls') ?? '', leftover: read('config.alloy.new') };
+  } finally {
+    try { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  }
+}
+
+test('alloy-config.sh (#967): a good config is installed and Alloy restarted on it; the old one is kept as .prev', () => {
+  const r = runAlloyConfig('new config\n');
+  assert.equal(r.status, 0, r.out);
+  assert.equal(r.conf, 'new config\n');
+  assert.equal(r.prev, 'old config\n');
+  assert.match(r.calls, /^restart alloy\n(is-active --quiet alloy\n){3}$/);
+});
+
+test('alloy-config.sh (#967): a config alloy fmt can\'t read changes nothing and restarts nothing', () => {
+  const r = runAlloyConfig('BAD-SYNTAX {\n');
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /alloy fmt can't read/);
+  assert.equal(r.conf, 'old config\n');
+  assert.equal(r.calls, '');
+});
+
+test('alloy-config.sh (#967): a config Alloy won\'t run with is replaced by the previous one, and the setup fails loud', () => {
+  const r = runAlloyConfig('BAD-ARG = true\n');
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /did not stay up .* the previous config is back \(alloy active\)/);
+  assert.equal(r.conf, 'old config\n');
+  assert.match(r.calls, /restart alloy\nis-active --quiet alloy\nrestart alloy\nis-active alloy\n$/);
+});
+
+test('alloy-config.sh (#967, verifier L7): a failed install restarts nothing and fails, rather than saying "active with" the new config', () => {
+  const r = runAlloyConfig('new config\n', { installFails: 'all' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /could not install new\.alloy as config\.alloy: Alloy not restarted/);
+  assert.doesNotMatch(r.out, /active with/);
+  assert.equal(r.calls, '');
+  // The verifier's R2-L5: the copy goes to a file beside it and is renamed, so a part-written copy never replaces the
+  // installed config (Alloy's next start would load it).
+  assert.equal(r.conf, 'old config\n', 'the installed config is whole');
+  assert.equal(r.leftover, null, 'no part-written file left behind');
+  assert.match(script('alloy-config.sh'), /run `bash deploy\/alloy-setup\.sh <linode\|optiplex\|staging>` by hand/, 'the manual re-run is written down');
+});
+
+test('alloy-config.sh (#967, verifier R2-L5): when putting .prev back fails too, it says so and what to do, and claims nothing', () => {
+  const r = runAlloyConfig('BAD-ARG = true\n', { installFails: 'prev' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /putting config\.alloy\.prev back failed: config\.alloy is still the new one\. Copy config\.alloy\.prev over it by hand, then systemctl restart alloy/);
+  assert.doesNotMatch(r.out, /the previous config is back/);
+  assert.equal(r.conf, 'BAD-ARG = true\n', 'still the new one, whole, not a part-written .prev');
+  assert.equal(r.prev, 'old config\n');
+});
+
+test('alloy-config.sh (#967): without "restart" it installs only (credentials not filled in yet)', () => {
+  const r = runAlloyConfig('new config\n', { restart: false, prev: null });
+  assert.equal(r.status, 0, r.out);
+  assert.equal(r.conf, 'new config\n');
+  assert.equal(r.calls, '');
+});
+
+test('alloy-setup.sh (#967): the config goes in only through alloy-config.sh, and a refusal stops the setup', () => {
+  const s = script('alloy-setup.sh');
+  assert.doesNotMatch(s, /^\s*install -m 644 "\$HERE\/alloy\/\$ROLE\.alloy"/m, 'no direct install');
+  assert.doesNotMatch(s, /^\s*systemctl restart alloy/m, 'no restart without the check');
+  assert.match(s, /bash "\$HERE\/alloy-config\.sh" "\$HERE\/alloy\/\$ROLE\.alloy" \/etc\/alloy\/config\.alloy restart \|\| exit 1/);
+  assert.match(s, /bash "\$HERE\/alloy-config\.sh" "\$HERE\/alloy\/\$ROLE\.alloy" \/etc\/alloy\/config\.alloy \|\| exit 1/);
+  // Both update scripts run the setup for this file too (its path starts deploy/alloy), and neither restarts a service for it.
+  assert.match(script('update.sh'), /alloy_changed=\$\(echo "\$changed" \| grep -E '\^deploy\/alloy'/);
+  assert.match(script('relay-update.sh'), /grep -qE '\^deploy\/alloy'; then bash deploy\/alloy-setup\.sh optiplex/);
+  assert.match(script('update.sh'), /\|deploy\/alloy\|deploy\/update\\\.sh\$\|/, 'update.sh: deploy/alloy* is not a search-service change');
+  assert.doesNotMatch(script('relay-update.sh').match(/grep -qE "\^\(relay[^"]*"/)[0], /alloy/, 'relay-update.sh: the worker restart list leaves deploy/alloy* out');
+});

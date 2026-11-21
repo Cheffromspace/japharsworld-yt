@@ -36,7 +36,8 @@ fi
 chown root:root "$ENVF"; chmod 600 "$ENVF"
 
 install -d -m 755 /var/lib/japharsworld-yt-deploy   # deploy markers (deploy/deploy-record.sh, textfile collector)
-install -m 644 "$HERE/alloy/$ROLE.alloy" /etc/alloy/config.alloy
+# The config goes in below through deploy/alloy-config.sh: `alloy fmt` first, and the previous one back if Alloy doesn't
+# stay up with it (Everything-is-OK#967).
 # The Debian package reads /etc/default/alloy; point it at our env file too.
 mkdir -p /etc/systemd/system/alloy.service.d
 cat > /etc/systemd/system/alloy.service.d/japharsworld-yt.conf <<EOT
@@ -47,9 +48,10 @@ systemctl daemon-reload
 
 if grep -q '^GRAFANA_CLOUD_TOKEN=.\+' "$ENVF" && grep -q '^GRAFANA_PROM_URL=.\+' "$ENVF"; then
   systemctl enable -q alloy
-  systemctl restart alloy
+  bash "$HERE/alloy-config.sh" "$HERE/alloy/$ROLE.alloy" /etc/alloy/config.alloy restart || exit 1
   echo "Alloy ($ROLE): $(systemctl is-active alloy). Logs: journalctl -u alloy"
 else
+  bash "$HERE/alloy-config.sh" "$HERE/alloy/$ROLE.alloy" /etc/alloy/config.alloy || exit 1
   systemctl disable -q --now alloy 2>/dev/null || true
   echo "Alloy installed but stopped: fill in $ENVF, then: bash $HERE/alloy-setup.sh $ROLE"
 fi

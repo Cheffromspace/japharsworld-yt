@@ -156,3 +156,88 @@ test('with a source range, info and subtitles go out from the same address', asy
   assert.equal(seen[0], seen[1]);
   assert.match(seen[0], /^2600:3c06:e001:35e:/);
 });
+
+// ---- Everything-is-OK#968: the server's own yt-dlp path refuses files too large to read ----
+import { readdir, mkdir } from 'node:fs/promises';
+import { CaptionChain } from '../src/captionchain.js';
+
+// A fake yt-dlp for the server's Captions: `info` for list calls, `track` text for track calls (json3 under the key).
+function serverYtdlp(dataDir, { info, track = JSON.stringify({ events: [{ tStartMs: 0, dDurationMs: 1000, segs: [{ utf8: 'hi' }] }] }) }) {
+  const calls = [];
+  const runner = async (cmd, args) => {
+    calls.push(args);
+    if (args.includes('--write-info-json')) {
+      const id = args.at(-1).split('v=')[1];
+      await writeFile(join(dataDir, 'info', `${id}.info.json`), JSON.stringify(info));
+    } else {
+      const id = args[args.indexOf('--load-info-json') + 1].split(/[\\/]/).pop().replace('.json', '');
+      const key = args[args.indexOf('--sub-langs') + 1].slice(1, -1);
+      await writeFile(join(dataDir, 'subs', `${id}.${key}.json3`), track);
+    }
+    return '';
+  };
+  return { runner, calls };
+}
+const padded = { language: 'en', subtitles: {}, automatic_captions: {}, formats: [{ fragments: Array.from({ length: 300 }, (_, i) => ({ url: 'u'.repeat(900) + i })) }] };
+
+test('#968: the server path refuses an oversized info JSON, deletes it, and the chain answers "not available right now"', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jyt-968-'));
+  const store = new Store({ path: ':memory:', shards: 1, pool: 10, pinHours: 1 });
+  const y = serverYtdlp(dataDir, { info: padded });
+  const local = new Captions({ store, ytdlp: 'yt-dlp', dataDir, runner: y.runner, attempts: [[]], maxInfoBytes: 64 * 1024 });
+  const err = await local.info('vid968info1').then(() => null, (e) => e);
+  assert.ok(err, 'refused, not parsed');
+  assert.equal(err.code, 'info_too_large');
+  assert.deepEqual(await readdir(join(dataDir, 'info')), [], 'nothing kept in data/info');
+  // The legacy route answers the same "not available right now", uncached.
+  assert.equal((await local.get('vid968info2', 'en')).reason, 'temporarily_unavailable');
+  assert.equal(store.captionGet('vid968info2', 'en', 3600_000), null);
+
+  const logs = [];
+  const chain = new CaptionChain({ store, local, log: (l) => logs.push(l) });
+  const r = await chain.get('vid968info3', 'en');
+  assert.equal(r.available, false);
+  assert.equal(r.reason, 'temporarily_unavailable', 'the existing code, not no_captions');
+  assert.deepEqual(logs.filter((l) => l.event === 'captions_source_failed').map((l) => [l.via, l.message]), [['local', 'info_too_large']]);
+  assert.equal(chain.list('vid968info3'), null, 'no empty list cached');
+});
+
+test('#968: the server path refuses an oversized caption track and deletes it', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jyt-968-'));
+  await mkdir(join(dataDir, 'subs'), { recursive: true });
+  const store = new Store({ path: ':memory:', shards: 1, pool: 10, pinHours: 1 });
+  const long = JSON.stringify({ events: Array.from({ length: 200 }, (_, i) => ({ tStartMs: i * 1000, dDurationMs: 900, segs: [{ utf8: 'word ' }] })) });
+  const y = serverYtdlp(dataDir, { info: { language: 'en', subtitles: { en: [{}] }, automatic_captions: {} }, track: long });
+  const local = new Captions({ store, ytdlp: 'yt-dlp', dataDir, runner: y.runner, attempts: [[]], maxTrackBytes: 1024 });
+  const { file } = await local.info('vid968trak1');
+  const err = await local.cues('vid968trak1', file, { key: 'en', auto: false }).then(() => null, (e) => e);
+  assert.ok(err, 'refused, not parsed');
+  assert.equal(err.code, 'track_too_large');
+  assert.deepEqual(await readdir(join(dataDir, 'subs')), [], 'the track file is deleted');
+  assert.equal((await local.get('vid968trak2', 'en')).reason, 'temporarily_unavailable', 'legacy route: not available right now');
+  assert.deepEqual(await readdir(join(dataDir, 'subs')), []);
+});
+
+// The cached-file branch (src/captions.js info(), a <id>.json kept from an earlier lookup within the hour): an oversized
+// one is refused and deleted, never parsed, and yt-dlp is not asked (verifier round 1 of #968, Medium 2).
+test('#968: the server path refuses and deletes an oversized cached info JSON; the legacy route says not available right now', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jyt-968-'));
+  await mkdir(join(dataDir, 'info'), { recursive: true });
+  const store = new Store({ path: ':memory:', shards: 1, pool: 10, pinHours: 1 });
+  let calls = 0;
+  const runner = async () => { calls++; throw new Error('yt-dlp must not run for a cached file'); };
+  const local = new Captions({ store, ytdlp: 'yt-dlp', dataDir, runner, attempts: [[]], maxInfoBytes: 64 * 1024 });
+  const cached = (id) => writeFile(join(dataDir, 'info', `${id}.json`), JSON.stringify({ ...padded, subtitles: { en: [{}] } }));
+  await cached('vid968cach1');
+  const err = await local.info('vid968cach1').then(() => null, (e) => e);
+  assert.ok(err, 'refused, not parsed');
+  assert.equal(err.code, 'info_too_large');
+  assert.equal(calls, 0, 'no yt-dlp call for it');
+  assert.deepEqual(await readdir(join(dataDir, 'info')), [], 'the cached copy is deleted');
+  await cached('vid968cach2');
+  const r = await local.get('vid968cach2', 'en');
+  assert.equal(r.available, false);
+  assert.equal(r.reason, 'temporarily_unavailable');
+  assert.equal(store.captionGet('vid968cach2', 'en', 3600_000), null, 'not cached');
+  assert.deepEqual(await readdir(join(dataDir, 'info')), []);
+});

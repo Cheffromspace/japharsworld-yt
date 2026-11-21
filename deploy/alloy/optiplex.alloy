@@ -1,5 +1,6 @@
 // Grafana Alloy on the Optiplex (claude/monitoring.md). Installed by deploy/alloy-setup.sh optiplex.
-// Host metrics and the state of the relay and flash-check worker units. No logs leave the machine.
+// Host metrics, the state and restarts of the relay and flash-check worker units, and the relay workers' memory. No
+// logs leave the machine.
 
 prometheus.remote_write "cloud" {
   endpoint {
@@ -21,6 +22,8 @@ prometheus.exporter.unix "host" {
   }
   systemd {
     unit_include = "japharsworld-yt-.*\\.(service|timer)"
+    // systemd's NRestarts per service, the restarts its Restart= made: eiok-unit-restarted (Everything-is-OK#967, #968).
+    enable_restarts = true
   }
 }
 prometheus.scrape "host" {
@@ -31,7 +34,44 @@ prometheus.scrape "host" {
 prometheus.relabel "host" {
   rule {
     source_labels = ["__name__"]
-    regex         = "node_(cpu_seconds_total|load1|load5|memory_MemAvailable_bytes|memory_MemTotal_bytes|filesystem_avail_bytes|filesystem_size_bytes|network_(receive|transmit)_bytes_total|boot_time_seconds|systemd_unit_state|time_seconds|uname_info)|eiok_deploy_.*"
+    regex         = "node_(cpu_seconds_total|load1|load5|memory_MemAvailable_bytes|memory_MemTotal_bytes|filesystem_avail_bytes|filesystem_size_bytes|network_(receive|transmit)_bytes_total|boot_time_seconds|systemd_unit_state|systemd_service_restart_total|time_seconds|uname_info)|eiok_deploy_.*"
+    action        = "keep"
+  }
+  forward_to = [prometheus.remote_write.cloud.receiver]
+}
+
+// The relay workers' memory (Everything-is-OK#967, #968): the production unit caps the worker at MemoryMax=1G, and on
+// 2026-11-21 it crashed out of JavaScript heap. Collected only for now: the rule that reads group "relay" comes after a
+// day of readings (tools/grafana.mjs, the note where it will go). A process is matched by its command line: Alloy hands
+// these matchers to process-exporter v0.8.7, which runs each regex on the whole command line joined with spaces, argv[0]
+// included (the verifier's read of its source, 2026-11-21; Alloy's docs page says one argv element), so the worker's
+// "/usr/bin/node /opt/japharsworld-yt-relay/relay/worker.js" (ExecStart of deploy/japharsworld-yt-relay.service) matches
+// at the space; (^|\s) fits the other reading too. The staging worker is a group of its own. track_children = false: the
+// group is the worker process alone, whose heap is what ran out, not its yt-dlp and ffmpeg children (short-lived, and
+// counted by the unit's cgroup cap but not by V8's heap limit). Resident and swapped bytes only (no smaps, no threads);
+// the group name is the only label that says which process, so no command line or user name leaves the machine.
+prometheus.exporter.process "relay" {
+  gather_smaps   = false
+  track_threads  = false
+  track_children = false
+  matcher {
+    name    = "relay"
+    cmdline = ["(^|\\s)/opt/japharsworld-yt-relay/relay/worker\\.js$"]
+  }
+  matcher {
+    name    = "relay-staging"
+    cmdline = ["(^|\\s)/opt/japharsworld-yt-relay-staging/relay/worker\\.js$"]
+  }
+}
+prometheus.scrape "relay" {
+  targets         = prometheus.exporter.process.relay.targets
+  scrape_interval = "60s"
+  forward_to      = [prometheus.relabel.relay.receiver]
+}
+prometheus.relabel "relay" {
+  rule {
+    source_labels = ["__name__", "memtype"]
+    regex         = "namedprocess_namegroup_memory_bytes;(resident|swapped)"
     action        = "keep"
   }
   forward_to = [prometheus.remote_write.cloud.receiver]

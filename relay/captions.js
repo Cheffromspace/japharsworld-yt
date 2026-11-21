@@ -76,8 +76,8 @@ async function listStep(videoId, { ytdlp, extraArgs, runner, tmp, timeoutMs, max
 }
 
 // lists (the worker's, shared by its poll loops): video id → the list step in flight. A second caption job for the same
-// video joins it instead of running yt-dlp and the parse again (Everything-is-OK#968: on 2026-11-21 the server sent a
-// second job for the video 40 s after the first, which the worker was still running). The key is the video alone: the
+// video joins it instead of running yt-dlp and the parse again (Everything-is-OK#968: the server sent a second job for
+// the crash video 40 s after the first, which the worker was still running). The key is the video alone: the
 // list does not depend on `want`; each job then fetches its own track into its own folder.
 export async function captionsJob(job, { ytdlp, extraArgs = [], runner = runWarn, scripts, tmp = tmpdir(), timeoutMs = 60_000, log = () => {},
   lists = null, maxInfoBytes = INFO_MAX_BYTES, maxTrackBytes = TRACK_MAX_BYTES } = {}) {

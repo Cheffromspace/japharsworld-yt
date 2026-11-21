@@ -20,13 +20,18 @@ const INFO_MAX_AGE_MS = 60 * 60_000; // signed caption URLs inside the info JSON
 const MAX_LINES = 6000;
 
 // Caption files are read whole and parsed whole, so a file over these sizes is refused unread (Everything-is-OK#968:
-// on 2026-11-21 the home worker died out of heap parsing the info JSON of a 5.4 h livestream recording YouTube had not
-// finished processing; for such a video yt-dlp lists every stream fragment of every format, inferred, not measured).
+// the home worker died out of heap parsing the info JSON of a multi-hour livestream recording YouTube had not finished
+// processing; for such a video yt-dlp lists every stream fragment of every format, inferred, not measured).
 // INFO_MAX_BYTES: an ordinary 76-minute video with 173 auto-caption languages and 118 formats wrote a 6.82 MB info JSON
-// (measured with yt-dlp 2026.08.19 from the owner's PC, 2026-11-21; 6.5 MB of it is automatic_captions, which does not
+// (measured with yt-dlp 2026.08.19 on a development PC, 2026-11-21; 6.5 MB of it is automatic_captions, which does not
 // grow with the video's length) and needed a 20-24 MB heap to parse; a synthetic fragment-list file needed about 3.5x
 // its size (17.7 MB: 48-64 MB, 33.4 MB: 96-128 MB). 40 MB is about 6x that file and costs about 150 MB of heap a parse.
-// TRACK_MAX_BYTES: a json3 track for 5.4 h of speech is about 3-6 MB (inferred: ~150 words a minute, ~50 bytes a word,
+// 40 MB relies on the home worker's explicit 2 GB heap (deploy/japharsworld-yt-relay.service, NODE_OPTIONS): without it
+// Node sizes the heap from the cgroup (about 550 MB at 1G) and this limit should be about 16 MB. The search service's
+// own yt-dlp path (Captions below) uses it too, but that path is built only with CAPTION_LOCAL_YTDLP=on or with Tunelio
+// off (src/server.js); there a near-limit parse costs about 150 MB against the service's 400M cap, so whoever switches
+// that path on lowers the limit first.
+// TRACK_MAX_BYTES: a json3 track for 5 h of speech is about 3-6 MB (inferred: ~150 words a minute, ~50 bytes a word,
 // not measured), so the 12 h video cap (VIDEO_MAX_HOURS) gives about 13 MB at most; 32 MB is far above that.
 export const INFO_MAX_BYTES = 40 * 1024 * 1024;
 export const TRACK_MAX_BYTES = 32 * 1024 * 1024;

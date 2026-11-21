@@ -217,3 +217,27 @@ test('#968: the server path refuses an oversized caption track and deletes it', 
   assert.equal((await local.get('vid968trak2', 'en')).reason, 'temporarily_unavailable', 'legacy route: not available right now');
   assert.deepEqual(await readdir(join(dataDir, 'subs')), []);
 });
+
+// The cached-file branch (src/captions.js info(), a <id>.json kept from an earlier lookup within the hour): an oversized
+// one is refused and deleted, never parsed, and yt-dlp is not asked (verifier round 1 of #968, Medium 2).
+test('#968: the server path refuses and deletes an oversized cached info JSON; the legacy route says not available right now', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jyt-968-'));
+  await mkdir(join(dataDir, 'info'), { recursive: true });
+  const store = new Store({ path: ':memory:', shards: 1, pool: 10, pinHours: 1 });
+  let calls = 0;
+  const runner = async () => { calls++; throw new Error('yt-dlp must not run for a cached file'); };
+  const local = new Captions({ store, ytdlp: 'yt-dlp', dataDir, runner, attempts: [[]], maxInfoBytes: 64 * 1024 });
+  const cached = (id) => writeFile(join(dataDir, 'info', `${id}.json`), JSON.stringify({ ...padded, subtitles: { en: [{}] } }));
+  await cached('vid968cach1');
+  const err = await local.info('vid968cach1').then(() => null, (e) => e);
+  assert.ok(err, 'refused, not parsed');
+  assert.equal(err.code, 'info_too_large');
+  assert.equal(calls, 0, 'no yt-dlp call for it');
+  assert.deepEqual(await readdir(join(dataDir, 'info')), [], 'the cached copy is deleted');
+  await cached('vid968cach2');
+  const r = await local.get('vid968cach2', 'en');
+  assert.equal(r.available, false);
+  assert.equal(r.reason, 'temporarily_unavailable');
+  assert.equal(store.captionGet('vid968cach2', 'en', 3600_000), null, 'not cached');
+  assert.deepEqual(await readdir(join(dataDir, 'info')), []);
+});

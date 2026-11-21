@@ -20,54 +20,69 @@ const fires = (uid, series, when) => firing(expr(uid), series, at(when));
 
 // The shape of 2026-11-21's captions counters (from the exporter's lines and the journal's caption events, 09:30Z-16:16Z):
 // four "not available right now" answers within a second, one room and one video, about two minutes before the alert;
-// seven fetches that worked earlier in the day, the last two about 20 and 50 minutes before those answers.
+// seven fetches that worked earlier in the day. With stage 2 the service also counts that one video once (video_fail).
 const captionsDay = () => [
   ev('cc_unavailable', 'temporarily_unavailable', ['16:12', '16:12', '16:12', '16:12']),
   ev('cc_unavailable', 'failed', []),
   ev('cc_via', 'worker', ['09:45', '10:05', '10:25', '11:10', '15:20', '15:25', '15:50']),
+  ev('video_fail', 'captions', ['16:12']),
 ];
 
-test('eiok-captions-failing (#967): one video in one room, while other videos\' captions worked, is quiet', () => {
+test('eiok-captions-failing (#967): one video in one room is quiet; the rule before #967 fired on it', () => {
   // The rule before #967 fired here (the 16:14Z alert): 4 answers >= 3.
   const before = 'sum(increase(eiok_events_total{env!="staging",metric="cc_unavailable",key=~"temporarily_unavailable|failed"}[6h])) >= 3';
   assert.equal(firing(before, captionsDay(), at('16:14')).length, 1, 'the old rule fires on the fixture');
   assert.deepEqual(fires('eiok-captions-failing', captionsDay(), '16:14'), []);
   assert.deepEqual(fires('eiok-captions-failing', captionsDay(), '17:00'), []);
+  // Two stuck videos in 6 h: still quiet.
+  assert.deepEqual(fires('eiok-captions-failing', [ev('video_fail', 'captions', ['12:00', '16:12'])], '16:14'), []);
 });
 
-test('eiok-captions-failing (#967): captions failing for every video still fires, once no fetch has worked for 2 h', () => {
-  // The home worker's captions break after 12:00Z: every request after that gets nothing, and nothing is fetched.
-  const broken = [ev('cc_unavailable', 'temporarily_unavailable', ['12:30', '13:10', '13:40', '14:05']), ev('cc_unavailable', 'failed', []),
-    ev('cc_via', 'worker', ['09:00', '10:00', '11:45'])];
-  assert.deepEqual(fires('eiok-captions-failing', broken, '13:30'), [], 'a fetch worked within 2 h');
+test('eiok-captions-failing (#967): 3 different videos with no captions in 6 h fire, even while other videos\' captions work', () => {
+  // The home worker's captions break after 12:00Z: each video visitors ask for afterwards counts once.
+  const broken = [ev('video_fail', 'captions', ['12:30', '13:10', '14:05']), ev('cc_via', 'worker', ['13:00', '13:50'])];
+  assert.deepEqual(fires('eiok-captions-failing', broken, '13:30'), [], 'two videos so far');
   const f = fires('eiok-captions-failing', broken, '14:10');
   assert.equal(f.length, 1);
-  assert.ok(f[0].value >= 3);
-  // A route that threw (cc_unavailable failed, 502) counts the same.
-  const thrown = [ev('cc_unavailable', 'temporarily_unavailable', []), ev('cc_unavailable', 'failed', ['15:00', '15:01', '15:02']), ev('cc_via', 'worker', ['09:00'])];
-  assert.equal(fires('eiok-captions-failing', thrown, '15:05').length, 1);
+  assert.equal(f[0].value, 3);
+  assert.deepEqual(fires('eiok-captions-failing', broken, '19:00'), [], 'the first left the 6 h window');
 });
 
-test('eiok-builds-failing (#967): plays falling back because builds fail fire only when nothing built in the hour', () => {
-  const fallbacks = ev('play_fallback', 'build_timeout', ['10:05', '10:20', '10:40']);
-  assert.equal(fires('eiok-builds-failing', [fallbacks, ev('build', 'ok', [])], '10:45').length, 1, 'Tunelio building nothing');
-  assert.deepEqual(fires('eiok-builds-failing', [fallbacks, ev('build', 'ok', ['10:30'])], '10:45'), [], 'a build worked in the hour');
-  const mixed = [ev('play_fallback', 'build_failed', ['10:05']), ev('play_fallback', 'build_timeout', ['10:20', '10:40']), ev('build', 'ok', [])];
-  assert.equal(fires('eiok-builds-failing', mixed, '10:45').length, 1, 'build_failed and build_timeout add up');
+test('eiok-builds-failing (#967): builds of 3 different videos failing fire only when nothing built in the hour', () => {
+  const failed = ev('video_fail', 'build', ['10:05', '10:20', '10:40']);
+  assert.equal(fires('eiok-builds-failing', [failed, ev('build', 'ok', [])], '10:45').length, 1, 'Tunelio building nothing');
+  assert.deepEqual(fires('eiok-builds-failing', [failed, ev('build', 'ok', ['10:30'])], '10:45'), [], 'a build worked in the hour (the 2026-11-19/20/21 bursts of 524s each had one)');
+  assert.deepEqual(fires('eiok-builds-failing', [ev('video_fail', 'build', ['10:05', '10:20']), ev('build', 'ok', [])], '10:45'), [], 'two videos');
 });
 
-test('eiok-builds-failing (#967): the provider refusing one video (tunelio_failed, its 409 "not ready") does not count', () => {
-  // 16:11Z: one video refused by Tunelio 4 times; its plays went to youtube.com once per room and video (countPlay).
-  const day = [ev('play_fallback', 'tunelio_failed', ['16:11']), ev('play_fallback', 'build_timeout', []), ev('build', 'ok', [])];
+test('eiok-builds-failing (#967): the provider refusing a video (tunelio_failed, its 409 "not ready") is not a video_fail, so it never counts', () => {
+  // 15:17Z-16:17Z of 2026-11-21: one video refused by Tunelio 4 times (no video_fail: src/server.js counts build_failed
+  // only, test/videofail.test.js), and two warm-up builds of other videos timed out (524): two videos, under 3.
+  const day = [ev('video_fail', 'build', ['15:24', '15:24']), ev('play_fallback', 'tunelio_failed', ['16:11']), ev('build', 'ok', [])];
   assert.deepEqual(fires('eiok-builds-failing', day, '16:17'), []);
-  // Even many refused videos: the service's own Discord alert covers Tunelio failing (5xx, 401, 402, src/playback.js).
-  assert.deepEqual(fires('eiok-builds-failing', [ev('play_fallback', 'tunelio_failed', ['16:00', '16:05', '16:10', '16:15']), ev('build', 'ok', [])], '16:17'), []);
 });
 
-test('eiok-home-failing (#967): one failed home play is quiet; home failing with nothing ready fires', () => {
-  assert.deepEqual(fires('eiok-home-failing', [ev('home', 'failed', ['16:11']), ev('home', 'ready', ['15:30'])], '16:17'), [], 'today: one failure');
-  assert.equal(fires('eiok-home-failing', [ev('home', 'failed', ['16:01', '16:05', '16:12']), ev('home', 'ready', ['14:00'])], '16:17').length, 1);
-  assert.deepEqual(fires('eiok-home-failing', [ev('home', 'failed', ['16:01', '16:05', '16:12']), ev('home', 'ready', ['16:08'])], '16:17'), [], 'one got ready');
+test('eiok-home-failing (#967): one video failing at home is quiet; 3 different videos with nothing ready fire', () => {
+  assert.deepEqual(fires('eiok-home-failing', [ev('video_fail', 'home', ['16:11']), ev('home', 'ready', ['15:30'])], '16:17'), [], 'today: one video');
+  assert.equal(fires('eiok-home-failing', [ev('video_fail', 'home', ['16:01', '16:05', '16:12']), ev('home', 'ready', ['14:00'])], '16:17').length, 1);
+  assert.deepEqual(fires('eiok-home-failing', [ev('video_fail', 'home', ['16:01', '16:05', '16:12']), ev('home', 'ready', ['16:08'])], '16:17'), [], 'one got ready');
+  // The per-session count of one stuck video retried every minute (RETRY_MS) is not what this reads.
+  assert.deepEqual(fires('eiok-home-failing', [ev('home', 'failed', ['16:01', '16:02', '16:03', '16:04']), ev('video_fail', 'home', ['16:01']), ev('home', 'ready', [])], '16:17'), []);
+});
+
+test('eiok-server-errors (#967): the first request a route answered 5xx without meaning to fires, critical, naming the route', () => {
+  const day = [ev('http_5xx', 'ticket', ['12:00']), ev('http_5xx', 'captions', [])];
+  const f = fires('eiok-server-errors', day, '12:01');
+  assert.deepEqual(f.map((x) => [x.labels.key, x.value]), [['ticket', 1]]);
+  assert.deepEqual(fires('eiok-server-errors', day, '12:20'), [], 'clears after 15 minutes');
+  assert.deepEqual(fires('eiok-server-errors', [ev('http_5xx', 'ticket', [])], '12:01'), []);
+  assert.equal(rules['eiok-server-errors'].labels.severity, 'critical');
+  assert.equal(rules['eiok-server-errors'].for, '0m');
+});
+
+test('eiok-channels-unreadable (#967, hypercare\'s CHMON of #863): one play refused for an unreadable monitor status fires', () => {
+  assert.equal(fires('eiok-channels-unreadable', [ev('channel', 'unreadable', ['16:00'])], '16:01').length, 1);
+  assert.deepEqual(fires('eiok-channels-unreadable', [ev('channel', 'unreadable', []), ev('channel', 'unavailable', ['16:00'])], '16:01'), [], 'a hidden slot is not this');
 });
 
 test('eiok-channels-refused (#967, hypercare\'s CH503 of #863): 9 refused Channels plays in an hour are quiet, 10 fire', () => {
@@ -114,14 +129,15 @@ test('eiok-home-worker-memory (#967): the production worker over 70 % of its 1 G
   assert.match(rules['eiok-home-worker-memory'].annotations.summary, /^The home worker's memory is at its limit: /);
 });
 
-test('alert inputs missing (#967): the crash-restart and worker-memory series are inputs, so a config that stopped sending them shows', () => {
+test('alert inputs missing (#967): the crash-restart, worker-memory, video_fail and http_5xx series are inputs, so a config or exporter that stopped sending them shows', () => {
   const present = [
     gauge({ __name__: 'eiok_home_today', key: 'cap_builds' }, () => 60, DAY), gauge({ __name__: 'eiok_service_memory_limit_bytes' }, () => 1, DAY),
     gauge({ __name__: 'eiok_poll', source: 'tunelio_plan', metric: 'days_to_renewal' }, () => 9, DAY), ev('cc_outcome', 'none', []),
     restarts('linode', 'japharsworld-yt.service', []), restarts('optiplex', 'japharsworld-yt-relay.service', []), memory('relay', 'resident', 0.3 * GiB),
+    ev('video_fail', 'captions', []), ev('http_5xx', 'ticket', []),
   ];
   assert.deepEqual(fires('eiok-alert-inputs-missing', present, '12:00'), []);
-  for (const i of [4, 5, 6]) assert.equal(fires('eiok-alert-inputs-missing', present.filter((_, j) => j !== i), '12:00').length, 1, `input ${i} missing`);
+  for (const i of [4, 5, 6, 7, 8]) assert.equal(fires('eiok-alert-inputs-missing', present.filter((_, j) => j !== i), '12:00').length, 1, `input ${i} missing`);
 });
 
 // Item 5 of #967: the hard alarms stay as they were and still fire at once.
@@ -141,11 +157,15 @@ test('hard alarms (#967): search service down, public address down, no home work
 test('every rule of #967 explains itself: what it counted, what does not fire it, where to look', () => {
   for (const uid of ['eiok-captions-failing', 'eiok-builds-failing', 'eiok-home-failing']) {
     const s = rules[uid].annotations.summary;
-    assert.match(s, /\{\{ humanize \$values\.A\.Value \}\}/, `${uid}: the number counted`);
+    assert.match(s, /\{\{ humanize \$values\.A\.Value \}\} different videos/, `${uid}: the number counted, in videos`);
     assert.match(s, /One video .* does not fire this/, `${uid}: what does not fire it`);
     assert.match(s, /Look: `node tools\/ops\.mjs events --event /, `${uid}: where to look`);
   }
-  assert.equal(rules['eiok-captions-failing'].annotations.summary, 'Captions are failing: {{ humanize $values.A.Value }} caption requests in the last 6 hours got none, and no caption fetch worked in the last 2 hours (from the home worker, this server or Tunelio). One video YouTube can\'t serve does not fire this while other videos\' captions still work. Look: `node tools/ops.mjs events --event captions_source_failed,captions_via`, the Captions panel, and whether the home worker restarted (eiok-unit-restarted).');
+  for (const uid of ['eiok-server-errors', 'eiok-channels-unreadable', 'eiok-channels-refused']) {
+    assert.match(rules[uid].annotations.summary, /\{\{ humanize \$values\.A\.Value \}\}.*Look: `node tools\/ops\.mjs events --event /, uid);
+  }
+  assert.equal(rules['eiok-captions-failing'].annotations.summary, 'Captions are failing: {{ humanize $values.A.Value }} different videos got no captions when visitors asked, in the last 6 hours (each video counted once, however often it was asked for). One video YouTube can\'t serve does not fire this. Look: `node tools/ops.mjs events --event captions_source_failed,captions_via`, the Captions panel, and whether the home worker restarted (eiok-unit-restarted).');
+  assert.equal(rules['eiok-server-errors'].annotations.summary, '{{ humanize $values.A.Value }} {{ $labels.key }} requests were answered 5xx in the last 15 minutes: a fault in the search service (a route that threw), not a refusal it gives on purpose. Look: `node tools/ops.mjs events --event error` for the route and the error.');
 });
 
 // promql-lite's own semantics, where Prometheus' are easy to get wrong: an empty aggregation is empty (not 0), so

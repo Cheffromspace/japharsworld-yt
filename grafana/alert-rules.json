@@ -711,7 +711,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "Captions are failing: {{ humanize $values.A.Value }} caption requests in the last 6 hours got none, and no caption fetch worked in the last 2 hours (from the home worker, this server or Tunelio). One video YouTube can't serve does not fire this while other videos' captions still work. Look: `node tools/ops.mjs events --event captions_source_failed,captions_via`, the Captions panel, and whether the home worker restarted (eiok-unit-restarted)."
+   "summary": "Captions are failing: {{ humanize $values.A.Value }} different videos got no captions when visitors asked, in the last 6 hours (each video counted once, however often it was asked for). One video YouTube can't serve does not fire this. Look: `node tools/ops.mjs events --event captions_source_failed,captions_via`, the Captions panel, and whether the home worker restarted (eiok-unit-restarted)."
   },
   "labels": {
    "project": "everything-is-ok",
@@ -730,7 +730,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"cc_unavailable\",key=~\"temporarily_unavailable|failed\"}[6h])) >= 3 unless on() sum(increase(eiok_events_total{env!=\"staging\",metric=\"cc_via\"}[2h])) >= 0.5",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"video_fail\",key=\"captions\"}[6h])) >= 3",
      "instant": true
     }
    },
@@ -1035,7 +1035,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "Tunelio builds are failing: {{ humanize $values.A.Value }} plays went to youtube.com in the last hour because their build failed or timed out, and no Tunelio build succeeded in that hour. One video Tunelio refuses does not fire this. Look: `node tools/ops.mjs events --event build_failed,tunelio_error,tunelio_link` and the failed builds on the dashboard."
+   "summary": "Tunelio builds are failing: {{ humanize $values.A.Value }} different videos' builds failed or timed out in the last hour, and no Tunelio build succeeded in that hour. One video Tunelio refuses does not fire this. Look: `node tools/ops.mjs events --event build_failed,tunelio_error,tunelio_link` and the failed builds on the dashboard."
   },
   "labels": {
    "project": "everything-is-ok",
@@ -1054,7 +1054,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"play_fallback\",key=~\"build_failed|build_timeout\"}[1h])) >= 3 unless on() sum(increase(eiok_events_total{env!=\"staging\",metric=\"build\",key=\"ok\"}[1h])) >= 0.5",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"video_fail\",key=\"build\"}[1h])) >= 3 unless on() sum(increase(eiok_events_total{env!=\"staging\",metric=\"build\",key=\"ok\"}[1h])) >= 0.5",
      "instant": true
     }
    },
@@ -1089,7 +1089,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "The home relay is failing: {{ humanize $values.A.Value }} home plays failed in the last hour and none got ready. One video that fails at home does not fire this. Look: `node tools/ops.mjs events --event home_failed,home_ready`, then `journalctl -u japharsworld-yt-relay -n 80` on the Optiplex."
+   "summary": "The home relay is failing: {{ humanize $values.A.Value }} different videos failed at home in the last hour and none got ready. One video that fails at home does not fire this. Look: `node tools/ops.mjs events --event home_failed,home_ready`, then `journalctl -u japharsworld-yt-relay -n 80` on the Optiplex."
   },
   "labels": {
    "project": "everything-is-ok",
@@ -1108,7 +1108,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"home\",key=\"failed\"}[1h])) >= 3 unless on() sum(increase(eiok_events_total{env!=\"staging\",metric=\"home\",key=\"ready\"}[1h])) >= 0.5",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"video_fail\",key=\"home\"}[1h])) >= 3 unless on() sum(increase(eiok_events_total{env!=\"staging\",metric=\"home\",key=\"ready\"}[1h])) >= 0.5",
      "instant": true
     }
    },
@@ -1143,7 +1143,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "{{ humanize $values.A.Value }} Channels plays were refused in the last hour (a slot the list hides, or a monitor status the service can't read). Look: `node tools/ops.mjs events --event channel_refused`; a why of status_unreadable or status_missing means every Quest Channels play is refused."
+   "summary": "{{ humanize $values.A.Value }} Channels plays were refused in the last hour: slots the list hides (stale lists, our own checks). Look: `node tools/ops.mjs events --event channel_refused`."
   },
   "labels": {
    "project": "everything-is-ok",
@@ -1163,6 +1163,114 @@
     "model": {
      "refId": "A",
      "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"channel\",key=\"unavailable\"}[1h])) >= 10",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-channels-unreadable",
+  "title": "Channels status unreadable",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "0m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "The search service can't read the Channels monitor's status: {{ humanize $values.A.Value }} Quest Channels plays were refused for it in the last hour, and every one is while it lasts. Look: `node tools/ops.mjs events --event channel_refused` (why status_unreadable or status_missing), then the monitor database on the Linode."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "warning"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "sum(increase(eiok_events_total{env!=\"staging\",metric=\"channel\",key=\"unreadable\"}[1h])) >= 0.5",
+     "instant": true
+    }
+   },
+   {
+    "refId": "C",
+    "datasourceUid": "__expr__",
+    "model": {
+     "refId": "C",
+     "type": "threshold",
+     "expression": "A",
+     "conditions": [
+      {
+       "evaluator": {
+        "type": "gt",
+        "params": [
+         0
+        ]
+       }
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "uid": "eiok-server-errors",
+  "title": "Requests answered 5xx",
+  "folderUID": "everything-is-ok",
+  "ruleGroup": "everything-is-ok",
+  "condition": "C",
+  "for": "0m",
+  "noDataState": "OK",
+  "execErrState": "Error",
+  "annotations": {
+   "summary": "{{ humanize $values.A.Value }} {{ $labels.key }} requests were answered 5xx in the last 15 minutes: a fault in the search service (a route that threw), not a refusal it gives on purpose. Look: `node tools/ops.mjs events --event error` for the route and the error."
+  },
+  "labels": {
+   "project": "everything-is-ok",
+   "severity": "critical"
+  },
+  "notification_settings": {
+   "receiver": "Everything is OK Discord critical"
+  },
+  "data": [
+   {
+    "refId": "A",
+    "relativeTimeRange": {
+     "from": 900,
+     "to": 0
+    },
+    "datasourceUid": "${ds}",
+    "model": {
+     "refId": "A",
+     "expr": "sum by (key) (increase(eiok_events_total{env!=\"staging\",metric=\"http_5xx\"}[15m])) >= 0.5",
      "instant": true
     }
    },
@@ -1413,7 +1521,7 @@
   "noDataState": "OK",
   "execErrState": "Error",
   "annotations": {
-   "summary": "A value that the build cap, service memory, credit pace, captions, crash-restart or home worker memory alert needs has been missing for 30 minutes, so that alert is blind. Expected while the search service is down. Otherwise check japharsworld-yt-exporter (STATS_TOKEN, cgroup) and the metrics poller on the Linode."
+   "summary": "A value that the build cap, service memory, credit pace, captions, crash-restart, home worker memory or server-errors alert needs has been missing for 30 minutes, so that alert is blind. Expected while the search service is down. Otherwise check japharsworld-yt-exporter (STATS_TOKEN, cgroup) and the metrics poller on the Linode."
   },
   "labels": {
    "project": "everything-is-ok",
@@ -1432,7 +1540,7 @@
     "datasourceUid": "${ds}",
     "model": {
      "refId": "A",
-     "expr": "absent(eiok_home_today{env!=\"staging\",key=\"cap_builds\"}) or absent(eiok_service_memory_limit_bytes{env!=\"staging\"}) or absent(eiok_poll{env!=\"staging\",source=\"tunelio_plan\",metric=\"days_to_renewal\"}) or absent(eiok_events_total{env!=\"staging\",metric=\"cc_outcome\",key=\"none\"}) or absent(node_systemd_service_restart_total{env!=\"staging\",host=\"linode\",name=\"japharsworld-yt.service\"}) or absent(node_systemd_service_restart_total{env!=\"staging\",host=\"optiplex\",name=\"japharsworld-yt-relay.service\"}) or absent(namedprocess_namegroup_memory_bytes{env!=\"staging\",host=\"optiplex\",groupname=\"relay\",memtype=\"resident\"})",
+     "expr": "absent(eiok_home_today{env!=\"staging\",key=\"cap_builds\"}) or absent(eiok_service_memory_limit_bytes{env!=\"staging\"}) or absent(eiok_poll{env!=\"staging\",source=\"tunelio_plan\",metric=\"days_to_renewal\"}) or absent(eiok_events_total{env!=\"staging\",metric=\"cc_outcome\",key=\"none\"}) or absent(node_systemd_service_restart_total{env!=\"staging\",host=\"linode\",name=\"japharsworld-yt.service\"}) or absent(node_systemd_service_restart_total{env!=\"staging\",host=\"optiplex\",name=\"japharsworld-yt-relay.service\"}) or absent(namedprocess_namegroup_memory_bytes{env!=\"staging\",host=\"optiplex\",groupname=\"relay\",memtype=\"resident\"}) or absent(eiok_events_total{env!=\"staging\",metric=\"video_fail\",key=\"captions\"}) or absent(eiok_events_total{env!=\"staging\",metric=\"http_5xx\",key=\"ticket\"})",
      "instant": true
     }
    },

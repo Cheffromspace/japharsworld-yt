@@ -323,12 +323,13 @@ test('eiok-captions-empty and eiok-poller-stale: the thresholds, the input check
 });
 
 // The sources all throwing never reaches cc_outcome (test/captionchain.test.js pins the reason this reads). Since
-// Everything-is-OK#967 also "unless a caption fetch worked in 2 h" (test/alerts.test.js runs it over the day's counters).
-test('eiok-captions-failing: 3 in 6 h of the two keys that mean a failure, not list_unavailable or no_captions', () => {
+// Everything-is-OK#967 it reads different videos (video_fail captions: the server counts a video once per 6 h when a
+// request got temporarily_unavailable or failed, not list_unavailable or no_captions; test/videofail.test.js).
+test('eiok-captions-failing: 3 different videos in 6 h whose caption requests got none', () => {
   const r = alertRules('ds').find((x) => x.uid === 'eiok-captions-failing');
   const e = r.data[0].model.expr;
-  assert.match(e, /key=~"temporarily_unavailable\|failed"\}\[6h\]\)\) >= 3 unless on\(\) sum\(increase\(eiok_events_total\{env!="staging",metric="cc_via"\}\[2h\]\)\) >= 0\.5$/);
-  assert.doesNotMatch(e, /list_unavailable|no_captions/);
+  assert.equal(e, 'sum(increase(eiok_events_total{env!="staging",metric="video_fail",key="captions"}[6h])) >= 3');
+  assert.match(readFileSync(new URL('../src/server.js', import.meta.url), 'utf8'), /if \(!c\.available && c\.reason === 'temporarily_unavailable'\) videoFails\.count\('captions', last\.videoId\);/);
   assert.equal(r.labels.severity, 'warning');
 });
 

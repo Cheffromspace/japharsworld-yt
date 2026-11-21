@@ -60,7 +60,7 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
 | Linode CPU over 80 % | under 20 % idle across its vCPUs, 15 min |
 | Search service memory near its limit | anon + swap > 90 % of the live `memory.max`, page cache not counted, 15 min |
 | Searches failing (502) | 2 or more `search_fail` 502 in 15 min |
-| Alert inputs missing | `cap_builds`, the memory limit, `days_to_renewal`, `cc_outcome`, the search service's or home worker's restart counter or the production worker's memory absent for 30 min, so those alerts would be silently blind |
+| Alert inputs missing | `cap_builds`, the memory limit, `days_to_renewal`, `cc_outcome`, the search service's or home worker's restart counter, the production worker's memory, `video_fail` `captions` or `http_5xx` `ticket` absent for 30 min, so those alerts would be silently blind |
 | Home relay has no worker | no media worker connected for 15 min (only while `HOME_RELAY=on`; the gauge isn't set otherwise) |
 | Home sent over 100 GB today / 2,000 GB this month (no ISP cap, owner 2026-10-27: unusual volume, not a limit) | `eiok_transfer_bytes{host="home"}`: the Optiplex's bytes sent (every interface but `lo`), reported on each relay poll and counted in metrics.db (`transfer`), Chicago days and months, 5 min |
 | Linode sent over 700 GB this month | `eiok_transfer_bytes{host="linode",period="month"}`: the Linode's bytes sent, of its 1 TB monthly transfer, 5 min |
@@ -78,10 +78,12 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
 | Captions falling back to Tunelio | over 6 h, Tunelio answered more caption fetches (at least 3) than the home relay and local yt-dlp together, 30 min. Not "estimated timing above real": manual tracks never carry word timing, and that held on normal days (10-24: 104 estimated, 71 real) |
 | Tunelio open or reopen failed | `increase(eiok_tunelio_probe_reopen_fail_total[6h]) + increase(eiok_tunelio_probe_open_fail_total[6h]) > 0`, at once: the speed probe could not resume a cut link at the byte reached (another status, the wrong offset, or no first byte in 10 s), which would turn a reset into a visible freeze, or all three first opens of a read failed that way, which can mean Tunelio stopped honouring Range. The cause can be the Linode's own network, because any fetch error counts. The cut rate is only a panel until there is a baseline (Everything-is-OK#361) |
 | No video has caption tracks | over 6 h, 5 or more distinct videos had no tracks and none had any (`cc_outcome`, world #428), at once: a silent total failure. Stays after hypercare's own check of this ends. A partial failure, with some tracks still coming through, doesn't fire |
-| Caption lookups failing | 3 or more caption requests in 6 h answered `temporarily_unavailable` or `failed`, **and no caption fetch (`cc_via`, any source) worked in the last 2 h**, at once: the sources stopped answering, which `cc_outcome` never sees. One video YouTube can't serve doesn't fire it while others work (Everything-is-OK#967, below) |
-| Video builds failing at Tunelio | 3 or more plays in 1 h went to youtube.com because their Tunelio build failed or timed out (`play_fallback` `build_failed`/`build_timeout`), and no build succeeded in that hour (`build` `ok`), at once (#967) |
-| Home relay plays failing | 3 or more home sessions failed in 1 h (`home` `failed`) and none got ready, at once (#967) |
-| Many Channels plays refused | 10 or more Channels answers `unavailable` in 1 h (a slot the list hides, or a monitor status the service can't read), at once (#967, hypercare's limit of #863) |
+| Caption lookups failing | 3 or more **different videos** in 6 h whose caption requests got none (`video_fail` `captions`: a request answered `temporarily_unavailable` or `failed`, each video once per 6 h), at once: the sources stopped answering, which `cc_outcome` never sees. One video YouTube can't serve doesn't fire it (Everything-is-OK#967, below) |
+| Video builds failing at Tunelio | 3 or more different videos in 1 h whose Tunelio build failed or timed out after `/create` accepted it (`video_fail` `build`), and no build succeeded in that hour (`build` `ok`), at once (#967) |
+| Home relay plays failing | 3 or more different videos failed at home in 1 h (`video_fail` `home`) and no home session got ready, at once (#967) |
+| Many Channels plays refused | 10 or more Channels answers `unavailable` in 1 h (slots the list hides), at once (#967, hypercare's limit of #863) |
+| Channels status unreadable | 1 or more Channels plays refused in 1 h because the monitor's status can't be read (`channel` `unreadable`), at once: every Quest Channels play is refused meanwhile (#967, hypercare's CHMON of #863) |
+| Requests answered 5xx (critical) | any request answered 5xx that the service didn't mean to give, in 15 min (`http_5xx`, by route: a route that threw), at once; one alert per route. The by-design 5xx answers (search and captions 502, a broken home upload, a hidden Channels slot) are not counted (#967) |
 | Service crashed and restarted (critical) | `japharsworld-yt.service` (Linode) or `japharsworld-yt-relay.service` (Optiplex) was restarted by systemd in the last 15 min (`node_systemd_service_restart_total` rose), at once; one alert per unit, naming it and the host (#967, #968) |
 | Home worker memory at its limit | the production relay worker's resident + swapped memory over 70 % of its unit's 1 GiB for 30 min (#967, #968) |
 | Metrics poller stale | no pass reached the `tunelio_plan` write for over an hour, 5 min; the timer is 15 min, the widest gap seen 18 min. That write is mid-pass, so a pass failing after it (daily sources, domains, reports) doesn't show |
@@ -94,13 +96,16 @@ written cause (our own checks and sweeps, provider timeouts on warm-ups, quiet-t
 video) and 5 never explained; none described an outage visitors felt. On 2026-11-21 one livestream archive YouTube had
 not finished processing, in one room, fired both Grafana's "Caption lookups failing" (16:14Z) and hypercare's error
 count (#966), while the real fault in the same minutes, the home worker crashing out of memory (#968), had no alarm.
-- Grafana sees only exported counters, which carry no video (privacy, and cardinality), so a rule can't count
-  different videos. The captions, builds and home rules therefore fire only when the thing also stopped working in the
-  window: no caption fetch for 2 h, no build or no home session ready in the hour. One video that can't be fetched
-  never does that while others play. The accepted gap: a partial failure (some videos failing, others working) fires
-  none of them; a quiet stretch with only one stuck video playing still can.
-- Builds count plays, not warm-ups: `play_fallback` `build_failed`/`build_timeout` is counted once per room and video
-  (src/server.js `countPlay`). A provider refusing a video (`tunelio_failed`, e.g. its 409 "not ready") isn't counted:
+- Grafana sees only exported counters, and no counter carries a video (privacy, and cardinality). So the service
+  counts different videos itself: `video_fail` (src/videofail.js) counts a video once per kind and window, keeping the
+  IDs in memory only, each dropped by its own timer when its window ends (6 h for captions, 1 h for builds and home),
+  as the privacy page promises. The builds and home rules also need the thing to have stopped working in the hour (no
+  build ok, no home session ready), so a few failing videos among many that work don't fire them. The accepted gap: a
+  partial failure (some videos failing, others working) fires neither; captions fire at 3 videos either way. A restart
+  forgets the IDs, so a video can count twice across one. (Stage 1 of #967, before this counter was live, read per-play
+  and per-request counts with "unless something worked in the window".)
+- Builds count a video whose build `/create` accepted and then failed or timed out (`build_failed`: 524, 503, no
+  answer; warm-ups included). A provider refusing a video (`tunelio_failed`, e.g. its 409 "not ready") isn't counted:
   the service alerts on its own when Tunelio fails (5xx, 401, 402: src/playback.js). `build` `ok` counts cached links
   too, unlike hypercare's `built`.
 - Crashes: systemd restarts the search service in 3 s and the worker in 5 s (`RestartSec`), between two 60 s scrapes,
@@ -119,8 +124,10 @@ count (#966), while the real fault in the same minutes, the home worker crashing
   disk, the silent caption failure (`eiok-captions-empty` is the same rule), SSH, YouTube refusals. Dropped: hypercare
   watching itself (ssh, journal), `backoff` (no such event is written any more), home cache evictions and over-cap
   (eviction is the cache working; the home volume rule covers it filling).
-- **Not covered until the next production deploy:** a visitor request answered 5xx because a route threw (500), which
-  only hypercare counted. Its counter is a `src/` change (#967 stage 2).
+- A visitor request answered 5xx because a route threw (500), which only hypercare counted (from the journal, 3 an
+  hour), is `eiok-server-errors` at the first one: `http_5xx` by route, with the 5xx answers the service gives on
+  purpose left out (src/server.js `BY_DESIGN_5XX`), so one cause raises one alert. Live only with the production deploy
+  that carries the counter (a search-service restart) and the rule push after it; until then nothing counts it.
 
 **eiok.cc** (owner, 2026-10-25) is the short domain for the Quest search box (README, "Compact search address"). Caddy
 serves it from the same site block as yt.japharsworld.com, with its own Let's Encrypt certificate, renewed by Caddy.

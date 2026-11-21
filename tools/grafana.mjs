@@ -3,7 +3,8 @@
 //   node tools/grafana.mjs push     uploads them to the stack (and the Discord contact points). Until the production
 //                                   deploy that carries 76c083d is live (Everything-is-OK#967), it refuses: rules go out
 //                                   only with push-rule from the checkouts the #967 push plan names, and a full push
-//                                   would fire "Alert inputs missing" and blind four rules. Then: push --after-deploy.
+//                                   would fire "Alert inputs missing" and blind the rules that read the new series.
+//                                   Then, once the four series named at FULL_PUSH_WAITS_FOR show: push --after-deploy.
 //   node tools/grafana.mjs push-rule <uid> [--dry-run]   that one alert rule only (no dashboards, contact points or
 //                                   other rules); --dry-run prints the request and sends nothing
 // push reads its settings from the environment or the repo's .env (gitignored; the environment wins):
@@ -821,15 +822,21 @@ export async function pushRule(uid, { dryRun = false, call = api, dsUid = null, 
 }
 
 // Everything-is-OK#967 (the verifier's R2-M1): the rules here read series production sends only after the deploy that
-// carries 76c083d (video_fail, http_5xx) and after both hosts run the new Alloy configs (the restart counters). A full
-// `push` before then fires "Alert inputs missing" within 30 minutes and blinds the captions, builds, home and
-// server-errors rules. So `push` refuses until it is told the deploy is live (--after-deploy); push-rule is not affected.
-// Once that deploy is on production and the series are seen in Grafana, set FULL_PUSH_WAITS_FOR to null in a commit of
-// its own, and the flag is no longer needed.
+// carries 76c083d (video_fail, http_5xx, channel unreadable) and after both hosts run the new Alloy configs (the restart
+// counters). A full `push` before then fires "Alert inputs missing" within 30 minutes and blinds the rules that read the
+// new series. So `push` refuses until it is told the deploy is live (--after-deploy); push-rule is not affected.
+// Before `push --after-deploy`, these four must show in Grafana (inputs-missing's new terms):
+//   node_systemd_service_restart_total{host="linode",name="japharsworld-yt.service"}
+//   node_systemd_service_restart_total{host="optiplex",name="japharsworld-yt-relay.service"}
+//   eiok_events_total{metric="video_fail",key="captions"}
+//   eiok_events_total{metric="http_5xx",key="ticket"}
+// Then remove the guard in a commit of its own: FULL_PUSH_WAITS_FOR = null here, and the guard test in
+// test/grafana.test.js and the push-step sentence in claude/monitoring.md with it. Until then every full push needs
+// the flag.
 export const FULL_PUSH_WAITS_FOR = { commit: '76c083d', issue: 'Everything-is-OK#967' };
 export function fullPushRefusal(args, waits = FULL_PUSH_WAITS_FOR) {
   if (!waits || args.includes('--after-deploy')) return null;
-  return `push refused: these rules need the production deploy that carries ${waits.commit} (${waits.issue}) and the new Alloy configs on the Linode and the Optiplex; pushed earlier, "Alert inputs missing" fires and four rules go blind. Push single rules with push-rule meanwhile (claude/monitoring.md, Setup). Once the deploy is live and its series show in Grafana: node tools/grafana.mjs push --after-deploy (and set FULL_PUSH_WAITS_FOR to null).`;
+  return `push refused: these rules need the production deploy that carries ${waits.commit} (${waits.issue}) and the new Alloy configs on the Linode and the Optiplex; pushed earlier, "Alert inputs missing" fires and the rules that read the new series go blind. Push single rules with push-rule meanwhile (claude/monitoring.md, Setup). Once the deploy is live and its series show in Grafana: node tools/grafana.mjs push --after-deploy (and set FULL_PUSH_WAITS_FOR to null).`;
 }
 
 // promSource() through another API function (pushRule's injectable `call`).

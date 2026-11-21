@@ -151,8 +151,12 @@ count (#966), while the real fault in the same minutes, the home worker crashing
   path, answered as `youtube_failed` (search_fail 502, so `eiok-search-502` at 2 in 15 min); a More-page failure
   (`more_fail` 502, no rule at all; hypercare's request-line count used to see it); a throw after the headers were
   sent (no route streams, so rare); a handler that never answers (Caddy times it out); a rejection after the answer
-  (`unhandled_rejection`, no rule). `test/fuzz5xx.test.js` sends 300 generated requests from a fixed seed and holds
-  that ordinary internet noise reaches none of the counted 500s.
+  (`unhandled_rejection`, no rule). `test/fuzz5xx.test.js` sends, for seeds 967 and 1 (`FUZZ_SEED` for others), 300
+  generated requests plus a fixed set to the server with test fakes, and holds that none is answered 5xx outside the
+  by-design codes or counted as `http_5xx`. It reaches the router, the URL parse, the 404 and 405 paths, Channels (with
+  the monitor unreadable), the stats, ops and relay token checks with wrong tokens, tickets allocated and not, and every
+  caption language the route accepts with a played video behind it. It does not reach a request body, a right token, the
+  pasted-link and More paths past their YouTube call, the home relay with a worker, or Tunelio.
 
 **eiok.cc** (owner, 2026-10-25) is the short domain for the Quest search box (README, "Compact search address"). Caddy
 serves it from the same site block as yt.japharsworld.com, with its own Let's Encrypt certificate, renewed by Caddy.
@@ -182,14 +186,17 @@ The domain itself is the owner's to renew (auto-renew, several years ahead), bec
    DISCORD_CRITICAL_WEBHOOK=https://discord.com/api/webhooks/...  # optional: the critical channel (below)
    ```
    then `node tools/grafana.mjs push`. It creates the folder, the dashboard (`/d/everything-is-ok`), the Discord
-   contact point and the alert rules, and is safe to re-run. **Until the production deploy that carries 76c083d is
-   live (Everything-is-OK#967), `push` refuses**: the rules read series that only that deploy and the new Alloy
-   configs bring, so a full push would fire "Alert inputs missing" and blind the captions, builds, home and
-   server-errors rules. Meanwhile rules go out only with `push-rule <uid>` from the checkouts #967's push plan names
-   (with the full `.env`, so a critical rule reaches the critical channel; check `receiver` in the read-back).
-   After the deploy, when the series show in Grafana: `push --after-deploy`, then set `FULL_PUSH_WAITS_FOR` in
-   tools/grafana.mjs to null in a commit of its own. To send alerts elsewhere, change
-   `GRAFANA_DISCORD_WEBHOOK` and push again. (`GRAFANA_TOKEN` in the same file is the write-only token Alloy uses.)
+   contact point and the alert rules, and is safe to re-run once it is allowed. **Until the production deploy that
+   carries 76c083d is live (Everything-is-OK#967), `push` refuses**: the rules read series that only that deploy and
+   the new Alloy configs bring, so a full push would fire "Alert inputs missing" and blind the rules that read the new
+   series. Meanwhile rules go out only with `push-rule <uid>` from the checkouts #967's push plan names (with the full
+   `.env`, so a critical rule reaches the critical channel; check `receiver` in the read-back). After the deploy,
+   when these four show in Grafana: the restart counter for `japharsworld-yt.service` on the Linode and for
+   `japharsworld-yt-relay.service` on the Optiplex, `eiok_events_total{metric="video_fail",key="captions"}` and
+   `{metric="http_5xx",key="ticket"}`: `push --after-deploy`. Then remove the guard in a commit of its own
+   (`FULL_PUSH_WAITS_FOR = null` in tools/grafana.mjs, its test in test/grafana.test.js, and this sentence); until
+   then every full push needs the flag. To send alerts elsewhere, change `GRAFANA_DISCORD_WEBHOOK` and push again
+   (with `--after-deploy` until the guard is removed). (`GRAFANA_TOKEN` in the same file is the write-only token Alloy uses.)
 
 **Critical channel** (world #195, owner 2026-10-26, card #234): a separate Discord channel, with its own sound and the
 @mention, for critical alerts only; warnings stay where they are. One env var, `DISCORD_CRITICAL_WEBHOOK`, in each

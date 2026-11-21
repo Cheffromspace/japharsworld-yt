@@ -120,6 +120,12 @@ test('exporter: usage counters, histograms, polls, slots, flash checks, jobs, he
     has('eiok_events_total{metric="cc_unavailable",key="temporarily_unavailable"} 0');
     has('eiok_events_total{metric="cc_unavailable",key="failed"} 0');
     has('eiok_events_total{metric="unhandled_rejection",key=""} 0'); // Everything-is-OK#681
+    // Everything-is-OK#967: what the rules that replaced hypercare read, from 0.
+    for (const route of ['ticket', 'captions', 'hls', 'search', 'other']) has(`eiok_events_total{metric="http_5xx",key="${route}"} 0`);
+    for (const kind of ['captions', 'build', 'home']) has(`eiok_events_total{metric="video_fail",key="${kind}"} 0`);
+    has('eiok_events_total{metric="channel",key="unreadable"} 0');
+    has('eiok_events_total{metric="play_fallback",key="build_failed"} 0');
+    has('eiok_events_total{metric="play_fallback",key="build_timeout"} 0');
     has('eiok_jobs_pending 1');
     has('eiok_jobs_oldest_pending_seconds{reason="daily"} 0');
     has('eiok_jobs_oldest_pending_seconds{reason="other"} 600');

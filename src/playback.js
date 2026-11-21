@@ -455,7 +455,7 @@ export class Playback {
     this.#saveLive();
     this.log({ event: ok ? 'tunelio_link' : 'build_failed', id: job.id, quality: job.quality, hls: job.format === 'hls', mb: job.mb, buildMs, seconds: job.seconds, reason,
       ...(ok && cachedBuild(job.mb, buildMs) ? { cached: true } : {}), ...(status !== undefined ? { status } : {}), ...(error ? { error } : {}) });
-    try { this.onBuild({ id: job.id, format: job.format, quality: job.quality, seconds: job.seconds, mb: job.mb, buildMs, ok }); } catch { /* metrics only */ }
+    try { this.onBuild({ id: job.id, format: job.format, quality: job.quality, seconds: job.seconds, mb: job.mb, buildMs, ok, reason }); } catch { /* metrics only */ }
     return job;
   }
 

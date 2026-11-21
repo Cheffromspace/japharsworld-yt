@@ -361,7 +361,7 @@ export class Home {
     s.reason = reason;
     s.endedMs = this.now();
     this.#saveMeta(s);
-    this.onEvent('failed');
+    this.onEvent('failed', { id: s.id }); // the id for the once-per-video count only (src/videofail.js, #967)
     this.log({ event: 'home_failed', id: s.id, quality: s.quality, reason, ms: s.endedMs - s.startedMs, message: message.slice(0, 200) });
     this.#wake(s);
   }

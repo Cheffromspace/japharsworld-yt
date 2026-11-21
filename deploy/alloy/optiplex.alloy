@@ -41,20 +41,26 @@ prometheus.relabel "host" {
 }
 
 // The relay workers' memory (Everything-is-OK#967, #968): the production unit caps the worker at MemoryMax=1G, and on
-// 2026-11-21 it crashed out of JavaScript heap; eiok-home-worker-memory reads group "relay". A process is matched by its
-// script, argv[1] (the ExecStart of deploy/japharsworld-yt-relay*.service), and the staging worker is a group of its own,
-// so the rule never counts it. Resident and swapped bytes only (no smaps, no threads); the group name is the only label
-// that says which process, so no command line or user name leaves the machine.
+// 2026-11-21 it crashed out of JavaScript heap. Collected only for now: the rule that reads group "relay" comes after a
+// day of readings (tools/grafana.mjs, the note where it will go). A process is matched by its command line: Alloy hands
+// these matchers to process-exporter v0.8.7, which runs each regex on the whole command line joined with spaces, argv[0]
+// included (the verifier's read of its source, 2026-11-21; Alloy's docs page says one argv element), so the worker's
+// "/usr/bin/node /opt/japharsworld-yt-relay/relay/worker.js" (ExecStart of deploy/japharsworld-yt-relay.service) matches
+// at the space; (^|\s) fits the other reading too. The staging worker is a group of its own. track_children = false: the
+// group is the worker process alone, whose heap is what ran out, not its yt-dlp and ffmpeg children (short-lived, and
+// counted by the unit's cgroup cap but not by V8's heap limit). Resident and swapped bytes only (no smaps, no threads);
+// the group name is the only label that says which process, so no command line or user name leaves the machine.
 prometheus.exporter.process "relay" {
-  gather_smaps  = false
-  track_threads = false
+  gather_smaps   = false
+  track_threads  = false
+  track_children = false
   matcher {
     name    = "relay"
-    cmdline = ["^/opt/japharsworld-yt-relay/relay/worker\\.js$"]
+    cmdline = ["(^|\\s)/opt/japharsworld-yt-relay/relay/worker\\.js$"]
   }
   matcher {
     name    = "relay-staging"
-    cmdline = ["^/opt/japharsworld-yt-relay-staging/relay/worker\\.js$"]
+    cmdline = ["(^|\\s)/opt/japharsworld-yt-relay-staging/relay/worker\\.js$"]
   }
 }
 prometheus.scrape "relay" {

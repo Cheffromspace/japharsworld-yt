@@ -20,32 +20,37 @@ const fires = (uid, series, when) => firing(expr(uid), series, at(when));
 
 // The shape of 2026-11-21's captions counters (from the exporter's lines and the journal's caption events, 09:30Z-16:16Z):
 // four "not available right now" answers within a second, one room and one video, about two minutes before the alert;
-// seven fetches that worked earlier in the day. With stage 2 the service also counts that one video once (video_fail).
+// seven fetches that worked earlier in the day, and (as the worst case) none after 15:50.
 const captionsDay = () => [
   ev('cc_unavailable', 'temporarily_unavailable', ['16:12', '16:12', '16:12', '16:12']),
   ev('cc_unavailable', 'failed', []),
   ev('cc_via', 'worker', ['09:45', '10:05', '10:25', '11:10', '15:20', '15:25', '15:50']),
-  ev('video_fail', 'captions', ['16:12']),
 ];
 
-test('eiok-captions-failing (#967): one video in one room is quiet; the rule before #967 fired on it', () => {
+test('eiok-captions-failing (#967): one room\'s burst for one video is quiet all evening, with or without other fetches; the rule before #967 fired on it', () => {
   // The rule before #967 fired here (the 16:14Z alert): 4 answers >= 3.
   const before = 'sum(increase(eiok_events_total{env!="staging",metric="cc_unavailable",key=~"temporarily_unavailable|failed"}[6h])) >= 3';
   assert.equal(firing(before, captionsDay(), at('16:14')).length, 1, 'the old rule fires on the fixture');
-  assert.deepEqual(fires('eiok-captions-failing', captionsDay(), '16:14'), []);
-  assert.deepEqual(fires('eiok-captions-failing', captionsDay(), '17:00'), []);
-  // Two stuck videos in 6 h: still quiet.
-  assert.deepEqual(fires('eiok-captions-failing', [ev('video_fail', 'captions', ['12:00', '16:12'])], '16:14'), []);
+  // The verifier's case (M1): stage 1's first form fired 17:55Z-22:10Z here once no fetch had worked for 2 h.
+  for (const when of ['16:14', '16:30', '17:00', '18:00', '20:00', '22:00']) assert.deepEqual(fires('eiok-captions-failing', captionsDay(), when), [], when);
+  // The same room asking again an hour later about the same stuck video: two half-hours, still quiet.
+  const again = [...captionsDay().slice(1), ev('cc_unavailable', 'temporarily_unavailable', ['16:12', '16:12', '16:12', '16:12', '17:20', '17:21'])];
+  assert.deepEqual(fires('eiok-captions-failing', again, '18:00'), []);
+  // A burst that crosses a half-hour mark fills two half-hours: quiet.
+  assert.deepEqual(fires('eiok-captions-failing', [ev('cc_unavailable', 'temporarily_unavailable', ['16:28', '16:29', '16:31', '16:33'])], '17:00'), []);
 });
 
-test('eiok-captions-failing (#967): 3 different videos with no captions in 6 h fire, even while other videos\' captions work', () => {
-  // The home worker's captions break after 12:00Z: each video visitors ask for afterwards counts once.
-  const broken = [ev('video_fail', 'captions', ['12:30', '13:10', '14:05']), ev('cc_via', 'worker', ['13:00', '13:50'])];
-  assert.deepEqual(fires('eiok-captions-failing', broken, '13:30'), [], 'two videos so far');
-  const f = fires('eiok-captions-failing', broken, '14:10');
+test('eiok-captions-failing (#967): failures in 3 different half-hours of 6 h fire, whatever other videos do; at most half an hour late', () => {
+  // The home worker's captions break after 12:00Z; visitors keep asking.
+  const broken = [ev('cc_unavailable', 'temporarily_unavailable', ['12:10', '12:40', '12:45', '13:20']), ev('cc_unavailable', 'failed', []), ev('cc_via', 'worker', ['12:50', '13:10'])];
+  assert.deepEqual(fires('eiok-captions-failing', broken, '13:25'), [], 'two half-hours so far (13:20 is seen at the 13:30 mark)');
+  const f = fires('eiok-captions-failing', broken, '13:30');
   assert.equal(f.length, 1);
-  assert.equal(f[0].value, 3);
-  assert.deepEqual(fires('eiok-captions-failing', broken, '19:00'), [], 'the first left the 6 h window');
+  assert.equal(f[0].value, 3, 'three half-hours');
+  assert.equal(fires('eiok-captions-failing', broken, '18:00').length, 1, 'still inside 6 h');
+  assert.deepEqual(fires('eiok-captions-failing', broken, '19:00'), [], 'the first half-hour left the 6 h');
+  // A route that threw (cc_unavailable failed, 502) counts the same.
+  assert.equal(fires('eiok-captions-failing', [ev('cc_unavailable', 'failed', ['15:00', '15:40', '16:10'])], '16:30').length, 1);
 });
 
 test('eiok-builds-failing (#967): builds of 3 different videos failing fire only when nothing built in the hour', () => {
@@ -117,27 +122,20 @@ test('eiok-unit-restarted (#967): the search service crashing fires too; other u
   assert.deepEqual(fires('eiok-unit-restarted', [counter({ __name__: 'node_systemd_service_restart_total', host: 'optiplex', name: 'japharsworld-yt-relay.service' }, [], { ...DAY, start: 1 })], '18:00'), []);
 });
 
-const memory = (group, type, bytes) => gauge({ __name__: 'namedprocess_namegroup_memory_bytes', host: 'optiplex', groupname: group, memtype: type, instance: 'optiplex' }, () => bytes, DAY);
-const GiB = 1024 ** 3;
-
-test('eiok-home-worker-memory (#967): the production worker over 70 % of its 1 GiB fires (warning, after 30 minutes); the staging worker does not', () => {
-  assert.equal(fires('eiok-home-worker-memory', [memory('relay', 'resident', 0.6 * GiB), memory('relay', 'swapped', 0.15 * GiB)], '12:00').length, 1, 'resident + swapped');
-  assert.deepEqual(fires('eiok-home-worker-memory', [memory('relay', 'resident', 0.5 * GiB), memory('relay', 'swapped', 0.1 * GiB)], '12:00'), []);
-  assert.deepEqual(fires('eiok-home-worker-memory', [memory('relay-staging', 'resident', 0.95 * GiB), memory('relay', 'resident', 0.3 * GiB)], '12:00'), []);
-  assert.equal(rules['eiok-home-worker-memory'].for, '30m');
-  assert.equal(rules['eiok-home-worker-memory'].labels.severity, 'warning');
-  assert.match(rules['eiok-home-worker-memory'].annotations.summary, /^The home worker's memory is at its limit: /);
+test('worker memory (#967, the coordinator\'s call on the verifier\'s M3): Alloy collects it, but no rule reads it until a day of readings is in', () => {
+  assert.equal(rules['eiok-home-worker-memory'], undefined);
+  assert.doesNotMatch(JSON.stringify(alertRules('ds')), /namedprocess_namegroup_memory_bytes/, 'no rule and no inputs-missing entry');
 });
 
-test('alert inputs missing (#967): the crash-restart, worker-memory, video_fail and http_5xx series are inputs, so a config or exporter that stopped sending them shows', () => {
+test('alert inputs missing (#967): the crash-restart, video_fail and http_5xx series are inputs, so a config or exporter that stopped sending them shows', () => {
   const present = [
     gauge({ __name__: 'eiok_home_today', key: 'cap_builds' }, () => 60, DAY), gauge({ __name__: 'eiok_service_memory_limit_bytes' }, () => 1, DAY),
     gauge({ __name__: 'eiok_poll', source: 'tunelio_plan', metric: 'days_to_renewal' }, () => 9, DAY), ev('cc_outcome', 'none', []),
-    restarts('linode', 'japharsworld-yt.service', []), restarts('optiplex', 'japharsworld-yt-relay.service', []), memory('relay', 'resident', 0.3 * GiB),
+    restarts('linode', 'japharsworld-yt.service', []), restarts('optiplex', 'japharsworld-yt-relay.service', []),
     ev('video_fail', 'captions', []), ev('http_5xx', 'ticket', []),
   ];
   assert.deepEqual(fires('eiok-alert-inputs-missing', present, '12:00'), []);
-  for (const i of [4, 5, 6, 7, 8]) assert.equal(fires('eiok-alert-inputs-missing', present.filter((_, j) => j !== i), '12:00').length, 1, `input ${i} missing`);
+  for (const i of [4, 5, 6, 7]) assert.equal(fires('eiok-alert-inputs-missing', present.filter((_, j) => j !== i), '12:00').length, 1, `input ${i} missing`);
 });
 
 // Item 5 of #967: the hard alarms stay as they were and still fire at once.
@@ -157,15 +155,15 @@ test('hard alarms (#967): search service down, public address down, no home work
 test('every rule of #967 explains itself: what it counted, what does not fire it, where to look', () => {
   for (const uid of ['eiok-captions-failing', 'eiok-builds-failing', 'eiok-home-failing']) {
     const s = rules[uid].annotations.summary;
-    assert.match(s, /\{\{ humanize \$values\.A\.Value \}\} different videos/, `${uid}: the number counted, in videos`);
-    assert.match(s, /One video .* does not fire this/, `${uid}: what does not fire it`);
+    assert.match(s, /\{\{ printf "%\.0f" \$values\.A\.Value \}\} different (videos|half-hours)/, `${uid}: the number counted, whole`);
+    assert.match(s, /One (video|room) .* does not fire this/, `${uid}: what does not fire it`);
     assert.match(s, /Look: `node tools\/ops\.mjs events --event /, `${uid}: where to look`);
   }
   for (const uid of ['eiok-server-errors', 'eiok-channels-unreadable', 'eiok-channels-refused']) {
-    assert.match(rules[uid].annotations.summary, /\{\{ humanize \$values\.A\.Value \}\}.*Look: `node tools\/ops\.mjs events --event /, uid);
+    assert.match(rules[uid].annotations.summary, /\{\{ printf "%\.0f" \$values\.A\.Value \}\}.*Look: `node tools\/ops\.mjs events --event /, uid);
   }
-  assert.equal(rules['eiok-captions-failing'].annotations.summary, 'Captions are failing: {{ humanize $values.A.Value }} different videos got no captions when visitors asked, in the last 6 hours (each video counted once, however often it was asked for). One video YouTube can\'t serve does not fire this. Look: `node tools/ops.mjs events --event captions_source_failed,captions_via`, the Captions panel, and whether the home worker restarted (eiok-unit-restarted).');
-  assert.equal(rules['eiok-server-errors'].annotations.summary, '{{ humanize $values.A.Value }} {{ $labels.key }} requests were answered 5xx in the last 15 minutes: a fault in the search service (a route that threw), not a refusal it gives on purpose. Look: `node tools/ops.mjs events --event error` for the route and the error.');
+  // The verifier's L1: increase() extrapolates, so a count is shown whole (the texts themselves are pinned below).
+  assert.doesNotMatch(JSON.stringify(alertRules('ds')), /humanize \$values/);
 });
 
 // promql-lite's own semantics, where Prometheus' are easy to get wrong: an empty aggregation is empty (not 0), so
@@ -187,20 +185,56 @@ test('promql-lite: empty aggregations, unless/and on(), comparison filters and c
 // The Alloy configs that send what eiok-unit-restarted and eiok-home-worker-memory read (deploy/alloy/*.alloy).
 const script = (f) => readFileSync(new URL(`../deploy/${f}`, import.meta.url), "utf8");
 
-test('Alloy configs (#967): restart counters on every host, the worker memory on the Optiplex only, production worker by its script', () => {
+test('Alloy configs (#967): restart counters on every host; the Optiplex collects each relay worker\'s memory, matched on its real command line', () => {
   for (const host of ['linode', 'staging', 'optiplex']) {
     const a = script(`alloy/${host}.alloy`);
     assert.match(a, /systemd \{\n\s+unit_include = [^\n]+\n(\s+\/\/[^\n]*\n)?\s+enable_restarts = true\n\s+\}/, host);
     assert.match(a, /\|systemd_service_restart_total\|/, `${host}: kept by the relabel rule`);
   }
   const o = script('alloy/optiplex.alloy');
-  // The file says worker\\.js: Alloy's string escape, so the regex Alloy gets is worker\.js.
-  assert.ok(o.includes('    name    = "relay"\n    cmdline = ["^/opt/japharsworld-yt-relay/relay/worker\\\\.js$"]'), 'production worker group');
-  assert.ok(o.includes('    name    = "relay-staging"\n    cmdline = ["^/opt/japharsworld-yt-relay-staging/relay/worker\\\\.js$"]'), 'staging worker group');
+  // The verifier's H1: process-exporter v0.8.7 (what Alloy hands its matchers to) runs each cmdline regex on the whole
+  // command line joined with spaces, argv[0] included. Each group's pattern, as Alloy reads the string (its \\ is one
+  // backslash), must take its own unit's ExecStart joined that way, and not the other unit's; and argv[1] alone too.
+  const pattern = (name) => {
+    const m = o.match(new RegExp(`name\\s+= "${name}"\\n\\s+cmdline = \\["([^"]+)"\\]`));
+    assert.ok(m, name);
+    return new RegExp(m[1].replace(/\\\\/g, '\\'));
+  };
+  const execStart = (unit) => script(unit).match(/^ExecStart=(.+)$/m)[1].trim().split(/\s+/);
+  const prod = execStart('japharsworld-yt-relay.service'), staging = execStart('japharsworld-yt-relay-staging.service');
+  assert.deepEqual(prod, ['/usr/bin/node', '/opt/japharsworld-yt-relay/relay/worker.js']);
+  for (const [group, own, other] of [['relay', prod, staging], ['relay-staging', staging, prod]]) {
+    const re = pattern(group);
+    assert.ok(re.test(own.join(' ')), `${group}: its own command line, joined`);
+    assert.ok(re.test(own[1]), `${group}: and argv[1] alone`);
+    assert.ok(!re.test(other.join(' ')) && !re.test(other[1]), `${group}: not the other worker`);
+  }
   assert.match(o, /gather_smaps\s+= false/);
+  assert.match(o, /track_children = false/, 'the worker alone, not its yt-dlp and ffmpeg children');
   assert.match(o, /regex\s+= "namedprocess_namegroup_memory_bytes;\(resident\|swapped\)"/);
-  // The ExecStart lines those matchers read.
-  assert.match(script('japharsworld-yt-relay.service'), /^ExecStart=\/usr\/bin\/node \/opt\/japharsworld-yt-relay\/relay\/worker\.js$/m);
-  assert.match(script('japharsworld-yt-relay-staging.service'), /^ExecStart=\/usr\/bin\/node \/opt\/japharsworld-yt-relay-staging\/relay\/worker\.js$/m);
   for (const host of ['linode', 'staging']) assert.doesNotMatch(script(`alloy/${host}.alloy`), /exporter\.process/, host);
+});
+
+// The owner reads these on a phone (#967 brief, item 4): every summary of the rules that replaced hypercare, word for word.
+const SUMMARIES = {
+  "eiok-captions-failing": "Captions are failing: caption requests got none in {{ printf \"%.0f\" $values.A.Value }} different half-hours of the last 6 hours. One room asking many times about one video YouTube can't serve fills one half-hour and does not fire this. Look: `node tools/ops.mjs events --event captions_source_failed,captions_via`, the Captions panel, and whether the home worker restarted (eiok-unit-restarted).",
+  "eiok-builds-failing": "Tunelio builds are failing: {{ printf \"%.0f\" $values.A.Value }} different videos' builds failed or timed out in the last hour, and no Tunelio build succeeded in that hour. One video Tunelio refuses does not fire this. Look: `node tools/ops.mjs events --event build_failed,tunelio_error,tunelio_link` and the failed builds on the dashboard.",
+  "eiok-home-failing": "The home relay is failing: {{ printf \"%.0f\" $values.A.Value }} different videos failed at home in the last hour and none got ready. One video that fails at home does not fire this. Look: `node tools/ops.mjs events --event home_failed,home_ready`, then `journalctl -u japharsworld-yt-relay -n 80` on the Optiplex.",
+  "eiok-channels-refused": "{{ printf \"%.0f\" $values.A.Value }} Channels plays were refused in the last hour: slots the list hides (stale lists, our own checks). Look: `node tools/ops.mjs events --event channel_refused`.",
+  "eiok-channels-unreadable": "The search service can't read the Channels monitor's status: {{ printf \"%.0f\" $values.A.Value }} Quest Channels plays were refused for it in the last hour, and every one will be until it is fixed. Look: `node tools/ops.mjs events --event channel_refused` (why status_unreadable or status_missing), then the monitor database on the Linode.",
+  "eiok-server-errors": "{{ printf \"%.0f\" $values.A.Value }} {{ $labels.key }} requests were answered 5xx in the last 15 minutes: a fault in the search service (a route that threw), not a refusal it gives on purpose. Look: `node tools/ops.mjs events --event error` for the route and the error.",
+  "eiok-unit-restarted": "{{ $labels.name }} on {{ $labels.host }} stopped on its own and systemd started it again, in the 15 minutes before this alert ({{ printf \"%.0f\" $values.A.Value }} time(s)). Plays and caption jobs it was holding were dropped. Look: `journalctl -u {{ $labels.name }} -n 80` on that host for why it stopped (out of memory, a crash).",
+  "eiok-alert-inputs-missing": "A value that the build cap, service memory, credit pace, captions, crash-restart or server-errors alert needs has been missing for 30 minutes, so that alert is blind. Expected while the search service is down, and for a restart counter while its host is off. Otherwise check japharsworld-yt-exporter (STATS_TOKEN, cgroup) and the metrics poller on the Linode, or, for the restart counters, Alloy on the Linode or the Optiplex (`systemctl status alloy`, `journalctl -u alloy`).",
+};
+test('#967 alert texts, word for word (a change here is a change the owner reads)', () => {
+  for (const [uid, text] of Object.entries(SUMMARIES)) assert.equal(rules[uid].annotations.summary, text, uid);
+});
+
+// The verifier's M2: until the removal commit, both places that describe hypercare say it is retired.
+test('hypercare (#967): the docs say it is retired, and the install step is marked not to be run', () => {
+  const mon = readFileSync(new URL('../claude/monitoring.md', import.meta.url), 'utf8');
+  assert.match(mon, /## Hourly hypercare \(Optiplex timer\)\n\n\*\*Retired 2026-11-21 \(the timer was disabled at 17:04:04Z, Everything-is-OK#967\); kept until the removal commit\.\*\*/);
+  const kit = readFileSync(new URL('../infra-check/README.md', import.meta.url), 'utf8');
+  assert.match(kit, /# 11\. Hourly hypercare: RETIRED 2026-11-21 .*\n#\s+the removal commit\. Do not run these lines\.\n# 11\. Hourly hypercare/);
+  assert.match(kit, /- Retired 2026-11-21 \(the timer was disabled at 17:04:04Z, Everything-is-OK#967\); kept until the removal commit:\n  hourly hypercare/);
 });

@@ -206,10 +206,11 @@ test('bootstrap.sh: a new filter restarts Caddy, and an existing site file for t
 // Everything-is-OK#967: a config Alloy can't load blinds every metric of the host at once, so alloy-config.sh checks it
 // with `alloy fmt` first and puts the previous one back if Alloy doesn't stay up. Fakes: `alloy fmt` refuses a file
 // with BAD-SYNTAX; Alloy "runs" only while the installed file has no BAD-ARG (as an unknown argument stops it at load).
-function runAlloyConfig(next, { prev = 'old config\n', restart = true } = {}) {
+function runAlloyConfig(next, { prev = 'old config\n', restart = true, installFails = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'alloy-config-'));
   try {
     mkdirSync(join(dir, 'bin'));
+    if (installFails) writeFileSync(join(dir, 'bin', 'install'), '#!/usr/bin/env bash\necho "install: read-only file system" >&2\nexit 1\n', { mode: 0o755 });
     writeFileSync(join(dir, 'bin', 'alloy'), '#!/usr/bin/env bash\n[ "$1" = fmt ] && ! grep -q BAD-SYNTAX "$2"\n', { mode: 0o755 });
     writeFileSync(join(dir, 'bin', 'sleep'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
     // Run from the temp folder, so the fake systemctl's files are relative.
@@ -254,6 +255,15 @@ test('alloy-config.sh (#967): a config Alloy won\'t run with is replaced by the 
   assert.match(r.out, /did not stay up .* the previous config is back \(alloy active\)/);
   assert.equal(r.conf, 'old config\n');
   assert.match(r.calls, /restart alloy\nis-active --quiet alloy\nrestart alloy\nis-active alloy\n$/);
+});
+
+test('alloy-config.sh (#967, verifier L7): a failed install restarts nothing and fails, rather than saying "active with" the new config', () => {
+  const r = runAlloyConfig('new config\n', { installFails: true });
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /could not install new\.alloy as config\.alloy: Alloy not restarted/);
+  assert.doesNotMatch(r.out, /active with/);
+  assert.equal(r.calls, '');
+  assert.match(script('alloy-config.sh'), /run `bash deploy\/alloy-setup\.sh <linode\|optiplex\|staging>` by hand/, 'the manual re-run is written down');
 });
 
 test('alloy-config.sh (#967): without "restart" it installs only (credentials not filled in yet)', () => {

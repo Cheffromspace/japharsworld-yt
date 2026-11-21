@@ -42,7 +42,7 @@ Linode                                                  Optiplex
 | `eiok_search_up`, `eiok_relay_workers_online`, `eiok_tunelio_enabled`, `eiok_youtube_api_units_today` | `/healthz` |
 | `node_*`, `node_systemd_unit_state`, `probe_success` | Alloy (`deploy/alloy/*.alloy`) |
 | `node_systemd_service_restart_total{host,name}` | Alloy's systemd collector with `enable_restarts` on every host: systemd's `NRestarts`, the restarts a unit's `Restart=` made (Everything-is-OK#967) |
-| `namedprocess_namegroup_memory_bytes{groupname,memtype}` | Alloy's process exporter on the Optiplex only: resident and swapped bytes of the relay workers, group `relay` (production, matched by `/opt/japharsworld-yt-relay/relay/worker.js`) and `relay-staging`; no command line or user name leaves the machine (Everything-is-OK#967) |
+| `namedprocess_namegroup_memory_bytes{groupname,memtype}` | Alloy's process exporter on the Optiplex only: resident and swapped bytes of each relay worker process alone (`track_children = false`: not its yt-dlp and ffmpeg children), group `relay` (production) and `relay-staging`, matched on the command line joined with spaces as process-exporter v0.8.7 does (`/usr/bin/node /opt/japharsworld-yt-relay/relay/worker.js`). Collected only: no rule reads it until a day of readings is in (Everything-is-OK#967, #968). No command line or user name leaves the machine |
 
 ## Alerts (Grafana, to Discord)
 
@@ -78,14 +78,14 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
 | Captions falling back to Tunelio | over 6 h, Tunelio answered more caption fetches (at least 3) than the home relay and local yt-dlp together, 30 min. Not "estimated timing above real": manual tracks never carry word timing, and that held on normal days (10-24: 104 estimated, 71 real) |
 | Tunelio open or reopen failed | `increase(eiok_tunelio_probe_reopen_fail_total[6h]) + increase(eiok_tunelio_probe_open_fail_total[6h]) > 0`, at once: the speed probe could not resume a cut link at the byte reached (another status, the wrong offset, or no first byte in 10 s), which would turn a reset into a visible freeze, or all three first opens of a read failed that way, which can mean Tunelio stopped honouring Range. The cause can be the Linode's own network, because any fetch error counts. The cut rate is only a panel until there is a baseline (Everything-is-OK#361) |
 | No video has caption tracks | over 6 h, 5 or more distinct videos had no tracks and none had any (`cc_outcome`, world #428), at once: a silent total failure. Stays after hypercare's own check of this ends. A partial failure, with some tracks still coming through, doesn't fire |
-| Caption lookups failing | 3 or more **different videos** in 6 h whose caption requests got none (`video_fail` `captions`: a request answered `temporarily_unavailable` or `failed`, each video once per 6 h), at once: the sources stopped answering, which `cc_outcome` never sees. One video YouTube can't serve doesn't fire it (Everything-is-OK#967, below) |
+| Caption lookups failing | caption requests answered `temporarily_unavailable` or `failed` in **3 or more different half-hours** of the last 6 h (a subquery at the half-hour marks, so up to 30 min late), at once: the sources stopped answering, which `cc_outcome` never sees. One room's burst for one stuck video fills one half-hour (two if it crosses a mark) and stays quiet; it doesn't depend on other videos being fetched. In quiet hours one room asking about the same stuck video across more than an hour can still fire it. Pushed within 6 h of failures in 3 half-hours, it fires at once (Everything-is-OK#967, below; until the per-video count of stage 2 is live) |
 | Video builds failing at Tunelio | 3 or more different videos in 1 h whose Tunelio build failed or timed out after `/create` accepted it (`video_fail` `build`), and no build succeeded in that hour (`build` `ok`), at once (#967) |
 | Home relay plays failing | 3 or more different videos failed at home in 1 h (`video_fail` `home`) and no home session got ready, at once (#967) |
 | Many Channels plays refused | 10 or more Channels answers `unavailable` in 1 h (slots the list hides), at once (#967, hypercare's limit of #863) |
 | Channels status unreadable | 1 or more Channels plays refused in 1 h because the monitor's status can't be read (`channel` `unreadable`), at once: every Quest Channels play is refused meanwhile (#967, hypercare's CHMON of #863) |
 | Requests answered 5xx (critical) | any request answered 5xx that the service didn't mean to give, in 15 min (`http_5xx`, by route: a route that threw), at once; one alert per route. The by-design 5xx answers (search and captions 502, a broken home upload, a hidden Channels slot) are not counted (#967) |
 | Service crashed and restarted (critical) | `japharsworld-yt.service` (Linode) or `japharsworld-yt-relay.service` (Optiplex) was restarted by systemd in the last 15 min (`node_systemd_service_restart_total` rose), at once; one alert per unit, naming it and the host (#967, #968) |
-| Home worker memory at its limit | the production relay worker's resident + swapped memory over 70 % of its unit's 1 GiB for 30 min (#967, #968) |
+| (Home worker memory: no rule yet) | the series is collected (`namedprocess_namegroup_memory_bytes`, group `relay`); the rule comes after a day of readings, because the run that crashed on 2026-11-21 peaked at the 1G cap and a threshold set now could fire at once (#967, #968) |
 | Metrics poller stale | no pass reached the `tunelio_plan` write for over an hour, 5 min; the timer is 15 min, the widest gap seen 18 min. That write is mid-pass, so a pass failing after it (daily sources, domains, reports) doesn't show |
 | Disk almost full | under 10 % free on `/`, 15 min |
 
@@ -101,9 +101,14 @@ count (#966), while the real fault in the same minutes, the home worker crashing
   IDs in memory only, each dropped by its own timer when its window ends (6 h for captions, 1 h for builds and home),
   as the privacy page promises. The builds and home rules also need the thing to have stopped working in the hour (no
   build ok, no home session ready), so a few failing videos among many that work don't fire them. The accepted gap: a
-  partial failure (some videos failing, others working) fires neither; captions fire at 3 videos either way. A restart
-  forgets the IDs, so a video can count twice across one. (Stage 1 of #967, before this counter was live, read per-play
-  and per-request counts with "unless something worked in the window".)
+  partial failure (some videos failing, others working) fires neither. A restart forgets the IDs, so a video can count
+  twice across one. Until that counter is live (stage 2, a deploy), captions count half-hours: failures in 3 different
+  half-hours of 6 h. A first version (stage 1, not pushed) asked "unless a caption fetch worked in 2 h", which the
+  verifier showed would fire on the day's one stuck video from 17:55Z to 22:10Z had nobody else fetched captions.
+- Until stage 2's exporter sends `build` `ok`, `home` `ready` and `channel` `unavailable` from 0, a series that has
+  never counted on production starts at its first event, and `increase()` sees only the second one on: the builds,
+  home and Channels rules start counting from each such series' second event (and a missing `ok`/`ready` series reads
+  as "nothing worked", toward firing).
 - Builds count a video whose build `/create` accepted and then failed or timed out (`build_failed`: 524, 503, no
   answer; warm-ups included). A provider refusing a video (`tunelio_failed`, e.g. its 409 "not ready") isn't counted:
   the service alerts on its own when Tunelio fails (5xx, 401, 402: src/playback.js). `build` `ok` counts cached links
@@ -115,11 +120,20 @@ count (#966), while the real fault in the same minutes, the home worker crashing
   moves it is checked on the staging VPS before the rule is pushed (systemd's docs don't say); if it does, the rule gets
   a guard on the deploy markers (`eiok_deploy_timestamp_seconds`).
 - The worker's memory: its unit caps it at `MemoryMax=1G` and had hit that limit 35k times
-  (deploy/japharsworld-yt-relay.service); on 2026-11-21 V8 gave up at about 743 MB of heap. 70 % of 1 GiB (about
-  750 MB) of resident + swapped, for 30 min, is the heap near where it died; not yet calibrated on normal days.
+  (deploy/japharsworld-yt-relay.service); on 2026-11-21 V8 gave up at about 743 MB of heap, and 28 minutes after the
+  restart the unit stood at 1.07 GB (cgroup, page cache included). Alloy collects the worker process's resident and
+  swapped bytes; the rule waits for a day of readings (the coordinator tracks it on #968).
 - A broken Alloy config would blind a whole host, so `deploy/alloy-setup.sh` installs it through
-  `deploy/alloy-config.sh`: `alloy fmt` must read it, and if Alloy doesn't stay active on it (three looks 8 s apart)
-  the previous config goes back and the setup fails.
+  `deploy/alloy-config.sh`: `alloy fmt` must read it, the install must work, and if Alloy doesn't stay active on it
+  (three looks 8 s apart) the previous config goes back and the setup fails. That failure is one line in update.sh's
+  or relay-update.sh's journal ("alloy setup failed") and is not tried again until another `deploy/alloy*` change:
+  after fixing the cause, run `bash deploy/alloy-setup.sh <linode|optiplex|staging>` on that host by hand. A config
+  that loads but whose component finds nothing (a matcher that matches no process) stays up; only "Alert inputs
+  missing" shows that.
+- Known limits: a cached Tunelio link counts as a build that worked (`build` `ok`), so one cached replay in the hour
+  quiets the builds rule; "Service crashed and restarted" says "stopped on its own" because a deploy's
+  `systemctl restart` is expected not to move NRestarts (the worker's counter read 1 after the 2026-11-21 crash, after
+  a run that began with the 11-17 deploy), proven on the staging VPS before the rule is pushed.
 - What hypercare checked that Grafana already had: the units and `/healthz` (search down, public down, home worker),
   disk, the silent caption failure (`eiok-captions-empty` is the same rule), SSH, YouTube refusals. Dropped: hypercare
   watching itself (ssh, journal), `backoff` (no such event is written any more), home cache evictions and over-cap
@@ -307,6 +321,10 @@ The copies installed on 2026-10-24 also allowed service restarts. The
 rule above forbids those either way; the owner reinstalls the narrowed files.
 
 ## Hourly hypercare (Optiplex timer)
+
+**Retired 2026-11-21 (the timer was disabled at 17:04:04Z, Everything-is-OK#967); kept until the removal commit.** What it
+checked moved to the Grafana rules above ("What replaced the hourly hypercare's journal counts"); don't install or
+re-enable it.
 
 `infra-check/hypercare.mjs` and the `yt-hypercare` user timer (world #208, owner 2026-10-26; it replaced the
 coordinator's 30-minute loop). Every hour at :17, read only and without Claude, it checks the last hour: the search

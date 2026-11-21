@@ -1,7 +1,8 @@
 // A small PromQL subset for the alert-rule tests (Everything-is-OK#967): enough to evaluate the expressions that
 // tools/grafana.mjs writes over made-up series, so a rule's test runs its real expression rather than matching its text.
 // Supported: selectors with = != =~ !~ (a missing label reads as ""), [range] with s/m/h/d, number literals, time(),
-// sum/max/min/count with by (...) before or after, increase, max_over_time, absent, absent_over_time,
+// sum/max/min/count with by (...) before or after, increase, max_over_time, count_over_time, absent, absent_over_time,
+// subqueries (expr)[range:step] at the multiples of step, as Prometheus aligns them,
 // + - * / and the comparisons (as filters, no bool), and/unless/or with an optional on (...).
 // Not Prometheus: increase() is the plain rise inside the range (counter resets handled, no extrapolation to the edges),
 // which is at most Prometheus' value, so a test that fires here fires there; instant selectors look back 5 minutes.
@@ -12,7 +13,8 @@ const UNIT = { s: 1, m: 60, h: 3600, d: 86400 };
 
 function tokenize(src) {
   const out = [];
-  const re = /\s*(?:(\d+(?:\.\d+)?(?:e\d+)?)|("(?:[^"\\]|\\.)*")|(\[\d+[smhd]\])|(=~|!~|!=|>=|<=|==|[-+*/(){},=<>])|([A-Za-z_:][A-Za-z0-9_:]*))/y;
+  const re = /\s*(?:(\d+(?:\.\d+)?(?:e\d+)?)|("(?:[^"\\]|\\.)*")|(\[\d+[smhd](?::\d+[smhd])?\])|(=~|!~|!=|>=|<=|==|[-+*/(){},=<>])|([A-Za-z_:][A-Za-z0-9_:]*))/y;
+  const dur = (d) => Number(d.slice(0, -1)) * UNIT[d.slice(-1)];
   let m;
   re.lastIndex = 0;
   while (re.lastIndex < src.length) {
@@ -21,7 +23,7 @@ function tokenize(src) {
     if (!(m = re.exec(src))) throw new Error(`promql-lite: can't read "${src.slice(at, at + 20)}"`);
     if (m[1]) out.push({ t: 'num', v: Number(m[1]) });
     else if (m[2]) out.push({ t: 'str', v: JSON.parse(m[2]) });
-    else if (m[3]) { const d = m[3].slice(1, -1); out.push({ t: 'range', v: Number(d.slice(0, -1)) * UNIT[d.slice(-1)] }); }
+    else if (m[3]) { const [r, step] = m[3].slice(1, -1).split(':'); out.push({ t: 'range', v: dur(r), step: step ? dur(step) : null }); }
     else if (m[4]) out.push({ t: 'op', v: m[4] });
     else out.push({ t: 'id', v: m[5] });
   }
@@ -57,7 +59,12 @@ function parse(src) {
     const tk = toks[i++];
     if (!tk) throw new Error(`promql-lite: unexpected end of ${src}`);
     if (tk.t === 'num') return { k: 'num', v: tk.v };
-    if (tk.t === 'op' && tk.v === '(') { const e = binary(0); eat(')'); return e; }
+    if (tk.t === 'op' && tk.v === '(') {
+      const e = binary(0); eat(')');
+      // A subquery: (expr)[range:step], the expression at every multiple of step inside the range, as Prometheus does.
+      if (peek()?.t === 'range' && peek().step) { const r = toks[i++]; return { k: 'subq', expr: e, range: r.v, step: r.step }; }
+      return e;
+    }
     if (tk.t !== 'id') throw new Error(`promql-lite: unexpected ${tk.v} in ${src}`);
     if (AGG.has(tk.v) && (isOp('(') || isOp('by'))) {
       let by = null;
@@ -96,8 +103,8 @@ const matches = (labels, [name, op, val]) => {
 const key = (labels, keep) => JSON.stringify(Object.entries(labels).filter(([k]) => k !== '__name__' && (!keep || keep.includes(k))).sort());
 const dropName = (labels) => Object.fromEntries(Object.entries(labels).filter(([k]) => k !== '__name__'));
 
-export function evaluate(src, series, at) {
-  const ev = (n) => {
+export function evaluate(src, series, top) {
+  const ev = (n, at = top) => {
     switch (n.k) {
       case 'num': return { scalar: n.v };
       case 'sel': {
@@ -107,19 +114,27 @@ export function evaluate(src, series, at) {
       }
       case 'call': {
         if (n.fn === 'time') return { scalar: at };
-        const a = ev(n.args[0]);
+        const a = ev(n.args[0], at);
         if (n.fn === 'increase') return a.matrix.filter((s) => s.samples.length >= 2).map((s) => {
           let rise = 0;
           for (let j = 1; j < s.samples.length; j++) { const d = s.samples[j][1] - s.samples[j - 1][1]; rise += d >= 0 ? d : s.samples[j][1]; }
           return { labels: dropName(s.labels), value: rise };
         });
+        if (n.fn === 'count_over_time') return a.matrix.map((s) => ({ labels: dropName(s.labels), value: s.samples.length }));
         if (n.fn === 'max_over_time') return a.matrix.map((s) => ({ labels: dropName(s.labels), value: Math.max(...s.samples.map((x) => x[1])) }));
         if (n.fn === 'absent') return a.length ? [] : [{ labels: {}, value: 1 }];
         if (n.fn === 'absent_over_time') return a.matrix.length ? [] : [{ labels: {}, value: 1 }];
         throw new Error(`promql-lite: no function ${n.fn}`);
       }
+      case 'subq': {
+        const rows = new Map();
+        for (let t = Math.floor(at / n.step) * n.step; t > at - n.range; t -= n.step) {
+          for (const s of ev(n.expr, t)) { const k = key(s.labels); const r = rows.get(k) ?? { labels: s.labels, samples: [] }; r.samples.unshift([t, s.value]); rows.set(k, r); }
+        }
+        return { matrix: [...rows.values()] };
+      }
       case 'agg': {
-        const v = ev(n.arg);
+        const v = ev(n.arg, at);
         const groups = new Map();
         for (const s of v) {
           const k = key(s.labels, n.by ?? []);
@@ -130,7 +145,7 @@ export function evaluate(src, series, at) {
         return [...groups.values()].map((g) => ({ labels: g.labels, value: f(g.values) }));
       }
       case 'bin': {
-        const l = ev(n.left), r = ev(n.right);
+        const l = ev(n.left, at), r = ev(n.right, at);
         const arith = { '+': (a, b) => a + b, '-': (a, b) => a - b, '*': (a, b) => a * b, '/': (a, b) => a / b };
         const cmp = { '>': (a, b) => a > b, '<': (a, b) => a < b, '>=': (a, b) => a >= b, '<=': (a, b) => a <= b, '==': (a, b) => a === b, '!=': (a, b) => a !== b };
         if (['and', 'unless', 'or'].includes(n.op)) {

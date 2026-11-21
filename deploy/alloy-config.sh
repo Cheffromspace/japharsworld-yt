@@ -8,6 +8,9 @@
 # 3. With "restart": Alloy is restarted and must stay active through three looks ALLOY_SETTLE seconds apart (an unknown
 #    block or argument stops Alloy at its first load; systemd's restarts make it flap between failed and activating).
 #    If it doesn't, the .prev file goes back, Alloy is restarted on it, and the script fails.
+# A failure is one line in the update script's journal ("alloy setup failed") and is not tried again until another
+# deploy/alloy* change: after fixing the cause, run `bash deploy/alloy-setup.sh <linode|optiplex|staging>` by hand
+# (claude/monitoring.md, Setup).
 set -uo pipefail
 NEW=$1 CONF=$2 RESTART=${3:-}
 SETTLE=${ALLOY_SETTLE:-8}
@@ -15,8 +18,14 @@ if ! alloy fmt "$NEW" >/dev/null 2>&1; then
   echo "alloy fmt can't read $NEW: $CONF left as it was"
   exit 1
 fi
-[ -f "$CONF" ] && cp -p "$CONF" "$CONF.prev"
-install -m 644 "$NEW" "$CONF"
+if [ -f "$CONF" ] && ! cp -p "$CONF" "$CONF.prev"; then
+  echo "could not keep $CONF as $CONF.prev: nothing changed"
+  exit 1
+fi
+if ! install -m 644 "$NEW" "$CONF"; then
+  echo "could not install $NEW as $CONF: Alloy not restarted"
+  exit 1
+fi
 [ "$RESTART" = restart ] || exit 0
 up() {
   for _ in 1 2 3; do sleep "$SETTLE"; systemctl is-active --quiet alloy || return 1; done

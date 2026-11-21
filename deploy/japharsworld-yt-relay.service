@@ -17,9 +17,17 @@ StateDirectory=japharsworld-yt-relay
 StateDirectoryMode=0700
 Restart=always
 RestartSec=5
-# The cgroup counts the page cache of the stream cache: 2026-10-25 at 300M it held 64 MB anon + 199 MB file, hit the
-# limit 35k times (memory.events max), throttled sockets 9k times and swapped 29 MB. The Optiplex has ~30 GB free.
-MemoryMax=1G
+# Memory: 300M at first (2026-10-18), 1G from 2026-10-24 (at 300M the worker swapped and its cgroup hit the limit all the
+# time: the cgroup counts the stream cache's page cache, which the kernel reclaims at the limit), 4G from 2026-11-21
+# (Everything-is-OK#968, the owner's go). On 2026-11-21 at 16:12Z the worker died at V8's own heap limit (about 550 MB,
+# sized by Node from the 1G cgroup) parsing a huge caption info JSON; relay/captions.js now refuses such files unread.
+# The heap is set here rather than left to Node's guess from the cgroup: 2 GB old space, about 4x what it had, and the
+# other ~2 GB of the cap stay for yt-dlp (Python), ffmpeg, buffers and page cache, so the heap limit is met before the
+# cgroup's. Set through NODE_OPTIONS, not ExecStart, which the Alloy memory matcher reads (#967); child node processes
+# (yt-dlp's --js-runtimes node) inherit the same ceiling, a limit and not a reservation. The Optiplex has 31 GB (about
+# 25 GB free, 2026-11-21); all the capped units together come to about 6 GB.
+MemoryMax=4G
+Environment=NODE_OPTIONS=--max-old-space-size=2048
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

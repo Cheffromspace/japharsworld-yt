@@ -120,7 +120,7 @@ count (#966), while the real fault in the same minutes, the home worker crashing
   counter is systemd's own `NRestarts`, through Alloy's `enable_restarts`. Whether a deploy's `systemctl restart`
   moves it is checked on the staging VPS before the rule is pushed (systemd's docs don't say); if it does, the rule gets
   a guard on the deploy markers (`eiok_deploy_timestamp_seconds`).
-- The worker's memory: its unit caps it at `MemoryMax=1G` and had hit that limit 35k times
+- The worker's memory: its unit capped it at `MemoryMax=1G` (4G and a 2 GB heap since #968) and had hit that limit 35k times
   (deploy/japharsworld-yt-relay.service); on 2026-11-21 V8 gave up at about 743 MB of heap, and 28 minutes after the
   restart the unit stood at 1.07 GB (cgroup, page cache included). Alloy collects the worker process's resident and
   swapped bytes; the rule waits for a day of readings (the coordinator tracks it on #968).

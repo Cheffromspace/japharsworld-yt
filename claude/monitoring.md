@@ -120,9 +120,12 @@ count (#966), while the real fault in the same minutes, the home worker crashing
   counter is systemd's own `NRestarts`, through Alloy's `enable_restarts`. Whether a deploy's `systemctl restart`
   moves it is checked on the staging VPS before the rule is pushed (systemd's docs don't say); if it does, the rule gets
   a guard on the deploy markers (`eiok_deploy_timestamp_seconds`).
-- The worker's memory: its unit capped it at `MemoryMax=1G` (4G and a 2 GB heap since #968) and had hit that limit 35k times
-  (deploy/japharsworld-yt-relay.service); on 2026-11-21 V8 gave up at about 743 MB of heap, and 28 minutes after the
-  restart the unit stood at 1.07 GB (cgroup, page cache included). Alloy collects the worker process's resident and
+- The worker's memory: its unit capped it at `MemoryMax=1G` (4G and a 2 GB heap since #968). The often-quoted "hit the
+  limit 35k times" was at the earlier 300M cap and is why it went to 1G (`git show 2a75164`, 2026-10-24); at 1G the
+  cgroup's `memory.events` read `max 78740` about 4.5 h after the 2026-11-21 restart (observed on the host that day,
+  #968 research), mostly reclaimable page cache. On 2026-11-21 V8 gave up at its heap limit (GC 743 -> 552 MB; a limit
+  of about 550 MB inferred from the 1G cgroup), and 28 minutes after the restart the unit stood at 1.07 GB (cgroup,
+  page cache included). Alloy collects the worker process's resident and
   swapped bytes; the rule waits for a day of readings (the coordinator tracks it on #968).
 - A broken Alloy config would blind a whole host, so `deploy/alloy-setup.sh` installs it through
   `deploy/alloy-config.sh`: `alloy fmt` must read it, the install must work, and if Alloy doesn't stay active on it

@@ -2,7 +2,6 @@
  "notice": "",
  "slots": {
   "borneo-jungle-night": {
-   "hidden": true,
    "title": "Lonely Lakeside Campfire"
   },
   "fan-noise-black": {
@@ -31,6 +30,9 @@
   },
   "lofi-study": {
    "hidden": false
+  },
+  "milky-way": {
+   "hidden": true
   },
   "retroworld-ps1": {
    "hidden": true

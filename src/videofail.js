@@ -9,6 +9,9 @@
 // is kept in memory for up to 6 hours and is never stored or sent". So the IDs live in this Map only; each one is
 // dropped by its own timer when its kind's window ends (and the Map is capped), and nothing here logs, stores or
 // exports one: the metric carries the kind alone. A restart forgets them, so a video can count twice across one.
+// The Map is capped at MAX: past it the oldest id is dropped, and that video can count again inside its window. The
+// timers are not capped (one per count, each up to 6 h); ids come only from played tickets, which are rate-limited, so
+// both stay small (the stage 2 verifier's L3).
 export const VIDEO_FAIL_MS = { captions: 6 * 3600_000, build: 3600_000, home: 3600_000 };
 const MAX = 5000;
 

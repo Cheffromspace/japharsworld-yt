@@ -170,6 +170,23 @@ test('http_5xx: scanner-shaped paths (//, bad percent-encoding, traversal) answe
   assert.deepEqual(s.incs.filter((x) => x.startsWith('http_5xx:')), []);
 });
 
+test('captions (the stage 2 verifier\'s L7): "constructor", "toString" and other inherited names are not languages: they get English as an unknown language does, and count nothing', async (t) => {
+  const { normalizeLang } = await import('../src/query.js');
+  const asked = [];
+  const s = await start({}, { async get(id, lang) { asked.push(lang); return { id, lang, available: true, source: 'manual', lines: [[0, 1, 'hi']] }; },
+    async tracks(id, lang) { return { id, lang, available: true, tracks: [], track: -1 }; }, warm() {} });
+  t.after(() => s.server.close());
+  const r = JSON.parse((await s.get('/v1/0/s?q=rain')).body);
+  await s.get(`/v1/0/${r.results[0].t}`);
+  asked.length = 0;
+  for (const w of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', 'isPrototypeOf', 'xyz']) {
+    assert.equal((await s.get(`/v1/0/cc/${w}`)).status, 200, w);
+    assert.equal(normalizeLang(w), 'en', w);
+  }
+  assert.deepEqual(asked, ['en', 'en', 'en', 'en', 'en', 'en']);
+  assert.deepEqual(s.incs.filter((x) => x.startsWith('video_fail:') || x.startsWith('http_5xx:')), []);
+});
+
 test('channels: a monitor status the service can\'t read is counted as unreadable, a hidden slot as unavailable; neither 503 is an http_5xx', async (t) => {
   const answers = { 'a-slot': { error: 'monitor_unreadable' }, 'b-slot': { error: 'channel_unavailable' }, 'c-slot': { error: 'unknown_channel' } };
   const s = await start({ channels: { resolve: async (key) => answers[key] } });

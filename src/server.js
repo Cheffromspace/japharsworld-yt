@@ -1823,7 +1823,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     else if (listOnly) metrics.inc('cc_tracks');
     else { metrics.inc('cc_list'); metrics.inc('cc_list_lang', raw === 'native' ? 'native' : normalizeLang(raw)); }
     if ((byTrack && typeof captions.track !== 'function') || (listOnly && typeof captions.tracks !== 'function')) { metrics.inc('cc_unavailable', 'no_tracks'); return fail(res, 404, 'no_tracks', 'Caption tracks are not available.'); }
-    const lang = byTrack || listOnly ? normalizeLang(url.searchParams.get('l')) : raw === 'native' ? 'native' : (LANGS[raw] ? raw : normalizeLang(raw));
+    const lang = byTrack || listOnly ? normalizeLang(url.searchParams.get('l')) : raw === 'native' ? 'native' : (Object.hasOwn(LANGS, raw) ? raw : normalizeLang(raw));
     const last = store.lastPlayed(shard);
     if (!last) { metrics.inc('cc_unavailable', 'nothing_playing'); return fail(res, 404, 'nothing_playing', 'Nothing from search has played here yet.'); }
     try {

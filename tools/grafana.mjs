@@ -1,6 +1,9 @@
 // Grafana Cloud dashboard and alert rules for Everything is OK (claude/monitoring.md), kept in the repo.
 //   node tools/grafana.mjs build    writes grafana/dashboard.json, grafana/tonight.json and grafana/alert-rules.json
-//   node tools/grafana.mjs push     uploads them to the stack (and the Discord contact points)
+//   node tools/grafana.mjs push     uploads them to the stack (and the Discord contact points). Until the production
+//                                   deploy that carries 76c083d is live (Everything-is-OK#967), it refuses: rules go out
+//                                   only with push-rule from the checkouts the #967 push plan names, and a full push
+//                                   would fire "Alert inputs missing" and blind four rules. Then: push --after-deploy.
 //   node tools/grafana.mjs push-rule <uid> [--dry-run]   that one alert rule only (no dashboards, contact points or
 //                                   other rules); --dry-run prints the request and sends nothing
 // push reads its settings from the environment or the repo's .env (gitignored; the environment wins):
@@ -817,6 +820,18 @@ export async function pushRule(uid, { dryRun = false, call = api, dsUid = null, 
     state: live?.state ?? null, health: live?.health ?? null, lastEvaluation: live?.lastEvaluation ?? null };
 }
 
+// Everything-is-OK#967 (the verifier's R2-M1): the rules here read series production sends only after the deploy that
+// carries 76c083d (video_fail, http_5xx) and after both hosts run the new Alloy configs (the restart counters). A full
+// `push` before then fires "Alert inputs missing" within 30 minutes and blinds the captions, builds, home and
+// server-errors rules. So `push` refuses until it is told the deploy is live (--after-deploy); push-rule is not affected.
+// Once that deploy is on production and the series are seen in Grafana, set FULL_PUSH_WAITS_FOR to null in a commit of
+// its own, and the flag is no longer needed.
+export const FULL_PUSH_WAITS_FOR = { commit: '76c083d', issue: 'Everything-is-OK#967' };
+export function fullPushRefusal(args, waits = FULL_PUSH_WAITS_FOR) {
+  if (!waits || args.includes('--after-deploy')) return null;
+  return `push refused: these rules need the production deploy that carries ${waits.commit} (${waits.issue}) and the new Alloy configs on the Linode and the Optiplex; pushed earlier, "Alert inputs missing" fires and four rules go blind. Push single rules with push-rule meanwhile (claude/monitoring.md, Setup). Once the deploy is live and its series show in Grafana: node tools/grafana.mjs push --after-deploy (and set FULL_PUSH_WAITS_FOR to null).`;
+}
+
 // promSource() through another API function (pushRule's injectable `call`).
 async function promSourceVia(call) {
   if (call === api) return promSource();
@@ -831,6 +846,8 @@ if (cmd === 'build') {
   writeFileSync('grafana/alert-rules.json', `${JSON.stringify(alertRules('${ds}', { critical: true }), null, 1)}\n`);
   console.log('wrote grafana/dashboard.json, grafana/tonight.json, grafana/alert-rules.json');
 } else if (cmd === 'push') {
+  const refused = fullPushRefusal(process.argv.slice(3));
+  if (refused) { console.error(refused); process.exit(2); }
   push().catch((err) => { console.error(err.message); process.exitCode = 1; });
 } else if (cmd === 'push-rule') {
   const args = process.argv.slice(3);
@@ -838,6 +855,6 @@ if (cmd === 'build') {
     .then((r) => console.log(JSON.stringify(r, null, 1)))
     .catch((err) => { console.error(err.message); process.exitCode = 1; });
 } else if (cmd) {
-  console.error('usage: node tools/grafana.mjs build|push|push-rule <uid> [--dry-run]');
+  console.error('usage: node tools/grafana.mjs build|push [--after-deploy]|push-rule <uid> [--dry-run]');
   process.exit(2);
 }

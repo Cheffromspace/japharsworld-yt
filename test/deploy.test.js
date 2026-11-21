@@ -210,7 +210,13 @@ function runAlloyConfig(next, { prev = 'old config\n', restart = true, installFa
   const dir = mkdtempSync(join(tmpdir(), 'alloy-config-'));
   try {
     mkdirSync(join(dir, 'bin'));
-    if (installFails) writeFileSync(join(dir, 'bin', 'install'), '#!/usr/bin/env bash\necho "install: read-only file system" >&2\nexit 1\n', { mode: 0o755 });
+    // installFails: 'all' (every copy) or 'prev' (only putting .prev back). A failing copy writes part of the file
+    // first, as GNU install does on a full disk, so a test sees whether a part-written config could land in place.
+    if (installFails) writeFileSync(join(dir, 'bin', 'install'), `#!/usr/bin/env bash
+src="\${@: -2:1}"; dst="\${@: -1}"
+if [ "${installFails}" = all ] || [[ "$src" == *.prev ]]; then printf 'half a con' > "$dst"; echo "install: no space left" >&2; exit 1; fi
+exec /usr/bin/install "$@"
+`, { mode: 0o755 });
     writeFileSync(join(dir, 'bin', 'alloy'), '#!/usr/bin/env bash\n[ "$1" = fmt ] && ! grep -q BAD-SYNTAX "$2"\n', { mode: 0o755 });
     writeFileSync(join(dir, 'bin', 'sleep'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
     // Run from the temp folder, so the fake systemctl's files are relative.
@@ -227,7 +233,7 @@ esac
     writeFileSync(join(dir, 'run.sh'), `PATH="$PWD/bin:$PATH"\nbash deploy-alloy-config.sh new.alloy config.alloy ${restart ? 'restart' : ''}\n`);
     const r = spawnSync('bash', ['run.sh'], { cwd: dir, encoding: 'utf8' });
     const read = (f) => (existsSync(join(dir, f)) ? readFileSync(join(dir, f), 'utf8') : null);
-    return { status: r.status, out: r.stdout + r.stderr, conf: read('config.alloy'), prev: read('config.alloy.prev'), calls: read('calls') ?? '' };
+    return { status: r.status, out: r.stdout + r.stderr, conf: read('config.alloy'), prev: read('config.alloy.prev'), calls: read('calls') ?? '', leftover: read('config.alloy.new') };
   } finally {
     try { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
   }
@@ -258,12 +264,25 @@ test('alloy-config.sh (#967): a config Alloy won\'t run with is replaced by the 
 });
 
 test('alloy-config.sh (#967, verifier L7): a failed install restarts nothing and fails, rather than saying "active with" the new config', () => {
-  const r = runAlloyConfig('new config\n', { installFails: true });
+  const r = runAlloyConfig('new config\n', { installFails: 'all' });
   assert.notEqual(r.status, 0);
   assert.match(r.out, /could not install new\.alloy as config\.alloy: Alloy not restarted/);
   assert.doesNotMatch(r.out, /active with/);
   assert.equal(r.calls, '');
+  // The verifier's R2-L5: the copy goes to a file beside it and is renamed, so a part-written copy never replaces the
+  // installed config (Alloy's next start would load it).
+  assert.equal(r.conf, 'old config\n', 'the installed config is whole');
+  assert.equal(r.leftover, null, 'no part-written file left behind');
   assert.match(script('alloy-config.sh'), /run `bash deploy\/alloy-setup\.sh <linode\|optiplex\|staging>` by hand/, 'the manual re-run is written down');
+});
+
+test('alloy-config.sh (#967, verifier R2-L5): when putting .prev back fails too, it says so and what to do, and claims nothing', () => {
+  const r = runAlloyConfig('BAD-ARG = true\n', { installFails: 'prev' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.out, /putting config\.alloy\.prev back failed: config\.alloy is still the new one\. Copy config\.alloy\.prev over it by hand, then systemctl restart alloy/);
+  assert.doesNotMatch(r.out, /the previous config is back/);
+  assert.equal(r.conf, 'BAD-ARG = true\n', 'still the new one, whole, not a part-written .prev');
+  assert.equal(r.prev, 'old config\n');
 });
 
 test('alloy-config.sh (#967): without "restart" it installs only (credentials not filled in yet)', () => {

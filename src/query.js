@@ -123,10 +123,12 @@ export const SHORT_LANGS = {
 };
 export function normalizeLang(l) {
   if (!l) return 'en';
-  if (LANGS[l]) return l;
+  // Own keys only: "constructor" or "toString" in a /cc/<lang> address are not languages (Everything-is-OK#967, the
+  // verifier of stage 2: through an inherited property one counted a video as without captions).
+  if (Object.hasOwn(LANGS, l)) return l;
   const lower = l.toLowerCase();
   for (const k of Object.keys(LANGS)) if (k.toLowerCase() === lower) return k;
   const base = lower.split(/[-_]/)[0];
-  if (LANGS[base]) return base;
+  if (Object.hasOwn(LANGS, base)) return base;
   return 'en';
 }

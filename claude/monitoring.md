@@ -60,7 +60,7 @@ failed state (credits low, Data API quota, plan renewals, reports) have none.
 | Linode CPU over 80 % | under 20 % idle across its vCPUs, 15 min |
 | Search service memory near its limit | anon + swap > 90 % of the live `memory.max`, page cache not counted, 15 min |
 | Searches failing (502) | 2 or more `search_fail` 502 in 15 min |
-| Alert inputs missing | `cap_builds`, the memory limit, `days_to_renewal`, `cc_outcome`, the search service's or home worker's restart counter, the production worker's memory, `video_fail` `captions` or `http_5xx` `ticket` absent for 30 min, so those alerts would be silently blind |
+| Alert inputs missing | `cap_builds`, the memory limit, `days_to_renewal`, `cc_outcome`, the search service's or home worker's restart counter, `video_fail` `captions` or `http_5xx` `ticket` absent for 30 min, so those alerts would be silently blind |
 | Home relay has no worker | no media worker connected for 15 min (only while `HOME_RELAY=on`; the gauge isn't set otherwise) |
 | Home sent over 100 GB today / 2,000 GB this month (no ISP cap, owner 2026-10-27: unusual volume, not a limit) | `eiok_transfer_bytes{host="home"}`: the Optiplex's bytes sent (every interface but `lo`), reported on each relay poll and counted in metrics.db (`transfer`), Chicago days and months, 5 min |
 | Linode sent over 700 GB this month | `eiok_transfer_bytes{host="linode",period="month"}`: the Linode's bytes sent, of its 1 TB monthly transfer, 5 min |
@@ -103,8 +103,10 @@ count (#966), while the real fault in the same minutes, the home worker crashing
   build ok, no home session ready), so a few failing videos among many that work don't fire them. The accepted gap: a
   partial failure (some videos failing, others working) fires neither. A restart forgets the IDs, so a video can count
   twice across one. Until that counter is live (stage 2, a deploy), captions count half-hours: failures in 3 different
-  half-hours of 6 h. A first version (stage 1, not pushed) asked "unless a caption fetch worked in 2 h", which the
-  verifier showed would fire on the day's one stuck video from 17:55Z to 22:10Z had nobody else fetched captions.
+  half-hours of 6 h. That fires 60 to 90 min after the first failure, if visitors keep asking; and one room asking about
+  one stuck video in 3 different half-hours fires it at any hour (a long video with late joiners can). A first version
+  (stage 1, not pushed) asked "unless a caption fetch worked in 2 h", which the verifier showed would fire on the day's
+  one stuck video from 17:55Z to 22:10Z had nobody else fetched captions.
 - Stage 2's exporter sends `build` `ok`, `home` `ready` and `channel` `unavailable` (with the new keys) from 0, so
   `increase()` sees the first event of a series that has never counted on production. Before it, those rules counted
   from each such series' second event (and a missing `ok`/`ready` series read as "nothing worked", toward firing).
@@ -130,9 +132,13 @@ count (#966), while the real fault in the same minutes, the home worker crashing
   that loads but whose component finds nothing (a matcher that matches no process) stays up; only "Alert inputs
   missing" shows that.
 - Known limits: a cached Tunelio link counts as a build that worked (`build` `ok`), so one cached replay in the hour
-  quiets the builds rule; "Service crashed and restarted" says "stopped on its own" because a deploy's
-  `systemctl restart` is expected not to move NRestarts (the worker's counter read 1 after the 2026-11-21 crash, after
-  a run that began with the 11-17 deploy), proven on the staging VPS before the rule is pushed.
+  quiets the builds rule. "Service crashed and restarted" says "stopped on its own" because a manual start or restart
+  (a deploy's `systemctl restart`) resets NRestarts to 0 (systemd `src/core/service.c`: `flush_n_restarts`, then
+  `n_restarts = 0` at the start), which `increase()` reads as a counter reset, so no increase; only a restart systemd's
+  `Restart=` makes raises it. Inferred from the source (the stage 1 verifier's read, round 2); proven on the staging
+  VPS before the rule is pushed, after a `systemctl kill` (the counter rises) and then a `systemctl restart` (it
+  goes back to 0). The worker's counter read 1 after the 2026-11-21 crash; that its run began with the 11-17 deploy is
+  not verified.
 - What hypercare checked that Grafana already had: the units and `/healthz` (search down, public down, home worker),
   disk, the silent caption failure (`eiok-captions-empty` is the same rule), SSH, YouTube refusals. Dropped: hypercare
   watching itself (ssh, journal), `backoff` (no such event is written any more), home cache evictions and over-cap
@@ -141,6 +147,12 @@ count (#966), while the real fault in the same minutes, the home worker crashing
   hour), is `eiok-server-errors` at the first one: `http_5xx` by route, with the 5xx answers the service gives on
   purpose left out (src/server.js `BY_DESIGN_5XX`), so one cause raises one alert. Live only with the production deploy
   that carries the counter (a search-service restart) and the rule push after it; until then nothing counts it.
+  Faults that never reach `http_5xx` (known gaps, the stage 2 verifier): a store or code failure in the pasted-link
+  path, answered as `youtube_failed` (search_fail 502, so `eiok-search-502` at 2 in 15 min); a More-page failure
+  (`more_fail` 502, no rule at all; hypercare's request-line count used to see it); a throw after the headers were
+  sent (no route streams, so rare); a handler that never answers (Caddy times it out); a rejection after the answer
+  (`unhandled_rejection`, no rule). `test/fuzz5xx.test.js` sends 300 generated requests from a fixed seed and holds
+  that ordinary internet noise reaches none of the counted 500s.
 
 **eiok.cc** (owner, 2026-10-25) is the short domain for the Quest search box (README, "Compact search address"). Caddy
 serves it from the same site block as yt.japharsworld.com, with its own Let's Encrypt certificate, renewed by Caddy.
@@ -170,7 +182,13 @@ The domain itself is the owner's to renew (auto-renew, several years ahead), bec
    DISCORD_CRITICAL_WEBHOOK=https://discord.com/api/webhooks/...  # optional: the critical channel (below)
    ```
    then `node tools/grafana.mjs push`. It creates the folder, the dashboard (`/d/everything-is-ok`), the Discord
-   contact point and the alert rules, and is safe to re-run. To send alerts elsewhere, change
+   contact point and the alert rules, and is safe to re-run. **Until the production deploy that carries 76c083d is
+   live (Everything-is-OK#967), `push` refuses**: the rules read series that only that deploy and the new Alloy
+   configs bring, so a full push would fire "Alert inputs missing" and blind the captions, builds, home and
+   server-errors rules. Meanwhile rules go out only with `push-rule <uid>` from the checkouts #967's push plan names
+   (with the full `.env`, so a critical rule reaches the critical channel; check `receiver` in the read-back).
+   After the deploy, when the series show in Grafana: `push --after-deploy`, then set `FULL_PUSH_WAITS_FOR` in
+   tools/grafana.mjs to null in a commit of its own. To send alerts elsewhere, change
    `GRAFANA_DISCORD_WEBHOOK` and push again. (`GRAFANA_TOKEN` in the same file is the write-only token Alloy uses.)
 
 **Critical channel** (world #195, owner 2026-10-26, card #234): a separate Discord channel, with its own sound and the

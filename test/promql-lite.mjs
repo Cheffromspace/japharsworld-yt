@@ -127,6 +127,9 @@ export function evaluate(src, series, top) {
         throw new Error(`promql-lite: no function ${n.fn}`);
       }
       case 'subq': {
+        // The range is left-open, (t - range, t], as in Prometheus 3 (and Mimir on its engine): an evaluation exactly on a
+        // mark sees range/step points (12 half-hours in 6 h). Prometheus 2.x includes a point at t - range too, so it
+        // sees one more there (13); that changes only how long a firing lasts at mark instants, and no test depends on it.
         const rows = new Map();
         for (let t = Math.floor(at / n.step) * n.step; t > at - n.range; t -= n.step) {
           for (const s of ev(n.expr, t)) { const k = key(s.labels); const r = rows.get(k) ?? { labels: s.labels, samples: [] }; r.samples.unshift([t, s.value]); rows.set(k, r); }

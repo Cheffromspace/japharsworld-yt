@@ -45,7 +45,11 @@ in `src/home.js`.
   remove a session a player fetched in the last 5 min (PLAYING_MS) or one building or uploading and not stale
   (STALE_MS). A restart (`flush`, then a new `Home` on the same dir: `#load`) keeps exactly the ready, not-stale
   sessions (ready as `#playlist` reads it from disk: a listed segment and a stored one) and the `cut_short` failures
-  with files, and drops the rest (allowing for the 30 s by which `#write` may lag `lastPutMs` in meta.json).
+  with files, and drops the rest (allowing for the 30 s by which `#write` may lag `lastPutMs` in meta.json). A restart
+  keeps who is watching: the played check runs on the test's own fetch times across it, as strict as anywhere
+  (Everything-is-OK#1011, fixed by saving the last fetch in meta.json). A third of the restart ops are **crashes** (no
+  `flush`; reach `crash`): after one, and only for a session it reloaded and no player fetched since, the last fetch
+  may count as up to 30 s older (GET_SAVE_MS, `file()` writes it at most that often; reach `crash_lag_allowed`).
 - **A2 the maps agree.** Every `sessions` entry sits under its own `id@quality` and is in `byToken`. An entry only in
   `byToken` (set aside by `start`, or a reloaded `cut_short`) is gone at the first `sweep` once nobody fetched it for 5
   min. The token folders on disk are exactly `byToken`'s. Each session's `mb` equals the bytes the test put. Each
@@ -55,7 +59,9 @@ in `src/home.js`.
   MB under `dailyMb` (`capped`, `limit`); real builds in the rolling hour <= `hourBuilds`; the hour's expected MB within
   `hourMb` unless the hour is empty or the video is `hourMbExemptSeconds` or longer (`blocks`); nothing over
   `itemMaxMb`; at least `startGapMs` since the last real build, except an AV1 play while not `hammering`; a worker
-  online and its live streams <= its `mediaMax` (`worker`, `#active`). Stated exceptions it allows: a cache upload
+  online and its live streams <= its `mediaMax` (`worker`, `#active`). After a crash only, the MB half (never the
+  builds half: `start` writes day.json at once) allows the downloaded MB the test put since day.json's last write, as
+  `#saveDaySoon` schedules it, summed over that day's crashes (reach `crash_day_mb_allowed`). Stated exceptions it allows: a cache upload
   leaves the day, the hour and the gap (`put`); a restart forgets the hour and the gap (`recent`, `lastStartMs`).
 - **A4 the disk.** After a start that makes a session, free MB minus what the unfinished builds will still grow is at
   least `freeFloorGb` (`#room`, `#expectedMb`); after any `sweep`, either the expected total is within `maxGb` or no
@@ -70,9 +76,21 @@ of 4-10 MB, `dailyMb` 0.3, 0.8 or 2-10 MB, two media workers taking 1-3 streams.
 predicted playlist or a growing one that only grows, never both, then one closing playlist (every segment, or cut back
 to those sent in order, `closedAt`), after which its stream uploads nothing more.
 
+**Directed:** the seeds ending in 0 and in 5 also run a second sequence that opens with a set script, then that seed's
+random ops (the plain sequence of every seed is unchanged). Ending in 0, 'edge': a finished copy from the worker's
+cache, two player fetches 10-55 s apart, a crash or a clean restart, the longest video's start 3.9 min after the last
+fetch (over maxGb), then a sweep every 10 s to 5.1 min. Ending in 5, 'day': a download whose segments come 15-50 s
+apart, a crash, another start. Random ops almost never
+reach these edges (2026-11-23: the A1 crash allowance fired 0 times in 2,000 plain seeds, and a `Home` writing day.json
+every 60 s was caught by 1 seed in 2,000); without them the two crash allowances would be unchecked. A failure there is
+named "seed N (directed)"; `FUZZ_SEED=N` reruns both sequences of that seed.
+
 **Drift points** (hand copies in the test that must follow the code): `expectedOf` is `#expectedMb` written out (it is
 private, and `state()` rounds it to whole MB); the session model follows the rules of `#playlist`, `#checkEnded`, `put`
-and `start`'s `.catch` (including SHORT_S); the constants PLAYING_MS, STALE_MS and the 30 s meta save are copied by name.
+and `start`'s `.catch` (including SHORT_S); the constants PLAYING_MS, STALE_MS, GET_SAVE_MS, DAY_SAVE_MS and the 30 s
+meta save are copied by name; when `#saveDaySoon` and its callers write day.json (a start that makes a session, a
+playlist upload, `flush`, the first new segment DAY_SAVE_MS after the last write) is written out as `daySave` in the
+test.
 A change to any of them in `src/home.js` means changing the test in the same commit.
 
 ## Reading a failure
@@ -91,10 +109,6 @@ property or add an exclusion to make it pass. If the failing ops are something t
 
 **Open findings** (each excused by one narrow, named exclusion in `KNOWN`, with a `test.todo` naming it; `FUZZ_STRICT=1`
 shows them failing):
-- `reload`, Everything-is-OK#1011: `#load` rebuilds sessions with `lastGetMs` 0 (`#session`; only a `cut_short` one is
-  stamped), so a sweep after a restart can evict a finished session a player is on. Excused only for A1's played check
-  (never the live-build one), and only for a session the latest restart reloaded and no player fetched since. Strict
-  seeds: 1105, 1116.
 - `recached`, Everything-is-OK#1013: `s.cached` is not saved in meta.json, so after a restart a cache upload takes its
   cache hit again (`put`) and the day lets one more real build through. Only a repeat hit after a restart counts as
   this finding; a second hit with no restart between fails (verifier V17, 2026-11-23). Strict seed: 1026.
@@ -109,10 +123,20 @@ A finding's count is measured one way: the seeds of 2,000 that fail with the oth
 (for example `FUZZ_KNOWN=reload,midnight FUZZ_SEEDS=2000` for recached).
 
 When a fix for one lands: remove its name from `KNOWN` (and its branch in the check), turn its `test.todo` into a plain
-test or delete it, run the sweep with `FUZZ_STRICT=1`, and update this list. The fix for `reload` also changes the test's
-restart bookkeeping: the restart op stamps only reloaded failed sessions as played (`stamped`, as `#load` does today); a
-fix that stamps reloaded ready sessions too needs the same there, or A4 fails on sessions Home rightly keeps as played
-(verifier, 2026-11-23: 24 such seeds of 2,000, for example 1112).
+test or delete it, run the sweep with `FUZZ_STRICT=1`, and update this list.
+
+**Fixed:** `reload`, Everything-is-OK#1011 (a restart forgot who was watching). meta.json now carries `lastGetMs`
+(always, 0 when nobody fetched), written by `file()` at most every 30 s and by `flush()`; `#load` restores it, and
+stamps "played from the restart" only a ready session whose meta.json has no such field (written before the fix: the one
+restart of the deploy that brings it). The restart op's bookkeeping (`stamped`, reloaded `cut_short` failures only) did
+not change, because nothing new is stamped. Seeds that failed before it: strict 1105; 1116 with
+`FUZZ_KNOWN=recached,midnight` (it also fails on `recached` strict).
+
+**Known limits** (what the code states it does; allowed by name, not findings):
+- After a crash (no `flush`), the day's downloaded MB can be under-counted by what was downloaded since day.json was
+  last written, at most 30 s of uploads, per crash (`#saveDaySoon`, "flush() saves the rest on shutdown").
+- After a crash, a session's last fetch can read back up to 30 s old (GET_SAVE_MS), so its protection can end up to
+  30 s early.
 
 ## Checking the check
 

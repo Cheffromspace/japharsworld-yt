@@ -13,6 +13,7 @@ import { config as base } from '../src/config.js';
 import { alertRules } from '../tools/grafana.mjs';
 import { TunelioCaptions } from '../src/transcripts.js';
 import { CaptionChain } from '../src/captionchain.js';
+import { codecFetch } from './remote-fakes.js';
 
 const UNITY = 'UnityPlayer/6000.0.67f1-DWR (UnityWebRequest/1.0, libcurl/8.10.1-DEV)';
 const WMF = 'NSPlayer/12.00.26100.1234 WMFSDK/12.00.26100.1234';
@@ -128,7 +129,7 @@ async function app(t, spendOpts = {}) {
   const logs = [];
   const spend = new SpendGate({ hourCredits: 0, dayCredits: 0, perIpPerMinute: 2, perShardPerMinute: 3, log: () => {}, ...spendOpts });
   const playback = new Playback({ tunelio, quality: '720p', probe: async () => ({ ok: true, refused: false }), spend });
-  const a = createApp({ config: { ...base, shards: 2, pool: 200, tunelioQuality: '720p', ticketPlayerHoldMs: 5000, searchesPerMinutePerIp: 500, videoMaxSeconds: 43200, lookupWarm: false, adaptiveHls: false },
+  const a = createApp({ adaptiveFetch: codecFetch(), config: { ...base, shards: 2, pool: 200, tunelioQuality: '720p', ticketPlayerHoldMs: 5000, searchesPerMinutePerIp: 500, videoMaxSeconds: 43200, lookupWarm: false, adaptiveHls: false },
     store, youtube, playback, tunelio, captions: { async get() { return { available: false }; } }, log: (s) => logs.push(JSON.parse(s)) });
   const server = http.createServer(a);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -221,7 +222,7 @@ test('#478: a caption track number beyond the video\'s tracks costs only the lis
   const store = new Store({ path: ':memory:', shards: 1, pool: 100, pinHours: 24 });
   const tunelio = fakeTranscripts();
   const captions = new CaptionChain({ store, tunelio: new TunelioCaptions({ store, tunelio }) });
-  const a = createApp({ config: { ...base, shards: 1, pool: 100 }, store, captions, tunelio: { enabled: true, credits: null },
+  const a = createApp({ adaptiveFetch: codecFetch(), config: { ...base, shards: 1, pool: 100 }, store, captions, tunelio: { enabled: true, credits: null },
     youtube: { async search(q) { return { videos: [{ id: q, title: 't', channel: 'c', length: '1:00', seconds: 60, views: '', age: '', live: false, cc: true }], more: null }; }, thumbnailUrl: (id) => id },
     log: () => {} });
   const server = http.createServer(a);
@@ -255,7 +256,7 @@ test('#478: many IPs can\'t reset another IP\'s lookup warm count', async (t) =>
   // and the lookup-warm map would never be asked (verifier, 2026-11-10). So: a bound far above the three IPs that search,
   // and the lookup-warm map filled to it directly with IPs active just now.
   const MAX = 50;
-  const a = createApp({ config: { ...base, shards: 1, pool: 100, tunelioQuality: '720p', searchesPerMinutePerIp: 50, videoMaxSeconds: 43200,
+  const a = createApp({ adaptiveFetch: codecFetch(), config: { ...base, shards: 1, pool: 100, tunelioQuality: '720p', searchesPerMinutePerIp: 50, videoMaxSeconds: 43200,
     lookupWarm: true, lookupWarmsPerMinutePerIp: 2, lookupWarmsPerMinute: 100, rateKeysMax: MAX },
     store, youtube, playback, tunelio, captions: { async get() { return { available: false }; } }, log: () => {} });
   const server = http.createServer(a);

@@ -498,6 +498,6 @@ A forced `daily_limit` refuses every video, already-built and pinned ones too, w
 
 ```sh
 npm install
-npm test
+npm test             # offline: test/netguard.mjs fails any test that connects to another host
 node src/server.js   # http://127.0.0.1:8790
 ```

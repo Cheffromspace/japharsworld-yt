@@ -11,9 +11,9 @@ setup); `claude/` holds the design docs: `metrics.md`, `monitoring.md` (Grafana 
 
 ```sh
 npm install
-npm test                                   # node --test test/*.test.js
-node --test test/server.test.js            # one file
-node --test --test-name-pattern="privacy" test/metrics.test.js   # one test
+npm test                                   # node --import ./test/netguard.mjs --test test/*.test.js (offline: a test that connects out fails)
+node --import ./test/netguard.mjs --test test/server.test.js            # one file
+node --import ./test/netguard.mjs --test --test-name-pattern="privacy" test/metrics.test.js   # one test
 node src/server.js                         # http://127.0.0.1:8790 (data/ for SQLite files)
 cd monitor && python -m unittest test_slotmon   # the Python link monitor's tests
 node tools/grafana.mjs build              # regenerate the reviewed copies in grafana/*.json

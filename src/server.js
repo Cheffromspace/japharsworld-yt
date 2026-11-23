@@ -98,7 +98,9 @@ const HOME_REFUSED_MS = 5 * 60_000;
 // A video's build_route is counted once per via in this long (routeEvent): a play's /create calls fall well within it.
 const ROUTE_COUNT_MS = 3600_000;
 
-export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, adaptive, slots, home, channels, spend, allowance, log = console.log } = {}) {
+export function createApp({ config = defaults, store, youtube = defaultYoutube, captions, playback, tunelio, alert, relay, api, sheetOpts, metrics, probe, adaptive, adaptiveFetch, slots, home, channels, spend, allowance, log = console.log } = {}) {
+  // adaptiveFetch: the default Adaptive's fetch for its codec reads of a build's first bytes (tests give a local fake:
+  // npm test is offline, Everything-is-OK#1035; a fake build's real-looking URL was fetched on every run until 2026-11-23).
   // Recent events for /ops/events, redacted as they are kept.
   const ring = new EventRing();
   const rawLog = log;
@@ -171,7 +173,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   } catch (err) { logJson({ event: 'speed_seed_failed', message: String(err?.message ?? err).slice(0, 200) }); }
   const today = () => dayOf(Date.now(), config.metricsTz);
   adaptive ??= new Adaptive({
-    playback, log: logJson, onEvent: (k) => metrics.inc('adaptive', k), holdMs: config.adaptiveHoldMs, directSeconds: config.adaptiveDirectSeconds,
+    playback, log: logJson, ...(adaptiveFetch ? { fetcher: adaptiveFetch } : {}), onEvent: (k) => metrics.inc('adaptive', k), holdMs: config.adaptiveHoldMs, directSeconds: config.adaptiveDirectSeconds,
     base: `${config.publicUrl}/hls`, switching: config.adaptiveSwitch, start: config.adaptiveStart, startSeconds: config.adaptiveStartSeconds,
     startMid: config.adaptiveStartMid, startStepSeconds: config.adaptiveStartStepSeconds,
     stateFile: config.metricsPath ? join(dirname(config.metricsPath), 'adaptive-live.json') : null, androidNoAv1: config.homeAndroid,

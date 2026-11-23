@@ -20,6 +20,7 @@ import { trustedIps } from '../src/trusted.js';
 import { ForcedLimits, allowedHere } from '../src/forced.js';
 import { createWorker } from '../relay/worker.js';
 import { config as base } from '../src/config.js';
+import { codecFetch, emptySearch } from './remote-fakes.js';
 
 const TOKEN = 'secret-token';
 const WMF = 'NSPlayer/12.00.26100.1234 WMFSDK/12.00.26100.1234';
@@ -48,13 +49,13 @@ async function routeApp(t, { mediaMax = 4, spend = new SpendGate({ hourCredits: 
   const relay = new Relay({ token: TOKEN, pollMs: 200 });
   const playback = new Playback({ tunelio, quality: '720p', probe: async () => ({ ok: true, refused: false }), spend, ...playbackOpts });
   const logs = [];
-  const app = createApp({ config, store, relay, tunelio, playback, spend, adaptive, captions: { async get() { return {}; } }, log: (l) => { try { logs.push(JSON.parse(l)); } catch { /* request lines */ } } });
+  const app = createApp({ adaptiveFetch: codecFetch(), youtube: emptySearch, config, store, relay, tunelio, playback, spend, adaptive, captions: { async get() { return {}; } }, log: (l) => { try { logs.push(JSON.parse(l)); } catch { /* request lines */ } } });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
   const url = `http://127.0.0.1:${server.address().port}`;
   const jobs = [];
-  const worker = createWorker({ url, token: TOKEN, name: 'home', polls: 2, caps: ['media'], mediaMax, log: () => {}, txBytes: () => null,
+  const worker = createWorker({ url, token: TOKEN, name: 'home', polls: 2, caps: ['media'], mediaMax, youtube: emptySearch, log: () => {}, txBytes: () => null,
     media: async (job) => {
       jobs.push(job);
       const put = (file, body) => fetch(`${url}/relay/media/${job.token}/${file}`, { method: 'PUT', headers: { authorization: `Bearer ${TOKEN}` }, body });
@@ -352,7 +353,7 @@ function upgradePlayback({ allow = () => true } = {}) {
 
 test('adaptive: upgrades are charged to the latest picker (a play request), not to a warm or whoever loads the master', async (t) => {
   const pb = upgradePlayback({ allow: () => false });
-  const adaptive = new Adaptive({ playback: pb, base: 'http://pub/hls' });
+  const adaptive = new Adaptive({ playback: pb, fetcher: codecFetch(), base: 'http://pub/hls' });
   const data = { id: vid(1), seconds: 600 };
   const s = spendScope.run({ ip: 'code-A', shard: 1, play: true, answer: 'youtube' }, () => adaptive.session(data, pb.lowerJob));
   spendScope.run({ ip: 'code-W', shard: 1, answer: 'warm_skip' }, () => adaptive.session(data, pb.lowerJob)); // a warm: no change
@@ -370,7 +371,7 @@ test('adaptive: upgrades are charged to the latest picker (a play request), not 
 test('adaptive: the payer is let go once every rung has started, or after 12 hours', () => {
   let now = 0, open = false;
   const pb = upgradePlayback({ allow: () => open });
-  const adaptive = new Adaptive({ playback: pb, base: 'http://pub/hls', now: () => now });
+  const adaptive = new Adaptive({ playback: pb, fetcher: codecFetch(), base: 'http://pub/hls', now: () => now });
   const one = spendScope.run({ ip: 'code-A', shard: 1, play: true }, () => adaptive.session({ id: vid(1), seconds: 600 }, pb.lowerJob));
   adaptive.master(one.token, 'v1');
   assert.equal(one.payer?.ip, 'code-A', 'kept while a rung is still to start');
@@ -379,7 +380,7 @@ test('adaptive: the payer is let go once every rung has started, or after 12 hou
   assert.equal(one.payer, null, 'let go after 12 h');
   open = true;
   const pb2 = upgradePlayback();
-  const a2 = new Adaptive({ playback: pb2, base: 'http://pub/hls', now: () => now });
+  const a2 = new Adaptive({ playback: pb2, fetcher: codecFetch(), base: 'http://pub/hls', now: () => now });
   const two = spendScope.run({ ip: 'code-B', shard: 1, play: true }, () => a2.session({ id: vid(2), seconds: 600 }, pb2.lowerJob));
   a2.master(two.token, 'v1');
   assert.equal(two.payer, null, 'every rung started: nothing left to charge');
@@ -404,7 +405,7 @@ test('playback: jobs carry no payer, and spend_refused is logged once per stretc
 test('adaptive: a rung refused at the first master load is tried again at the next and listed once it starts', async (t) => {
   let open = false;
   const pb = upgradePlayback({ allow: () => open });
-  const adaptive = new Adaptive({ playback: pb, base: 'http://pub/hls' });
+  const adaptive = new Adaptive({ playback: pb, fetcher: codecFetch(), base: 'http://pub/hls' });
   const s = spendScope.run({ ip: '192.0.2.1', shard: 1 }, () => adaptive.session({ id: vid(1), seconds: 600 }, pb.lowerJob));
   const first = adaptive.master(s.token, 'v1');
   assert.doesNotMatch(first, /1080p\.m3u8/, 'refused now: not listed');
@@ -420,7 +421,7 @@ test('adaptive: a player\'s reload mark lasts 12 hours at most', () => {
   let now = 0;
   const pb = upgradePlayback();
   const events = [];
-  const adaptive = new Adaptive({ playback: pb, base: 'http://pub/hls', now: () => now, onEvent: (k) => events.push(k) });
+  const adaptive = new Adaptive({ playback: pb, fetcher: codecFetch(), base: 'http://pub/hls', now: () => now, onEvent: (k) => events.push(k) });
   const s = adaptive.session({ id: vid(1), seconds: 600 }, pb.lowerJob);
   adaptive.master(s.token, 'v1');
   now += 11 * 3600_000;

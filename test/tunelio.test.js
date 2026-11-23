@@ -8,6 +8,7 @@ import { makeAlert } from '../src/alert.js';
 import { Store } from '../src/store.js';
 import { createApp } from '../src/server.js';
 import { videoMaxSeconds, config as base } from '../src/config.js';
+import { codecFetch } from './remote-fakes.js';
 
 const respond = (status, body, credits) => new Response(JSON.stringify(body), {
   status, headers: { 'content-type': 'application/json', ...(credits != null ? { 'x-credits-remaining': String(credits) } : {}) } });
@@ -209,7 +210,7 @@ test('server: an age-restricted video answers restricted to the tablet and fails
   const calls = [];
   const tunelio = { enabled: true, async create(id) { calls.push(id); const e = new Error('x'); e.status = 404; e.code = 'This video is age-restricted and cannot be downloaded.'; throw e; } };
   const playback = new Playback({ tunelio });
-  const app = createApp({ config: { ...base, shards: 1, pool: 50, ticketPlayerHoldMs: 5000 }, store, youtube, playback, tunelio: { enabled: true }, log: () => {} });
+  const app = createApp({ adaptiveFetch: codecFetch(), config: { ...base, shards: 1, pool: 50, ticketPlayerHoldMs: 5000 }, store, youtube, playback, tunelio: { enabled: true }, log: () => {} });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
@@ -236,7 +237,7 @@ test('server: /ops/plan mode restricted makes a video answer restricted for a wh
   const calls = [];
   const tunelio = { enabled: true, async create(id) { calls.push(id); return { url: `https://cdn.example/${id}.mp4`, quality: '720p', mb: 10 }; } };
   const playback = new Playback({ tunelio });
-  const app = createApp({ config: { ...base, shards: 1, pool: 50, statsToken: 'tok' }, store, youtube, playback, tunelio: { enabled: true }, log: () => {} });
+  const app = createApp({ adaptiveFetch: codecFetch(), config: { ...base, shards: 1, pool: 50, statsToken: 'tok' }, store, youtube, playback, tunelio: { enabled: true }, log: () => {} });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
@@ -366,7 +367,7 @@ test('server: played ticket redirects through playback; caption track by number'
   const playback = { async location(d) { seen.push(d); return { location: d.live ? 'https://www.youtube.com/watch?v=' + d.id : 'https://tunelio.dev/tunnel?id=' + d.id + '&progressive=1', via: 'x' }; } };
   const captions = { async get(id, lang) { return { id, lang, available: true, lines: [], tracks: [{ i: 0 }], track: 0 }; },
     async track(id, i, lang) { return { id, lang, available: true, lines: [[0, 1, `track ${i}`]], track: i }; } };
-  const app = createApp({ config: { ...base, shards: 1, pool: 50 }, store, youtube, playback, captions, tunelio: { enabled: true, credits: 7 }, log: () => {} });
+  const app = createApp({ adaptiveFetch: codecFetch(), config: { ...base, shards: 1, pool: 50 }, store, youtube, playback, captions, tunelio: { enabled: true, credits: 7 }, log: () => {} });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
@@ -394,7 +395,7 @@ test('server: tickets answer the tablet, the resolver and the player differently
   // pcAv1 off: this test isn't about AV1, and with it on the PC codec read fetched the fake tunnel link over the network
   // (a 422 from tunelio.dev, 2026-11-13); a failed read now sends the resolver on (Everything-is-OK#749), so line 399's 302
   // depended on that network answer.
-  const app = createApp({ config: { ...base, shards: 1, pool: 50, ticketResolverHoldMs: 50, ticketPlayerHoldMs: 5000, pcAv1: false }, store, youtube, playback, metrics, tunelio: { enabled: true }, log: () => {} });
+  const app = createApp({ adaptiveFetch: codecFetch(), config: { ...base, shards: 1, pool: 50, ticketResolverHoldMs: 50, ticketPlayerHoldMs: 5000, pcAv1: false }, store, youtube, playback, metrics, tunelio: { enabled: true }, log: () => {} });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
@@ -437,7 +438,7 @@ test('room quality: 720p by default, a pick per shard, builds kept apart per qua
   const tunelio = { enabled: true, credits: 1, async create(id, q) { created.push([id, q]); return { url: `https://tunelio.dev/tunnel?id=${id}&q=${q}`, expires: 9e9, quality: q, fileSize: 1e8 }; } };
   const playback = new Playback({ tunelio, quality: '720p', probe: async () => ({ ok: true }) });
   const youtube = { async search() { return { videos: [{ id: 'AbCdEfGh1jK', title: 't', channel: 'c', length: '20:00', seconds: 1200, views: '', age: '', live: false }], more: null }; }, thumbnailUrl: () => '' };
-  const app = createApp({ config: { ...base, shards: 2, pool: 100, tunelioQuality: '720p', tunelioQualities: ['720p', '1080p'], metricsPath: '', tunelioKey: '' },
+  const app = createApp({ adaptiveFetch: codecFetch(), config: { ...base, shards: 2, pool: 100, tunelioQuality: '720p', tunelioQualities: ['720p', '1080p'], metricsPath: '', tunelioKey: '' },
     store, youtube, tunelio, playback, captions: { async get() { return { available: false }; } }, log: () => {} });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -527,7 +528,7 @@ async function tooLongApp(t, { home = undefined, config = {}, video = {}, playba
   const metrics = new Proxy({ counts, inc(m, k = '') { counts[m + ':' + k] = (counts[m + ':' + k] ?? 0) + 1; } }, { get: (o, k) => (k in o ? o[k] : () => {}) });
   // questMp4 off: these are the #420 rules for every player of a .m3u8 ticket; with it on (#584) AVPro's first load of a
   // long video is "not a video" while the mp4's /create runs (tested in test/adaptive.test.js).
-  const app = createApp({ config: { ...base, shards: 1, pool: 50, ticketPlayerHoldMs: 5000, homeAndroid: true, videoMaxSeconds: 0, questMp4: false, ...config }, store, youtube, playback, tunelio: { enabled: true }, metrics, log: () => {}, ...(home ? { home } : {}) });
+  const app = createApp({ adaptiveFetch: codecFetch(), config: { ...base, shards: 1, pool: 50, ticketPlayerHoldMs: 5000, homeAndroid: true, videoMaxSeconds: 0, questMp4: false, ...config }, store, youtube, playback, tunelio: { enabled: true }, metrics, log: () => {}, ...(home ? { home } : {}) });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());

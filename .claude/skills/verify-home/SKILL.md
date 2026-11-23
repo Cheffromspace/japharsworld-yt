@@ -140,8 +140,11 @@ A second seeded test, for Everything-is-OK#996. The service is the real `createA
 faked so a player's ticket request is held until the test lets it go. `captions` answers as a failed lookup does
 (`temporarily_unavailable`, no tracks) until the test lets its sources succeed. The real lookup awaits its sources and
 answers that only when they found nothing, so the test's counts of that path are not frequencies. Some videos are looked
-up already when a sequence starts. Some have faults: a lookup that throws (the route's 502) and a track fetch that fails
-while the list is there. Each video has its own track code and line text, kept in the test's own table. The world side
+up already when a sequence starts. Some have faults: a caption fetch that fails (the route's 502) and a track fetch that
+fails while the list is there. The failed fetch stands for any fetch that fails: a service restart, a proxy 502 or 503,
+the network. A real failed lookup does not give it: the chain's `resolve()` catches every source error and returns
+nothing (`src/captionchain.js` 192-213), so the route answers "not ready". Each video has its own track code and line
+text, kept in the test's own table. The world side
 is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can drift from the code it stands for.
 
 - **Promises** (checked against the test's own records: its table of each video's track and lines, its log of asks
@@ -153,26 +156,47 @@ is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can
     playing ticket's own captions, judged after the quiet part of the drain (the sources answer, the world asks
     until nothing is due). It is judged only on seeds where the visitor did nothing after the count (about 60 % of
     seeds; half the seeds draw an idle visitor for this).
-- **The open finding "nopicker"** (#996; its own `test.todo`; strict seed 999). After a list answer that is not usable
-  (not ready, a 404 or 502, or for another ticket), the world asks again only on a picker open (cs:3653, cs:3378;
-  the #166 design). So a visitor who does nothing ends on "Captions can't load right now". It is B3's one exclusion,
-  for that end state only: no list, no "No captions", the test's log showing the last ask for this ticket unusable and
-  nothing asked after it. The excused seeds are split into (a), answered during the hold, and (b), after the count.
-  Budget: `NOPICKER_BUDGET` (half of the judged seeds per sweep), applied from `NOPICKER_MIN_JUDGED` (20) judged seeds, so a
-  one-seed rerun is not read as over budget. The highest honest cell on 2026-11-23 was 37.6 % over 500 seeds (svcNotReady2
-  with opt2x and stragglers), and 16 of 42 judged at the default 60 seeds.
-  It does NOT excuse a false "No captions", another video's captions, or a world that never asked.
-- **Today all three fail**, each path a recorded seed in `FAILS_TODAY`, run with explicit options so no switch moves
-  them:
+  - B4 (added 2026-11-23, verifier round 2, L-d): if the visitor stayed and the playing video has NO captions (by the
+    test's table), the world ends holding no list and no lines; any it holds are another video's. It holds today, so
+    it is a plain assertion in the default run and in the `FUZZ_PROMISES=1` run, never a todo.
+- **The open finding "nopicker"** (#996; its own `test.todo`; strict seed 999). After an ask the sources could not
+  answer yet, the world asks again only on a picker open (cs:3653, cs:3378; the #166 design). So a visitor who does
+  nothing ends on "Captions can't load right now". It is B3's one exclusion, for that end state only (no list, no "No
+  captions", the last ask was for this ticket and nothing was asked after it), and only when the TEST'S OWN records
+  say that last ask could not have been answered with the list: the asked video's sources had nothing (it was not in
+  the test's `ready` set), or a fault the test drew threw during it. Until 2026-11-23 it was decided from the
+  service's own answer, so a service that wrongly answered "not ready" passed every check (verifier round 2, N1).
+  - What it still excuses: whatever the service answered at that last ask, while the sources had nothing. That is
+    mostly a "not ready" (the #166 design proper); also a 502 from a failed fetch, and, rarely, a 404 or another
+    ticket's answer that came while the sources had nothing anyway (a correct service would have said "not ready"
+    there and the world would end the same). Each sweep prints the excused seeds by the last answer's kind.
+  - A 404 `nothing_playing` or an answer for another ticket is NOT the #166 design: they are #996's own paths. When
+    the sources had the list, they are not excused, and neither is a "not ready".
+  - It does NOT excuse a false "No captions", another video's captions, or a world that never asked.
+  - The excused seeds are split into (a), the last ask during the hold, and (b), after the count.
+  - Budget (`NOPICKER_BUDGET`, per world option): the excused seeds may be at most this share of the judged seeds
+    whose video has captions (the only seeds it can excuse), applied from `NOPICKER_MIN_JUDGED` (20) such seeds, so a
+    one-seed rerun is not read as over budget. Set on 2026-11-23 from the honest cells (today's service, svcHeld,
+    svcNotReady2; stragglers off and on; 500 seeds and the default 60):
+    - opt2xs: 25 %. Highest honest share 18.1 % at 500 seeds, 6 of 32 (18.8 %) at the default 60, 16.1 % at 2,000
+      (svcHeld). It sees opt2xs losing its start ask (svcHeld: 66 of 249 at 500 seeds, 10 of 32 at 60), which no
+      check sees, since every seed that variant moves is excused.
+    - today, opt1, opt1x, opt2, opt2x: no budget. Highest honest share 31.3 % (svcNotReady2, stragglers off; 10 of 32 at
+      60). Every variant tried that moves these options' excused share is caught by B3 itself (VSFirstListNotReady,
+      VSTwoListsNotReady, droplist), so a budget there would guard nothing seen.
+- **Today B1, B2 and B3 fail** (B4 holds), each path a recorded seed in `FAILS_TODAY`, run with explicit options so no
+  switch moves them:
   - three answers for another ticket (#996; 1010);
   - a list asked with CC on whose lookup found nothing yet (#996's item 4; 1069);
   - a 404 `nothing_playing` with CC on in a fresh shard (1042);
   - a track that keeps failing, LoadNative after its waits (cs:3675-3678; 1170);
-  - a list ask that errors three times (cs:2264-2266; 1027);
+  - a list ask whose caption fetch fails three times, 502 (cs:2264-2266; 1027);
   - B1 by #996's path (1016);
   - B3 strict, "nopicker" (999).
-  So the promises are `test.todo`, and a plain test asserts that the recorded seeds still fail: the file goes red
-  when the code under it changes.
+  So B1-B3 are `test.todo`, and a plain test asserts that the recorded seeds still fail: the file goes red when the
+  code under it changes. The orderings printed with a failure (and the ones for the world's replay) come from a
+  shrink that keeps the failure's PATH, not only the failing check (verifier round 2, L-b: before, seed 1027's three
+  502s shrank to a 404). Shrunk: 1010 3 ops, 1069 3, 1042 2, 1170 2, 1027 5, 1016 3, 999 1.
 - **When #996's fix lands**, its fixer drops the `FAILS_TODAY` test and turns the todos into plain tests (today's
   `FUZZ_PROMISES=1` run, with `nopicker` kept as long as the #166 design stays). For a world-side fix they change the
   copy (or make the matching `VARIANTS` entry the default) in the same batch as the C#, and the world's own replay
@@ -180,8 +204,8 @@ is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can
 
 | Switch | What it does | In the default `npm test` run? |
 |---|---|---|
-| (none) | the `FAILS_TODAY` seeds, then a 60-seed sweep of today's copy that must still fail B1 and B2 somewhere (diagnostic counts for B3) | yes, the only test that runs |
-| `FUZZ_PROMISES=1` | runs B1, B2, B3 as plain tests with the known exclusions, plus the `nopicker` budget | no |
+| (none) | the `FAILS_TODAY` seeds, then a 60-seed sweep of today's copy that must keep B4 and still fail B1 and B2 somewhere (diagnostic counts for B3); "fail somewhere" is asserted only from 20 seeds, so `FUZZ_SEED=n` alone is green | yes, the only test that runs |
+| `FUZZ_PROMISES=1` | runs B1-B4 as plain tests with the known exclusions, plus the `nopicker` budget | no |
 | `FUZZ_STRICT=1` | the same with no exclusion: B3 counts every judged seed | no |
 | `FUZZ_KNOWN=a,b` | the exclusions to keep (default `nopicker`; empty keeps none) | default `nopicker` |
 | `FUZZ_WORLD=today\|opt1\|opt1x\|opt2\|opt2x\|opt2xs` | the copy's variant: #996's options (`VARIANTS` in the file) | `today` |
@@ -190,7 +214,11 @@ is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can
 | `FUZZ_TICKET_PIN=1` | TICKET_PIN on; the fake's `peek` answers a ready build, so a played ticket picked again is answered from its pin | off |
 | `FUZZ_SEED`, `FUZZ_SEEDS`, `FUZZ_STEPS` | the seed range and length | 996, 60 seeds, 16 steps |
 
-- **Run:** `node --test test/captions-hold.props.test.js` (60 seeds, about 3.6 s); `FUZZ_PROMISES=1 FUZZ_SEEDS=2000
+  Only the value `1` turns `FUZZ_PROMISES`, `FUZZ_STRICT` and `FUZZ_TICKET_PIN` on; `0` or anything else is off. Only
+  `0` turns `FUZZ_OTHER` and `FUZZ_FAULTS` off. (Until 2026-11-23 any value turned the first three on, so
+  `FUZZ_TICKET_PIN=0` ran with the pin: verifier round 2, L-a.)
+
+- **Run:** `node --test test/captions-hold.props.test.js` (60 seeds, about 3.7 s); `FUZZ_PROMISES=1 FUZZ_SEEDS=2000
   FUZZ_WORLD=opt2x` (say) for one of #996's options; service options are patches outside the repo (the batch's report
   names them), applied in a scratch worktree.
 - **The copy and its drift.** It mirrors `Assets/EverythingIsOK/Scripts/EverythingIsOKYouTubeSearch.cs` in the world
@@ -216,6 +244,14 @@ is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can
   - cs:3108: PickRow clears `ccNone`. cs:3145: the CC button is a toggle; the copy only turns it on.
   - `PreferredRow()` (cs:3128-3142) is row 0 (no saved language).
   - PaintCaptionNotes' timeout (cs:3557-3567) is display only.
+- **The options are models, not the C#.** opt2x's not-ready rule covers only an EMPTY not-ready list (#996's item 4); a
+  not-ready list that came with its tracks (a track's cue fetch failed) is read as today: the list is kept and a track
+  is asked (cs:3654-3667). Until 2026-11-23 opt2x dropped that one too (verifier round 2, L-d-copy). The change sends
+  those CC-on fault seeds on to LoadNative's "No captions" (cs:3678) as today's world does, so under opt2x and opt2xs
+  B2 now fails by that path on 16 (today's service), 19 (svcHeld) and 22 (svcNotReady2) of 500 seeds, stragglers off
+  (before: 4, 3, 1). A fix for #996 must cover cs:3678 itself: until it does, the `FUZZ_PROMISES=1` run of svcHeld or
+  svcNotReady2 with opt2x or opt2xs (stragglers off) fails B1 and B2 by that path on 2 or 3 of the default 60 seeds
+  (1012, 1017; svcNotReady2 also 1022).
 - **Service side covered:** `captionIn` in `src/server.js` (it answers for `store.lastPlayed`, a 404 with nothing played,
   a 502 when the lookup throws), the ticket route's hold, its `markPlayed` after the hold (even for a dropped request,
   #1029), the pinned answer with TICKET_PIN, and the store. A change there means a run of this file and of its
@@ -229,7 +265,9 @@ is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can
       after its waits (cs:3677, `track_gave_up` 14);
     - holds released out of pick order (#1029's path, `release_not_latest_pick` 1,079); stragglers 1,366; lookups
       looked up already 1,798;
-    - with `FUZZ_TICKET_PIN=1`, a pick answered from its pin (`pick_answered_at_once` 487; 0 with the pin off, by design).
+    - with `FUZZ_TICKET_PIN=1`, a pick answered from its pin (`pick_answered_at_once` 487; 0 with the pin off, by design);
+    - B4 judged (the visitor stayed, the playing video has no captions) on 335 of 2,000 seeds, and on 5 of the default
+      60. (All counts re-run on 2026-11-23 after the round-2 fixes: unchanged.)
   - Not reached:
     - the copy's `'no tracks'` "No captions" (cs:3385): an empty list ends in "No captions" at cs:3655 first;
     - the `userTrack >= 0` half of cs:3667: only a track picked on the tablet (PickRow) sets it before the list, and
@@ -238,28 +276,37 @@ is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can
       ticket whose video it looked up, so they count only a broken service (VB1-wrong-video: on 180 of 500 seeds);
     - cs:3640 (a non-JSON answer) and `no_track_in_language` (the fake has one track, asked by row 0): not in the copy
       or the fake.
-  - Not covered by any promise: another video's list held while the playing video has no captions. B1 and B3 apply
-    only when it has captions, and B2 only to a "No captions". Under VB1-wrong-video this was 33 of the 78 seeds that
-    served another video's content and failed nothing (the other 45: the visitor left, the list was for a ticket no
-    longer playing, or it was replaced before the end). Widening B1 to it would change the promise: the coordinator's
-    call.
-- **Checking the check** (2026-11-23, the batch report has the patches and outputs): every check was seen failing on a
-  broken variant, counted over 500 seeds as the seeds it adds over its base (the default 60 seeds in brackets):
+  - Not covered by any promise: a "No captions" that never comes for a video that has none. Example: the verifier's
+    `VR2b-nocaps-as-notready` (round 2), a service that answers a captionless video "not ready" instead of
+    `no_captions`: no check fails on any of 500 seeds (B4 included). The visitor would see "Captions can't load right now" for good, and with
+    opt2x and CC on the world asks the list again every slot. Why no promise sees it: B2 judges only a "No captions"
+    that came, B1 and B3 judge only videos with captions, and B4 judges only what the world holds, and a world on
+    "can't load right now" holds nothing. A converse of B2 for captionless videos would see it; adding one is the
+    coordinator's call (it was left out of the round of 2026-11-23).
+    (Another video's list held while the playing video has none, named here until 2026-11-23, is now B4.)
+- **Checking the check** (2026-11-23, after verifier round 2's fixes; the batch reports have the patches and outputs):
+  every check was seen failing on a broken variant, counted as the seeds it adds over its base (500 seeds, world opt2x
+  unless named, stragglers off; the default 60 seeds in brackets):
   - V404none (the copy's opt2x without its 404 rule; today's service): B2 34 (4).
-  - VB1-wrong-video (svcHeld answering the asked ticket with the last-played video's captions): B1 121 (14).
-  - VB1-never-counted (svcNotReady2 that never counts the 302 path): B1 321 (41), and the `nopicker` budget (249 of 319
-    judged seeds excused).
-  - VB2-service-says-none (svcNotReady2's not-ready answer says `no_captions`): B1 192 (28), B3 147 (21). B2 cannot see
+  - VB1-wrong-video (svcHeld answering the asked ticket with the last-played video's captions): B1 118 (14), and B4 30
+    (0), all 30 B4 alone.
+  - VB1-never-counted (svcNotReady2 that never counts the 302 path): B1 300 (38).
+  - VB2-service-says-none (svcNotReady2's not-ready answer says `no_captions`): B1 174 (25), B3 106 (15). B2 cannot see
     it: it trusts the service's reason, by design.
-  - VWccWaitsPicker (the copy with CC on asks the list only on a picker open; svcHeld): B3 13 (2), on 6 of them B3 alone,
-    so B3 sees what B1 does not.
-  - VSTwoListsNotReady (svcHeld whose first two list asks per ticket answer "not ready"): the `nopicker` budget: 172 of
-    319 judged seeds excused (22 of 40 in the default 60). Its one-ask form excuses 132 of 319 (41 %) and stays under:
-    the budget catches a large shift, not a small one.
-  - VPPinNotCounted (a pinned answer without `markPlayed`; `FUZZ_TICKET_PIN=1`): B1 37 (4) on today's service. Under
-    svcNotReady2 it changes nothing: that option never reads `lastPlayed` for an asked ticket counted before.
+  - VWccWaitsPicker (the copy with CC on asks the list only on a picker open; svcHeld): B3 7 (1), all 7 B3 alone, so B3
+    sees what B1 does not. The weakest variant at the default 60.
+  - VSFirstListNotReady and VSTwoListsNotReady (svcHeld whose first one or two list asks per ticket answer "not ready",
+    whatever the sources hold): B3 55 (6) and 93 (12); with opt2xs 34 (3) and 98 (10); at 2,000 seeds 253 and 381
+    (opt2x), 178 and 433 (opt2xs). Before the exclusion read the test's own records they added no failing seed at all.
+  - droplist (the copy drops a good list when the play starts; svcHeld): B3 45 (7), B3 alone, opt2x and opt2xs.
+  - keeplist (ForgetTracks keeps the old video's list across a pick; svcHeld): B4 26 (3), all 26 B4 alone; at 2,000
+    seeds 89 (3). With today's service and copy: B4 16 of 500, 0 of the default 60, so the default run does not see it.
+  - nostartask (opt2xs without its start ask; svcHeld): no check fails on any seed (every seed it moves is excused);
+    only opt2xs's budget sees it: `FUZZ_PROMISES=1 FUZZ_WORLD=opt2xs FUZZ_OTHER=0` reports "excused 10 of 32 ... over
+    its budget of 25 %" (66 of 249 at 500 seeds); without the variant 6 of 32 (39 of 249), no budget line.
+  - VPPinNotCounted (a pinned answer without `markPlayed`; `FUZZ_TICKET_PIN=1`): B1 37 (4) on today's service.
 
-  The default 60 seeds are a smoke run (the weakest variants are caught by 2 to 4 of them); a change to the captions
+  The default 60 seeds are a smoke run (the weakest variants are caught by 0 to 3 of them); a change to the captions
   route or the ticket route also gets `FUZZ_PROMISES=1 FUZZ_SEEDS=2000` with the fix's copy variant.
 - **A known limit of the svcNotReady2 option** (if #996's fix takes it): its "counted once" is keyed by shard and ticket,
   but tickets are reused round-robin (store.js). After the pool wraps, a reused ticket counts as counted already, so

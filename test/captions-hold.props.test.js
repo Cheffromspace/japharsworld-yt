@@ -94,8 +94,10 @@ const MAX_WAITS = 6; // cs:390
 //   opt1x  opt1, and the same for one that came from a 404 nothing_playing (the second path; not in #996's text)
 //   opt2   an answer for another ticket or a 404 never ends in "No captions": asked again while the player loads, then
 //          "Captions can't load right now" (ccUnavailable), which a picker open asks again
-//   opt2x  opt2, and a list answer for this ticket that is not ready (temporarily_unavailable) does the same instead of
-//          "No captions" (#996's item 4, the CC-on path; the LoadTracks branch at cs:3653 already does this)
+//   opt2x  opt2, and a list answer for this ticket that is not ready (temporarily_unavailable) and EMPTY (no tracks) does
+//          the same instead of "No captions" (#996's item 4, the CC-on path; the LoadTracks branch at cs:3653 already does
+//          this). A not-ready list that came WITH tracks (a track's cue fetch failed) is read as today (cs:3654-3667: the
+//          list is kept, the next tick asks a track); until 2026-11-23 opt2x dropped that one too (verifier round 2, L-d-copy)
 //   opt2xs opt2x, and when the play starts the list is asked once more if it is not here yet (the verifier's start-ask
 //          variant, T-startask.patch; whether the world should do this is #996's design choice: it is here to be measured)
 export const VARIANTS = ['today', 'opt1', 'opt1x', 'opt2', 'opt2x', 'opt2xs'];
@@ -182,7 +184,7 @@ class World {
     const real = d.reason === 'no_captions';
     if (load === LIST || load === TRACKS) {
       if (load === TRACKS && !d.available && d.reason !== 'no_captions') { this.ccUnavailable = true; return; } // cs:3653
-      if (this.variant.startsWith('opt2x') && !d.available && d.reason !== 'no_captions') { if (this.loading) this.want = true; else { this.ccUnavailable = true; this.ccTracksTried = true; } this.ccLoad = this.loading ? load : 0; return; }
+      if (this.variant.startsWith('opt2x') && !d.available && d.reason !== 'no_captions' && !(Array.isArray(d.tracks) && d.tracks.length)) { if (this.loading) this.want = true; else { this.ccUnavailable = true; this.ccTracksTried = true; } this.ccLoad = this.loading ? load : 0; return; }
       // ReadTracks cs:3719-3723 (trackCode per row), cs:3654: what the world now holds, kept so B1 can check whose it is.
       this.trackCodes = Array.isArray(d.tracks) ? d.tracks.map((x) => x.code) : []; this.trackCount = this.trackCodes.length; this.ccListLoaded = true;
       if (this.trackCount === 0) { this.none(real ? 'empty' : `empty list (${d.reason})`, real); return; } // cs:3655

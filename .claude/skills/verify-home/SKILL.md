@@ -37,7 +37,9 @@ each session built only from what the test sent and saw (building until a listed
 ENDLIST with every listed segment here; failed by `giveUp`, a job failing while it builds, an `x-media-failed` or
 SHORT_S cut-back closing playlist, or a 410 on a live session's segment). Two things do come from Home: which sessions
 exist (`byToken` and `sessions`, which A1 and A2 check) and a new session's token and worker (`start`'s answer, recorded
-once). The functions named are `Home`'s in `src/home.js`.
+once). Cache hits are predicted the same way, never read from `s.cached`: the first cached upload of a session the model
+has not failed, once per restart epoch (`put` sets `s.cached`, which a restart forgets). The functions named are `Home`'s
+in `src/home.js`.
 
 - **A1 no delete under a player or a live build.** `start`, `sweep` and `#evictFor` (through `start` and `put`) never
   remove a session a player fetched in the last 5 min (PLAYING_MS) or one building or uploading and not stale
@@ -94,7 +96,8 @@ shows them failing):
   (never the live-build one), and only for a session the latest restart reloaded and no player fetched since. Strict
   seeds: 1105, 1116.
 - `recached`, Everything-is-OK#1013: `s.cached` is not saved in meta.json, so after a restart a cache upload takes its
-  cache hit again (`put`) and the day lets one more real build through. Strict seed: 1026.
+  cache hit again (`put`) and the day lets one more real build through. Only a repeat hit after a restart counts as
+  this finding; a second hit with no restart between fails (verifier V17, 2026-11-23). Strict seed: 1026.
 - `midnight`, Everything-is-OK#1018: a cache hit is taken off the day it is marked (`put`), not the day its build
   started, so a build started before midnight and marked cached after it gives the new day one more real build.
   Strict seed: 2925.

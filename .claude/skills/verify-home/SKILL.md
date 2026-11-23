@@ -136,27 +136,126 @@ change. A diff that changes `src/home.js` and leaves this unchanged says why in 
 
 ## Pilot B: captions around a held play (test/captions-hold.props.test.js)
 
-A second seeded test, for Everything-is-OK#996. The service is the real `createApp` with a real `Store`; `playback` is
-faked so a player's ticket request is held until the test lets it go, and `captions` answers as a failed lookup does
+A second seeded test, for Everything-is-OK#996. The service is the real `createApp` with a real `Store`. `playback` is
+faked so a player's ticket request is held until the test lets it go. `captions` answers as a failed lookup does
 (`temporarily_unavailable`, no tracks) until the test lets its sources succeed. The real lookup awaits its sources and
-answers that only when they found nothing, so the test's counts of that path are not frequencies. The world side is a
-hand-written COPY of the world's caption-ask rule, so unlike pilot A it can drift from the code it stands for.
+answers that only when they found nothing, so the test's counts of that path are not frequencies. Some videos are looked
+up already when a sequence starts. Some have faults: a lookup that throws (the route's 502) and a track fetch that fails
+while the list is there. Each video has its own track code and line text, kept in the test's own table. The world side
+is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can drift from the code it stands for.
 
-- **Promises.** B1: if the visitor stayed and the video has captions, the world ends holding the playing ticket's list
-  (and lines, CC on). B2: "No captions" only follows an answer for that ticket that says `no_captions`.
-- **Today both fail**, by three paths (each a recorded seed in `FAILS_TODAY`): three answers for another ticket (#996),
-  a list asked with CC on whose lookup found no tracks yet (#996's item 4), and a 404 `nothing_playing` with CC on in a fresh
-  shard. So the promises are `test.todo`, and a plain test asserts that the recorded seeds still fail: the file goes red
-  when the code under it changes. `FUZZ_STRICT=1` runs the promises as plain tests.
-- **When #996's fix lands**, its fixer: drops the `FAILS_TODAY` test, turns the two todos into plain tests (the strict
-  test), and for a world-side fix changes the copy (or makes the matching `VARIANTS` entry the default) in the same batch
-  as the C#; the world's own replay scenario must then pass in the test editor.
-- **The copy and its drift.** It mirrors `Assets/EverythingIsOK/Scripts/EverythingIsOKYouTubeSearch.cs` in the world repo
-  as read at world commit `eddf7f5a` (2026-11-22): lines 39 and 1405-1414 (only spacing, so not modelled), 390, 2079-2088,
-  2258-2267, 3145-3150, 3329-3335, 3338-3388, 3544-3548, 3571-3575, 3635-3700, 3719-3723; each line of the copy names
-  its `cs:N`. Before trusting a pass, check those lines are unchanged (`git log eddf7f5a..HEAD --` that file in the world
-  repo); if they changed, re-read the copy against the new C#, line by line, and move the commit named here.
-- **Service side covered:** `captionIn` in `src/server.js` (it answers for `store.lastPlayed`), the ticket route's
-  `markPlayed` after the hold, and the store. A change there means a run of this file and of its strict form.
-- **Run:** `node --test test/captions-hold.props.test.js` (60 seeds, about 3 s); `FUZZ_STRICT=1 FUZZ_SEEDS=2000` for the
-  promises; `FUZZ_WORLD=opt2x` (say) for one of #996's options in the copy; `FUZZ_OTHER=0` without stragglers.
+- **Promises** (checked against the test's own records: its table of each video's track and lines, its log of asks
+  and answers, when the playing ticket's play was counted, what the visitor did):
+  - B1: if the visitor stayed and the video has captions, the world ends holding the playing ticket's OWN list (and
+    lines, CC on), after a drain in which the visitor opens a picker three times.
+  - B2: "No captions" only follows an answer for that ticket that says `no_captions`.
+  - B3 (P1 strict): after the play is counted, a visitor who opens no picker and presses no CC still ends with the
+    playing ticket's own captions, judged after the quiet part of the drain (the sources answer, the world asks
+    until nothing is due). It is judged only on seeds where the visitor did nothing after the count (about 60 % of
+    seeds; half the seeds draw an idle visitor for this).
+- **The open finding "nopicker"** (#996; its own `test.todo`; strict seed 999). After a list answer that is not usable
+  (not ready, a 404 or 502, or for another ticket), the world asks again only on a picker open (cs:3653, cs:3378;
+  the #166 design). So a visitor who does nothing ends on "Captions can't load right now". It is B3's one exclusion,
+  for that end state only: no list, no "No captions", the test's log showing the last ask for this ticket unusable and
+  nothing asked after it. The excused seeds are split into (a), answered during the hold, and (b), after the count.
+  Budget: `NOPICKER_BUDGET` (half of the judged seeds per sweep; the highest honest cell on 2026-11-23 was 37.6 %, svcNotReady2 with opt2x and stragglers).
+  It does NOT excuse a false "No captions", another video's captions, or a world that never asked.
+- **Today all three fail**, each path a recorded seed in `FAILS_TODAY`, run with explicit options so no switch moves
+  them:
+  - three answers for another ticket (#996; 1010);
+  - a list asked with CC on whose lookup found nothing yet (#996's item 4; 1069);
+  - a 404 `nothing_playing` with CC on in a fresh shard (1042);
+  - a track that keeps failing, LoadNative after its waits (cs:3675-3678; 1170);
+  - a list ask that errors three times (cs:2264-2266; 1027);
+  - B1 by #996's path (1016);
+  - B3 strict, "nopicker" (999).
+  So the promises are `test.todo`, and a plain test asserts that the recorded seeds still fail: the file goes red
+  when the code under it changes.
+- **When #996's fix lands**, its fixer drops the `FAILS_TODAY` test and turns the todos into plain tests (today's
+  `FUZZ_PROMISES=1` run, with `nopicker` kept as long as the #166 design stays). For a world-side fix they change the
+  copy (or make the matching `VARIANTS` entry the default) in the same batch as the C#, and the world's own replay
+  scenario must then pass in the test editor.
+
+| Switch | What it does | In the default `npm test` run? |
+|---|---|---|
+| (none) | the `FAILS_TODAY` seeds, then a 60-seed sweep of today's copy that must still fail B1 and B2 somewhere (diagnostic counts for B3) | yes, the only test that runs |
+| `FUZZ_PROMISES=1` | runs B1, B2, B3 as plain tests with the known exclusions, plus the `nopicker` budget | no |
+| `FUZZ_STRICT=1` | the same with no exclusion: B3 counts every judged seed | no |
+| `FUZZ_KNOWN=a,b` | the exclusions to keep (default `nopicker`; empty keeps none) | default `nopicker` |
+| `FUZZ_WORLD=today\|opt1\|opt1x\|opt2\|opt2x\|opt2xs` | the copy's variant: #996's options (`VARIANTS` in the file) | `today` |
+| `FUZZ_OTHER=0` | no stragglers | stragglers on |
+| `FUZZ_FAULTS=0` | no faults (no 502 lookups, no failing track fetches) | faults on |
+| `FUZZ_TICKET_PIN=1` | TICKET_PIN on; the fake's `peek` answers a ready build, so a played ticket picked again is answered from its pin | off |
+| `FUZZ_SEED`, `FUZZ_SEEDS`, `FUZZ_STEPS` | the seed range and length | 996, 60 seeds, 16 steps |
+
+- **Run:** `node --test test/captions-hold.props.test.js` (60 seeds, about 3.6 s); `FUZZ_PROMISES=1 FUZZ_SEEDS=2000
+  FUZZ_WORLD=opt2x` (say) for one of #996's options; service options are patches outside the repo (the batch's report
+  names them), applied in a scratch worktree.
+- **The copy and its drift.** It mirrors `Assets/EverythingIsOK/Scripts/EverythingIsOKYouTubeSearch.cs` in the world
+  repo as read at world commit `eddf7f5a` (2026-11-22):
+  - lines 39 and 1405-1414 (only spacing, so not modelled);
+  - 390;
+  - 1942, 1956-1957 and 2015 (Captions() runs on Update's 0.2 s tick, so a new ticket's reset is done at the pick; read
+    in code);
+  - 2079-2088, 2258-2267, 3145-3150, 3329-3335, 3338-3388, 3544-3548, 3571-3575;
+  - 3635-3700 (with 3667);
+  - 3719-3723 and 3702 (what the world holds).
+
+  Each line of the copy names its `cs:N`. Before trusting a pass, check those lines are unchanged (`git log
+  eddf7f5a..HEAD --` that file in the world repo); if they changed, re-read the copy against the new C#, line by line,
+  and move the commit named here.
+- **Known differences, not modelled** (each makes the copy simpler than the world):
+  - An ask and its answer are one step in the copy. In the world an ask can be in flight while the room picks again;
+    the new ticket's reset re-asks at once, so the old answer (old `t`) is read as the new ask's and uses one of its
+    three tries (cs:2079-2090, 2175, 3638). That only makes today worse, and opt2x makes a mismatch harmless.
+  - cs:3640: an answer that is not a JSON object → "No captions" (the service always sends JSON).
+  - cs:3362: a change of `urlLanguage` also forgets and asks again.
+  - cs:2388, 2431: a restricted or daily-limit answer stops the asks.
+  - cs:3108: PickRow clears `ccNone`. cs:3145: the CC button is a toggle; the copy only turns it on.
+  - `PreferredRow()` (cs:3128-3142) is row 0 (no saved language).
+  - PaintCaptionNotes' timeout (cs:3557-3567) is display only.
+- **Service side covered:** `captionIn` in `src/server.js` (it answers for `store.lastPlayed`, a 404 with nothing played,
+  a 502 when the lookup throws), the ticket route's hold, its `markPlayed` after the hold (even for a dropped request,
+  #1029), the pinned answer with TICKET_PIN, and the store. A change there means a run of this file and of its
+  `FUZZ_PROMISES=1` form.
+- **Reached and not reached** (2,000 seeds, today's copy, stragglers on; `reach` in each run's output):
+  - Reached (counts in 2,000 seeds):
+    - every path to a false "No captions": another ticket's answers (`none_mismatch` 911), a 404 (`none_404` 179), a
+      not-ready list (`none_empty` 121, real ones excluded), LoadNative after its waits (`none_native` 26), three 502s
+      (`none_error` 17);
+    - CC-on list asks during a hold (`list_ask_during_hold` 518); cs:3667 (`list_not_available` 41); a track given up
+      after its waits (cs:3677, `track_gave_up` 14);
+    - holds released out of pick order (#1029's path, `release_not_latest_pick` 1,079); stragglers 1,366; lookups
+      looked up already 1,798;
+    - with `FUZZ_TICKET_PIN=1`, a pick answered from its pin (`pick_answered_at_once` 487; 0 with the pin off, by design).
+  - Not reached:
+    - the copy's `'no tracks'` "No captions" (cs:3385): an empty list ends in "No captions" at cs:3655 first;
+    - the `userTrack >= 0` half of cs:3667: only a track picked on the tablet (PickRow) sets it before the list, and
+      that is not modelled;
+    - `served_other_video` and `served_other_video_as_asked_ticket`: today's service labels every answer with the
+      ticket whose video it looked up, so they count only a broken service (VB1-wrong-video: on 180 of 500 seeds);
+    - cs:3640 (a non-JSON answer) and `no_track_in_language` (the fake has one track, asked by row 0): not in the copy
+      or the fake.
+- **Checking the check** (2026-11-23, the batch report has the patches and outputs): every check was seen failing on a
+  broken variant, counted over 500 seeds as the seeds it adds over its base (the default 60 seeds in brackets):
+  - V404none (the copy's opt2x without its 404 rule; today's service): B2 34 (4).
+  - VB1-wrong-video (svcHeld answering the asked ticket with the last-played video's captions): B1 121 (14).
+  - VB1-never-counted (svcNotReady2 that never counts the 302 path): B1 321 (41), and the `nopicker` budget (249 of 319
+    judged seeds excused).
+  - VB2-service-says-none (svcNotReady2's not-ready answer says `no_captions`): B1 192 (28), B3 147 (21). B2 cannot see
+    it: it trusts the service's reason, by design.
+  - VWccWaitsPicker (the copy with CC on asks the list only on a picker open; svcHeld): B3 13 (2), on 6 of them B3 alone,
+    so B3 sees what B1 does not.
+  - VSTwoListsNotReady (svcHeld whose first two list asks per ticket answer "not ready"): the `nopicker` budget: 172 of
+    319 judged seeds excused (22 of 40 in the default 60). Its one-ask form excuses 132 of 319 (41 %) and stays under:
+    the budget catches a large shift, not a small one.
+  - VPPinNotCounted (a pinned answer without `markPlayed`; `FUZZ_TICKET_PIN=1`): B1 37 (4) on today's service. Under
+    svcNotReady2 it changes nothing: that option never reads `lastPlayed` for an asked ticket counted before.
+
+  The default 60 seeds are a smoke run (the weakest variants are caught by 2 to 4 of them); a change to the captions
+  route or the ticket route also gets `FUZZ_PROMISES=1 FUZZ_SEEDS=2000` with the fix's copy variant.
+- **A known limit of the svcNotReady2 option** (if #996's fix takes it): its "counted once" is keyed by shard and ticket,
+  but tickets are reused round-robin (store.js). After the pool wraps, a reused ticket counts as counted already, so
+  it is answered at once and its lookup runs before the count, which is what that option was chosen to avoid. Key it
+  by ticket and video id, or clear it when the ticket is allocated; a restart empties it. This test (3 tickets, no reuse)
+  cannot see that.

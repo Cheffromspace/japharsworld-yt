@@ -281,11 +281,12 @@ test('home: a meta.json from before the fix (no lastGetMs) counts as played from
   clock.ms += 60_000;
   const again = new Home(opts);
   assert.equal(again.byToken.get(a.token).lastGetMs, clock.ms, 'stamped at the restart');
+  // Read before any flush: #load writes the stamp itself, and a flush would write it anyway (verifier L-4, 2026-11-23).
+  assert.equal(meta().lastGetMs, clock.ms, 'the stamp is written at load: the next restart reads a time, not "no field"');
   clock.ms += 10_000;
   assert.ok(again.start({ id: 'bbbbbbbbbbb' }, '720p'));
   assert.ok(!logs.some((l) => l.event === 'home_evict'), 'kept for its paused player');
   again.flush();
-  assert.equal(meta().lastGetMs, clock.ms - 10_000, 'the stamp is written on shutdown: the next restart reads a time, not "no field"');
   clock.ms += 5 * 60_000;
   const third = new Home(opts);
   third.sweep();

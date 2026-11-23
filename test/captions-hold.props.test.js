@@ -51,6 +51,9 @@ const PIN = Boolean(process.env.FUZZ_TICKET_PIN);
 export const KNOWN = new Set(process.env.FUZZ_STRICT ? [] : (process.env.FUZZ_KNOWN ?? 'nopicker').split(',').filter(Boolean));
 // The nopicker exclusion's budget: at most this share of the B3-judged seeds may be excused by it in one sweep.
 export const NOPICKER_BUDGET = 0.5;
+// ...applied only from this many judged seeds: a run of one or a few seeds (FUZZ_SEED=n) would otherwise read one excused
+// seed as over budget.
+export const NOPICKER_MIN_JUDGED = 20;
 const UA = 'NSPlayer/12.00.19041.5794 WMFSDK/12.00.19041.5794'; // a PC player (AVPro): held, then counted (clientKind 'avpro')
 
 function rng(seed) {
@@ -477,9 +480,9 @@ if (process.env.FUZZ_STRICT || process.env.FUZZ_PROMISES) {
   test(`captions hold (#996), world copy ${WORLD}${OTHER ? '' : ', no stragglers'}${FAULTS ? '' : ', no faults'}${PIN ? ', TICKET_PIN on' : ''}: ${SEEDS} seeds keep B1, B2 and B3 (${KNOWN.size ? `excused: ${[...KNOWN].join(', ')}` : 'no exclusion'})`, async (t) => {
     const { out, reach, b3 } = await sweep(WORLD);
     t.diagnostic(`reach: ${JSON.stringify(Object.fromEntries(Object.entries(reach).sort()))}`);
-    t.diagnostic(`B3 judged on ${b3.judged} of ${SEEDS} seeds; nopicker excused ${b3.excused} (a, during the hold: ${b3.a}; b, after the count: ${b3.b}); budget ${Math.floor(NOPICKER_BUDGET * b3.judged)}`);
+    t.diagnostic(`B3 judged on ${b3.judged} of ${SEEDS} seeds; nopicker excused ${b3.excused} (a, during the hold: ${b3.a}; b, after the count: ${b3.b}); budget ${b3.judged >= NOPICKER_MIN_JUDGED ? Math.floor(NOPICKER_BUDGET * b3.judged) : `not applied under ${NOPICKER_MIN_JUDGED} judged seeds`}`);
     const problems = [];
-    if (b3.excused > NOPICKER_BUDGET * b3.judged) problems.push(`the nopicker exclusion excused ${b3.excused} of ${b3.judged} judged seeds, over its budget of ${NOPICKER_BUDGET * 100} %: the world leaves "can't load right now" for a picker open far more often than recorded`);
+    if (b3.judged >= NOPICKER_MIN_JUDGED && b3.excused > NOPICKER_BUDGET * b3.judged) problems.push(`the nopicker exclusion excused ${b3.excused} of ${b3.judged} judged seeds, over its budget of ${NOPICKER_BUDGET * 100} %: the world leaves "can't load right now" for a picker open far more often than recorded`);
     for (const prop of ['B1', 'B2', 'B3']) if (out[prop].length) {
       problems.push(`${prop} fails on ${out[prop].length} seeds: ${out[prop].slice(0, 12).join(', ')}`);
       t.diagnostic(`${prop} fails on ${out[prop].length} seeds; shortest:\n${show(await shortest(WORLD, prop, out[prop]))}`);

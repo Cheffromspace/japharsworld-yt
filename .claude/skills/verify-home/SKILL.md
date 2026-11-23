@@ -158,7 +158,9 @@ is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can
   the #166 design). So a visitor who does nothing ends on "Captions can't load right now". It is B3's one exclusion,
   for that end state only: no list, no "No captions", the test's log showing the last ask for this ticket unusable and
   nothing asked after it. The excused seeds are split into (a), answered during the hold, and (b), after the count.
-  Budget: `NOPICKER_BUDGET` (half of the judged seeds per sweep; the highest honest cell on 2026-11-23 was 37.6 %, svcNotReady2 with opt2x and stragglers).
+  Budget: `NOPICKER_BUDGET` (half of the judged seeds per sweep), applied from `NOPICKER_MIN_JUDGED` (20) judged seeds, so a
+  one-seed rerun is not read as over budget. The highest honest cell on 2026-11-23 was 37.6 % over 500 seeds (svcNotReady2
+  with opt2x and stragglers), and 16 of 42 judged at the default 60 seeds.
   It does NOT excuse a false "No captions", another video's captions, or a world that never asked.
 - **Today all three fail**, each path a recorded seed in `FAILS_TODAY`, run with explicit options so no switch moves
   them:
@@ -236,6 +238,11 @@ is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can
       ticket whose video it looked up, so they count only a broken service (VB1-wrong-video: on 180 of 500 seeds);
     - cs:3640 (a non-JSON answer) and `no_track_in_language` (the fake has one track, asked by row 0): not in the copy
       or the fake.
+  - Not covered by any promise: another video's list held while the playing video has no captions. B1 and B3 apply
+    only when it has captions, and B2 only to a "No captions". Under VB1-wrong-video this was 33 of the 78 seeds that
+    served another video's content and failed nothing (the other 45: the visitor left, the list was for a ticket no
+    longer playing, or it was replaced before the end). Widening B1 to it would change the promise: the coordinator's
+    call.
 - **Checking the check** (2026-11-23, the batch report has the patches and outputs): every check was seen failing on a
   broken variant, counted over 500 seeds as the seeds it adds over its base (the default 60 seeds in brackets):
   - V404none (the copy's opt2x without its 404 rule; today's service): B2 34 (4).

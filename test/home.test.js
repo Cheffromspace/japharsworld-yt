@@ -14,6 +14,7 @@ import { Home } from '../src/home.js';
 import { createWorker } from '../relay/worker.js';
 import { mediaJob, ffmpegArgs, seekRunArgs, parseProbe, formatFor, rangeProxy, predictPlaylist, steadyLength, onTime, closedAt } from '../relay/media.js';
 import { config as base } from '../src/config.js';
+import { codecFetch } from './remote-fakes.js';
 
 const TOKEN = 'secret-token';
 const PL1 = '#EXTM3U\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXTINF:4.0,\nseg0.ts\n';
@@ -794,7 +795,7 @@ test('ticket → home: a PC player gets the home playlist when Tunelio is off; t
   const config = { ...base, shards: 2, pool: 50, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, homeStartGapMs: 0, homeHourBuilds: 0, homeHourMb: 0, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub', metricsPath: '' };
   const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
   const relay = new Relay({ token: TOKEN, pollMs: 200 });
-  const app = createApp({ config, store, relay, tunelio: { enabled: false }, captions: { async get() { return {}; } }, log: () => {} });
+  const app = createApp({ adaptiveFetch: codecFetch(), config, store, relay, tunelio: { enabled: false }, captions: { async get() { return {}; } }, log: () => {} });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
@@ -845,7 +846,7 @@ async function homeApp(t, { config: c = {}, media = null, playlist = PL1, ...ove
   const config = { ...base, shards: 2, pool: 50, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, homeStartGapMs: 0, homeHourBuilds: 0, homeHourMb: 0, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub', metricsPath: '', ...c };
   const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
   const relay = new Relay({ token: TOKEN, pollMs: 200 });
-  const app = createApp({ config, store, relay, tunelio: { enabled: false }, captions: { async get() { return {}; } }, log: () => {}, ...over });
+  const app = createApp({ adaptiveFetch: codecFetch(), config, store, relay, tunelio: { enabled: false }, captions: { async get() { return {}; } }, log: () => {}, ...over });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
@@ -1156,7 +1157,7 @@ test('ticket → home: a long play whose home playlist grows (uneven keyframes) 
     const job = { id: 'aaaaaaaaaaa', quality: '1080p', state: 'ready', url: 'https://tunelio.dev/t?id=x' };
     const playback = { jobs: new Map(), peek: () => job, status: () => ({ state: 'ready' }), start() {},
       async location() { return { location: job.url, via: 'tunelio', ready: true }; } };
-    const adaptive = new Adaptive({ playback, base: 'http://pub/hls' });
+    const adaptive = new Adaptive({ playback, fetcher: codecFetch(), base: 'http://pub/hls' });
     adaptive.pacer = { check: () => ({ ok: pacerOk }) };
     return { playback, adaptive, tunelio: { enabled: true }, config: { homeLongMinutes: 5 } };
   };
@@ -1179,7 +1180,7 @@ test('ticket → home: with HOME_ANDROID_GROWING a .m3u8 ticket (Quest) keeps th
   const job = { id: 'aaaaaaaaaaa', quality: '1080p', state: 'ready', url: 'https://tunelio.dev/t?id=x' };
   const playback = { jobs: new Map(), peek: () => job, status: () => ({ state: 'ready' }), start() {},
     async location() { return { location: job.url, via: 'tunelio', ready: true }; } };
-  const adaptive = new Adaptive({ playback, base: 'http://pub/hls' });
+  const adaptive = new Adaptive({ playback, fetcher: codecFetch(), base: 'http://pub/hls' });
   adaptive.pacer = { check: () => ({ ok: true }) };
   const QUEST = 'AVProMobileVideo/2026.3.3 (Linux;Android 14) ExoPlayer';
   const app = await homeApp(t, { playback, adaptive, tunelio: { enabled: true }, config: { homeLongMinutes: 5, homeAndroid: true, homeAndroidGrowing: true } });
@@ -1200,7 +1201,7 @@ test('ticket → home: with HOME_ANDROID_GROWING a PC leaving for Tunelio keeps 
   const job = { id: 'aaaaaaaaaaa', quality: '1080p', state: 'ready', url: 'https://tunelio.dev/t?id=x' };
   const playback = { jobs: new Map(), peek: () => job, status: () => ({ state: 'ready' }), start() {},
     async location() { return { location: job.url, via: 'tunelio', ready: true }; } };
-  const adaptive = new Adaptive({ playback, base: 'http://pub/hls' });
+  const adaptive = new Adaptive({ playback, fetcher: codecFetch(), base: 'http://pub/hls' });
   adaptive.pacer = { check: () => ({ ok: true }) };
   const lines = [];
   const app = await homeApp(t, { playback, adaptive, tunelio: { enabled: true }, log: (l) => lines.push(typeof l === 'string' ? JSON.parse(l) : l),
@@ -1236,7 +1237,7 @@ async function pinApp(t, config = {}, { playlist } = {}) {
   const job = { id: 'aaaaaaaaaaa', quality: '1080p', state: 'ready', url: 'https://tunelio.dev/t?id=x' };
   const playback = { jobs: new Map(), peek: () => job, status: () => ({ state: 'ready' }), start() {},
     async location() { return { location: job.url, via: 'tunelio', ready: true }; } };
-  const adaptive = new Adaptive({ playback, base: 'http://pub/hls' });
+  const adaptive = new Adaptive({ playback, fetcher: codecFetch(), base: 'http://pub/hls' });
   adaptive.pacer = { check: () => ({ ok: true }) };
   const lines = [];
   const app = await homeApp(t, { playback, adaptive, tunelio: { enabled: true }, log: (l) => lines.push(typeof l === 'string' ? JSON.parse(l) : l),
@@ -1533,7 +1534,7 @@ async function cachedSeekApp(t, { seekWant, SEGS = 300 }) {
   const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
   const relay = new Relay({ token: TOKEN, pollMs: 200 });
   const lines = [];
-  const app = createApp({ config, store, relay, tunelio: { enabled: false }, captions: { async get() { return {}; } }, log: (l) => lines.push(l) });
+  const app = createApp({ adaptiveFetch: codecFetch(), config, store, relay, tunelio: { enabled: false }, captions: { async get() { return {}; } }, log: (l) => lines.push(l) });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
@@ -2070,7 +2071,7 @@ async function raceApp(t, { raceMs = 40, config = {}, media = null } = {}) {
   const built = new Promise((resolve) => { finish = resolve; });
   const tunelio = { enabled: true, create: async (id, quality) => ({ url: `https://tunelio.dev/t?id=x&q=${quality}`, expires: Math.round(Date.now() / 1000) + 7200, fileSize: 2e8, quality }) };
   const playback = new Playback({ tunelio, probe: async () => { await built; return { ok: finish.ok !== false, status: finish.ok === false ? 524 : 206 }; } });
-  const adaptive = new Adaptive({ playback, base: 'http://pub/hls' });
+  const adaptive = new Adaptive({ playback, fetcher: codecFetch(), base: 'http://pub/hls' });
   adaptive.codec = async () => 'avc1';
   const lines = [];
   const counts = [];
@@ -2346,7 +2347,7 @@ test('ticket → home (#576 review): a PC play reuses a growing slow_build sessi
   const relay = new Relay({ token: TOKEN, pollMs: 200 });
   relay.capable = () => ['home']; relay.run = () => new Promise(() => {});
   const home = new Home({ relay, dir: join(dir, 'home'), base: 'http://pub/home', enabled: true, dailyBuilds: 100, dailyMb: 1e9, startGapMs: 45_000, itemMaxMb: 6000 });
-  const app = createApp({ config, store, relay, home, tunelio: { enabled: false }, captions: { async get() { return {}; } }, log: () => {} });
+  const app = createApp({ adaptiveFetch: codecFetch(), config, store, relay, home, tunelio: { enabled: false }, captions: { async get() { return {}; } }, log: () => {} });
   const server = http.createServer(app); await new Promise((r) => server.listen(0, '127.0.0.1', r)); t.after(() => server.close());
   const data = { id: 'aaaaaaaaaaa', title: 'T', seconds: 600, live: false };
   const [n] = store.allocate(0, [{ kind: 'video', data }]);
@@ -2375,7 +2376,7 @@ test('ticket → home (#577): a PC player of a video over HOME_STAY_HOURS stays 
     let asked = 0;
     const playback = { jobs: new Map(), peek: () => job, status: () => ({ state }), start() {},
       async location() { asked++; return { location: job.url, via: 'tunelio', ready: true }; }, asked: () => asked };
-    const adaptive = new Adaptive({ playback, base: 'http://pub/hls' });
+    const adaptive = new Adaptive({ playback, fetcher: codecFetch(), base: 'http://pub/hls' });
     adaptive.pacer = { check: () => ({ ok: true }) };
     // The test video is 600 s; 0.1 h is 360 s.
     return { playback, adaptive, tunelio: { enabled: true }, config: { homeLongMinutes: 5, homeStayHours: 0.1 } };

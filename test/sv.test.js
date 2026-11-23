@@ -16,6 +16,7 @@ import { dayOf } from '../src/metrics.js';
 import { createWorker } from '../relay/worker.js';
 import { alertRules } from '../tools/grafana.mjs';
 import { config as base } from '../src/config.js';
+import { codecFetch } from './remote-fakes.js';
 
 const TOKEN = 'secret-token';
 const PL1 = '#EXTM3U\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXTINF:4.0,\nseg0.ts\n';
@@ -46,7 +47,7 @@ async function app(t, { worker = false, video = {}, pool = 50, config: c = {}, p
   const config = { ...base, shards: 2, pool, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub', metricsPath: '', ...c };
   const store = new Store({ path: ':memory:', shards: 2, pool, pinHours: 24 });
   const relay = new Relay({ token: TOKEN, pollMs: 200 });
-  const a = createApp({ config, store, relay, metrics, tunelio: { enabled: false }, captions: { async get() { return {}; } },
+  const a = createApp({ adaptiveFetch: codecFetch(), config, store, relay, metrics, tunelio: { enabled: false }, captions: { async get() { return {}; } },
     log: (l) => lines.push(typeof l === 'string' ? JSON.parse(l) : l), ...over });
   const server = http.createServer(a);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -73,7 +74,7 @@ async function app(t, { worker = false, video = {}, pool = 50, config: c = {}, p
 // A playback whose every build fails part way (Tunelio's link answered, the build then broke).
 const failingPlayback = () => ({ jobs: new Map(), pausedUntil: 0, peek: () => null, status: () => ({ state: 'failed', reason: 'build_failed' }), start() {},
   async location(data) { return { location: watch(data.id), via: 'youtube', reason: 'build_failed', ready: true }; } });
-const okPacer = (playback) => { const ad = new Adaptive({ playback, base: 'http://pub/hls' }); ad.pacer = { check: () => ({ ok: true }) }; return ad; };
+const okPacer = (playback) => { const ad = new Adaptive({ playback, fetcher: codecFetch(), base: 'http://pub/hls' }); ad.pacer = { check: () => ({ ok: true }) }; return ad; };
 
 test('SV-022 a Tunelio build that fails part way: build_failed with its status, the player to youtube, a new job only after 30 s', async () => {
   let now = 1_000_000;

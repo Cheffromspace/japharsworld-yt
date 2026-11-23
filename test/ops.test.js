@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { EventRing, mask, redact, gitHead } from '../src/ops.js';
 import { Playback } from '../src/playback.js';
+import { codecFetch } from './remote-fakes.js';
 
 const config = { ...base, shards: 2, pool: 100, statsToken: 'secret', metricsPath: '', tunelioKey: '' };
 
@@ -69,7 +70,7 @@ test('ops routes: token required, state and redacted events', async (t) => {
   const tunelio = { enabled: true, credits: 77, async create() { return { url: 'https://tunelio.dev/tunnel?id=x&sig=y', expires: 9e9, quality: '1080p', fileSize: 500e6 }; } };
   const lines = [];
   const playback = new Playback({ tunelio, probe: async () => ({ ok: true }), log: (o) => lines.push(JSON.stringify(o)) });
-  const app = createApp({ config, store, youtube, tunelio, playback, captions: { async get() { return { available: false }; } }, log: () => {} });
+  const app = createApp({ adaptiveFetch: codecFetch(), config, store, youtube, tunelio, playback, captions: { async get() { return { available: false }; } }, log: () => {} });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
@@ -128,7 +129,7 @@ test('ops routes: token required, state and redacted events', async (t) => {
   assert.equal(playback.restricted('ZzAgeGate01'), true, 'a forced plan cleared: the real verdict is back');
 
   // Without a token configured the routes don't exist.
-  const off = createApp({ config: { ...config, statsToken: '' }, store, youtube, tunelio, log: () => {} });
+  const off = createApp({ adaptiveFetch: codecFetch(), config: { ...config, statsToken: '' }, store, youtube, tunelio, log: () => {} });
   const res = { writeHead(s) { this.status = s; return this; }, end() {} , on() {} };
   await off({ url: '/ops/state', method: 'GET', headers: {} }, Object.assign(res, { headersSent: false }));
   assert.equal(res.status, 404);
@@ -143,7 +144,7 @@ test('hls-test: the resolver gets a "not a video" page, the player the playlist;
   mkdirSync(join(dir, 'hls-test'));
   writeFileSync(join(dir, 'hls-test', '0123456789abcdef.m3u8'), '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nhttps://t/720.m3u8\n');
   const store = new Store({ path: ':memory:', shards: 2, pool: 100, pinHours: 24 });
-  const app = createApp({ config: { ...config, dbPath: join(dir, 'tickets.db') }, store, tunelio: { enabled: false }, log: () => {} });
+  const app = createApp({ adaptiveFetch: codecFetch(), config: { ...config, dbPath: join(dir, 'tickets.db') }, store, tunelio: { enabled: false }, log: () => {} });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
@@ -168,7 +169,7 @@ test('hls-test slots: #REDIRECT files answer 302; ?resolve=1 lets the resolver t
   writeFileSync(join(dir, 'hls-test', '7e57000000000001.m3u8'), '#REDIRECT https://tunelio.dev/tunnel?id=x&progressive=1\n');
   writeFileSync(join(dir, 'hls-test', '7e57000000000002.m3u8'), '#EXTM3U\n');
   const store = new Store({ path: ':memory:', shards: 2, pool: 100, pinHours: 24 });
-  const app = createApp({ config: { ...config, dbPath: join(dir, 'tickets.db') }, store, tunelio: { enabled: false }, log: () => {} });
+  const app = createApp({ adaptiveFetch: codecFetch(), config: { ...config, dbPath: join(dir, 'tickets.db') }, store, tunelio: { enabled: false }, log: () => {} });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
@@ -239,7 +240,7 @@ test('ops slot routes: refill is POST only and answers 202; the slots answer wha
   const store = new Store({ path: ':memory:', shards: 2, pool: 100, pinHours: 24 });
   const calls = [];
   const slots = { status: () => ({ running: false, refillsToday: 0 }), refill: (o) => { calls.push(o); return o.id === 'x' ? { error: 'bad_id' } : { started: true }; } };
-  const app = createApp({ config, store, tunelio: { enabled: false }, slots, log: () => {} });
+  const app = createApp({ adaptiveFetch: codecFetch(), config, store, tunelio: { enabled: false }, slots, log: () => {} });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());
@@ -265,7 +266,7 @@ test('hls-test files: segments and playlists from a folder; a missing segment is
   mkdirSync(folder, { recursive: true });
   writeFileSync(join(folder, 'index.m3u8'), '#EXTM3U\n#EXT-X-PLAYLIST-TYPE:EVENT\n');
   const store = new Store({ path: ':memory:', shards: 2, pool: 100, pinHours: 24 });
-  const app = createApp({ config: { ...config, dbPath: join(dir, 'tickets.db') }, store, tunelio: { enabled: false }, log: () => {} });
+  const app = createApp({ adaptiveFetch: codecFetch(), config: { ...config, dbPath: join(dir, 'tickets.db') }, store, tunelio: { enabled: false }, log: () => {} });
   const server = http.createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => server.close());

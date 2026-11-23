@@ -7,6 +7,7 @@ import { Playback } from '../src/playback.js';
 import { Store } from '../src/store.js';
 import { createApp } from '../src/server.js';
 import { config as base } from '../src/config.js';
+import { codecFetch } from './remote-fakes.js';
 
 const UNITY = 'UnityPlayer/6000.0.67f1-DWR (UnityWebRequest/1.0, libcurl/8.10.1-DEV)';
 const UNITY_ANDROID = 'UnityPlayer/6000.0.67f1-DWR (UnityWebRequest/1.0, libcurl/8.10.1-DEV) Android';
@@ -29,7 +30,7 @@ async function app(t, { config = {}, video = {}, restricted = false } = {}) {
   const logs = [];
   const counts = {};
   const metrics = new Proxy({ inc(m, k = '') { counts[m + (k ? ':' + k : '')] = (counts[m + (k ? ':' + k : '')] ?? 0) + 1; } }, { get: (o, k) => (k in o ? o[k] : () => {}) });
-  const a = createApp({ config: { ...base, shards: 1, pool: 100, tunelioQuality: '720p', ticketPlayerHoldMs: 5000, searchesPerMinutePerIp: 50, videoMaxSeconds: 43200, lookupWarm: true, ...config },
+  const a = createApp({ adaptiveFetch: codecFetch(), config: { ...base, shards: 1, pool: 100, tunelioQuality: '720p', ticketPlayerHoldMs: 5000, searchesPerMinutePerIp: 50, videoMaxSeconds: 43200, lookupWarm: true, ...config },
     store, youtube, playback, tunelio, metrics, captions: { async get() { return { available: false }; } }, log: (s) => logs.push(JSON.parse(s)) });
   const server = http.createServer(a);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));

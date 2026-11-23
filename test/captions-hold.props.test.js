@@ -9,9 +9,9 @@
 // the replay in the test editor (_TesterCaptionAnswer / _TesterCaptionError).
 // The ops: the world's caption tick (Captions() plus the string slot sending one ask and reading its answer); the room
 // picking a ticket (a new play: the old player's request is dropped, the new one held); a held play ending (its 302,
-// after store.markPlayed, even for a dropped request: the service still counts it, #1029); a straggler (a player still on
-// an older ticket asks it again and is answered at once); the caption sources answering; the visitor turning CC on, opening
-// a picker, or leaving. Then a drain: every hold ends; first the quiet part (the sources answer, the world asks until
+// after store.markPlayed, even for a dropped request: the service still counts it, #1029); a straggler (another visitor's
+// player still on an older ticket asks it again and is answered at once); the caption sources answering; the visitor
+// turning CC on, opening a picker, or leaving. Then a drain: every hold ends; first the quiet part (the sources answer, the world asks until
 // nothing is due, the visitor does nothing), then the visitor opens a picker three times, the sources answering before
 // each. Timing becomes order: LoadGap (5.2 s, cs:39) and the retry waits (cs:1405-1414) only space the asks, so no
 // constant is assumed.
@@ -27,15 +27,18 @@
 //   B4:      if the visitor stayed and the playing video has NO captions (by this test's table), the world ends holding no
 //            list and no lines (any it holds are another video's). It holds today: a plain assertion in every run.
 // B1-B3 fail on today's code (#996): the promises are test.todo, and a plain test asserts that they DO fail today on
-// the recorded seeds (FAILS_TODAY), so this file goes red when the code under it changes. The fixer of #996 must then: drop
-// that assertion, turn the todos into plain tests (FUZZ_PROMISES=1 runs them now; B3 may keep its exclusion and todo if
-// the fix leaves the #166 design), and, for a world-side fix, change the copy below in the same batch as the C# (and
-// re-read it against the new C#).
+// the recorded seeds (FAILS_TODAY), so this file goes red when the code under it changes. #996's SERVICE half is in
+// (2026-11-23, service-cap1: src/server.js playerAsked, a caption ask answered about the ticket the asking client's player
+// asked for last, held or counted): FAILS_TODAY now holds only seeds that fail by a world path, and the seeds it fixed
+// are asserted to pass (FIXED_BY_SERVICE). The fixer of #996's WORLD half must then: drop that assertion, turn the todos
+// into plain tests (FUZZ_PROMISES=1 runs them now; B3 may keep its exclusion and todo if the fix leaves the #166 design),
+// and change the copy below in the same batch as the C# (and re-read it against the new C#).
 // Switches (the verify-home skill has them in one table): FUZZ_PROMISES=1 runs B1-B3 with the known exclusions
 // (FUZZ_KNOWN, default nopicker); FUZZ_STRICT=1 runs them with none; FUZZ_WORLD=today|opt1|opt1x|opt2|opt2x|opt2xs picks the
 // copy's variant (#996's options; see VARIANTS); FUZZ_OTHER=0 leaves out stragglers; FUZZ_FAULTS=0 leaves out the faults;
-// FUZZ_TICKET_PIN=1 runs with TICKET_PIN on; FUZZ_SEED / FUZZ_SEEDS / FUZZ_STEPS as in the other fuzz tests. Only the
-// value 1 turns FUZZ_PROMISES, FUZZ_STRICT and FUZZ_TICKET_PIN on (0 or anything else is off); only 0 turns FUZZ_OTHER and
+// FUZZ_TICKET_PIN=1 runs with TICKET_PIN on; FUZZ_STRAGGLER_SAME=1 sends a straggler as the room's own client (see
+// STRAGGLER_SAME); FUZZ_SEED / FUZZ_SEEDS / FUZZ_STEPS as in the other fuzz tests. Only the
+// value 1 turns FUZZ_PROMISES, FUZZ_STRICT, FUZZ_TICKET_PIN and FUZZ_STRAGGLER_SAME on (0 or anything else is off); only 0 turns FUZZ_OTHER and
 // FUZZ_FAULTS off. Service variants are patches to src/server.js kept outside the repo (the batch's report names them).
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -58,7 +61,8 @@ const PROMISES = process.env.FUZZ_PROMISES === '1';
 export const KNOWN = new Set(STRICT ? [] : (process.env.FUZZ_KNOWN ?? 'nopicker').split(',').filter(Boolean));
 // The nopicker exclusion's budget, per world option: at most this share of the B3-judged seeds whose video has captions
 // (the only seeds it can excuse) may be excused by it in one sweep. Set from the honest cells (2026-11-23, at the test of
-// this commit; 500 seeds and the default 60; today's service, svcHeld and svcNotReady2; stragglers off and on):
+// this commit; 500 seeds and the default 60; today's service, svcHeld and svcNotReady2; stragglers off and on; "today's
+// service" in this file's numbers is the service BEFORE #996's service half, f216ef5, and none were re-run since):
 //   opt2xs  highest honest share 18.1 % at 500 seeds, 6 of 32 (18.8 %) at the default 60, 16.1 % at 2,000 (svcHeld):
 //           budget 25 %. It sees opt2xs losing its start ask with svcHeld and no stragglers (26.5 % at 500, 10 of 32 at
 //           60), which no check sees: every seed it moves is excused. It MISSES that variant with stragglers on (21.3 %,
@@ -74,6 +78,13 @@ export const NOPICKER_MIN_JUDGED = 20;
 // asserted (verifier round 2, L-a: `FUZZ_SEED=1010` went red on it).
 const MIN_SEEDS_FAIL_SOMEWHERE = 20;
 const UA = 'NSPlayer/12.00.19041.5794 WMFSDK/12.00.19041.5794'; // a PC player (AVPro): held, then counted (clientKind 'avpro')
+// A straggler is ANOTHER visitor's player (#996's service half answers each client about its own player's ticket): its
+// requests carry an x-forwarded-for, which the service honours from loopback (src/server.js clientIp), so it is another
+// client; the room's player and the world's caption asks stay one client. FUZZ_STRAGGLER_SAME=1 sends it as the same
+// client, as before 2026-11-23 (the coordinator's call: kept for comparison). Today's service and the shard-level option
+// read no client, so their cells do not move with it.
+const STRAGGLER_SAME = process.env.FUZZ_STRAGGLER_SAME === '1';
+const straggler = STRAGGLER_SAME ? {} : { 'x-forwarded-for': '203.0.113.7' };
 
 function rng(seed) {
   let a = seed >>> 0;
@@ -289,9 +300,9 @@ export async function runOne(seed, ops, variant = WORLD, { faults = FAULTS, pin 
   const get = async (path) => { const res = await fetch(`${url}/v1/0/${path}`); let body = null; try { body = await res.json(); } catch {} return { status: res.status, body }; };
   const plays = []; // the players' ticket requests in flight
   let dropping = null; // the room's current player's request, which a new pick drops
-  const play = (n, { droppable = false } = {}) => {
+  const play = (n, { droppable = false, headers = {} } = {}) => {
     const ac = new AbortController();
-    const p = fetch(`${url}/v1/0/${n}`, { redirect: 'manual', headers: { 'user-agent': UA }, signal: ac.signal }).then((res) => res.status, () => 'dropped');
+    const p = fetch(`${url}/v1/0/${n}`, { redirect: 'manual', headers: { 'user-agent': UA, ...headers }, signal: ac.signal }).then((res) => res.status, () => 'dropped');
     plays.push(p);
     if (droppable) dropping = ac;
     return p;
@@ -373,7 +384,7 @@ export async function runOne(seed, ops, variant = WORLD, { faults = FAULTS, pin 
       else if (op.k === 'straggler') {
         const old = [...new Set(picked)].filter((x) => x !== world.ticket);
         if (!old.length) line = 'straggler: no older ticket';
-        else { const n = old[Math.floor(op.a * old.length)]; atOnce.add(ids[tickets.indexOf(n)]); await play(n); atOnce.delete(ids[tickets.indexOf(n)]); bump('straggler'); line = `a straggler's player asks ${name(n)} again: answered at once, play counted`; }
+        else { const n = old[Math.floor(op.a * old.length)]; atOnce.add(ids[tickets.indexOf(n)]); await play(n, { headers: straggler }); atOnce.delete(ids[tickets.indexOf(n)]); bump('straggler'); line = `a straggler's player asks ${name(n)} again: answered at once, play counted`; }
       }
       else if ((op.k === 'ccOn' || op.k === 'picker') && idle && countedAt != null) line = `${op.k}: skipped (an idle visitor, the video plays)`;
       else if (op.k === 'ccOn') { if (countedAt != null) helped = true; world.ccButtonOn(); line = 'the visitor turns CC on'; }
@@ -508,22 +519,30 @@ export async function shortest(variant, prop, seeds, match = null, opts) {
   }
   return best;
 }
-const SWITCHES = ['FUZZ_STRICT', 'FUZZ_PROMISES', 'FUZZ_KNOWN', 'FUZZ_WORLD', 'FUZZ_OTHER', 'FUZZ_FAULTS', 'FUZZ_TICKET_PIN', 'FUZZ_STEPS'];
-const rerun = (seed) => `${SWITCHES.filter((k) => process.env[k] != null).map((k) => `${k}=${process.env[k]}`).join(' ')} FUZZ_SEED=${seed} node --test test/captions-hold.props.test.js`.trim();
+const SWITCHES = ['FUZZ_STRICT', 'FUZZ_PROMISES', 'FUZZ_KNOWN', 'FUZZ_WORLD', 'FUZZ_OTHER', 'FUZZ_FAULTS', 'FUZZ_TICKET_PIN', 'FUZZ_STRAGGLER_SAME', 'FUZZ_STEPS'];
+const rerun = (seed) => `${SWITCHES.filter((k) => process.env[k] != null).map((k) => `${k}=${process.env[k]}`).join(' ')} FUZZ_SEED=${seed} node --import ./test/netguard.mjs --test test/captions-hold.props.test.js`.trim();
 const show = (b) => `seed ${b.seed}: ${b.fails[b.prop]}\n  ${b.trace.join('\n  ')}\n  rerun: ${rerun(b.seed)}`;
 
-// Today's world copy and today's service: seeds that fail each promise, by path (2026-11-23, world eddf7f5a, service
-// 9259b0b; draw(seed, 16) with stragglers, faults on, TICKET_PIN off, given explicitly so no switch changes them; the
-// nopicker exclusion on unless an entry says known: []). When #996's fix lands, this test goes red: see the top of this
-// file for what the fixer does. "shrunk": the path-keeping shrink (verifier round 2, L-b), as printed with a failure.
+// Today's world copy (eddf7f5a, = the released world v2026.11.22) against this service, with #996's service half
+// (2026-11-23, service-cap1: a caption ask answered about the ticket the asking client's player asked for last): seeds that
+// still fail each promise by a WORLD path (draw(seed, 16) with stragglers, faults on, TICKET_PIN off, given explicitly so no
+// switch changes them; the nopicker exclusion on unless an entry says known: []). When #996's world half lands, the copy
+// changes with the C# and this test goes red: see the top of this file for what the fixer does. "shrunk": the
+// path-keeping shrink (verifier round 2, L-b), as printed with a failure.
 const FAILS_TODAY = [
-  { seed: 1010, prop: 'B2', path: /three answers for another ticket/ }, // #996's own path (shrunk: 3 ops)
-  { seed: 1069, prop: 'B2', path: /empty list \(temporarily_unavailable\)/ }, // #996's item 4: CC on, a captioned video's list not looked up yet (shrunk: 3 ops; the verifier's L2 pick, 1152, no longer fails so: its caption fetch fails once, a fault)
-  { seed: 1042, prop: 'B2', path: /404 nothing_playing/ }, // CC on in a fresh shard during the hold (shrunk: 2 ops; so do all 84 seeds of 996-1995 that fail by a 404)
+  { seed: 1069, prop: 'B2', path: /empty list \(temporarily_unavailable\)/ }, // #996's item 4: CC on, the held video's lookup failed: a not-ready empty list, NoCaptions at cs:3656 (shrunk: 3 ops)
   { seed: 1170, prop: 'B2', path: /LoadNative after its waits/ }, // a track that keeps failing with the list there (cs:3675-3678; shrunk: 2 ops)
-  { seed: 1027, prop: 'B2', path: /three failed asks/ }, // a list ask whose caption fetch fails three times, 502 (cs:2264-2266; shrunk: 5 ops)
-  { seed: 1016, prop: 'B1', path: /after answers for another ticket/ }, // B1 by #996's path, with stragglers (shrunk: 3 ops)
-  { seed: 999, prop: 'B3', path: /can't load right now/, known: [] }, // finding nopicker: a 404 during the hold, nothing asked after the count (shrunk: 1 op)
+  { seed: 1120, prop: 'B2', path: /three failed asks/ }, // a list ask whose caption fetch fails three times, 502 (cs:2264-2266); replaces 1027, which the service half moved off this path
+  { seed: 999, prop: 'B3', path: /can't load right now/, known: [] }, // finding nopicker: a not-ready answer for the held ticket during the hold, nothing asked after the count (cs:3653, cs:3378; #166). Before the service half it was a 404 nothing_playing (shrunk: 1 op)
+];
+// Seeds that failed by a SERVICE path on the service before #996's service half (staging a4b15cd, the same settings) and
+// must pass now (each is shown failing against a4b15cd's src/ in the batch's report, service-cap1 runs/failstoday-*.txt):
+// the room's player held, the route answered about the last counted play (another ticket) or with a 404. 1016 needs the
+// straggler to be another client (the default; FUZZ_STRAGGLER_SAME=1 moves this client's own record and fails it).
+const FIXED_BY_SERVICE = [
+  { seed: 1010, prop: 'B2' }, // was: "No captions" after three answers for another ticket (#996's own path)
+  { seed: 1042, prop: 'B2' }, // was: "No captions" after a 404 nothing_playing (CC on in a fresh shard during the hold)
+  { seed: 1016, prop: 'B1' }, // was: B1 by another ticket's answers after a straggler's play was counted
 ];
 
 test.todo('captions hold B1 (#996): the world ends holding the playing ticket\'s own captions when the video has them (fails today; FUZZ_PROMISES=1)');
@@ -559,10 +578,14 @@ if (STRICT || PROMISES) {
     assert.ok(!problems.length, problems.join('\n'));
   });
 } else {
-  test('captions hold (#996): today\'s world copy against today\'s service still FAILS B1-B3 on the recorded seeds, and keeps B4', async (t) => {
+  test('captions hold (#996): today\'s world copy against this service still FAILS B1-B3 on the recorded world-path seeds, passes the seeds the service half fixed, and keeps B4', async (t) => {
     for (const { seed, prop, path, known = ['nopicker'] } of FAILS_TODAY) {
       const r = await runOne(seed, draw(seed, 16, true), 'today', { faults: true, pin: false, known: new Set(known) });
-      assert.ok(r.fails[prop] && path.test(r.fails[prop]), `seed ${seed} no longer fails ${prop} by ${path}: ${r.fails[prop] ?? 'passes'}. If #996's fix (or a change to the captions route or the ticket route) landed, see the top of this file and the verify-home skill, "Pilot B"`);
+      assert.ok(r.fails[prop] && path.test(r.fails[prop]), `seed ${seed} no longer fails ${prop} by ${path}: ${r.fails[prop] ?? 'passes'}. If #996's world half (or a change to the captions route or the ticket route) landed, see the top of this file and the verify-home skill, "Pilot B"`);
+    }
+    for (const { seed, prop } of FIXED_BY_SERVICE) {
+      const r = await runOne(seed, draw(seed, 16, true), 'today', { faults: true, pin: false, known: new Set(['nopicker']) });
+      assert.equal(r.fails[prop], null, `seed ${seed} fails ${prop} again, which #996's service half fixed (src/server.js playerAsked): ${r.fails[prop]}`);
     }
     const { out, reach, b3, b4 } = await sweep('today');
     t.diagnostic(`today, ${SEEDS} seeds: B1 fails on ${out.B1.length}, B2 on ${out.B2.length}, B3 on ${out.B3.length}, B4 on ${out.B4.length} (B4 judged ${b4.judged}); ${b3Line(b3, 'today')}; reach: ${JSON.stringify(Object.fromEntries(Object.entries(reach).sort()))}`);

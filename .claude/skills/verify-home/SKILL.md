@@ -19,11 +19,11 @@ commit". A change elsewhere in the service (server.js routing, the relay worker)
 ## Run it
 
 ```sh
-node --test test/home.props.test.js                    # 100 seeds x 150 steps, about 5-9 s; part of npm test and CI
-FUZZ_SEEDS=2000 node --test test/home.props.test.js    # the sweep: one process, about 1.5-3.5 min, prints reach counts
-FUZZ_SEED=1234 node --test test/home.props.test.js     # one seed; a failure prints its shrunk ops and this command
-FUZZ_STRICT=1 node --test test/home.props.test.js      # no exclusions: the open findings below fail again
-FUZZ_STEPS=400 FUZZ_SEEDS=500 node --test test/home.props.test.js   # longer sequences
+node --import ./test/netguard.mjs --test test/home.props.test.js                                # 100 seeds x 150 steps, about 5-9 s; part of npm test and CI
+FUZZ_SEEDS=2000 node --import ./test/netguard.mjs --test test/home.props.test.js                # the sweep: one process, about 1.5-3.5 min, prints reach counts
+FUZZ_SEED=1234 node --import ./test/netguard.mjs --test test/home.props.test.js                 # one seed; a failure prints its shrunk ops and this command
+FUZZ_STRICT=1 node --import ./test/netguard.mjs --test test/home.props.test.js                  # no exclusions: the open findings below fail again
+FUZZ_STEPS=400 FUZZ_SEEDS=500 node --import ./test/netguard.mjs --test test/home.props.test.js  # longer sequences
 ```
 
 Seeds start at 1009 (FUZZ_SEED moves the start). A seed runs the same on every platform: the session tokens are seeded
@@ -158,7 +158,7 @@ and V17, so each has an example test that `npm test` runs.
 ## Moving the coverage commit
 
 Move it only after (1) re-reading every function listed under the coverage at the new commit and confirming the
-properties and the drift points still describe them, (2) `FUZZ_SEEDS=2000 node --test test/home.props.test.js` passing
+properties and the drift points still describe them, (2) `FUZZ_SEEDS=2000 node --import ./test/netguard.mjs --test test/home.props.test.js` passing
 (or failing only on the open findings above), and (3) recording the new commit here in the same commit as any test
 change. A diff that changes `src/home.js` and leaves this unchanged says why in its message.
 
@@ -169,6 +169,12 @@ that ships. It moves in one commit once that branch is on staging, after the thr
 2026-11-23).
 
 ## Pilot B: captions around a held play (test/captions-hold.props.test.js)
+
+**The numbers in this section** (the budgets, the reach list, the variants' and B4's counts) were measured against the
+service BEFORE #996's service half (f216ef5, 2026-11-23): "today's service" there means a4b15cd / 9259b0b. They were not
+re-run against the change, so they do not all reproduce from this tree; only the FAILS_TODAY / FIXED_BY_SERVICE seeds
+below are. The batch report of #996's service half has the option table's cells for the change; #996's phase 3
+re-measures the rest with the world's rule as built.
 
 A second seeded test, for Everything-is-OK#996. The service is the real `createApp` with a real `Store`. `playback` is
 faked so a player's ticket request is held until the test lets it go. `captions` answers as a failed lookup does
@@ -220,27 +226,34 @@ is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can
     - today, opt1, opt1x, opt2, opt2x: no budget. Highest honest share 31.3 % (svcNotReady2, stragglers off; 10 of 32 at
       60). Every variant tried that moves these options' excused share is caught by B3 itself (VSFirstListNotReady,
       VSTwoListsNotReady, droplist), so a budget there would guard nothing seen.
-- **Today B1, B2 and B3 fail** (B4 holds), each path a recorded seed in `FAILS_TODAY`, run with explicit options so no
-  switch moves them:
-  - three answers for another ticket (#996; 1010);
-  - a list asked with CC on whose lookup found nothing yet (#996's item 4; 1069);
-  - a 404 `nothing_playing` with CC on in a fresh shard (1042);
+- **#996's service half is in** (2026-11-23, service-cap1; `src/server.js` `playerAsked`): a caption ask is answered about
+  the video ticket the asking client's player asked for last in the shard, held or counted (the svcHeld option, per
+  client). Against it, today's copy (= the released world, v2026.11.22) still fails B1, B2 and B3 by WORLD paths only,
+  each a recorded seed in `FAILS_TODAY`, run with explicit options so no switch moves them:
+  - a list asked with CC on whose lookup found nothing (#996's item 4, NoCaptions at cs:3656; 1069);
   - a track that keeps failing, LoadNative after its waits (cs:3675-3678; 1170);
-  - a list ask whose caption fetch fails three times, 502 (cs:2264-2266; 1027);
-  - B1 by #996's path (1016);
-  - B3 strict, "nopicker" (999).
+  - a list ask whose caption fetch fails three times, 502 (cs:2264-2266; 1120, which replaced 1027: the service half
+    moved 1027 off that path);
+  - B3 strict, "nopicker" (999: now a not-ready answer for the held ticket, before a 404).
+  The seeds that failed by a SERVICE path before it (on staging a4b15cd) are asserted to pass (`FIXED_BY_SERVICE`):
+  three answers for another ticket (#996; 1010), a 404 `nothing_playing` with CC on in a fresh shard (1042), B1 by
+  another ticket's answers after a straggler's play (1016). In 2,000 seeds of today's copy (stragglers on) no check
+  fails by another ticket's answer or a 404 any more.
   So B1-B3 are `test.todo`, and a plain test asserts that the recorded seeds still fail: the file goes red when the
   code under it changes. The orderings printed with a failure (and the ones for the world's replay) come from a
   shrink that keeps the failure's PATH, not only the failing check (verifier round 2, L-b: before, seed 1027's three
-  502s shrank to a 404). Shrunk: 1010 3 ops, 1069 3, 1042 2, 1170 2, 1027 5, 1016 3, 999 1.
-- **When #996's fix lands**, its fixer drops the `FAILS_TODAY` test and turns the todos into plain tests (today's
-  `FUZZ_PROMISES=1` run, with `nopicker` kept as long as the #166 design stays). For a world-side fix they change the
-  copy (or make the matching `VARIANTS` entry the default) in the same batch as the C#, and the world's own replay
-  scenario must then pass in the test editor.
+  502s shrank to a 404).
+- **A straggler is another visitor's player** (since 2026-11-23): its requests carry an `x-forwarded-for` from
+  loopback, so the service sees another client. `FUZZ_STRAGGLER_SAME=1` sends it as the room's own client, as before;
+  today's service and the shard-level svcHeld option read no client, so their cells do not move with it.
+- **When #996's world half lands**, its fixer drops the `FAILS_TODAY` test and turns the todos into plain tests (today's
+  `FUZZ_PROMISES=1` run, with `nopicker` kept as long as the #166 design stays). They change the copy (or make the
+  matching `VARIANTS` entry the default) in the same batch as the C#, and the world's own replay scenario must then pass
+  in the test editor.
 
 | Switch | What it does | In the default `npm test` run? |
 |---|---|---|
-| (none) | the `FAILS_TODAY` seeds, then a 60-seed sweep of today's copy that must keep B4 and still fail B1 and B2 somewhere (diagnostic counts for B3); "fail somewhere" is asserted only from 20 seeds, so `FUZZ_SEED=n` alone is green | yes, the only test that runs |
+| (none) | the `FAILS_TODAY` seeds and the `FIXED_BY_SERVICE` seeds, then a 60-seed sweep of today's copy that must keep B4 and still fail B1 and B2 somewhere (diagnostic counts for B3); "fail somewhere" is asserted only from 20 seeds, so `FUZZ_SEED=n` alone is green | yes, the only test that runs |
 | `FUZZ_PROMISES=1` | runs B1-B4 as plain tests with the known exclusions, plus the `nopicker` budget | no |
 | `FUZZ_STRICT=1` | the same with no exclusion: B3 counts every judged seed | no |
 | `FUZZ_KNOWN=a,b` | the exclusions to keep (default `nopicker`; empty keeps none) | default `nopicker` |
@@ -248,13 +261,14 @@ is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can
 | `FUZZ_OTHER=0` | no stragglers | stragglers on |
 | `FUZZ_FAULTS=0` | no faults (no 502 lookups, no failing track fetches) | faults on |
 | `FUZZ_TICKET_PIN=1` | TICKET_PIN on; the fake's `peek` answers a ready build, so a played ticket picked again is answered from its pin | off |
+| `FUZZ_STRAGGLER_SAME=1` | a straggler asks as the room's own client (no `x-forwarded-for`), as before 2026-11-23 | another client |
 | `FUZZ_SEED`, `FUZZ_SEEDS`, `FUZZ_STEPS` | the seed range and length | 996, 60 seeds, 16 steps |
 
-  Only the value `1` turns `FUZZ_PROMISES`, `FUZZ_STRICT` and `FUZZ_TICKET_PIN` on; `0` or anything else is off. Only
+  Only the value `1` turns `FUZZ_PROMISES`, `FUZZ_STRICT`, `FUZZ_TICKET_PIN` and `FUZZ_STRAGGLER_SAME` on; `0` or anything else is off. Only
   `0` turns `FUZZ_OTHER` and `FUZZ_FAULTS` off. (Until 2026-11-23 any value turned the first three on, so
   `FUZZ_TICKET_PIN=0` ran with the pin: verifier round 2, L-a.)
 
-- **Run:** `node --test test/captions-hold.props.test.js` (60 seeds, about 3.7 s); `FUZZ_PROMISES=1 FUZZ_SEEDS=2000
+- **Run:** `node --import ./test/netguard.mjs --test test/captions-hold.props.test.js` (60 seeds, about 3.7 s); `FUZZ_PROMISES=1 FUZZ_SEEDS=2000
   FUZZ_WORLD=opt2x` (say) for one of #996's options; service options are patches outside the repo (the batch's report
   names them), applied in a scratch worktree.
 - **The copy and its drift.** It mirrors `Assets/EverythingIsOK/Scripts/EverythingIsOKYouTubeSearch.cs` in the world

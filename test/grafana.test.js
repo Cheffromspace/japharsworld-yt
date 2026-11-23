@@ -381,7 +381,8 @@ test('push refuses until the deploy is live (--after-deploy), names why and what
   const empty = mkdtempSync(join(tmpdir(), 'grafana-guard-'));
   const script = fileURLToPath(new URL('../tools/grafana.mjs', import.meta.url));
   const run = spawnSync(process.execPath, [script, 'push'], { cwd: empty, encoding: 'utf8', timeout: 20_000,
-    env: { PATH: process.env.PATH, GRAFANA_URL: 'http://127.0.0.1:9', GRAFANA_SA_TOKEN: 'not-a-token' } });
+    // NODE_OPTIONS carries test/netguard.mjs into the child (it starts with no other environment).
+    env: { PATH: process.env.PATH, GRAFANA_URL: 'http://127.0.0.1:9', GRAFANA_SA_TOKEN: 'not-a-token', ...(process.env.NODE_OPTIONS ? { NODE_OPTIONS: process.env.NODE_OPTIONS } : {}) } });
   try { rmSync(empty, { recursive: true, force: true }); } catch {}
   assert.equal(run.status, 2, run.stderr);
   assert.match(run.stderr, /^push refused: /);

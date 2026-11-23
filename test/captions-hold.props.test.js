@@ -23,7 +23,7 @@
 //            (after the quiet part of the drain) with its own captions. Judged only on seeds where the visitor did nothing
 //            after the count. One exclusion, "nopicker" (#996): the end state "can't load right now" when, by this test's OWN
 //            records, the asked video's sources had nothing at the last ask (or a fault the test drew threw there), which the
-//            world's #166 design leaves for a picker open; within NOPICKER_BUDGET of the judged seeds whose video has captions.
+//            world's #166 design leaves for a picker open; within NOPICKER_BUDGET of the judged seeds whose video has captions (opt2xs only).
 //   B4:      if the visitor stayed and the playing video has NO captions (by this test's table), the world ends holding no
 //            list and no lines (any it holds are another video's). It holds today: a plain assertion in every run.
 // B1-B3 fail on today's code (#996): the promises are test.todo, and a plain test asserts that they DO fail today on
@@ -56,9 +56,16 @@ const STRICT = process.env.FUZZ_STRICT === '1';
 const PROMISES = process.env.FUZZ_PROMISES === '1';
 // The open findings excused where their check names them (see the todos below): FUZZ_STRICT=1 excuses none.
 export const KNOWN = new Set(STRICT ? [] : (process.env.FUZZ_KNOWN ?? 'nopicker').split(',').filter(Boolean));
-// The nopicker exclusion's budget: at most this share of the B3-judged seeds whose video has captions (the only seeds it
-// can excuse) may be excused by it in one sweep.
-export const NOPICKER_BUDGET = 0.5;
+// The nopicker exclusion's budget, per world option: at most this share of the B3-judged seeds whose video has captions
+// (the only seeds it can excuse) may be excused by it in one sweep. Set from the honest cells (2026-11-23, at the test of
+// this commit; 500 seeds and the default 60; today's service, svcHeld and svcNotReady2; stragglers off and on):
+//   opt2xs  highest honest share 18.1 % at 500 seeds, 6 of 32 (18.8 %) at the default 60, 16.1 % at 2,000 (svcHeld):
+//           budget 25 %. It sees opt2xs losing its start ask (svcHeld: 26.5 % at 500, 10 of 32 at 60), which no check
+//           sees: every seed it moves is excused.
+//   today, opt1, opt1x, opt2, opt2x  highest honest share 31.3 % (svcNotReady2, stragglers off; 10 of 32 at 60): no
+//           budget. With the exclusion read from the test's own records, every variant tried that moves these options'
+//           excused share is caught by B3 itself (VSFirstListNotReady, VSTwoListsNotReady, droplist); none needs a budget.
+export const NOPICKER_BUDGET = { opt2xs: 0.25 };
 // ...applied only from this many such seeds: a run of one or a few seeds (FUZZ_SEED=n) would otherwise read one excused
 // seed as over budget.
 export const NOPICKER_MIN_JUDGED = 20;
@@ -521,21 +528,28 @@ const FAILS_TODAY = [
 test.todo('captions hold B1 (#996): the world ends holding the playing ticket\'s own captions when the video has them (fails today; FUZZ_PROMISES=1)');
 test.todo('captions hold B2 (#996): "No captions" only after an answer for that ticket that says no_captions (fails today; FUZZ_PROMISES=1)');
 test.todo('captions hold B3 (#996, P1 strict): after the play is counted, a visitor who opens no picker and presses no CC still ends with the playing ticket\'s own captions (fails today and under every option tried; FUZZ_PROMISES=1)');
-test.todo('captions hold finding "nopicker" (#996; strict seed 999): after an ask the sources could not answer yet, the world asks again only on a picker open (cs:3653, cs:3378; #166), so a visitor who does nothing ends on "can\'t load right now"; B3 excuses exactly that end state, and only when the test\'s own records say the sources had nothing at the last ask, within NOPICKER_BUDGET of the judged seeds with captions');
+test.todo('captions hold finding "nopicker" (#996; strict seed 999): after an ask the sources could not answer yet, the world asks again only on a picker open (cs:3653, cs:3378; #166), so a visitor who does nothing ends on "can\'t load right now"; B3 excuses exactly that end state, and only when the test\'s own records say the sources had nothing at the last ask, within NOPICKER_BUDGET (opt2xs) of the judged seeds with captions');
 
-// The nopicker budget's check: null when within it (or under NOPICKER_MIN_JUDGED), else the problem.
-const overBudget = (b3) => (b3.judgedCaptions >= NOPICKER_MIN_JUDGED && b3.excused > NOPICKER_BUDGET * b3.judgedCaptions
-  ? `the nopicker exclusion excused ${b3.excused} of ${b3.judgedCaptions} judged seeds with captions, over its budget of ${NOPICKER_BUDGET * 100} %: the world leaves "can't load right now" for a picker open far more often than recorded` : null);
-const b3Line = (b3) => `B3 judged on ${b3.judged} of ${SEEDS} seeds (${b3.judgedCaptions} with captions); nopicker excused ${b3.excused} (a, during the hold: ${b3.a}; b, after the count: ${b3.b}; by the last answer: ${JSON.stringify(b3.kinds)}); budget ${b3.judgedCaptions >= NOPICKER_MIN_JUDGED ? Math.floor(NOPICKER_BUDGET * b3.judgedCaptions) : `not applied under ${NOPICKER_MIN_JUDGED} judged seeds with captions`}`;
+// The nopicker budget's check for a world option: null when it has none, within it, or under NOPICKER_MIN_JUDGED; else
+// the problem.
+const overBudget = (b3, variant) => {
+  const share = NOPICKER_BUDGET[variant];
+  return share != null && b3.judgedCaptions >= NOPICKER_MIN_JUDGED && b3.excused > share * b3.judgedCaptions
+    ? `the nopicker exclusion excused ${b3.excused} of ${b3.judgedCaptions} judged seeds with captions, over its budget of ${share * 100} % for ${variant}: the world leaves "can't load right now" for a picker open far more often than the honest cells did` : null;
+};
+const budgetText = (b3, variant) => (NOPICKER_BUDGET[variant] == null ? `no budget for ${variant}`
+  : b3.judgedCaptions >= NOPICKER_MIN_JUDGED ? `budget ${Math.floor(NOPICKER_BUDGET[variant] * b3.judgedCaptions)} (${NOPICKER_BUDGET[variant] * 100} % for ${variant})`
+    : `budget not applied under ${NOPICKER_MIN_JUDGED} judged seeds with captions`);
+const b3Line = (b3, variant) => `B3 judged on ${b3.judged} of ${SEEDS} seeds (${b3.judgedCaptions} with captions); nopicker excused ${b3.excused} (a, during the hold: ${b3.a}; b, after the count: ${b3.b}; by the last answer: ${JSON.stringify(b3.kinds)}); ${budgetText(b3, variant)}`;
 
 if (STRICT || PROMISES) {
   test(`captions hold (#996), world copy ${WORLD}${OTHER ? '' : ', no stragglers'}${FAULTS ? '' : ', no faults'}${PIN ? ', TICKET_PIN on' : ''}: ${SEEDS} seeds keep B1, B2, B3 and B4 (${KNOWN.size ? `excused: ${[...KNOWN].join(', ')}` : 'no exclusion'})`, async (t) => {
     const { out, reach, b3, b4 } = await sweep(WORLD);
     t.diagnostic(`reach: ${JSON.stringify(Object.fromEntries(Object.entries(reach).sort()))}`);
-    t.diagnostic(b3Line(b3));
+    t.diagnostic(b3Line(b3, WORLD));
     t.diagnostic(`B4 judged on ${b4.judged} of ${SEEDS} seeds (the visitor stayed, the video has no captions)`);
     const problems = [];
-    const budget = KNOWN.has('nopicker') ? overBudget(b3) : null;
+    const budget = KNOWN.has('nopicker') ? overBudget(b3, WORLD) : null;
     if (budget) problems.push(budget);
     for (const prop of PROPS) if (out[prop].length) {
       problems.push(`${prop} fails on ${out[prop].length} seeds: ${out[prop].slice(0, 12).join(', ')}`);
@@ -550,7 +564,7 @@ if (STRICT || PROMISES) {
       assert.ok(r.fails[prop] && path.test(r.fails[prop]), `seed ${seed} no longer fails ${prop} by ${path}: ${r.fails[prop] ?? 'passes'}. If #996's fix (or a change to the captions route or the ticket route) landed, see the top of this file and the verify-home skill, "Pilot B"`);
     }
     const { out, reach, b3, b4 } = await sweep('today');
-    t.diagnostic(`today, ${SEEDS} seeds: B1 fails on ${out.B1.length}, B2 on ${out.B2.length}, B3 on ${out.B3.length}, B4 on ${out.B4.length} (B4 judged ${b4.judged}); ${b3Line(b3)}; reach: ${JSON.stringify(Object.fromEntries(Object.entries(reach).sort()))}`);
+    t.diagnostic(`today, ${SEEDS} seeds: B1 fails on ${out.B1.length}, B2 on ${out.B2.length}, B3 on ${out.B3.length}, B4 on ${out.B4.length} (B4 judged ${b4.judged}); ${b3Line(b3, 'today')}; reach: ${JSON.stringify(Object.fromEntries(Object.entries(reach).sort()))}`);
     // B4 holds today: asserted in every run.
     if (out.B4.length) assert.fail(`B4 fails on ${out.B4.length} seeds: ${out.B4.slice(0, 12).join(', ')}\n${show(await shortest('today', 'B4', out.B4))}`);
     if (SEEDS >= MIN_SEEDS_FAIL_SOMEWHERE) assert.ok(out.B1.length > 0 && out.B2.length > 0, 'B1 and B2 still fail somewhere today');

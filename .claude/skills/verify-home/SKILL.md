@@ -123,7 +123,7 @@ The two day-count findings are excused by one rule: a start over the day's real 
 as the known findings alone would make it (the day's starts less its cache hits, each finding's kind of hit counted only
 when that finding is in `KNOWN`, floored at 0 as `put` does), was under `dailyBuilds`. So neither can pay for the other.
 A finding's count is measured one way: the seeds of 2,000 that fail with the other findings in `KNOWN` and this one not
-(for example `FUZZ_KNOWN=reload,midnight FUZZ_SEEDS=2000` for recached).
+(for example `FUZZ_KNOWN=midnight FUZZ_SEEDS=2000` for recached).
 
 When a fix for one lands: remove its name from `KNOWN` (and its branch in the check), turn its `test.todo` into a plain
 test or delete it, run the sweep with `FUZZ_STRICT=1`, and update this list.

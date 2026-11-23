@@ -134,8 +134,10 @@ export class Home {
         if (this.#stale(s)) throw new Error('stream gone');
         // Its last fetch comes back from meta.json (#session). A meta.json from before Everything-is-OK#1011 has none:
         // counted as played from the restart, as a cut_short one is, so the deploy that brings the field cuts no paused
-        // play off. Every meta.json written since has it (0 when nobody fetched), so this is that one restart only.
-        if (m.lastGetMs == null) s.lastGetMs = this.now();
+        // play off. Every meta.json written since has it (0 when nobody fetched), and the stamp is written at once: a
+        // crash before the first clean shutdown would otherwise read "no field" again and stamp it again (service-home1's
+        // probe, 2026-11-23). So this is that one restart only.
+        if (m.lastGetMs == null) { s.lastGetMs = this.now(); this.#saveMeta(s); }
         this.sessions.set(`${s.id}@${s.quality}`, s);
         this.byToken.set(s.token, s);
       } catch { rmSync(folder, { recursive: true, force: true }); dropped++; }

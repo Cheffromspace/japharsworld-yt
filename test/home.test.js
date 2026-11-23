@@ -295,6 +295,22 @@ seg1.ts
   assert.equal(again.byToken.get(s.token)?.state, 'ready', 'reloaded as a live stream, not dropped as gone');
 });
 
+test('home: the restart stamp of a pre-fix meta.json is written at once, so a crash before a clean shutdown does not stamp it again (Everything-is-OK#1011)', async (t) => {
+  const { dir, clock, logs, opts, a, meta } = pausedCopy(t);
+  const { lastGetMs, ...old } = meta();
+  writeFileSync(join(dir, a.token, 'meta.json'), JSON.stringify(old)); // as 849fc97 wrote it
+  clock.ms += 60_000;
+  const stampedAt = clock.ms;
+  const again = new Home(opts); // the deploy that brings the field: stamped "played from the restart"
+  assert.equal(meta().lastGetMs, stampedAt, 'the stamp is in meta.json already, before any shutdown');
+  clock.ms += 10 * 60_000;
+  const crashed = new Home(opts); // a crash 10 min later: no flush ran, nobody fetched
+  assert.equal(crashed.byToken.get(a.token).lastGetMs, stampedAt, 'read back, not stamped again');
+  assert.ok(crashed.start({ id: 'bbbbbbbbbbb' }, '720p'));
+  assert.deepEqual(logs.filter((l) => l.event === 'home_evict').map((l) => l.why), ['size'], 'unwatched for 10 min: evicted at the next start');
+  void again;
+});
+
 test('home: meta.json goes through a .tmp file; a leftover .tmp is ignored, and a folder with only one is dropped on load (Everything-is-OK#1011)', (t) => {
   const { dir, opts, first, a, meta } = pausedCopy(t, { maxGb: 8 });
   first.flush();

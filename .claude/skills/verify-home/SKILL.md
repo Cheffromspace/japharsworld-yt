@@ -127,8 +127,8 @@ test or delete it, run the sweep with `FUZZ_STRICT=1`, and update this list.
 
 **Fixed:** `reload`, Everything-is-OK#1011 (a restart forgot who was watching). meta.json now carries `lastGetMs`
 (always, 0 when nobody fetched), written by `file()` at most every 30 s and by `flush()`; `#load` restores it, and
-stamps "played from the restart" only a ready session whose meta.json has no such field (written before the fix: the one
-restart of the deploy that brings it). The restart op's bookkeeping (`stamped`, reloaded `cut_short` failures only) did
+stamps "played from the restart" only a ready session whose meta.json has no such field (written before the fix), and
+writes the stamp at once, so it is the one restart of the deploy that brings it, crash or not. The restart op's bookkeeping (`stamped`, reloaded `cut_short` failures only) did
 not change, because nothing new is stamped. Seeds that failed before it: strict 1105; 1116 with
 `FUZZ_KNOWN=recached,midnight` (it also fails on `recached` strict).
 

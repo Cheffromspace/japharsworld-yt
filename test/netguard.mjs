@@ -8,8 +8,8 @@
 // dns.Resolver's, which always ask a DNS server), a UDP send or connect (dgram), fetch, the built-in WebSocket. Loopback
 // (127.0.0.1, ::1, localhost) and local pipes pass: the tests run the real app on port 0.
 // Where a refusal is charged (a test process, the main thread):
-//   - made by a test (its body, its beforeEach/afterEach, async work it started, or with no async owner while it runs):
-//     that test fails;
+//   - made by a test (its body, its beforeEach/afterEach, async work it started), or while it runs by work with no
+//     async owner or started in a before()/after() hook (a server shared by the file's tests): that test fails;
 //   - made at load, in a before()/after() hook, between tests, or by async work a test left running after it ended:
 //     no test is charged (an innocent test stays green), and the file FAILS at exit, naming each one and its place.
 //   The owner is read from an AsyncLocalStorage the guard sets around each test's and hook's function (the runner calls
@@ -212,9 +212,12 @@ function install() {
   let lastEnded = null; // the name of the last test that ended
   const outside = [];
   const all = []; // every refusal, sorted, for NETGUARD_RECORD
+  // A before()/after() hook is shared setup (a server started there serves every test): what it starts is charged like
+  // work with no owner, to the test running when the refusal is made, and only outside a test is it named as the hook's.
+  const shared = (r) => r.owner?.hook === 'before' || r.owner?.hook === 'after';
   const label = (r) => {
-    if (r.owner?.hook === 'before' || r.owner?.hook === 'after') return `in ${r.owner.hook === 'after' ? 'an' : 'a'} ${r.owner.hook}() hook${r.owner.name && r.owner.name !== '<root>' ? ` of "${r.owner.name}"` : ''}`;
-    if (r.owner) return `from async work started in test "${r.owner.name}", after that test ended`;
+    if (shared(r)) return `in ${r.owner.hook === 'after' ? 'an' : 'a'} ${r.owner.hook}() hook${r.owner.name && r.owner.name !== '<root>' ? ` of "${r.owner.name}"` : ''}`;
+    if (r.owner) return `from async work started in test "${r.owner.name}", after that test ended${r.during ? `, while test "${r.during.fullName ?? r.during.name}" ran` : ''}`;
     if (r.during) return `while test "${r.during.fullName ?? r.during.name}" ran`;
     return lastEnded == null ? 'at load, before any test' : `outside any test, after "${lastEnded}" (no async owner)`;
   };
@@ -225,7 +228,7 @@ function install() {
     const mine = [];
     for (const r of fresh) {
       all.push(r);
-      const ours = t && (r.owner ? r.owner.ctx === t : r.during === t);
+      const ours = t && (r.owner && !shared(r) ? r.owner.ctx === t : r.during === t);
       if (ours) { r.to = t.fullName ?? t.name; mine.push(r); } else { r.to = label(r); outside.push(r); }
     }
     return mine;

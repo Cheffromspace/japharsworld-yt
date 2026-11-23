@@ -67,6 +67,14 @@ test('netguard: a refusal in a test fails that test only, naming the host and th
   assert.match(r.out, /netguard: this test tried 1 outbound connection\(s\): fetch http:\/\/192\.0\.2\.1:9 @ .*netguard-fixtures\/intest\.test\.mjs:3/, r.out);
 });
 
+test('netguard: a refusal by a server started in a before() hook, made while a test calls it, fails that test', () => {
+  const r = run('shared');
+  failed(r, 'U1 calls the shared server');
+  passed(r, 'U2 does nothing');
+  assert.match(r.out, /netguard: this test tried 1 outbound connection\(s\): fetch http:\/\/192\.0\.2\.1:9 @ /, r.out);
+  assert.deepEqual(r.record?.refused.map((x) => [x.what, x.to]), [['fetch http://192.0.2.1:9', 'U1 calls the shared server']], 'the record');
+});
+
 test('netguard: a refusal in an after() hook fails the file at exit, named', () => {
   const r = run('after');
   passed(r, 'S1 passes');
@@ -77,7 +85,7 @@ test('netguard: a refusal from async work that outlives its test names that test
   const r = run('outlives');
   passed(r, 'P10 starts work that outlives it');
   passed(r, 'P11 is innocent and stays green');
-  redOutside(r, 'from async work started in test "P10 starts work that outlives it", after that test ended');
+  redOutside(r, 'from async work started in test "P10 starts work that outlives it", after that test ended, while test "P11 is innocent and stays green" ran');
 });
 
 test('netguard: control: loopback only is green, nothing refused', () => {

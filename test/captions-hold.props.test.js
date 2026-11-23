@@ -1,8 +1,8 @@
 // Everything-is-OK#996, pilot B of #1007: the captions exchange around a held play, as generated orderings. The service is
 // the REAL app (createApp with a real Store; only `playback` and `captions` are faked: a player's ticket request is held
 // until the test lets it go, src/server.js's ticket route `await playback.location(...)`, and a caption lookup comes back
-// with no tracks, temporarily_unavailable, until the test lets the sources succeed; some videos also have faults: a lookup
-// that throws, a track fetch that fails with the list there). The world is a small scripted COPY of the caption-asking rule
+// with no tracks, temporarily_unavailable, until the test lets the sources succeed; some videos also have faults: a caption
+// fetch that fails (502), a track fetch that fails with the list there). The world is a small scripted COPY of the caption-asking rule
 // in the world repo's Assets/EverythingIsOK/Scripts/EverythingIsOKYouTubeSearch.cs, read at world commit eddf7f5a
 // (2026-11-22); every line of the copy names the C# lines (cs:N) it mirrors. A change to those lines means re-reading the
 // copy (.claude/skills/verify-home/SKILL.md, "Pilot B"): the copy can drift; the real world code is the referee, through
@@ -21,9 +21,12 @@
 //            (reason no_captions).
 //   B3 (P1 strict): after the playing ticket's play is counted, a visitor who opens no picker and presses no CC still ends
 //            (after the quiet part of the drain) with its own captions. Judged only on seeds where the visitor did nothing
-//            after the count. One exclusion, "nopicker" (#996): the end state "can't load right now" after an answer that was
-//            not usable, which the world's #166 design leaves for a picker open; within NOPICKER_BUDGET of the judged seeds.
-// All three fail on today's code (#996): the promises are test.todo, and a plain test asserts that they DO fail today on
+//            after the count. One exclusion, "nopicker" (#996): the end state "can't load right now" when, by this test's OWN
+//            records, the asked video's sources had nothing at the last ask (or a fault the test drew threw there), which the
+//            world's #166 design leaves for a picker open; within NOPICKER_BUDGET of the judged seeds whose video has captions.
+//   B4:      if the visitor stayed and the playing video has NO captions (by this test's table), the world ends holding no
+//            list and no lines (any it holds are another video's). It holds today: a plain assertion in every run.
+// B1-B3 fail on today's code (#996): the promises are test.todo, and a plain test asserts that they DO fail today on
 // the recorded seeds (FAILS_TODAY), so this file goes red when the code under it changes. The fixer of #996 must then: drop
 // that assertion, turn the todos into plain tests (FUZZ_PROMISES=1 runs them now; B3 may keep its exclusion and todo if
 // the fix leaves the #166 design), and, for a world-side fix, change the copy below in the same batch as the C# (and
@@ -31,8 +34,9 @@
 // Switches (the verify-home skill has them in one table): FUZZ_PROMISES=1 runs B1-B3 with the known exclusions
 // (FUZZ_KNOWN, default nopicker); FUZZ_STRICT=1 runs them with none; FUZZ_WORLD=today|opt1|opt1x|opt2|opt2x|opt2xs picks the
 // copy's variant (#996's options; see VARIANTS); FUZZ_OTHER=0 leaves out stragglers; FUZZ_FAULTS=0 leaves out the faults;
-// FUZZ_TICKET_PIN=1 runs with TICKET_PIN on; FUZZ_SEED / FUZZ_SEEDS / FUZZ_STEPS as in the other fuzz tests. Service
-// variants are patches to src/server.js kept outside the repo (the batch's report names them).
+// FUZZ_TICKET_PIN=1 runs with TICKET_PIN on; FUZZ_SEED / FUZZ_SEEDS / FUZZ_STEPS as in the other fuzz tests. Only the
+// value 1 turns FUZZ_PROMISES, FUZZ_STRICT and FUZZ_TICKET_PIN on (0 or anything else is off); only 0 turns FUZZ_OTHER and
+// FUZZ_FAULTS off. Service variants are patches to src/server.js kept outside the repo (the batch's report names them).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -46,14 +50,21 @@ const STEPS = Number(process.env.FUZZ_STEPS) || 16;
 const WORLD = process.env.FUZZ_WORLD || 'today';
 const OTHER = process.env.FUZZ_OTHER !== '0';
 const FAULTS = process.env.FUZZ_FAULTS !== '0';
-const PIN = Boolean(process.env.FUZZ_TICKET_PIN);
+// Switches that turn something on read only '1' (verifier round 2, L-a: `FUZZ_TICKET_PIN=0` turned the pin ON before).
+const PIN = process.env.FUZZ_TICKET_PIN === '1';
+const STRICT = process.env.FUZZ_STRICT === '1';
+const PROMISES = process.env.FUZZ_PROMISES === '1';
 // The open findings excused where their check names them (see the todos below): FUZZ_STRICT=1 excuses none.
-export const KNOWN = new Set(process.env.FUZZ_STRICT ? [] : (process.env.FUZZ_KNOWN ?? 'nopicker').split(',').filter(Boolean));
-// The nopicker exclusion's budget: at most this share of the B3-judged seeds may be excused by it in one sweep.
+export const KNOWN = new Set(STRICT ? [] : (process.env.FUZZ_KNOWN ?? 'nopicker').split(',').filter(Boolean));
+// The nopicker exclusion's budget: at most this share of the B3-judged seeds whose video has captions (the only seeds it
+// can excuse) may be excused by it in one sweep.
 export const NOPICKER_BUDGET = 0.5;
-// ...applied only from this many judged seeds: a run of one or a few seeds (FUZZ_SEED=n) would otherwise read one excused
+// ...applied only from this many such seeds: a run of one or a few seeds (FUZZ_SEED=n) would otherwise read one excused
 // seed as over budget.
 export const NOPICKER_MIN_JUDGED = 20;
+// The plain test's "B1 and B2 still fail somewhere today" needs a sweep: with fewer seeds (FUZZ_SEED=n alone) it is not
+// asserted (verifier round 2, L-a: `FUZZ_SEED=1010` went red on it).
+const MIN_SEEDS_FAIL_SOMEWHERE = 20;
 const UA = 'NSPlayer/12.00.19041.5794 WMFSDK/12.00.19041.5794'; // a PC player (AVPro): held, then counted (clientKind 'avpro')
 
 function rng(seed) {
@@ -235,18 +246,22 @@ export async function runOne(seed, ops, variant = WORLD, { faults = FAULTS, pin 
   const notReady = (id, lang) => ({ id, lang, available: false, reason: 'temporarily_unavailable', tracks: [], track: -1 });
   const nothing = (id, lang) => ({ id, lang, available: false, reason: 'no_captions', tracks: [], track: -1 });
   // Faults (verifier M4; FUZZ_FAULTS=0 leaves them out), drawn from their own stream so the draws above stay as they were.
-  // Per video: `throws` lookups that throw (a resolve that errors: the route answers 502 captions_failed, server.js:1835-1839),
-  // spent only while the list is not looked up yet; and `cueFails` track fetches that fail while the list is there
+  // Per video: `throws` caption fetches that fail, spent only while the list is not looked up yet. The fake throws, so the
+  // route answers 502 captions_failed (server.js:1835-1839). That stands for ANY failed caption fetch, which the world counts
+  // the same (cs:2264-2266): a service restart, a proxy 502/503, the network. It is not how a real lookup fails: the chain's
+  // resolve() catches every source error and returns null (captionchain.js:192-213), so a failed lookup answers "not ready"
+  // (verifier round 2, L-c). And `cueFails` track fetches that fail while the list is there
   // (captionchain.js answer(): no cues → { ...base, available: false, reason: 'temporarily_unavailable' } with the tracks
   // and the track index, :128-132), as when a track's source refuses. Without them two world paths to "No captions" are
   // never reached: LoadNative after its waits (cs:3675-3678) and a list ask that fails three times (cs:2264-2266).
   const fr = rng(seed ^ 0xfa17);
   const throws = {}, cueFails = {};
   for (const id of ids) { throws[id] = faults && fr() < 0.25 ? 1 + Math.floor(fr() * 5) : 0; cueFails[id] = faults && fr() < 0.3 ? 1 + Math.floor(fr() * 20) : 0; }
+  let thrown = 0; // the test's own record of the faults it threw (N1 reads it per ask, never the service's 502)
   const ask = (id) => {
     if (ready.has(id)) return true;
     fetching.add(id);
-    if (throws[id] > 0) { throws[id]--; bump('lookup_error'); throw new Error('caption lookup failed (test fault)'); }
+    if (throws[id] > 0) { throws[id]--; thrown++; bump('lookup_error'); throw new Error('caption fetch failed (test fault)'); }
     bump('caption_not_ready'); return false;
   };
   const cues = (id, lang, i) => { if (cueFails[id] > 0) { cueFails[id]--; bump('cue_fault'); return { id, lang, available: false, reason: 'temporarily_unavailable', tracks: tracksOf(id), track: i }; } return null; };
@@ -305,14 +320,21 @@ export async function runOne(seed, ops, variant = WORLD, { faults = FAULTS, pin 
   const videoOf = (n) => ids[tickets.indexOf(n)];
   // Content (track codes, line text) that is not the video of the ticket it is labelled with, by the test's own table.
   const foreign = (a) => a.status === 200 && a.t != null && ((a.codes?.length && a.codes.join() !== tracksOf(videoOf(a.t)).map((x) => x.code).join()) || (a.lines?.length && a.lines.join() !== linesOf(videoOf(a.t)).map((x) => x[2]).join()));
-  const count = (a) => {
+  // One world tick and its answer, counted. srcDown is N1's record, from this test's own state at that ask, never from the
+  // answer: the asked ticket's video was not in `ready` (its sources had nothing), or a fault this test drew threw during
+  // the ask. `ready` changes only at a 'sources' op or the drain's sources step, never inside a tick, so reading it after
+  // the answer is reading it at the ask.
+  const tick = async () => { const before = thrown; const a = await world.tick(); count(a, thrown > before); return a; };
+  const count = (a, threw = false) => {
     if (!a) return;
     if (a.during && a.load === LIST) bump('list_ask_during_hold');
     if (a.status === 404) bump('answer_404');
     if (a.status === 502) bump('answer_502');
     if (a.status === 200 && a.t != null && a.t !== a.asked) bump('answer_other_ticket');
     // usable: an answer for the asked ticket that is not "not ready" (a list, or a real no_captions).
-    asks.push({ asked: a.asked, load: a.load, status: a.status, usable: a.status === 200 && a.t === a.asked && (a.available !== false || a.reason === 'no_captions'), afterCount: countedAt != null });
+    // The kind of the answer (for the excused split only): not ready, a 404, a 502, another ticket's, or a list/no_captions.
+    const kind = a.status === 404 ? '404' : a.status === 502 ? '502' : a.status !== 200 ? 'other' : a.t !== a.asked ? 'other_ticket' : a.available === false && a.reason !== 'no_captions' ? 'not_ready' : 'usable';
+    asks.push({ asked: a.asked, load: a.load, status: a.status, kind, usable: kind === 'usable', afterCount: countedAt != null, srcDown: !ready.has(videoOf(a.asked)) || threw });
     if (foreign(a)) bump(a.t === a.asked ? 'served_other_video_as_asked_ticket' : 'served_other_video');
   };
   let step = 0;
@@ -322,7 +344,7 @@ export async function runOne(seed, ops, variant = WORLD, { faults = FAULTS, pin 
     else trace.push('before: nothing played in this shard yet');
     if (ready.size) trace.push(`before: the captions of ${[...ready].map((id) => name(tickets[ids.indexOf(id)])).join(', ')} are looked up already`);
     if (none.size) trace.push(`before: the videos of ${[...none].map((id) => name(tickets[ids.indexOf(id)])).join(', ')} have no captions`);
-    for (const id of ids) if (throws[id] || cueFails[id]) trace.push(`before: faults for ${name(tickets[ids.indexOf(id)])}'s video:${throws[id] ? ` its lookup throws ${throws[id]} times (502)` : ''}${cueFails[id] ? ` its track fetch fails ${cueFails[id]} times with the list there` : ''}`);
+    for (const id of ids) if (throws[id] || cueFails[id]) trace.push(`before: faults for ${name(tickets[ids.indexOf(id)])}'s video:${throws[id] ? ` its caption fetch fails ${throws[id]} times (502)` : ''}${cueFails[id] ? ` its track fetch fails ${cueFails[id]} times with the list there` : ''}`);
     const pick = async (n) => {
       dropping?.abort(); // the room's player moves on: its request for the old ticket is dropped (the hold goes on)
       picked.push(n); lastPick = n; world.load(n); countedAt = null; helped = false;
@@ -334,7 +356,7 @@ export async function runOne(seed, ops, variant = WORLD, { faults = FAULTS, pin 
     trace.push(`${step++}: the room picks ${name(tickets[1])}; its player's request is held`);
     for (const op of ops) {
       let line = op.k;
-      if (op.k === 'tick') { const a = await world.tick(); count(a); line = tickLine(a); }
+      if (op.k === 'tick') { const a = await tick(); line = tickLine(a); }
       else if (op.k === 'release') { if (!pending.length) line = 'release: nothing held'; else { const n = await release(op.a); line = `the hold on ${name(n)} ends: play counted${n === world.ticket ? ', the video starts' : ' (its player had moved on)'}`; } }
       else if (op.k === 'sources') { line = fetching.size ? `the caption sources answer for ${[...fetching].map((id) => name(tickets[ids.indexOf(id)])).join(', ')}` : 'sources: nothing asked yet'; for (const id of fetching) ready.add(id); fetching.clear(); }
       else if (op.k === 'pick') { const n = tickets.filter((x) => x !== world.ticket)[Math.floor(op.a * 2)]; await pick(n); line = `the room picks ${name(n)}`; }
@@ -373,7 +395,7 @@ export async function runOne(seed, ops, variant = WORLD, { faults = FAULTS, pin 
       if (quietPhase) {
         for (let round = 0; round < 3; round++) {
           if (fetching.size) { trace.push('drain: the caption sources answer'); for (const id of fetching) ready.add(id); fetching.clear(); }
-          for (let i = 0; i < 12; i++) { const a = await world.tick(); count(a); if (!a) break; trace.push(`drain: ${tickLine(a)}`); }
+          for (let i = 0; i < 12; i++) { const a = await tick(); if (!a) break; trace.push(`drain: ${tickLine(a)}`); }
         }
         trace.push('drain: the world has nothing more to ask by itself');
         b3.helped = helped;
@@ -381,25 +403,30 @@ export async function runOne(seed, ops, variant = WORLD, { faults = FAULTS, pin 
         const why = hasCaptions ? without() : null;
         if (why) {
           b3.fail = `the play of ${name(world.ticket)} was counted, the visitor did ${helped ? 'something' : 'nothing'} after it, and the world ends without its captions (${why})`;
-          // The nopicker exclusion (#996, B3's todo): only the end state the world's #166 design leaves for a picker open:
-          // "can't load right now" (no list, no "No captions"), and by this test's own log the last ask for this ticket got
-          // no usable answer and nothing was asked after it. (a): that answer came before the play was counted (during the
-          // hold); (b): after it (a lookup that failed after the count).
+          // The nopicker exclusion (#996, B3's todo): only the end state the world's #166 design leaves for a picker open,
+          // "can't load right now" (no list, no "No captions"), after a last ask for this ticket (nothing asked after it)
+          // that by THIS TEST's records could not have been answered with the list: the asked video's sources had nothing
+          // (not in `ready`), or a fault the test drew threw during it (srcDown). What the service answered does not decide
+          // it (verifier round 2, N1; rules 2 and 4): a "not ready", a 404 or another ticket's answer given while the
+          // sources held the list is NOT excused. (The answer must also not be a usable one; that only narrows.) The answer's
+          // kind is kept for the split. (a): that ask came before the play was counted (during the hold); (b): after it.
           const last = asks.at(-1);
-          if (world.ccTicket === world.ticket && !world.ccListLoaded && !world.ccNone && world.ccUnavailable && last && last.asked === world.ticket && !last.usable) b3.excused = last.afterCount ? 'b' : 'a';
+          if (world.ccTicket === world.ticket && !world.ccListLoaded && !world.ccNone && world.ccUnavailable && last && last.asked === world.ticket && !last.usable && last.srcDown) {
+            b3.excused = last.afterCount ? 'b' : 'a'; b3.excusedKind = last.kind;
+          }
         }
       }
       for (let round = 0; round < 3; round++) {
         if (fetching.size) { trace.push('drain: the caption sources answer'); for (const id of fetching) ready.add(id); fetching.clear(); }
         world.pickerOpened = true;
         trace.push('drain: the visitor opens a picker');
-        for (let i = 0; i < 12; i++) { const a = await world.tick(); count(a); if (!a) break; trace.push(`drain: ${tickLine(a)}`); }
+        for (let i = 0; i < 12; i++) { const a = await tick(); if (!a) break; trace.push(`drain: ${tickLine(a)}`); }
       }
     }
     for (const x of world.nones) bump(`none_${x.real ? 'real' : x.from.split(' ')[0]}`);
     if (world.listNotAvailable) reach.list_not_available = world.listNotAvailable; // cs:3667
     if (world.trackGaveUp) reach.track_gave_up = world.trackGaveUp; // cs:3677
-    const fails = { B1: null, B2: null, B3: null };
+    const fails = { B1: null, B2: null, B3: null, B4: null };
     const wrong = world.nones.find((x) => !x.real && x.from !== 'no tracks');
     const after = { mismatch: 'three answers for another ticket', '404': 'a 404 nothing_playing', error: 'three failed asks (502 captions_failed)' };
     if (wrong) fails.B2 = `"No captions" for ${name(wrong.ticket)} after ${after[wrong.from] ?? (wrong.from.startsWith('native') ? `a track that kept failing, LoadNative after its waits: ${wrong.from}` : `an answer for it that did not say no_captions: ${wrong.from}`)}`;
@@ -408,8 +435,13 @@ export async function runOne(seed, ops, variant = WORLD, { faults = FAULTS, pin 
     if (why) fails.B1 = `the visitor stayed, and the world ends without ${name(world.ticket)}'s captions (${why})`;
     // B3 (P1 strict): judged only when the visitor did nothing after the count; excused only by the named exclusion.
     if (b3.judged && b3.fail && !(b3.excused && known.has('nopicker'))) fails.B3 = b3.fail;
-    const tally = { b3_judged: b3.judged, b3_helped: b3.helped && !world.left, b3_fail_strict: b3.judged && Boolean(b3.fail), b3_fail_all_seeds: Boolean(b3.fail),
-      b3_excused_a: b3.judged && b3.excused === 'a', b3_excused_b: b3.judged && b3.excused === 'b' };
+    // B4, from the test's table (verifier round 2, L-d): the playing video has no captions, so any list or lines the world
+    // ends holding are another video's (a ForgetTracks that kept the old list across a pick, say). Judged whenever the
+    // visitor stayed and the video has none; no exclusion.
+    const b4Judged = !world.left && !hasCaptions;
+    if (b4Judged && (world.trackCodes.length || world.lineTexts.length)) fails.B4 = `the visitor stayed, ${name(world.ticket)}'s video has no captions, and the world ends holding another video's ${world.trackCodes.length ? `list (${world.trackCodes.join()})` : `lines (${world.lineTexts.join()})`}`;
+    const tally = { b3_judged: b3.judged, b3_judged_captions: b3.judged && hasCaptions, b3_helped: b3.helped && !world.left, b3_fail_strict: b3.judged && Boolean(b3.fail), b3_fail_all_seeds: Boolean(b3.fail),
+      b3_excused_a: b3.judged && b3.excused === 'a', b3_excused_b: b3.judged && b3.excused === 'b', b3_excused_kind: b3.judged && b3.excused ? b3.excusedKind : null, b4_judged: b4Judged };
     return { fails, trace, reach, tally, b3 };
   } finally {
     while (pending.length) pending.shift().release();
@@ -420,28 +452,39 @@ export async function runOne(seed, ops, variant = WORLD, { faults = FAULTS, pin 
   }
 }
 
-// Shrinks a failing sequence by deleting ops while the same property still fails (with the same options).
+// A failure's path: its message with ticket numbers and track codes taken out (the shrink may move a failure to another
+// ticket; the path is what failed and after what).
+export const pathOf = (msg) => (msg ? msg.replace(/ticket \d+/g, 'ticket #').replace(/\((?:[a-z]{2},?)+\)/g, '(…)') : null);
+// Shrinks a failing sequence by deleting ops while the same property still fails BY THE SAME PATH (with the same options).
+// Verifier round 2, L-b: "the same check fails" let seed 1027's three 502s shrink to a 404 in 2 ops; the ordering printed
+// with a failure (and handed to the world's replay) must show the failure that was found.
 async function shrink(seed, ops, prop, variant, opts) {
+  const want = pathOf((await runOne(seed, ops, variant, opts)).fails[prop]);
   let best = ops;
   for (let i = 0; i < best.length;) {
     const tryOps = [...best.slice(0, i), ...best.slice(i + 1)];
     const r = await runOne(seed, tryOps, variant, opts);
-    if (r.fails[prop]) best = tryOps; else i++;
+    if (want && pathOf(r.fails[prop]) === want) best = tryOps; else i++;
   }
   return best;
 }
+const PROPS = ['B1', 'B2', 'B3', 'B4'];
 export async function sweep(variant, opts = {}) {
   const known = opts.known ?? KNOWN;
-  const out = { B1: [], B2: [], B3: [] }, reach = {}, b3 = { judged: 0, a: 0, b: 0 };
+  const out = { B1: [], B2: [], B3: [], B4: [] }, reach = {}, b3 = { judged: 0, judgedCaptions: 0, a: 0, b: 0, kinds: {} };
+  let b4Judged = 0;
   for (let seed = SEED; seed < SEED + SEEDS; seed++) {
     const r = await runOne(seed, draw(seed, STEPS), variant, opts);
-    for (const prop of ['B1', 'B2', 'B3']) if (r.fails[prop]) out[prop].push(seed);
+    for (const prop of PROPS) if (r.fails[prop]) out[prop].push(seed);
     for (const [k, n] of Object.entries(r.reach)) reach[k] = (reach[k] ?? 0) + n;
     if (r.tally.b3_judged) b3.judged++;
+    if (r.tally.b3_judged_captions) b3.judgedCaptions++;
+    if (r.tally.b4_judged) b4Judged++;
     if (known.has('nopicker') && r.tally.b3_excused_a) b3.a++;
     if (known.has('nopicker') && r.tally.b3_excused_b) b3.b++;
+    if (known.has('nopicker') && r.tally.b3_excused_kind) b3.kinds[r.tally.b3_excused_kind] = (b3.kinds[r.tally.b3_excused_kind] ?? 0) + 1;
   }
-  return { out, reach, b3: { ...b3, excused: b3.a + b3.b } };
+  return { out, reach, b3: { ...b3, excused: b3.a + b3.b }, b4: { judged: b4Judged } };
 }
 // The shortest failing ordering among the first failing seeds, optionally only those whose message matches.
 export async function shortest(variant, prop, seeds, match = null, opts) {
@@ -460,13 +503,13 @@ const show = (b) => `seed ${b.seed}: ${b.fails[b.prop]}\n  ${b.trace.join('\n  '
 // Today's world copy and today's service: seeds that fail each promise, by path (2026-11-23, world eddf7f5a, service
 // 9259b0b; draw(seed, 16) with stragglers, faults on, TICKET_PIN off, given explicitly so no switch changes them; the
 // nopicker exclusion on unless an entry says known: []). When #996's fix lands, this test goes red: see the top of this
-// file for what the fixer does.
+// file for what the fixer does. "shrunk": the path-keeping shrink (verifier round 2, L-b), as printed with a failure.
 const FAILS_TODAY = [
   { seed: 1010, prop: 'B2', path: /three answers for another ticket/ }, // #996's own path (shrunk: 3 ops)
-  { seed: 1069, prop: 'B2', path: /empty list \(temporarily_unavailable\)/ }, // #996's item 4: CC on, a captioned video's list not looked up yet (shrunk: 3 ops; the verifier's L2 pick, 1152, no longer fails so: its lookup throws once, a fault)
-  { seed: 1042, prop: 'B2', path: /404 nothing_playing/ }, // CC on in a fresh shard during the hold (shortest: seed 998, 2 ops)
+  { seed: 1069, prop: 'B2', path: /empty list \(temporarily_unavailable\)/ }, // #996's item 4: CC on, a captioned video's list not looked up yet (shrunk: 3 ops; the verifier's L2 pick, 1152, no longer fails so: its caption fetch fails once, a fault)
+  { seed: 1042, prop: 'B2', path: /404 nothing_playing/ }, // CC on in a fresh shard during the hold (shrunk: 2 ops; so do all 84 seeds of 996-1995 that fail by a 404)
   { seed: 1170, prop: 'B2', path: /LoadNative after its waits/ }, // a track that keeps failing with the list there (cs:3675-3678; shrunk: 2 ops)
-  { seed: 1027, prop: 'B2', path: /three failed asks/ }, // a list ask that errors three times (cs:2264-2266; shrunk: 5 ops)
+  { seed: 1027, prop: 'B2', path: /three failed asks/ }, // a list ask whose caption fetch fails three times, 502 (cs:2264-2266; shrunk: 5 ops)
   { seed: 1016, prop: 'B1', path: /after answers for another ticket/ }, // B1 by #996's path, with stragglers (shrunk: 3 ops)
   { seed: 999, prop: 'B3', path: /can't load right now/, known: [] }, // finding nopicker: a 404 during the hold, nothing asked after the count (shrunk: 1 op)
 ];
@@ -474,29 +517,39 @@ const FAILS_TODAY = [
 test.todo('captions hold B1 (#996): the world ends holding the playing ticket\'s own captions when the video has them (fails today; FUZZ_PROMISES=1)');
 test.todo('captions hold B2 (#996): "No captions" only after an answer for that ticket that says no_captions (fails today; FUZZ_PROMISES=1)');
 test.todo('captions hold B3 (#996, P1 strict): after the play is counted, a visitor who opens no picker and presses no CC still ends with the playing ticket\'s own captions (fails today and under every option tried; FUZZ_PROMISES=1)');
-test.todo('captions hold finding "nopicker" (#996; strict seed 999): after a list answer that is not ready (or not for this ticket), the world asks again only on a picker open (cs:3653, cs:3378; #166), so a visitor who does nothing ends on "can\'t load right now"; B3 excuses exactly that end state, within NOPICKER_BUDGET of the judged seeds');
+test.todo('captions hold finding "nopicker" (#996; strict seed 999): after an ask the sources could not answer yet, the world asks again only on a picker open (cs:3653, cs:3378; #166), so a visitor who does nothing ends on "can\'t load right now"; B3 excuses exactly that end state, and only when the test\'s own records say the sources had nothing at the last ask, within NOPICKER_BUDGET of the judged seeds with captions');
 
-if (process.env.FUZZ_STRICT || process.env.FUZZ_PROMISES) {
-  test(`captions hold (#996), world copy ${WORLD}${OTHER ? '' : ', no stragglers'}${FAULTS ? '' : ', no faults'}${PIN ? ', TICKET_PIN on' : ''}: ${SEEDS} seeds keep B1, B2 and B3 (${KNOWN.size ? `excused: ${[...KNOWN].join(', ')}` : 'no exclusion'})`, async (t) => {
-    const { out, reach, b3 } = await sweep(WORLD);
+// The nopicker budget's check: null when within it (or under NOPICKER_MIN_JUDGED), else the problem.
+const overBudget = (b3) => (b3.judgedCaptions >= NOPICKER_MIN_JUDGED && b3.excused > NOPICKER_BUDGET * b3.judgedCaptions
+  ? `the nopicker exclusion excused ${b3.excused} of ${b3.judgedCaptions} judged seeds with captions, over its budget of ${NOPICKER_BUDGET * 100} %: the world leaves "can't load right now" for a picker open far more often than recorded` : null);
+const b3Line = (b3) => `B3 judged on ${b3.judged} of ${SEEDS} seeds (${b3.judgedCaptions} with captions); nopicker excused ${b3.excused} (a, during the hold: ${b3.a}; b, after the count: ${b3.b}; by the last answer: ${JSON.stringify(b3.kinds)}); budget ${b3.judgedCaptions >= NOPICKER_MIN_JUDGED ? Math.floor(NOPICKER_BUDGET * b3.judgedCaptions) : `not applied under ${NOPICKER_MIN_JUDGED} judged seeds with captions`}`;
+
+if (STRICT || PROMISES) {
+  test(`captions hold (#996), world copy ${WORLD}${OTHER ? '' : ', no stragglers'}${FAULTS ? '' : ', no faults'}${PIN ? ', TICKET_PIN on' : ''}: ${SEEDS} seeds keep B1, B2, B3 and B4 (${KNOWN.size ? `excused: ${[...KNOWN].join(', ')}` : 'no exclusion'})`, async (t) => {
+    const { out, reach, b3, b4 } = await sweep(WORLD);
     t.diagnostic(`reach: ${JSON.stringify(Object.fromEntries(Object.entries(reach).sort()))}`);
-    t.diagnostic(`B3 judged on ${b3.judged} of ${SEEDS} seeds; nopicker excused ${b3.excused} (a, during the hold: ${b3.a}; b, after the count: ${b3.b}); budget ${b3.judged >= NOPICKER_MIN_JUDGED ? Math.floor(NOPICKER_BUDGET * b3.judged) : `not applied under ${NOPICKER_MIN_JUDGED} judged seeds`}`);
+    t.diagnostic(b3Line(b3));
+    t.diagnostic(`B4 judged on ${b4.judged} of ${SEEDS} seeds (the visitor stayed, the video has no captions)`);
     const problems = [];
-    if (b3.judged >= NOPICKER_MIN_JUDGED && b3.excused > NOPICKER_BUDGET * b3.judged) problems.push(`the nopicker exclusion excused ${b3.excused} of ${b3.judged} judged seeds, over its budget of ${NOPICKER_BUDGET * 100} %: the world leaves "can't load right now" for a picker open far more often than recorded`);
-    for (const prop of ['B1', 'B2', 'B3']) if (out[prop].length) {
+    const budget = KNOWN.has('nopicker') ? overBudget(b3) : null;
+    if (budget) problems.push(budget);
+    for (const prop of PROPS) if (out[prop].length) {
       problems.push(`${prop} fails on ${out[prop].length} seeds: ${out[prop].slice(0, 12).join(', ')}`);
       t.diagnostic(`${prop} fails on ${out[prop].length} seeds; shortest:\n${show(await shortest(WORLD, prop, out[prop]))}`);
     }
     assert.ok(!problems.length, problems.join('\n'));
   });
 } else {
-  test('captions hold (#996): today\'s world copy against today\'s service still FAILS the promises on the recorded seeds', async (t) => {
+  test('captions hold (#996): today\'s world copy against today\'s service still FAILS B1-B3 on the recorded seeds, and keeps B4', async (t) => {
     for (const { seed, prop, path, known = ['nopicker'] } of FAILS_TODAY) {
       const r = await runOne(seed, draw(seed, 16, true), 'today', { faults: true, pin: false, known: new Set(known) });
       assert.ok(r.fails[prop] && path.test(r.fails[prop]), `seed ${seed} no longer fails ${prop} by ${path}: ${r.fails[prop] ?? 'passes'}. If #996's fix (or a change to the captions route or the ticket route) landed, see the top of this file and the verify-home skill, "Pilot B"`);
     }
-    const { out, reach, b3 } = await sweep('today');
-    t.diagnostic(`today, ${SEEDS} seeds: B1 fails on ${out.B1.length}, B2 on ${out.B2.length}, B3 on ${out.B3.length} (judged ${b3.judged}, nopicker excused ${b3.excused}); reach: ${JSON.stringify(Object.fromEntries(Object.entries(reach).sort()))}`);
-    assert.ok(out.B1.length > 0 && out.B2.length > 0, 'B1 and B2 still fail somewhere today');
+    const { out, reach, b3, b4 } = await sweep('today');
+    t.diagnostic(`today, ${SEEDS} seeds: B1 fails on ${out.B1.length}, B2 on ${out.B2.length}, B3 on ${out.B3.length}, B4 on ${out.B4.length} (B4 judged ${b4.judged}); ${b3Line(b3)}; reach: ${JSON.stringify(Object.fromEntries(Object.entries(reach).sort()))}`);
+    // B4 holds today: asserted in every run.
+    if (out.B4.length) assert.fail(`B4 fails on ${out.B4.length} seeds: ${out.B4.slice(0, 12).join(', ')}\n${show(await shortest('today', 'B4', out.B4))}`);
+    if (SEEDS >= MIN_SEEDS_FAIL_SOMEWHERE) assert.ok(out.B1.length > 0 && out.B2.length > 0, 'B1 and B2 still fail somewhere today');
+    else t.diagnostic(`"B1 and B2 still fail somewhere today" is not asserted under ${MIN_SEEDS_FAIL_SOMEWHERE} seeds`);
   });
 }

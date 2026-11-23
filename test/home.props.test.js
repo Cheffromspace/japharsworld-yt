@@ -50,8 +50,8 @@ function rng(seed) {
 
 // Session tokens (home.js start: randomBytes(9)) decide the order #load reads the folders in, so random ones made a seed's
 // run differ between runs (2026-11-22). randomBytes is swapped for a seeded one while a sequence runs, with no seam in src/:
-// syncBuiltinESMExports() carries the swap to home.js's `import { randomBytes } from 'node:crypto'`. The folder order is
-// still the file system's (sorted on Windows, hashed on Linux's ext4), so a seed is reproducible per platform.
+// syncBuiltinESMExports() carries the swap to home.js's `import { randomBytes } from 'node:crypto'`. With readdirSync
+// sorted as well (sortedReaddir below), a seed runs the same on every platform.
 const realRandomBytes = crypto.randomBytes;
 function seededTokens(seed) {
   const r = rng(seed ^ 0x70c3);
@@ -134,7 +134,8 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
   const fetchedSince = new Set();   // tokens a player fetched since the latest restart
   const starts = [];                // { t, token, av1, worker, expected, seconds, epoch }
   const cachedAt = new Map();       // token → when its first cached upload was taken (a cache hit)
-  const hits = [];                  // { token, t, again }: every cache hit Home takes (home.js put, cached && !s.cached)
+  const hits = [];                  // { token, t, again }: every cache hit the test expects Home to take
+  const hitEpoch = new Map();       // token → the restart epoch of its last cache hit: s.cached lives in memory only
   const dayEvents = [];             // { day, kind: 'start' | 'legit' | 'midnight' | 'recached' }, in order: what Home's day count sees
   // The test's model of each session, from what it sent and saw only, by the rules home.js states (the top: building until
   // a listed segment is here, then ready; ended once the playlist has ENDLIST and every segment it lists is here; failed by
@@ -173,10 +174,15 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
   // The model's rules, applied as the test sends.
   const ended = (tok) => { const m = model.get(tok); if (!m.ended && m.endlist && [...Array(m.listed).keys()].every((i) => segs.get(tok).has(i))) m.ended = true; }; // #checkEnded
   const failModel = (tok, reason) => { const m = model.get(tok); if (m.state !== 'failed') Object.assign(m, { state: 'failed', reason }); };
-  // A cache hit Home takes (home.js put: cached && !s.cached), by kind: a repeat after a restart (recached), the first one on a
-  // later day than its build started (midnight), or the first one on its build's day.
+  // A cache upload reaching a session Home has and the model says is not failed (home.js put takes the hit before any other
+  // check but the 410): the test expects a cache hit on the first one in each restart epoch (put sets s.cached, which a
+  // restart forgets), by kind: a repeat in a later epoch than the token's last hit (recached, #1013), the first one on a
+  // later day than its build started (midnight, #1018), or the first one on its build's day. Not read from Home's s.cached
+  // (verifier N1, 2026-11-23): a Home that took a hit on every cached upload must fail here, not be excused as recached.
   const hit = (tok) => {
+    if (hitEpoch.get(tok) === epoch) return;
     const again = cachedAt.has(tok), day = dayOf(now, TZ), later = day !== dayOf(info.get(tok).started, TZ);
+    hitEpoch.set(tok, epoch);
     hits.push({ token: tok, t: now, again });
     if (!again) { cachedAt.set(tok, now); if (later) bump('hit_next_day'); }
     dayEvents.push({ day, kind: again ? 'recached' : later ? 'midnight' : 'legit' });
@@ -343,7 +349,7 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
               closed.add(tok);
             }
             const s0 = home.byToken.get(tok);
-            if (cached && s0 && s0.state !== 'failed' && !s0.cached) hit(tok);
+            if (cached && s0 && model.get(tok).state !== 'failed') hit(tok);
             status = home.put(tok, 'index.m3u8', Buffer.from(text), { cached, failed });
             line = `put(${name(tok)}, index.m3u8 ${what}${failed ? ', x-media-failed' : ''}${cached ? ', cached' : ''}) → ${status}`;
             if (status === 204) {
@@ -358,9 +364,8 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
             const i = op.b < 0.6 ? Math.min(n - 1, (have.size ? Math.max(...have) : -1) + 1) : Math.floor(op.c * n);
             const size = segSize(ti, i);
             const s = home.byToken.get(tok);
-            const wasCached = Boolean(s?.cached);
             // home.js put takes the cache hit before the segment checks, so a 410 for the disk still counts it.
-            if (cached && s && s.state !== 'failed' && !s.cached) hit(tok);
+            if (cached && s && model.get(tok).state !== 'failed') hit(tok);
             status = home.put(tok, `seg${i}.ts`, Buffer.alloc(size), { cached });
             line = `put(${name(tok)}, seg${i}.ts${cached ? ', cached' : ''}) → ${status}`;
             if (status === 410 && s && model.get(tok).state !== 'failed') failModel(tok, 'no_room'); // put: the disk's half floor
@@ -368,8 +373,9 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
               if (!have.has(i)) {
                 have.add(i);
                 bytes.set(tok, (bytes.get(tok) ?? 0) + size);
-                // home.js put: a segment counts against the day's MB unless its session is cached by now.
-                if (!(cached || wasCached)) { const d = dayOf(now, TZ); mbByDay.set(d, (mbByDay.get(d) ?? 0) + size / 1e6); }
+                // home.js put: a segment counts against the day's MB unless its session is cached by now; a stream's uploads are
+                // all cached or none (relay/media.js), and its first cached one sets s.cached before the segment counts.
+                if (!cached) { const d = dayOf(now, TZ); mbByDay.set(d, (mbByDay.get(d) ?? 0) + size / 1e6); }
               }
               const m = model.get(tok);
               if (m.state === 'building' && m.listed > 0) m.state = 'ready';

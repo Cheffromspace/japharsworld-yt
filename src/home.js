@@ -16,7 +16,8 @@
 //
 // A session is one video at one quality: building until its first playlist with a segment arrives, then ready
 // (playable while the rest uploads), ended once the playlist has ENDLIST and every segment it lists is here. Sessions
-// are saved next to their files (meta.json) and reloaded on start, so a deploy doesn't cut plays off; the daily use is
+// are saved next to their files (meta.json), with when a player last fetched from them, and reloaded on start, so a
+// deploy doesn't cut plays off, a paused one included (Everything-is-OK#1011); the daily use is
 // saved too (day.json), so it doesn't reset the cap. Files stay keepHours, oldest finished first out above maxGb
 // (8 GB: 1080p sessions are 0.6–1.6 GB and the Linode's / is 25 GB, 2026-10-25), never one building or being played;
 // a build counts its expected size against maxGb from its start (#expectedMb), so room is made before it grows.
@@ -63,6 +64,11 @@ export const SHORT_S = 10;
 // A session a player fetched from this recently is being played: the sweep leaves it alone. Players fetch a segment
 // every few seconds, and a paused one picks up where it was.
 const PLAYING_MS = 5 * 60_000;
+// A player's fetches reach meta.json at most this often (file()), and all of them on shutdown (flush()): a restart then
+// knows who was watching (Everything-is-OK#1011, 2026-11-23: #load gave every reloaded session "never fetched", so a
+// start in the next 5 minutes could evict a copy under a paused player). After a crash (no flush) the last fetch read
+// back can be up to this much old. One ~200-byte write per 30 s per session being played, whatever the player count.
+const GET_SAVE_MS = 30_000;
 // A 1080p home session's MB per second of video, the high end measured (0.46–0.57, 2026-10-26: a 4.1 h mix, 8404 MB):
 // what a build counts against maxGb before its first segments say better (#expectedMb).
 export const MB_PER_SECOND = 0.57;
@@ -126,6 +132,12 @@ export class Home {
         }
         if (s.state !== 'ready') throw new Error('never ready');
         if (this.#stale(s)) throw new Error('stream gone');
+        // Its last fetch comes back from meta.json (#session). A meta.json from before Everything-is-OK#1011 has none:
+        // counted as played from the restart, as a cut_short one is, so the deploy that brings the field cuts no paused
+        // play off. Every meta.json written since has it (0 when nobody fetched), and the stamp is written at once: a
+        // crash before the first clean shutdown would otherwise read "no field" again and stamp it again (service-home1's
+        // probe, 2026-11-23). So this is that one restart only.
+        if (m.lastGetMs == null) { s.lastGetMs = this.now(); this.#saveMeta(s); }
         this.sessions.set(`${s.id}@${s.quality}`, s);
         this.byToken.set(s.token, s);
       } catch { rmSync(folder, { recursive: true, force: true }); dropped++; }
@@ -137,7 +149,9 @@ export class Home {
     return { token: f.token, id: f.id, quality: f.quality, seconds: f.seconds ?? 0, worker: f.worker ?? null, state: 'building',
       startedMs: f.startedMs ?? this.now(), readyMs: 0, endedMs: 0, lastPutMs: f.lastPutMs ?? 0, ended: false, mb: 0, segments: 0,
       listed: [], listedSeconds: 0, stored: new Set(), reason: null, waiters: [], endWaiters: [], segmentWaiters: new Map(),
-      firstSegmentMs: 0, firstServed: null, lastGetMs: 0, why: f.why ?? null, want: null, last: -1 };
+      firstSegmentMs: 0, firstServed: null, lastGetMs: f.lastGetMs ?? 0, why: f.why ?? null, want: null, last: -1,
+      // What meta.json holds now (#saveMeta), so each throttle compares with what a restart would read back.
+      putSavedMs: f.lastPutMs ?? 0, getSavedMs: f.lastGetMs ?? 0 };
   }
 
   // Not finished, and no upload for STALE_MS: nothing will arrive any more.
@@ -145,10 +159,20 @@ export class Home {
 
   // The session's why (server.js startHome) is saved with it, so leaveHome still knows a reloaded long play.
   save(s) { this.#saveMeta(s); }
+  // Written to meta.json.tmp and renamed over meta.json, as #write does for the media: a meta.json cut short by a crash
+  // would make #load delete the whole folder, and since #1011 it is written all through a play, not only while uploading.
+  // A leftover meta.json.tmp is never read; a folder with only that has no meta.json and goes on load, as before. Sync and
+  // caught: a failed write (the folder gone) never fails the upload or the player's fetch that caused it.
   #saveMeta(s) {
     const meta = { id: s.id, quality: s.quality, seconds: s.seconds, worker: s.worker, startedMs: s.startedMs, lastPutMs: s.lastPutMs,
-      why: s.why ?? null, ...(s.state === 'failed' ? { state: 'failed', reason: s.reason, endedMs: s.endedMs } : {}) };
-    try { writeFileSync(join(this.dir, s.token, 'meta.json'), JSON.stringify(meta)); s.metaSavedMs = this.now(); } catch { /* folder gone */ }
+      lastGetMs: s.lastGetMs, why: s.why ?? null, ...(s.state === 'failed' ? { state: 'failed', reason: s.reason, endedMs: s.endedMs } : {}) };
+    const path = join(this.dir, s.token, 'meta.json');
+    try {
+      writeFileSync(`${path}.tmp`, JSON.stringify(meta));
+      renameSync(`${path}.tmp`, path);
+      s.putSavedMs = meta.lastPutMs;
+      s.getSavedMs = meta.lastGetMs;
+    } catch { /* folder gone */ }
   }
   #saveUneven() { try { writeFileSync(join(this.dir, 'uneven.json'), JSON.stringify(Object.fromEntries(this.uneven))); } catch { /* no dir */ } }
   #saveDay() { this.daySavedMs = this.now(); try { writeFileSync(join(this.dir, 'day.json'), JSON.stringify(this.day)); } catch { /* no dir */ } }
@@ -156,7 +180,12 @@ export class Home {
   // start, so its MB were saved only when the next session started, and a deploy mid-build lost them (up to ~7 GB for
   // a 4 h 1080p build, 2026-10-27). flush() saves the rest on shutdown (server.js, SIGTERM).
   #saveDaySoon() { if (this.now() - this.daySavedMs >= DAY_SAVE_MS) this.#saveDay(); }
-  flush() { if (this.dir && this.enabled) this.#saveDay(); }
+  // The sessions' last fetches too (GET_SAVE_MS), so the next start knows them exactly.
+  flush() {
+    if (!(this.dir && this.enabled)) return;
+    for (const s of this.byToken.values()) if (s.lastGetMs > s.getSavedMs) this.#saveMeta(s);
+    this.#saveDay();
+  }
 
   // The day the caps count: the reporting time zone's (METRICS_TZ), the day the metrics, the dashboard and the daily
   // report use. It was the UTC date, which rolled over at 19:00 Chicago (2026-10-27: the dashboard's "today" read 0
@@ -541,8 +570,10 @@ export class Home {
     s.lastPutMs = this.now();
     if (file === 'index.m3u8') { this.#saveMeta(s); this.#saveDay(); }
     // A predicted playlist goes up once and the segments follow for minutes: lastPutMs reaches meta.json at least every
-    // 30 s, so a restart doesn't take a live stream for a dead one (STALE_MS).
-    else if (s.lastPutMs - (s.metaSavedMs ?? 0) > 30_000) this.#saveMeta(s);
+    // 30 s, so a restart doesn't take a live stream for a dead one (STALE_MS). Counted from the lastPutMs meta.json holds,
+    // not from when it was last written: a write for a fetch (file(), #1011) carries an older lastPutMs, and counting from
+    // it left a live build looking dead on reload (seed 1315 of the property test, 2026-11-23).
+    else if (s.lastPutMs - s.putSavedMs > 30_000) this.#saveMeta(s);
   }
 
   // A file for a player: { body, type } or null. A segment that isn't here yet is waited for up to segmentHoldMs while
@@ -553,6 +584,7 @@ export class Home {
     const s = this.byToken.get(token);
     if (!s || !(file === 'index.m3u8' || SEGMENT.test(file))) return null;
     s.lastGetMs = this.now();
+    if (s.lastGetMs - s.getSavedMs >= GET_SAVE_MS) this.#saveMeta(s); // who is watching survives a restart (#1011)
     if (file !== 'index.m3u8' && !s.stored.has(file) && !s.ended && s.state !== 'failed') {
       const n = segIndex(file);
       // Only a segment the playlist lists: one past the end or never listed will not come.

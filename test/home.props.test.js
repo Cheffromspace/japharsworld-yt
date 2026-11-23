@@ -2,7 +2,7 @@
 // checked after every step against promises its own comments make. Example tests (home.test.js) check the cases someone
 // thought of; three production bugs got past them (the disk filling 2026-10-28/30, a failed session deleted under its
 // players, verifier M1 2026-11-15, and a start race). Here a seeded generator draws starts, worker uploads, player fetches,
-// sweeps, clock jumps, worker failures and restarts, and after each step the test checks, from its OWN records (when it
+// sweeps, clock jumps, worker failures and restarts (clean ones, and crashes with no flush), and after each step the test checks, from its OWN records (when it
 // fetched each token, the starts it saw, the bytes it put, and a model of each session built only from what the test sent
 // and saw: `model` below), not from Home's fields. Two things do come from Home: which sessions exist (byToken and sessions,
 // what A1 and A2 check) and a new session's token and worker (start's answer, recorded once):
@@ -11,11 +11,14 @@
 //   A3 the limits hold at every start (day, hour, start gap with its AV1 exception, streams per worker);
 //   A4 the disk: the free-space floor after a start, and the size cap after a sweep.
 // Sizes are scaled down (segments of 20-150 KB, videos of 1-5 s, caps of a few MB) so the limits bite in a few steps.
-// Bounds: FUZZ_STEPS (150) steps per sequence, FUZZ_SEEDS (100) seeds from FUZZ_SEED (1009) in npm test. By hand:
+// Bounds: FUZZ_STEPS (150) steps per sequence, FUZZ_SEEDS (100) seeds from FUZZ_SEED (1009) in npm test, and for the
+// seeds ending in 0 or 5 a second, directed sequence (`opening` below). By hand:
 //   FUZZ_SEED=n node --test test/home.props.test.js          one seed (prints the shrunk failing ops, if any)
 //   FUZZ_SEEDS=2000 node --test test/home.props.test.js      a sweep, in this one process, with reach counts
 // Not covered: the half-floor stop in put (home.js put, the freeFloorGb x 500 check), segment holds and want(), the
-// playlist text players get, eta/settle. The skill .claude/skills/verify-home/SKILL.md says how to read a failure.
+// playlist text players get, eta/settle, and #load's stamp of a meta.json without lastGetMs (written before
+// Everything-is-OK#1011; every meta.json this test writes has the field, so no seed reaches it: home.test.js's examples
+// cover it). The skill .claude/skills/verify-home/SKILL.md says how to read a failure.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readdirSync, existsSync } from 'node:fs';
@@ -37,6 +40,12 @@ const STEPS = Number(process.env.FUZZ_STEPS) || 150;
 const PLAYING_MS = 5 * 60_000;
 const STALE_MS = 5 * 60_000;
 const META_LAG_MS = 30_000;
+// home.js GET_SAVE_MS: a player's fetches reach meta.json at most this often, and all of them on flush(). After a crash
+// (a restart with no flush) the last fetch #load reads back may be up to this much older than the real one.
+const GET_SAVE_MS = 30_000;
+// home.js DAY_SAVE_MS: today's use reaches day.json at a start, a playlist upload, flush(), and otherwise at the first new
+// segment DAY_SAVE_MS or more after the last write (#saveDaySoon). A crash loses what came since that last write.
+const DAY_SAVE_MS = 30_000;
 const HOUR = 3600_000;
 const TZ = 'America/Chicago';
 const TOKEN = /^[a-f0-9]{18}$/;
@@ -100,6 +109,60 @@ function draw(seed, n) {
   });
 }
 
+// Directed openings (Everything-is-OK#1011): random ops almost never reach the edges the restart rules turn on (the A1
+// crash allowance fired 0 times in 2,000 seeds, and a home.js that wrote day.json every 60 s instead of 30 s was caught by
+// 1 seed in 2,000, 2026-11-23). So the seeds ending in 0 and in 5 also run a second sequence: a set opening, then that
+// seed's own random ops. The plain sequence of every seed is unchanged. A failure there is "seed N (directed)".
+//   'edge' (seeds ending in 0): a finished copy from the worker's cache (so no day or hour limit holds the next start),
+//     two player fetches `gap` apart (under or over GET_SAVE_MS), a crash, a clean restart, or a crash and 5 s later a
+//     clean restart (Home keeps the crash's lagged fetch across it), the longest video's start
+//     3.9 min after the last fetch (its expected size takes the store over maxGb), then a sweep every 10 s to 5.1 min:
+//     a clean-up decision every 10 s across the 5-minute edge.
+//   'day' (seeds ending in 5): a download whose segments come 15-50 s apart (around DAY_SAVE_MS), a crash, another start:
+//     the day's MB just before and after day.json's last write.
+const directedKind = (seed) => (seed % 10 === 0 ? 'edge' : seed % 10 === 5 ? 'day' : null);
+function opening(seed) {
+  if (directedKind(seed) === 'day') return openingDay(seed);
+  const r = rng(seed ^ 0xd1ec);
+  const pick = (xs) => xs[Math.floor(r() * xs.length)];
+  const cfg = settings(seed);
+  const at = (i) => (i + 0.5) / 4; // op.a that picks video i of 4
+  const v1 = cfg.videos.reduce((best, v, i) => (v.seconds > cfg.videos[best].seconds ? i : best), 0); // the longest
+  const v0 = (v1 + 1 + Math.floor(r() * 3)) % 4;
+  // 1080p unless that is over itemMaxMb (blocks: 'big', no start at all).
+  const b1 = cfg.itemMaxMb > 0 && cfg.videos[v1].seconds * mbPerSecond('1080p') > cfg.itemMaxMb ? 0.25 : 0.75;
+  const gap = pick([10_000, 20_000, 28_000, 35_000, 45_000, 55_000]);
+  const crash = { k: 'restart', a: 0.1, b: 0, c: 0, d: 0 }, clean = { k: 'restart', a: 0.5, b: 0, c: 0, d: 0 }; // op.a < 1/3: a crash
+  const restarts = pick([[crash], [clean], [crash, { k: 'clock', ms: 5_000 }, clean]]);
+  const get = { k: 'get', a: 0, b: 0.5, c: 0, d: 0 }; // t0, seg0
+  return [
+    { k: 'start', a: at(v0), b: 0.25, c: 0.9, d: 0.1 },  // 720p, not AV1, its worker uploads from cache
+    { k: 'playlist', a: 0, b: 0.1, c: 0, d: 0.9 },       // the whole predicted playlist
+    ...Array.from({ length: 6 }, () => ({ k: 'segment', a: 0, b: 0.1, c: 0, d: 0 })), // its segments in order: ended
+    get, { k: 'clock', ms: gap }, get,
+    ...restarts,
+    { k: 'clock', ms: 235_000 - (restarts.length > 1 ? 5_000 : 0) }, // 3.9 min after the last fetch
+    { k: 'start', a: at(v1), b: b1, c: 0.9, d: 0.9 },
+    ...Array.from({ length: 7 }, () => [{ k: 'clock', ms: 10_000 }, { k: 'sweep', a: 0, b: 0, c: 0, d: 0 }]).flat(), // to 5.1 min
+  ];
+}
+function openingDay(seed) {
+  const r = rng(seed ^ 0xda75);
+  const v0 = Math.floor(r() * 4), v1 = (v0 + 1 + Math.floor(r() * 3)) % 4;
+  const at = (i) => (i + 0.5) / 4;
+  const seg = { k: 'segment', a: 0, b: 0.1, c: 0, d: 0 }; // t0's next segment in order
+  const spaced = Array.from({ length: 5 }, () => [{ k: 'clock', ms: [15_000, 35_000, 40_000, 50_000][Math.floor(r() * 4)] }, seg]).flat();
+  return [
+    { k: 'start', a: at(v0), b: 0.25, c: 0.9, d: 0.9 },  // 720p, downloaded
+    { k: 'playlist', a: 0, b: 0.1, c: 0, d: 0.9 },       // whole predicted playlist
+    seg, ...spaced,
+    { k: 'restart', a: 0.1, b: 0, c: 0, d: 0 },          // a crash
+    { k: 'clock', ms: 1000 },
+    { k: 'start', a: at(v1), b: 0.25, c: 0.9, d: 0.9 },
+  ];
+}
+const opsOf = (seed, directed) => (directed ? [...opening(seed), ...draw(seed, STEPS - opening(seed).length)] : draw(seed, STEPS));
+
 const ago = (ms) => (ms >= 60_000 ? `${(ms / 60_000).toFixed(1)} min` : `${Math.round(ms / 1000)} s`);
 const segSize = (ti, i) => 20_000 + ((ti * 7919 + i * 104_729) % 130_000);
 const playlist = (n, end, type = end ? 'VOD' : 'EVENT') =>
@@ -130,8 +193,8 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
   const closed = new Set();         // streams whose worker sent the closing playlist
   const mode = new Map();           // token → 'whole' or 'growing': the kind of playlist its worker sends
   const grown = new Map();          // token → segments its growing playlist lists
-  const reloaded = new Set();       // tokens the latest restart reloaded
-  const fetchedSince = new Set();   // tokens a player fetched since the latest restart
+  const fetchLost = new Set();      // tokens a crash reloaded whose player fetched nothing since: meta.json's last fetch may lag
+  let lastCrash = false;            // whether the latest restart was a crash (reach: the allowance after a clean one)
   const starts = [];                // { t, token, av1, worker, expected, seconds, epoch }
   const cachedAt = new Map();       // token → when its first cached upload was taken (a cache hit)
   const hits = [];                  // { token, t, again }: every cache hit the test expects Home to take
@@ -143,6 +206,12 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
   // on a segment of a live session, the disk's half floor): token → { state, ended, reason, listed, endlist }.
   const model = new Map();
   const mbByDay = new Map();        // day → MB of segments downloaded (not cached) that day
+  // When day.json was last written, by home.js's own schedule (DAY_SAVE_MS above) read against what the test did, and the
+  // downloaded MB put since: a crash loses those (lostByDay), the one stated limit of a crash for the day's MB (home.js
+  // #saveDaySoon, "flush() saves the rest on shutdown"). From the test's records, never from Home or day.json.
+  let daySaved = -Infinity, unsaved = [];
+  const lostByDay = new Map();      // day → downloaded MB a crash kept from day.json
+  const daySave = () => { daySaved = now; unsaved = []; };
   const reach = {};
   const bump = (k) => { reach[k] = (reach[k] ?? 0) + 1; };
   const trace = [];
@@ -196,11 +265,14 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
       if (home.byToken.has(tok)) continue;
       if (was.live) fail('A1', `${name(tok)} (${was.state}, building or uploading, not stale) was removed by ${op}`);
       const f = now - played(tok, false);
-      // KNOWN reload (Everything-is-OK#1011; strict seeds 1105, 1116): #load rebuilds a session with lastGetMs 0 (home.js
-      // #session; only a cut_short one is stamped), so a sweep before the player's next fetch takes it for unplayed. Excused
-      // only for the played check (not the live one above), and only for a session the latest restart reloaded and no
-      // player fetched since.
-      if (f < PLAYING_MS && known.has('reload') && reloaded.has(tok) && !fetchedSince.has(tok)) { bump('known_reload'); continue; }
+      // A restart keeps who is watching (Everything-is-OK#1011: meta.json carries the last fetch, home.js #saveMeta, #load).
+      // The one allowance: for a session a crash (no flush) reloaded and no player fetched since, the last fetch counts as up
+      // to GET_SAVE_MS older (home.js file() writes it at most that often). It lasts until that session's next fetch, also
+      // across later clean restarts: their flush has nothing newer to write, so Home keeps the lagged value (the
+      // coordinator's call, 2026-11-23, after a crash then a clean restart failed a correct Home). With no crash since a
+      // session's last fetch, A1 is as strict as anywhere else.
+      const lag = fetchLost.has(tok) ? GET_SAVE_MS : 0;
+      if (f < PLAYING_MS && f >= PLAYING_MS - lag) { bump('crash_lag_allowed'); if (!lastCrash) bump('crash_lag_allowed_after_clean'); continue; }
       if (f < PLAYING_MS) fail('A1', `${name(tok)} (${was.state}${was.ended ? ', ended' : ''}) was removed by ${op} while a player fetched it ${ago(f)} ago`);
     }
     for (const [key, s] of home.sessions) {
@@ -241,7 +313,13 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
       if (count < cfg.dailyBuilds && used.size) for (const k of used) bump(`known_${k}`);
       else fail('A3', `start ${name(rec.token)} is real build ${realToday + 1} of ${today}, over dailyBuilds ${cfg.dailyBuilds}`);
     }
-    if ((mbByDay.get(today) ?? 0) >= cfg.dailyMb - EPS) fail('A3', `start ${name(rec.token)} with ${(mbByDay.get(today)).toFixed(3)} MB downloaded today, dailyMb ${cfg.dailyMb.toFixed(3)}`);
+    const mbToday = mbByDay.get(today) ?? 0, lostToday = lostByDay.get(today) ?? 0;
+    if (mbToday >= cfg.dailyMb - EPS) {
+      // The one allowance for the day's MB (the builds above have none: start writes day.json at once): after a crash, Home's
+      // count may lack the MB downloaded since day.json was last written (lostByDay). Only that much, only on that day.
+      if (lostToday > 0 && mbToday - lostToday < cfg.dailyMb + EPS) bump('crash_day_mb_allowed');
+      else fail('A3', `start ${name(rec.token)} with ${mbToday.toFixed(3)} MB downloaded today${lostToday ? ` (${lostToday.toFixed(3)} MB of it after day.json's last write before a crash)` : ''}, dailyMb ${cfg.dailyMb.toFixed(3)}`);
+    }
     const epochReal = real().filter((x) => x.epoch === epoch); // a restart forgets the hour and the gap (home.js: recent, lastStartMs)
     const hour = epochReal.filter((x) => now - x.t < HOUR);
     if (cfg.hourBuilds > 0 && hour.length + 1 > cfg.hourBuilds) fail('A3', `start ${name(rec.token)} is build ${hour.length + 1} in the hour, hourBuilds ${cfg.hourBuilds}`);
@@ -307,6 +385,7 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
           const s = home.start({ id: v.id, seconds: v.seconds }, q, { av1 });
           line = `start(${v.id.slice(0, 1)}@${q}${av1 ? ', av1' : ''})`;
           if (events.includes('start')) {
+            daySave(); // home.js start: #saveDay after the build is counted
             const tok = s.token;
             issued.push(tok);
             info.set(tok, { name: `t${issued.length - 1}`, v, q, cached: op.d < 0.25, ti: issued.length - 1, started: now, worker: s.worker });
@@ -353,6 +432,7 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
             status = home.put(tok, 'index.m3u8', Buffer.from(text), { cached, failed });
             line = `put(${name(tok)}, index.m3u8 ${what}${failed ? ', x-media-failed' : ''}${cached ? ', cached' : ''}) → ${status}`;
             if (status === 204) {
+              daySave(); // home.js #write: a playlist upload writes day.json
               const m = model.get(tok), k = (text.match(/^seg\d+\.ts$/gm) ?? []).length, end = text.includes('#EXT-X-ENDLIST'), before = m.listed;
               Object.assign(m, { listed: k, endlist: end });
               if (m.state === 'building' && k > 0 && have.size > 0) m.state = 'ready';
@@ -375,7 +455,8 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
                 bytes.set(tok, (bytes.get(tok) ?? 0) + size);
                 // home.js put: a segment counts against the day's MB unless its session is cached by now; a stream's uploads are
                 // all cached or none (relay/media.js), and its first cached one sets s.cached before the segment counts.
-                if (!cached) { const d = dayOf(now, TZ); mbByDay.set(d, (mbByDay.get(d) ?? 0) + size / 1e6); }
+                if (!cached) { const d = dayOf(now, TZ); mbByDay.set(d, (mbByDay.get(d) ?? 0) + size / 1e6); unsaved.push({ day: d, mb: size / 1e6 }); }
+                if (now - daySaved >= DAY_SAVE_MS) daySave(); // home.js #saveDaySoon, after the segment is counted
               }
               const m = model.get(tok);
               if (m.state === 'building' && m.listed > 0) m.state = 'ready';
@@ -389,14 +470,14 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
           const tok = pickTok(op.a);
           if (!tok) { line = 'get: no session yet'; break; }
           const file = op.b < 0.3 ? 'index.m3u8' : `seg${Math.floor(op.c * info.get(tok).v.segs)}.ts`;
-          if (home.byToken.has(tok)) { fetched.set(tok, now); fetchedSince.add(tok); }
+          if (home.byToken.has(tok)) { fetched.set(tok, now); fetchLost.delete(tok); }
           pending.push(home.file(tok, file).catch(() => null));
           line = `get(${name(tok)}, ${file})${home.byToken.has(tok) ? '' : ' → gone'}`;
           break;
         }
         case 'sweep': home.sweep(); trace.push(`${step}: sweep()`); checkAfter(before, 'sweep()'); checkSweep(); after = false; break;
         case 'clock': {
-          const dt = op.a < 0.6 ? 1000 + Math.floor(op.b * 89_000) : op.a < 0.9 ? 120_000 + Math.floor(op.b * 480_000) : HOUR + Math.floor(op.b * 12 * HOUR);
+          const dt = op.ms ?? (op.a < 0.6 ? 1000 + Math.floor(op.b * 89_000) : op.a < 0.9 ? 120_000 + Math.floor(op.b * 480_000) : HOUR + Math.floor(op.b * 12 * HOUR));
           now += dt; line = `clock +${ago(dt)}`; break;
         }
         case 'giveUp': {
@@ -419,17 +500,23 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
         case 'refused': refused = !refused; line = `refusedRecently ${refused}`; break;
         case 'other': otherMb = op.a * cfg.capacityMb * 0.5; line = `other disk use ${otherMb.toFixed(2)} MB`; break;
         case 'restart': {
-          home.flush(); // server.js on SIGTERM
+          // A third of the restarts are crashes: the process ends with no flush (server.js shutdown never runs), so the
+          // last fetches and today's use written since the last throttled save are lost. Drawn from the restart's own
+          // weight and its op.a, so adding it moved no other op of any seed's sequence.
+          const crash = op.a < 1 / 3;
+          lastCrash = crash;
+          if (!crash) home.flush(); // server.js on SIGTERM
+          else for (const u of unsaved) { lostByDay.set(u.day, (lostByDay.get(u.day) ?? 0) + u.mb); bump('crash_day_mb_lost'); }
+          unsaved = []; daySaved = -Infinity; // flush wrote them, or the crash lost them; the new Home has written nothing yet
           epoch++; // the old process's relay jobs are never settled: it is gone
           home = new Home(opts());
-          reloaded.clear(); fetchedSince.clear();
           for (const [tok, s] of home.byToken) {
-            reloaded.add(tok);
+            if (crash && fetched.has(tok)) fetchLost.add(tok);
             lagged.add(tok);
             if (s.state === 'failed') stamped.set(tok, now); // home.js #load: a cut_short one counts as played from the restart
           }
-          bump('restart');
-          trace.push(`${step}: restart (flush, then a new Home on the same dir)`);
+          bump(crash ? 'crash' : 'restart');
+          trace.push(`${step}: ${crash ? 'crash (no flush), then a new Home on the same dir' : 'restart (flush, then a new Home on the same dir)'}`);
           checkRestart(before);
           checkAfter(new Map(), 'restart');
           after = false;
@@ -451,7 +538,7 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
 }
 
 // The open findings: each is excused only where its own check names it, and is listed in the skill with its seed.
-export const KNOWN = new Set(process.env.FUZZ_STRICT ? [] : (process.env.FUZZ_KNOWN ?? 'reload,recached,midnight').split(',').filter(Boolean));
+export const KNOWN = new Set(process.env.FUZZ_STRICT ? [] : (process.env.FUZZ_KNOWN ?? 'recached,midnight').split(',').filter(Boolean));
 
 // Deletes ops while the same property still fails: the shortest sequence this finds, for the report.
 export async function shrink(seed, ops, prop) {
@@ -467,15 +554,14 @@ export async function shrink(seed, ops, prop) {
 }
 
 // The open findings, until their fixes land. Each fix drops its name from KNOWN and its todo here (the skill says how).
-// FUZZ_STRICT=1 runs with no exclusion; FUZZ_KNOWN=reload,recached (say) keeps only the named ones.
-test.todo('home props finding "reload forgets players" (Everything-is-OK#1011; strict seeds 1105, 1116): a restart gives every reloaded session lastGetMs 0 (home.js #load, #session), so the next sweep can evict a finished one a player is on');
+// FUZZ_STRICT=1 runs with no exclusion; FUZZ_KNOWN=recached (say) keeps only the named ones.
 test.todo('home props finding "recached" (Everything-is-OK#1013; strict seed 1026): s.cached is not saved in meta.json, so after a restart a cache upload takes its cache hit again (home.js put), and the day lets one more real build through than dailyBuilds');
 test.todo('home props finding "midnight" (Everything-is-OK#1018; strict seed 2925): a cache hit is taken off the day it is marked, not the day its build started (home.js put), so a build started before midnight and marked cached after it gives the new day one more real build');
 
-async function report(seed, ops, fail) {
+async function report(seed, ops, fail, directed) {
   const small = await shrink(seed, ops.slice(0, fail.step + 1), fail.prop);
   const r = await runOne(seed, small);
-  return `${fail.prop} on seed ${seed}: ${r.fail?.message ?? fail.message}\nsettings: ${JSON.stringify(settings(seed))}\n` +
+  return `${fail.prop} on seed ${seed}${directed ? ' (directed)' : ''}: ${r.fail?.message ?? fail.message}\nsettings: ${JSON.stringify(settings(seed))}\n` +
     `shrunk to ${small.length} ops:\n  ${r.trace.join('\n  ')}\nrerun: ${process.env.FUZZ_STRICT ? 'FUZZ_STRICT=1 ' : process.env.FUZZ_KNOWN != null ? `FUZZ_KNOWN=${process.env.FUZZ_KNOWN} ` : ''}FUZZ_SEED=${seed} node --test test/home.props.test.js`;
 }
 
@@ -484,12 +570,15 @@ test(`home props (#1009): ${SEEDS} seeds from ${SEED}, ${STEPS} steps each, keep
   const failures = [];
   const started = Date.now();
   for (let seed = SEED; seed < SEED + SEEDS; seed++) {
-    const ops = draw(seed, STEPS);
-    const r = await runOne(seed, ops);
-    for (const [k, n] of Object.entries(r.reach)) reach[k] = (reach[k] ?? 0) + n;
-    if (r.fail) {
-      failures.push({ seed, ...r.fail });
-      if (failures.length === 1 || SEEDS <= 50) t.diagnostic(await report(seed, ops, r.fail));
+    for (const directed of directedKind(seed) ? [false, true] : [false]) {
+      const ops = opsOf(seed, directed);
+      const r = await runOne(seed, ops);
+      for (const [k, n] of Object.entries(r.reach)) reach[k] = (reach[k] ?? 0) + n;
+      if (directed) reach.directed = (reach.directed ?? 0) + 1;
+      if (r.fail) {
+        failures.push({ seed: directed ? `${seed} (directed)` : seed, ...r.fail });
+        if (failures.length === 1 || SEEDS <= 50) t.diagnostic(await report(seed, ops, r.fail, directed));
+      }
     }
   }
   t.diagnostic(`${SEEDS} seeds in ${Date.now() - started} ms; reach: ${JSON.stringify(Object.fromEntries(Object.entries(reach).sort()))}`);

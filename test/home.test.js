@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { run } from '../src/captions.js';
 import { tmpdir } from 'node:os';
@@ -184,6 +184,173 @@ test('home: a finished session being played survives the size cap and keepHours;
   home.sweep();
   assert.equal(await home.file(a.token, 'seg0.ts'), null, 'no player for 6 minutes: out');
   assert.deepEqual(logs.filter((l) => l.event === 'home_evict').map((l) => l.why), ['age']);
+});
+
+// Everything-is-OK#1011: a restart (a deploy) keeps who is watching. meta.json carries each session's last fetch, written
+// at most every 30 s while a player fetches (home.js GET_SAVE_MS) and all of it on flush() (SIGTERM). Before, #load gave
+// every reloaded session "never fetched", so a start within 5 minutes of a restart could evict a copy under a paused player.
+function pausedCopy(t, { maxGb = 0.000002 } = {}) {
+  const dir = tmp(t);
+  const clock = { ms: Date.parse('2026-11-23T12:00:00Z') };
+  const logs = [];
+  const opts = { relay: fakeRelay(), dir, base: 'https://yt/home', enabled: true, maxGb, now: () => clock.ms, log: (l) => logs.push(l) }; // 2 kB
+  const first = new Home(opts);
+  const a = first.start({ id: 'aaaaaaaaaaa' }, '720p');
+  first.put(a.token, 'seg0.ts', Buffer.alloc(1500));
+  first.put(a.token, 'seg1.ts', Buffer.alloc(1000));
+  first.put(a.token, 'index.m3u8', Buffer.from(PL2)); // ended, 2.5 kB: over the cap on its own
+  return { dir, clock, logs, opts, first, a, meta: () => JSON.parse(readFileSync(join(dir, a.token, 'meta.json'), 'utf8')) };
+}
+
+test('home: a copy a player fetched just before a restart survives the next start\'s sweep; unwatched, it goes (Everything-is-OK#1011)', async (t) => {
+  const { clock, logs, opts, first, a } = pausedCopy(t);
+  clock.ms += 60_000;
+  assert.ok(await first.file(a.token, 'seg0.ts'), 'a player fetches, then pauses');
+  clock.ms += 60_000;
+  first.flush(); // SIGTERM (server.js shutdown)
+  clock.ms += 20_000;
+  const again = new Home(opts);
+  assert.ok(again.start({ id: 'bbbbbbbbbbb' }, '720p'), 'another video starts; its sweep is over maxGb');
+  assert.ok(!logs.some((l) => l.event === 'home_evict'), 'nothing evicted');
+  assert.ok(await again.file(a.token, 'seg1.ts'), 'the paused player\'s next segment is still there');
+  clock.ms += 5 * 60_000 + 1; // nobody has fetched it for PLAYING_MS
+  again.sweep();
+  assert.equal(await again.file(a.token, 'seg1.ts'), null, 'then it goes');
+  assert.deepEqual(logs.filter((l) => l.event === 'home_evict').map((l) => l.why), ['size']);
+});
+
+test('home: after a crash (no flush) the fetch saved while playing keeps the copy, at most 30 s behind (Everything-is-OK#1011)', async (t) => {
+  const { clock, logs, opts, first, a, meta } = pausedCopy(t);
+  clock.ms += 60_000;
+  const fetched = clock.ms;
+  await first.file(a.token, 'seg0.ts');
+  assert.equal(meta().lastGetMs, fetched, 'the first fetch is written at once');
+  clock.ms += 20_000;
+  await first.file(a.token, 'seg1.ts');
+  assert.equal(meta().lastGetMs, fetched, 'one 20 s later is not (at most every 30 s)');
+  clock.ms += 10_000;
+  await first.file(a.token, 'seg1.ts');
+  assert.equal(meta().lastGetMs, clock.ms, '30 s after the last one written: written');
+  const last = clock.ms;
+  clock.ms += 25_000;
+  await first.file(a.token, 'seg1.ts'); // the real last fetch, not written; then the process dies (no flush)
+  clock.ms += 30_000;
+  const again = new Home(opts);
+  assert.equal(again.byToken.get(a.token).lastGetMs, last, 'read back: the last fetch written, 25 s behind the real one');
+  assert.ok(again.start({ id: 'bbbbbbbbbbb' }, '720p'));
+  assert.ok(!logs.some((l) => l.event === 'home_evict'), 'kept: played under PLAYING_MS ago by what was written');
+});
+
+test('home: flush() (SIGTERM, every deploy) writes the last fetch the 30 s rule held back, so the restart reads it exactly (Everything-is-OK#1011)', async (t) => {
+  // A fetch 10 s after one written is held back by file()'s 30 s rule, so only flush() can write it: a plain "fetch, then
+  // flush" cannot fail, because that first fetch is written at once (verifier M-2, 2026-11-23).
+  const { clock, opts, first, a, meta } = pausedCopy(t);
+  clock.ms += 60_000;
+  const written = clock.ms;
+  await first.file(a.token, 'seg0.ts');
+  assert.equal(meta().lastGetMs, written, 'the first fetch is written at once');
+  clock.ms += 10_000;
+  const last = clock.ms;
+  await first.file(a.token, 'seg1.ts'); // the player's last fetch; then it pauses
+  assert.equal(meta().lastGetMs, written, '10 s later: held back by the 30 s rule');
+  clock.ms += 5_000;
+  first.flush(); // SIGTERM (server.js shutdown)
+  assert.equal(meta().lastGetMs, last, 'flush writes the held-back fetch');
+  assert.equal(new Home(opts).byToken.get(a.token).lastGetMs, last, 'and the restart reads it back, not 10 s behind');
+});
+
+test('home: a reloaded copy nobody fetched is not counted as played; its meta.json says lastGetMs 0 (Everything-is-OK#1011)', async (t) => {
+  const { clock, logs, opts, first, a, meta } = pausedCopy(t);
+  clock.ms += 60_000;
+  first.flush();
+  assert.equal(meta().lastGetMs, 0, 'written as 0, so "no field" can only be a file from before the fix');
+  const again = new Home(opts);
+  assert.equal(again.byToken.get(a.token).lastGetMs, 0);
+  assert.ok(again.start({ id: 'bbbbbbbbbbb' }, '720p'));
+  assert.deepEqual(logs.filter((l) => l.event === 'home_evict').map((l) => l.why), ['size'], 'evicted at the first start, as without a restart');
+});
+
+test('home: a meta.json from before the fix (no lastGetMs) counts as played from the restart, once (Everything-is-OK#1011)', async (t) => {
+  const { dir, clock, logs, opts, first, a, meta } = pausedCopy(t);
+  clock.ms += 60_000;
+  await first.file(a.token, 'seg0.ts');
+  // What the code before the fix wrote (849fc97: id, quality, seconds, worker, startedMs, lastPutMs, why).
+  const { lastGetMs, ...old } = meta();
+  assert.ok(lastGetMs > 0);
+  writeFileSync(join(dir, a.token, 'meta.json'), JSON.stringify(old));
+  clock.ms += 60_000;
+  const again = new Home(opts);
+  assert.equal(again.byToken.get(a.token).lastGetMs, clock.ms, 'stamped at the restart');
+  // Read before any flush: #load writes the stamp itself, and a flush would write it anyway (verifier L-4, 2026-11-23).
+  assert.equal(meta().lastGetMs, clock.ms, 'the stamp is written at load: the next restart reads a time, not "no field"');
+  clock.ms += 10_000;
+  assert.ok(again.start({ id: 'bbbbbbbbbbb' }, '720p'));
+  assert.ok(!logs.some((l) => l.event === 'home_evict'), 'kept for its paused player');
+  again.flush();
+  clock.ms += 5 * 60_000;
+  const third = new Home(opts);
+  third.sweep();
+  assert.deepEqual(logs.filter((l) => l.event === 'home_evict').map((l) => l.why), ['size'], 'the next restart does not stamp it again');
+});
+
+test('home: a fetch saved to meta.json does not hold back the upload time a restart reads: a live build stays live (Everything-is-OK#1011)', async (t) => {
+  // The property test's seed 1315 (2026-11-23), as one story: a playlist, the worker quiet for minutes, then a player's
+  // fetch (written to meta.json) and at once an upload. Had the 30 s lastPutMs rule counted from the fetch's write, the
+  // upload time would not reach meta.json, and the restart would take this live build for a dead one (STALE_MS).
+  const dir = tmp(t);
+  let ms = Date.parse('2026-11-23T12:00:00Z');
+  const opts = { relay: fakeRelay(), dir, base: 'https://yt/home', enabled: true, now: () => ms };
+  const first = new Home(opts);
+  const s = first.start({ id: 'aaaaaaaaaaa', seconds: 60 }, '720p');
+  first.put(s.token, 'index.m3u8', Buffer.from(`${PL1}#EXTINF:4.0,
+seg1.ts
+`)); // growing, 2 listed
+  ms += 6 * 60_000;
+  await first.file(s.token, 'index.m3u8'); // a player asks: meta.json written for the fetch
+  first.put(s.token, 'seg0.ts', Buffer.from('ts0')); // the worker uploads again: ready
+  ms += 10_000;
+  first.flush();
+  const again = new Home(opts);
+  assert.equal(again.byToken.get(s.token)?.state, 'ready', 'reloaded as a live stream, not dropped as gone');
+});
+
+test('home: the restart stamp of a pre-fix meta.json is written at once, so a crash before a clean shutdown does not stamp it again (Everything-is-OK#1011)', async (t) => {
+  const { dir, clock, logs, opts, a, meta } = pausedCopy(t);
+  const { lastGetMs, ...old } = meta();
+  writeFileSync(join(dir, a.token, 'meta.json'), JSON.stringify(old)); // as 849fc97 wrote it
+  clock.ms += 60_000;
+  const stampedAt = clock.ms;
+  const again = new Home(opts); // the deploy that brings the field: stamped "played from the restart"
+  assert.equal(meta().lastGetMs, stampedAt, 'the stamp is in meta.json already, before any shutdown');
+  clock.ms += 10 * 60_000;
+  const crashed = new Home(opts); // a crash 10 min later: no flush ran, nobody fetched
+  assert.equal(crashed.byToken.get(a.token).lastGetMs, stampedAt, 'read back, not stamped again');
+  assert.ok(crashed.start({ id: 'bbbbbbbbbbb' }, '720p'));
+  assert.deepEqual(logs.filter((l) => l.event === 'home_evict').map((l) => l.why), ['size'], 'unwatched for 10 min: evicted at the next start');
+  void again;
+});
+
+test('home: meta.json goes through a .tmp file; a leftover .tmp is ignored, and a folder with only one is dropped on load (Everything-is-OK#1011)', (t) => {
+  const { dir, opts, first, a, meta } = pausedCopy(t, { maxGb: 8 });
+  first.flush();
+  assert.deepEqual(readdirSync(join(dir, a.token)).sort(), ['index.m3u8', 'meta.json', 'seg0.ts', 'seg1.ts'], 'no .tmp left after a write');
+  writeFileSync(join(dir, a.token, 'meta.json.tmp'), '{"id":"aaaaaaa'); // a crash in the middle of a write
+  const b = first.start({ id: 'bbbbbbbbbbb' }, '720p'); // a build whose first meta write was cut: only the .tmp
+  first.put(b.token, 'seg0.ts', Buffer.alloc(10));
+  first.put(b.token, 'index.m3u8', Buffer.from(PL1));
+  rmSync(join(dir, b.token, 'meta.json'));
+  writeFileSync(join(dir, b.token, 'meta.json.tmp'), '{"id":');
+  const logs = [];
+  const again = new Home({ ...opts, log: (l) => logs.push(l) });
+  assert.equal(again.byToken.get(a.token)?.state, 'ready', 'the .tmp beside a whole meta.json changes nothing');
+  assert.equal(again.byToken.get(a.token).mb, 0.0025, 'and is not counted as a segment');
+  assert.equal(meta().id, 'aaaaaaaaaaa');
+  assert.equal(again.byToken.has(b.token), false, 'only a .tmp: no meta.json, so the folder goes, as before the fix');
+  assert.equal(existsSync(join(dir, b.token)), false);
+  assert.deepEqual(logs.find((l) => l.event === 'home_loaded'), { event: 'home_loaded', sessions: 1, dropped: 1, storedMb: 0, maxGb: 8 });
+  again.flush();
+  again.save(again.byToken.get(a.token));
+  assert.equal(existsSync(join(dir, a.token, 'meta.json.tmp')), false, 'the next write replaces the leftover');
 });
 
 test('home: a segment asked for before it is here is held until it arrives; one past the end is not', async (t) => {

@@ -60,8 +60,9 @@ export const KNOWN = new Set(STRICT ? [] : (process.env.FUZZ_KNOWN ?? 'nopicker'
 // (the only seeds it can excuse) may be excused by it in one sweep. Set from the honest cells (2026-11-23, at the test of
 // this commit; 500 seeds and the default 60; today's service, svcHeld and svcNotReady2; stragglers off and on):
 //   opt2xs  highest honest share 18.1 % at 500 seeds, 6 of 32 (18.8 %) at the default 60, 16.1 % at 2,000 (svcHeld):
-//           budget 25 %. It sees opt2xs losing its start ask (svcHeld: 26.5 % at 500, 10 of 32 at 60), which no check
-//           sees: every seed it moves is excused.
+//           budget 25 %. It sees opt2xs losing its start ask with svcHeld and no stragglers (26.5 % at 500, 10 of 32 at
+//           60), which no check sees: every seed it moves is excused. It MISSES that variant with stragglers on (21.3 %,
+//           7 of 38) and under today's service (18.9 %); under svcNotReady2 B3 catches it.
 //   today, opt1, opt1x, opt2, opt2x  highest honest share 31.3 % (svcNotReady2, stragglers off; 10 of 32 at 60): no
 //           budget. With the exclusion read from the test's own records, every variant tried that moves these options'
 //           excused share is caught by B3 itself (VSFirstListNotReady, VSTwoListsNotReady, droplist); none needs a budget.

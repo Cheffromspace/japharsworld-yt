@@ -179,8 +179,10 @@ is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can
     one-seed rerun is not read as over budget. Set on 2026-11-23 from the honest cells (today's service, svcHeld,
     svcNotReady2; stragglers off and on; 500 seeds and the default 60):
     - opt2xs: 25 %. Highest honest share 18.1 % at 500 seeds, 6 of 32 (18.8 %) at the default 60, 16.1 % at 2,000
-      (svcHeld). It sees opt2xs losing its start ask (svcHeld: 66 of 249 at 500 seeds, 10 of 32 at 60), which no
-      check sees, since every seed that variant moves is excused.
+      (svcHeld). It sees opt2xs losing its start ask with svcHeld and no stragglers (66 of 249 at 500 seeds, 10 of 32
+      at 60), which no check sees, since every seed that variant moves is excused. It MISSES the same variant with
+      stragglers on (21.3 %, 7 of 38 at 60: under 25 %) and under today's service (18.9 %); under svcNotReady2 B3
+      catches it (30 of 500). So it is a coarse guard: run it with `FUZZ_OTHER=0`.
     - today, opt1, opt1x, opt2, opt2x: no budget. Highest honest share 31.3 % (svcNotReady2, stragglers off; 10 of 32 at
       60). Every variant tried that moves these options' excused share is caught by B3 itself (VSFirstListNotReady,
       VSTwoListsNotReady, droplist), so a budget there would guard nothing seen.
@@ -300,10 +302,12 @@ is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can
     (opt2x), 178 and 433 (opt2xs). Before the exclusion read the test's own records they added no failing seed at all.
   - droplist (the copy drops a good list when the play starts; svcHeld): B3 45 (7), B3 alone, opt2x and opt2xs.
   - keeplist (ForgetTracks keeps the old video's list across a pick; svcHeld): B4 26 (3), all 26 B4 alone; at 2,000
-    seeds 89 (3). With today's service and copy: B4 16 of 500, 0 of the default 60, so the default run does not see it.
+    seeds 89 (3). With today's service and copy: B4 16 of 500 without stragglers, 7 of 500 with them (the default
+    run's setting), 0 of the default 60 either way: the default run does not see it, only a longer sweep does.
   - nostartask (opt2xs without its start ask; svcHeld): no check fails on any seed (every seed it moves is excused);
-    only opt2xs's budget sees it: `FUZZ_PROMISES=1 FUZZ_WORLD=opt2xs FUZZ_OTHER=0` reports "excused 10 of 32 ... over
-    its budget of 25 %" (66 of 249 at 500 seeds); without the variant 6 of 32 (39 of 249), no budget line.
+    only opt2xs's budget sees it, and only without stragglers: `FUZZ_PROMISES=1 FUZZ_WORLD=opt2xs FUZZ_OTHER=0`
+    reports "excused 10 of 32 ... over its budget of 25 %" (66 of 249 at 500 seeds); without the variant 6 of 32 (39
+    of 249), no budget line. With stragglers on it passes (7 of 38).
   - VPPinNotCounted (a pinned answer without `markPlayed`; `FUZZ_TICKET_PIN=1`): B1 37 (4) on today's service.
 
   The default 60 seeds are a smoke run (the weakest variants are caught by 0 to 3 of them); a change to the captions

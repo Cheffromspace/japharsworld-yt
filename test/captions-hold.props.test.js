@@ -1,7 +1,7 @@
 // Everything-is-OK#996, pilot B of #1007: the captions exchange around a held play, as generated orderings. The service is
 // the REAL app (createApp with a real Store; only `playback` and `captions` are faked: a player's ticket request is held
-// until the test lets it go, src/server.js's ticket route `await playback.location(...)`, and the caption sources answer
-// "not ready yet" until the test lets them answer). The world is a small scripted COPY of the caption-asking rule in the
+// until the test lets it go, src/server.js's ticket route `await playback.location(...)`, and a caption lookup comes back
+// with no tracks, temporarily_unavailable, until the test lets the sources succeed). The world is a small scripted COPY of the caption-asking rule in the
 // world repo's Assets/EverythingIsOK/Scripts/EverythingIsOKYouTubeSearch.cs, read at world commit eddf7f5a (2026-11-22);
 // every line of the copy names the C# lines (cs:N) it mirrors. A change to those lines means re-reading the copy
 // (.claude/skills/verify-home/SKILL.md, "Pilot B"): the copy can drift; the real world code is the referee, through the
@@ -163,7 +163,9 @@ export async function runOne(seed, ops, variant = WORLD) {
   const r = rng(seed ^ 0xcc);
   const reach = {};
   const bump = (k) => { reach[k] = (reach[k] ?? 0) + 1; };
-  const config = { ...base, shards: 2, pool: 50, metricsPath: '', publicUrl: 'http://pub', homeRelay: false };
+  // FUZZ_TICKET_PIN=1: with TICKET_PIN on (config.js ticketPin, off by default; production's own setting is in its env), a
+  // played ticket asked again is answered from its pin, at once.
+  const config = { ...base, shards: 2, pool: 50, metricsPath: '', publicUrl: 'http://pub', homeRelay: false, ticketPin: Boolean(process.env.FUZZ_TICKET_PIN) };
   const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
   const pending = []; // held plays: { id, release, done }
   const atOnce = new Set(); // video ids answered without a hold (a straggler)
@@ -174,9 +176,11 @@ export async function runOne(seed, ops, variant = WORLD) {
       return new Promise((resolve) => pending.push({ id: data.id, release: () => resolve(where) }));
     } };
   const ids = ['aaaaaaaaaaa', 'bbbbbbbbbbb', 'ccccccccccc'];
-  // The caption sources (src/captionchain.js): asked once per video (an ask or warm starts it), then "not ready" until
-  // they answer (the 'sources' op): { available: false, reason: 'temporarily_unavailable', tracks: [] } (captionchain.js:66,
-  // :100, :119). A video with none answers reason 'no_captions' (:105). Some seeds' videos have none.
+  // The caption sources (src/captionchain.js). The real get() and tracks() await the lookup and answer
+  // { available: false, reason: 'temporarily_unavailable', tracks: [] } only when it found no tracks (captionchain.js:60-66,
+  // :96-100, :119): a lookup that failed (a refusal, the relay down). Here every lookup of a video fails that way until the
+  // 'sources' op lets them succeed, so the not-ready paths are reached on purpose: their counts are not how often it
+  // happens. A video with none answers reason 'no_captions' (:105). Some seeds' videos have none.
   const none = new Set(ids.filter(() => r() < 0.2));
   const fetching = new Set(), ready = new Set();
   const tracks = [{ i: 0, code: 'en', name: 'English', auto: true }];
@@ -327,7 +331,7 @@ const show = (b) => `seed ${b.seed}: ${b.fails[b.prop]}\n  ${b.trace.join('\n  '
 // fixer does.
 const FAILS_TODAY = [
   { seed: 1010, prop: 'B2', path: /three answers for another ticket/ }, // #996's own path
-  { seed: 997, prop: 'B2', path: /temporarily_unavailable/ }, // #996's item 4: CC on, the list asked before the sources answered
+  { seed: 997, prop: 'B2', path: /temporarily_unavailable/ }, // #996's item 4: CC on, a list whose lookup found no tracks yet
   { seed: 1042, prop: 'B2', path: /404 nothing_playing/ }, // CC on in a fresh shard during the hold
   { seed: 1000, prop: 'B1', path: /another ticket/ },
 ];

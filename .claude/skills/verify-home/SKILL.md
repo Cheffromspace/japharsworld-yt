@@ -137,14 +137,15 @@ change. A diff that changes `src/home.js` and leaves this unchanged says why in 
 ## Pilot B: captions around a held play (test/captions-hold.props.test.js)
 
 A second seeded test, for Everything-is-OK#996. The service is the real `createApp` with a real `Store`; `playback` is
-faked so a player's ticket request is held until the test lets it go, and `captions` answers "not ready"
-(`temporarily_unavailable`) until its sources answer. The world side is a hand-written COPY of the world's caption-ask
-rule, so unlike pilot A it can drift from the code it stands for.
+faked so a player's ticket request is held until the test lets it go, and `captions` answers as a failed lookup does
+(`temporarily_unavailable`, no tracks) until the test lets its sources succeed. The real lookup awaits its sources and
+answers that only when they found nothing, so the test's counts of that path are not frequencies. The world side is a
+hand-written COPY of the world's caption-ask rule, so unlike pilot A it can drift from the code it stands for.
 
 - **Promises.** B1: if the visitor stayed and the video has captions, the world ends holding the playing ticket's list
   (and lines, CC on). B2: "No captions" only follows an answer for that ticket that says `no_captions`.
 - **Today both fail**, by three paths (each a recorded seed in `FAILS_TODAY`): three answers for another ticket (#996),
-  a list asked with CC on before the sources answered (#996's item 4), and a 404 `nothing_playing` with CC on in a fresh
+  a list asked with CC on whose lookup found no tracks yet (#996's item 4), and a 404 `nothing_playing` with CC on in a fresh
   shard. So the promises are `test.todo`, and a plain test asserts that the recorded seeds still fail: the file goes red
   when the code under it changes. `FUZZ_STRICT=1` runs the promises as plain tests.
 - **When #996's fix lands**, its fixer: drops the `FAILS_TODAY` test, turns the two todos into plain tests (the strict

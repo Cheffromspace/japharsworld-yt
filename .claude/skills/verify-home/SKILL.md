@@ -26,13 +26,18 @@ FUZZ_STRICT=1 node --test test/home.props.test.js      # no exclusions: the open
 FUZZ_STEPS=400 FUZZ_SEEDS=500 node --test test/home.props.test.js   # longer sequences
 ```
 
-Seeds start at 1009 (FUZZ_SEED moves the start). A run is reproducible per platform: the session tokens are seeded in the
-test, and the order `#load` reads folders in is the file system's (sorted on Windows, hashed on Linux).
+Seeds start at 1009 (FUZZ_SEED moves the start). A seed runs the same on every platform: the session tokens are seeded
+in the test, and `readdirSync` is sorted while a sequence runs, so `#load` reads the folders in one order (both swapped
+through `syncBuiltinESMExports`, with no seam in `src/`).
 
 ## What it checks (the coverage)
 
-Every check reads the test's own records (when it fetched each token, the starts it saw, the bytes it put), not Home's
-fields. The functions named are `Home`'s in `src/home.js`.
+The checks read the test's own records: when it fetched each token, the starts it saw, the bytes it put, and a model of
+each session built only from what the test sent and saw (building until a listed segment is here, then ready; ended at
+ENDLIST with every listed segment here; failed by `giveUp`, a job failing while it builds, an `x-media-failed` or
+SHORT_S cut-back closing playlist, or a 410 on a live session's segment). Two things do come from Home: which sessions
+exist (`byToken` and `sessions`, which A1 and A2 check) and a new session's token and worker (`start`'s answer, recorded
+once). The functions named are `Home`'s in `src/home.js`.
 
 - **A1 no delete under a player or a live build.** `start`, `sweep` and `#evictFor` (through `start` and `put`) never
   remove a session a player fetched in the last 5 min (PLAYING_MS) or one building or uploading and not stale
@@ -41,7 +46,9 @@ fields. The functions named are `Home`'s in `src/home.js`.
   with files, and drops the rest (allowing for the 30 s by which `#write` may lag `lastPutMs` in meta.json).
 - **A2 the maps agree.** Every `sessions` entry sits under its own `id@quality` and is in `byToken`. An entry only in
   `byToken` (set aside by `start`, or a reloaded `cut_short`) is gone at the first `sweep` once nobody fetched it for 5
-  min. The token folders on disk are exactly `byToken`'s. Each session's `mb` equals the bytes the test put.
+  min. The token folders on disk are exactly `byToken`'s. Each session's `mb` equals the bytes the test put. Each
+  session's `state` (and `ended`, while not failed) agrees with the model (`#playlist`, `#checkEnded`, `put`, `giveUp`,
+  `#fail`).
 - **A3 the limits, at every start.** Real (not cached) builds per Chicago day <= `dailyBuilds` and the day's downloaded
   MB under `dailyMb` (`capped`, `limit`); real builds in the rolling hour <= `hourBuilds`; the hour's expected MB within
   `hourMb` unless the hour is empty or the video is `hourMbExemptSeconds` or longer (`blocks`); nothing over
@@ -57,13 +64,14 @@ fields. The functions named are `Home`'s in `src/home.js`.
 
 Bounds: 150 steps per sequence, 100 seeds in `npm test`, 2,000 in a sweep. Sizes are scaled down so the limits bite in a
 few steps: segments 20-150 KB, videos 1-5 s with 2-6 segments of 4 s, `maxGb` 1.5-3 MB, `freeFloorGb` 0-2 MB, a disk
-of 4-10 MB, two media workers taking 1-3 streams. The fake worker sends only what `relay/media.js` sends: the whole
+of 4-10 MB, `dailyMb` 0.3, 0.8 or 2-10 MB, two media workers taking 1-3 streams. The fake worker sends only what `relay/media.js` sends: the whole
 predicted playlist or a growing one that only grows, never both, then one closing playlist (every segment, or cut back
 to those sent in order, `closedAt`), after which its stream uploads nothing more.
 
 **Drift points** (hand copies in the test that must follow the code): `expectedOf` is `#expectedMb` written out (it is
-private, and `state()` rounds it to whole MB); the constants PLAYING_MS, STALE_MS and the 30 s meta save are copied by
-name. A change to any of them in `src/home.js` means changing the test in the same commit.
+private, and `state()` rounds it to whole MB); the session model follows the rules of `#playlist`, `#checkEnded`, `put`
+and `start`'s `.catch` (including SHORT_S); the constants PLAYING_MS, STALE_MS and the 30 s meta save are copied by name.
+A change to any of them in `src/home.js` means changing the test in the same commit.
 
 ## Reading a failure
 
@@ -82,15 +90,26 @@ property or add an exclusion to make it pass. If the failing ops are something t
 **Open findings** (each excused by one narrow, named exclusion in `KNOWN`, with a `test.todo` naming it; `FUZZ_STRICT=1`
 shows them failing):
 - `reload`, Everything-is-OK#1011: `#load` rebuilds sessions with `lastGetMs` 0 (`#session`; only a `cut_short` one is
-  stamped), so a sweep after a restart can evict a finished session a player is on. Excused only for a session the
-  latest restart reloaded and no player fetched since. Strict seeds: 1027, 1105.
+  stamped), so a sweep after a restart can evict a finished session a player is on. Excused only for A1's played check
+  (never the live-build one), and only for a session the latest restart reloaded and no player fetched since. Strict
+  seeds: 1105, 1116.
 - `recached`, Everything-is-OK#1013: `s.cached` is not saved in meta.json, so after a restart a cache upload takes its
-  cache hit again (`put`) and the day lets one more real build through. Excused only up to the number of repeated cache
-  hits taken that day. Strict seed: 1116.
+  cache hit again (`put`) and the day lets one more real build through. Strict seed: 1026.
+- `midnight`, Everything-is-OK#1018: a cache hit is taken off the day it is marked (`put`), not the day its build
+  started, so a build started before midnight and marked cached after it gives the new day one more real build.
+  Strict seed: 2925.
+
+The two day-count findings are excused by one rule: a start over the day's real builds passes only if Home's day count,
+as the known findings alone would make it (the day's starts less its cache hits, each finding's kind of hit counted only
+when that finding is in `KNOWN`, floored at 0 as `put` does), was under `dailyBuilds`. So neither can pay for the other.
+A finding's count is measured one way: the seeds of 2,000 that fail with the other findings in `KNOWN` and this one not
+(for example `FUZZ_KNOWN=reload,midnight FUZZ_SEEDS=2000` for recached).
 
 When a fix for one lands: remove its name from `KNOWN` (and its branch in the check), turn its `test.todo` into a plain
-test or delete it, run the sweep with `FUZZ_STRICT=1`, and update this list. The `midnight` exclusion in the code (a
-cache hit taken off the day it is marked) is off by default: no seed has shown it.
+test or delete it, run the sweep with `FUZZ_STRICT=1`, and update this list. The fix for `reload` also changes the test's
+restart bookkeeping: the restart op stamps only reloaded failed sessions as played (`stamped`, as `#load` does today); a
+fix that stamps reloaded ready sessions too needs the same there, or A4 fails on sessions Home rightly keeps as played
+(verifier, 2026-11-23: 24 such seeds of 2,000, for example 1112).
 
 ## Checking the check
 
@@ -98,6 +117,10 @@ Each property has been seen failing on a deliberately broken `src/home.js` (veri
 code"); after a change to the test, break one property on purpose and confirm the run fails, for example
 `start` setting aside a played session (`if (old && this.#playing(old))` → `if (old && false)`) must fail A1.
 Put `src/home.js` back with `git diff --quiet src/home.js` confirming it.
+
+The default 100 seeds are a smoke run: the weakest broken variants (A1's, set-aside and restart, caught by 4-5 of 100
+seeds on 2026-11-23) slip past about 1 run in 50. So any change to `src/home.js` also gets the 2,000-seed sweep, which
+none of the 13 variants has slipped past.
 
 ## Moving the coverage commit
 

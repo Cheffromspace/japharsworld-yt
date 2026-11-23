@@ -3,10 +3,10 @@
 # Deploys origin/<branch> (main; staging: DEPLOY_BRANCH) if it moved; rolls back if the new version fails its health check.
 # Once a day also updates yt-dlp, the usual fix when YouTube changes something.
 # Commits that only touch docs/, the link monitor, the metrics poller/exporter, Alloy, the search relay worker, public/
-# pages (re-read on change), tests, tools, design notes or this script (the monitor publishes docs/ itself) don't restart
-# the search service. A restart drops held players and Tunelio builds in flight (2026-10-21: plays during a deploy fell
-# back to youtube.com), so it waits until /healthz reports nothing busy: up to 3 min per run, deferred to later runs
-# for at most 30 min, then it restarts anyway.
+# pages (re-read on change), tests, tools, design notes, agent skills (.claude/) or this script (the monitor publishes
+# docs/ itself) don't restart the search service. A restart drops held players and Tunelio builds in flight (2026-10-21:
+# plays during a deploy fell back to youtube.com), so it waits until /healthz reports nothing busy: up to 3 min per run,
+# deferred to later runs for at most 30 min, then it restarts anyway.
 # Staging (#160, a separate VPS with the same paths) sets DEPLOY_BRANCH, DEPLOY_MONITOR, DEPLOY_POLLER and DEPLOY_ALLOY in
 # /etc/japharsworld-yt-deploy.env. Production has no such file and runs on the defaults: main, monitor and poller on,
 # deploy/alloy/linode.alloy.
@@ -51,7 +51,7 @@ changed=$(git diff --name-only "$current" "$target")
 # The monitor's own "Channels status" commits (docs/ only) are not deploys worth a marker on the dashboard.
 record() { echo "$changed" | grep -qv '^docs/' || return 0; bash deploy/deploy-record.sh "$1" || echo "deploy record failed"; }
 lock_changed=$(echo "$changed" | grep -x 'package-lock.json' || true)
-service_changed=$(echo "$changed" | grep -v -E '^(docs/|monitor/|relay/|deploy/monitor-setup\.sh$|deploy/slotmon(-remote)?$|deploy/japharsworld-yt-monitor\.|deploy/relay-|deploy/slotworker-|deploy/bgutil-(setup\.sh|pot-relay\.service)$|deploy/bootstrap\.sh$|deploy/shell-setup\.sh$|deploy/(staging-setup|dns-flip|harden)\.sh$|deploy/japharsworld-yt-slotworker|deploy/japharsworld-yt-relay|metrics/|deploy/metrics-setup\.sh$|deploy/japharsworld-yt-(metrics|exporter|occupants|security|backup)\.|deploy/backup-setup\.sh$|deploy/alloy|deploy/update\.sh$|deploy/deploy-record\.sh$|public/|test/|tools/|bench/|claude/|grafana/|infra-check/|README\.md$|CLAUDE\.md$|deploy-now\.cmd$|\.gitignore$|\.github/)' || true)
+service_changed=$(echo "$changed" | grep -v -E '^(docs/|monitor/|relay/|deploy/monitor-setup\.sh$|deploy/slotmon(-remote)?$|deploy/japharsworld-yt-monitor\.|deploy/relay-|deploy/slotworker-|deploy/bgutil-(setup\.sh|pot-relay\.service)$|deploy/bootstrap\.sh$|deploy/shell-setup\.sh$|deploy/(staging-setup|dns-flip|harden)\.sh$|deploy/japharsworld-yt-slotworker|deploy/japharsworld-yt-relay|metrics/|deploy/metrics-setup\.sh$|deploy/japharsworld-yt-(metrics|exporter|occupants|security|backup)\.|deploy/backup-setup\.sh$|deploy/alloy|deploy/update\.sh$|deploy/deploy-record\.sh$|public/|test/|tools/|bench/|claude/|\.claude/|grafana/|infra-check/|README\.md$|CLAUDE\.md$|deploy-now\.cmd$|\.gitignore$|\.github/)' || true)
 monitor_setup_changed=$(echo "$changed" | grep -E '^(monitor/requirements\.txt|monitor/seed/|deploy/monitor-setup\.sh|deploy/slotmon|deploy/japharsworld-yt-monitor\.)' || true)
 metrics_setup_changed=$(echo "$changed" | grep -E '^(deploy/metrics-setup\.sh|deploy/japharsworld-yt-(metrics|exporter|occupants|security)\.)' || true)
 backup_setup_changed=$(echo "$changed" | grep -E '^(deploy/backup-setup\.sh|deploy/japharsworld-yt-backup\.)' || true)

@@ -112,7 +112,8 @@ function draw(seed, n) {
 // 1 seed in 2,000, 2026-11-23). So the seeds ending in 0 and in 5 also run a second sequence: a set opening, then that
 // seed's own random ops. The plain sequence of every seed is unchanged. A failure there is "seed N (directed)".
 //   'edge' (seeds ending in 0): a finished copy from the worker's cache (so no day or hour limit holds the next start),
-//     two player fetches `gap` apart (under or over GET_SAVE_MS), a crash or a clean restart, the longest video's start
+//     two player fetches `gap` apart (under or over GET_SAVE_MS), a crash, a clean restart, or a crash and 5 s later a
+//     clean restart (Home keeps the crash's lagged fetch across it), the longest video's start
 //     3.9 min after the last fetch (its expected size takes the store over maxGb), then a sweep every 10 s to 5.1 min:
 //     a clean-up decision every 10 s across the 5-minute edge.
 //   'day' (seeds ending in 5): a download whose segments come 15-50 s apart (around DAY_SAVE_MS), a crash, another start:
@@ -129,14 +130,16 @@ function opening(seed) {
   // 1080p unless that is over itemMaxMb (blocks: 'big', no start at all).
   const b1 = cfg.itemMaxMb > 0 && cfg.videos[v1].seconds * mbPerSecond('1080p') > cfg.itemMaxMb ? 0.25 : 0.75;
   const gap = pick([10_000, 20_000, 28_000, 35_000, 45_000, 55_000]);
+  const crash = { k: 'restart', a: 0.1, b: 0, c: 0, d: 0 }, clean = { k: 'restart', a: 0.5, b: 0, c: 0, d: 0 }; // op.a < 1/3: a crash
+  const restarts = pick([[crash], [clean], [crash, { k: 'clock', ms: 5_000 }, clean]]);
   const get = { k: 'get', a: 0, b: 0.5, c: 0, d: 0 }; // t0, seg0
   return [
     { k: 'start', a: at(v0), b: 0.25, c: 0.9, d: 0.1 },  // 720p, not AV1, its worker uploads from cache
     { k: 'playlist', a: 0, b: 0.1, c: 0, d: 0.9 },       // the whole predicted playlist
     ...Array.from({ length: 6 }, () => ({ k: 'segment', a: 0, b: 0.1, c: 0, d: 0 })), // its segments in order: ended
     get, { k: 'clock', ms: gap }, get,
-    { k: 'restart', a: pick([0.1, 0.5]), b: 0, c: 0, d: 0 }, // a crash (op.a < 1/3) or a clean restart
-    { k: 'clock', ms: 235_000 },                         // 3.9 min after the last fetch
+    ...restarts,
+    { k: 'clock', ms: 235_000 - (restarts.length > 1 ? 5_000 : 0) }, // 3.9 min after the last fetch
     { k: 'start', a: at(v1), b: b1, c: 0.9, d: 0.9 },
     ...Array.from({ length: 7 }, () => [{ k: 'clock', ms: 10_000 }, { k: 'sweep', a: 0, b: 0, c: 0, d: 0 }]).flat(), // to 5.1 min
   ];
@@ -188,8 +191,8 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
   const closed = new Set();         // streams whose worker sent the closing playlist
   const mode = new Map();           // token → 'whole' or 'growing': the kind of playlist its worker sends
   const grown = new Map();          // token → segments its growing playlist lists
-  const crashLoaded = new Set();    // tokens the latest restart reloaded, if it was a crash (no flush)
-  const fetchedSince = new Set();   // tokens a player fetched since the latest restart
+  const fetchLost = new Set();      // tokens a crash reloaded whose player fetched nothing since: meta.json's last fetch may lag
+  let lastCrash = false;            // whether the latest restart was a crash (reach: the allowance after a clean one)
   const starts = [];                // { t, token, av1, worker, expected, seconds, epoch }
   const cachedAt = new Map();       // token → when its first cached upload was taken (a cache hit)
   const hits = [];                  // { token, t, again }: every cache hit the test expects Home to take
@@ -261,11 +264,13 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
       if (was.live) fail('A1', `${name(tok)} (${was.state}, building or uploading, not stale) was removed by ${op}`);
       const f = now - played(tok, false);
       // A restart keeps who is watching (Everything-is-OK#1011: meta.json carries the last fetch, home.js #saveMeta, #load).
-      // The one allowance, and only after a crash restart (no flush): for a session it reloaded and no player fetched since,
-      // the last fetch counts as up to GET_SAVE_MS older (home.js file() writes it at most that often). After a clean
-      // restart A1 is as strict as anywhere else.
-      const lag = crashLoaded.has(tok) && !fetchedSince.has(tok) ? GET_SAVE_MS : 0;
-      if (f < PLAYING_MS && f >= PLAYING_MS - lag) { bump('crash_lag_allowed'); continue; }
+      // The one allowance: for a session a crash (no flush) reloaded and no player fetched since, the last fetch counts as up
+      // to GET_SAVE_MS older (home.js file() writes it at most that often). It lasts until that session's next fetch, also
+      // across later clean restarts: their flush has nothing newer to write, so Home keeps the lagged value (the
+      // coordinator's call, 2026-11-23, after a crash then a clean restart failed a correct Home). With no crash since a
+      // session's last fetch, A1 is as strict as anywhere else.
+      const lag = fetchLost.has(tok) ? GET_SAVE_MS : 0;
+      if (f < PLAYING_MS && f >= PLAYING_MS - lag) { bump('crash_lag_allowed'); if (!lastCrash) bump('crash_lag_allowed_after_clean'); continue; }
       if (f < PLAYING_MS) fail('A1', `${name(tok)} (${was.state}${was.ended ? ', ended' : ''}) was removed by ${op} while a player fetched it ${ago(f)} ago`);
     }
     for (const [key, s] of home.sessions) {
@@ -463,7 +468,7 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
           const tok = pickTok(op.a);
           if (!tok) { line = 'get: no session yet'; break; }
           const file = op.b < 0.3 ? 'index.m3u8' : `seg${Math.floor(op.c * info.get(tok).v.segs)}.ts`;
-          if (home.byToken.has(tok)) { fetched.set(tok, now); fetchedSince.add(tok); }
+          if (home.byToken.has(tok)) { fetched.set(tok, now); fetchLost.delete(tok); }
           pending.push(home.file(tok, file).catch(() => null));
           line = `get(${name(tok)}, ${file})${home.byToken.has(tok) ? '' : ' → gone'}`;
           break;
@@ -497,14 +502,14 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
           // last fetches and today's use written since the last throttled save are lost. Drawn from the restart's own
           // weight and its op.a, so adding it moved no other op of any seed's sequence.
           const crash = op.a < 1 / 3;
+          lastCrash = crash;
           if (!crash) home.flush(); // server.js on SIGTERM
           else for (const u of unsaved) { lostByDay.set(u.day, (lostByDay.get(u.day) ?? 0) + u.mb); bump('crash_day_mb_lost'); }
           unsaved = []; daySaved = -Infinity; // flush wrote them, or the crash lost them; the new Home has written nothing yet
           epoch++; // the old process's relay jobs are never settled: it is gone
           home = new Home(opts());
-          crashLoaded.clear(); fetchedSince.clear();
           for (const [tok, s] of home.byToken) {
-            if (crash) crashLoaded.add(tok);
+            if (crash && fetched.has(tok)) fetchLost.add(tok);
             lagged.add(tok);
             if (s.state === 'failed') stamped.set(tok, now); // home.js #load: a cut_short one counts as played from the restart
           }

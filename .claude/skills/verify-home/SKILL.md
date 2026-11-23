@@ -48,8 +48,9 @@ in `src/home.js`.
   with files, and drops the rest (allowing for the 30 s by which `#write` may lag `lastPutMs` in meta.json). A restart
   keeps who is watching: the played check runs on the test's own fetch times across it, as strict as anywhere
   (Everything-is-OK#1011, fixed by saving the last fetch in meta.json). A third of the restart ops are **crashes** (no
-  `flush`; reach `crash`): after one, and only for a session it reloaded and no player fetched since, the last fetch
-  may count as up to 30 s older (GET_SAVE_MS, `file()` writes it at most that often; reach `crash_lag_allowed`).
+  `flush`; reach `crash`): for a session a crash reloaded and no player fetched since (also across later clean restarts,
+  whose `flush` has nothing newer to write), the last fetch may count as up to 30 s older (GET_SAVE_MS, `file()` writes it
+  at most that often; reach `crash_lag_allowed`). With no crash since a session's last fetch, A1 is as strict as anywhere.
 - **A2 the maps agree.** Every `sessions` entry sits under its own `id@quality` and is in `byToken`. An entry only in
   `byToken` (set aside by `start`, or a reloaded `cut_short`) is gone at the first `sweep` once nobody fetched it for 5
   min. The token folders on disk are exactly `byToken`'s. Each session's `mb` equals the bytes the test put. Each
@@ -78,7 +79,7 @@ to those sent in order, `closedAt`), after which its stream uploads nothing more
 
 **Directed:** the seeds ending in 0 and in 5 also run a second sequence that opens with a set script, then that seed's
 random ops (the plain sequence of every seed is unchanged). Ending in 0, 'edge': a finished copy from the worker's
-cache, two player fetches 10-55 s apart, a crash or a clean restart, the longest video's start 3.9 min after the last
+cache, two player fetches 10-55 s apart, a crash, a clean restart, or a crash then a clean restart, the longest video's start 3.9 min after the last
 fetch (over maxGb), then a sweep every 10 s to 5.1 min. Ending in 5, 'day': a download whose segments come 15-50 s
 apart, a crash, another start. Random ops almost never
 reach these edges (2026-11-23: the A1 crash allowance fired 0 times in 2,000 plain seeds, and a `Home` writing day.json

@@ -520,7 +520,7 @@ export async function shortest(variant, prop, seeds, match = null, opts) {
   return best;
 }
 const SWITCHES = ['FUZZ_STRICT', 'FUZZ_PROMISES', 'FUZZ_KNOWN', 'FUZZ_WORLD', 'FUZZ_OTHER', 'FUZZ_FAULTS', 'FUZZ_TICKET_PIN', 'FUZZ_STRAGGLER_SAME', 'FUZZ_STEPS'];
-const rerun = (seed) => `${SWITCHES.filter((k) => process.env[k] != null).map((k) => `${k}=${process.env[k]}`).join(' ')} FUZZ_SEED=${seed} node --test test/captions-hold.props.test.js`.trim();
+const rerun = (seed) => `${SWITCHES.filter((k) => process.env[k] != null).map((k) => `${k}=${process.env[k]}`).join(' ')} FUZZ_SEED=${seed} node --import ./test/netguard.mjs --test test/captions-hold.props.test.js`.trim();
 const show = (b) => `seed ${b.seed}: ${b.fails[b.prop]}\n  ${b.trace.join('\n  ')}\n  rerun: ${rerun(b.seed)}`;
 
 // Today's world copy (eddf7f5a, = the released world v2026.11.22) against this service, with #996's service half

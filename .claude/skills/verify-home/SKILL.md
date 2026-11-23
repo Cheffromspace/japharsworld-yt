@@ -19,11 +19,11 @@ commit". A change elsewhere in the service (server.js routing, the relay worker)
 ## Run it
 
 ```sh
-node --test test/home.props.test.js                    # 100 seeds x 150 steps, about 5-9 s; part of npm test and CI
-FUZZ_SEEDS=2000 node --test test/home.props.test.js    # the sweep: one process, about 1.5-3.5 min, prints reach counts
-FUZZ_SEED=1234 node --test test/home.props.test.js     # one seed; a failure prints its shrunk ops and this command
-FUZZ_STRICT=1 node --test test/home.props.test.js      # no exclusions: the open findings below fail again
-FUZZ_STEPS=400 FUZZ_SEEDS=500 node --test test/home.props.test.js   # longer sequences
+node --import ./test/netguard.mjs --test test/home.props.test.js                                # 100 seeds x 150 steps, about 5-9 s; part of npm test and CI
+FUZZ_SEEDS=2000 node --import ./test/netguard.mjs --test test/home.props.test.js                # the sweep: one process, about 1.5-3.5 min, prints reach counts
+FUZZ_SEED=1234 node --import ./test/netguard.mjs --test test/home.props.test.js                 # one seed; a failure prints its shrunk ops and this command
+FUZZ_STRICT=1 node --import ./test/netguard.mjs --test test/home.props.test.js                  # no exclusions: the open findings below fail again
+FUZZ_STEPS=400 FUZZ_SEEDS=500 node --import ./test/netguard.mjs --test test/home.props.test.js  # longer sequences
 ```
 
 Seeds start at 1009 (FUZZ_SEED moves the start). A seed runs the same on every platform: the session tokens are seeded
@@ -158,7 +158,7 @@ and V17, so each has an example test that `npm test` runs.
 ## Moving the coverage commit
 
 Move it only after (1) re-reading every function listed under the coverage at the new commit and confirming the
-properties and the drift points still describe them, (2) `FUZZ_SEEDS=2000 node --test test/home.props.test.js` passing
+properties and the drift points still describe them, (2) `FUZZ_SEEDS=2000 node --import ./test/netguard.mjs --test test/home.props.test.js` passing
 (or failing only on the open findings above), and (3) recording the new commit here in the same commit as any test
 change. A diff that changes `src/home.js` and leaves this unchanged says why in its message.
 
@@ -268,7 +268,7 @@ is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can
   `0` turns `FUZZ_OTHER` and `FUZZ_FAULTS` off. (Until 2026-11-23 any value turned the first three on, so
   `FUZZ_TICKET_PIN=0` ran with the pin: verifier round 2, L-a.)
 
-- **Run:** `node --test test/captions-hold.props.test.js` (60 seeds, about 3.7 s); `FUZZ_PROMISES=1 FUZZ_SEEDS=2000
+- **Run:** `node --import ./test/netguard.mjs --test test/captions-hold.props.test.js` (60 seeds, about 3.7 s); `FUZZ_PROMISES=1 FUZZ_SEEDS=2000
   FUZZ_WORLD=opt2x` (say) for one of #996's options; service options are patches outside the repo (the batch's report
   names them), applied in a scratch worktree.
 - **The copy and its drift.** It mirrors `Assets/EverythingIsOK/Scripts/EverythingIsOKYouTubeSearch.cs` in the world

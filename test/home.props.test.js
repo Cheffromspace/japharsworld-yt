@@ -13,8 +13,8 @@
 // Sizes are scaled down (segments of 20-150 KB, videos of 1-5 s, caps of a few MB) so the limits bite in a few steps.
 // Bounds: FUZZ_STEPS (150) steps per sequence, FUZZ_SEEDS (100) seeds from FUZZ_SEED (1009) in npm test, and for the
 // seeds ending in 0 or 5 a second, directed sequence (`opening` below). By hand:
-//   FUZZ_SEED=n node --test test/home.props.test.js          one seed (prints the shrunk failing ops, if any)
-//   FUZZ_SEEDS=2000 node --test test/home.props.test.js      a sweep, in this one process, with reach counts
+//   FUZZ_SEED=n node --import ./test/netguard.mjs --test test/home.props.test.js       one seed (prints the shrunk failing ops)
+//   FUZZ_SEEDS=2000 node --import ./test/netguard.mjs --test test/home.props.test.js   a sweep in this one process, reach counts
 // Not covered: the half-floor stop in put (home.js put, the freeFloorGb x 500 check), segment holds and want(), the
 // playlist text players get, eta/settle, and #load's stamp of a meta.json without lastGetMs (written before
 // Everything-is-OK#1011; every meta.json this test writes has the field, so no seed reaches it: home.test.js's examples
@@ -562,7 +562,7 @@ async function report(seed, ops, fail, directed) {
   const small = await shrink(seed, ops.slice(0, fail.step + 1), fail.prop);
   const r = await runOne(seed, small);
   return `${fail.prop} on seed ${seed}${directed ? ' (directed)' : ''}: ${r.fail?.message ?? fail.message}\nsettings: ${JSON.stringify(settings(seed))}\n` +
-    `shrunk to ${small.length} ops:\n  ${r.trace.join('\n  ')}\nrerun: ${process.env.FUZZ_STRICT ? 'FUZZ_STRICT=1 ' : process.env.FUZZ_KNOWN != null ? `FUZZ_KNOWN=${process.env.FUZZ_KNOWN} ` : ''}FUZZ_SEED=${seed} node --test test/home.props.test.js`;
+    `shrunk to ${small.length} ops:\n  ${r.trace.join('\n  ')}\nrerun: ${process.env.FUZZ_STRICT ? 'FUZZ_STRICT=1 ' : process.env.FUZZ_KNOWN != null ? `FUZZ_KNOWN=${process.env.FUZZ_KNOWN} ` : ''}FUZZ_SEED=${seed} node --import ./test/netguard.mjs --test test/home.props.test.js`;
 }
 
 test(`home props (#1009): ${SEEDS} seeds from ${SEED}, ${STEPS} steps each, keep A1-A4`, async (t) => {

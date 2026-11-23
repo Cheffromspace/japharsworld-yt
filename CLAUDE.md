@@ -11,7 +11,7 @@ setup); `claude/` holds the design docs: `metrics.md`, `monitoring.md` (Grafana 
 
 ```sh
 npm install
-npm test                                   # node --import ./test/netguard.mjs --test test/*.test.js (offline: a test that connects out fails)
+npm test                                   # node --import ./test/netguard.mjs --test test/*.test.js (offline: a connection out fails the test, or its file; self-test test/netguard.test.js)
 node --import ./test/netguard.mjs --test test/server.test.js            # one file
 node --import ./test/netguard.mjs --test --test-name-pattern="privacy" test/metrics.test.js   # one test
 node src/server.js                         # http://127.0.0.1:8790 (data/ for SQLite files)

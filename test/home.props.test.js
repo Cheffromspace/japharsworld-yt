@@ -3,13 +3,15 @@
 // thought of; three production bugs got past them (the disk filling 2026-10-28/30, a failed session deleted under its
 // players, verifier M1 2026-11-15, and a start race). Here a seeded generator draws starts, worker uploads, player fetches,
 // sweeps, clock jumps, worker failures and restarts, and after each step the test checks, from its OWN records (when it
-// fetched each token, the starts it saw, the bytes it put), not from Home's fields:
+// fetched each token, the starts it saw, the bytes it put, and a model of each session built only from what the test sent
+// and saw: `model` below), not from Home's fields. Two things do come from Home: which sessions exist (byToken and sessions,
+// what A1 and A2 check) and a new session's token and worker (start's answer, recorded once):
 //   A1 no delete under a player or a live build; a restart keeps exactly what #load promises to keep;
 //   A2 the maps agree (sessions, byToken, the folders on disk, the MB counted);
 //   A3 the limits hold at every start (day, hour, start gap with its AV1 exception, streams per worker);
 //   A4 the disk: the free-space floor after a start, and the size cap after a sweep.
 // Sizes are scaled down (segments of 20-150 KB, videos of 1-5 s, caps of a few MB) so the limits bite in a few steps.
-// Bounds: FUZZ_STEPS (150) steps per sequence, FUZZ_SEEDS (40) seeds from FUZZ_SEED (1009) in npm test. By hand:
+// Bounds: FUZZ_STEPS (150) steps per sequence, FUZZ_SEEDS (100) seeds from FUZZ_SEED (1009) in npm test. By hand:
 //   FUZZ_SEED=n node --test test/home.props.test.js          one seed (prints the shrunk failing ops, if any)
 //   FUZZ_SEEDS=2000 node --test test/home.props.test.js      a sweep, in this one process, with reach counts
 // Not covered: the half-floor stop in put (home.js put, the freeFloorGb x 500 check), segment holds and want(), the
@@ -19,6 +21,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { Home, MB_PER_SECOND, mbPerSecond } from '../src/home.js';
@@ -58,7 +61,15 @@ function seededTokens(seed) {
   };
   syncBuiltinESMExports();
 }
-function realTokens() { crypto.randomBytes = realRandomBytes; syncBuiltinESMExports(); }
+function realTokens() { crypto.randomBytes = realRandomBytes; fs.readdirSync = realReaddir; syncBuiltinESMExports(); }
+// The order #load reads the folders in is the file system's (sorted on Windows, hashed on Linux's ext4), so readdirSync is
+// sorted while a sequence runs: a seed then runs the same on every platform (verifier, 2026-11-23: with the order changed,
+// three strict seeds moved).
+const realReaddir = fs.readdirSync;
+function sortedReaddir() {
+  fs.readdirSync = (path, options) => { const out = realReaddir(path, options); return options?.withFileTypes ? out : [...out].sort(); };
+  syncBuiltinESMExports();
+}
 
 // The settings of one seed: each limit on at some seeds and off at others.
 function settings(seed) {
@@ -66,7 +77,8 @@ function settings(seed) {
   const pick = (xs) => xs[Math.floor(r() * xs.length)];
   const ids = ['aaaaaaaaaaa', 'bbbbbbbbbbb', 'ccccccccccc', 'ddddddddddd'];
   return {
-    dailyBuilds: 3 + Math.floor(r() * 8), dailyMb: 2 + r() * 8,
+    // dailyMb small on some seeds, so the day's MB binds before its builds do (verifier M4, 2026-11-23: at 2-10 MB it never did).
+    dailyBuilds: 3 + Math.floor(r() * 8), dailyMb: pick([0.3, 0.8, 2 + r() * 8]),
     hourBuilds: pick([0, 2, 3, 5]), hourMb: pick([0, 1.5, 3]), hourMbExemptSeconds: pick([0, 4]),
     startGapMs: pick([0, 20_000, 90_000]), av1GapMs: pick([0, 10_000]), av1HourBuilds: pick([0, 2, 4]),
     itemMaxMb: pick([0, 0, 2]), keepHours: pick([1, 3, 12]), maxGb: pick([0.0015, 0.003]), freeFloorGb: pick([0, 0.001, 0.002]),
@@ -98,6 +110,7 @@ const playlist = (n, end, type = end ? 'VOD' : 'EVENT') =>
 export async function runOne(seed, ops, { known = KNOWN } = {}) {
   const cfg = settings(seed);
   seededTokens(seed);
+  sortedReaddir();
   const dir = mkdtempSync(join(tmpdir(), 'home-props-'));
   let now = Date.parse('2026-11-20T22:00:00Z'); // 16:00 in Chicago, so clock jumps cross the caps' midnight
   const online = { w1: true, w2: false };
@@ -122,6 +135,12 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
   const starts = [];                // { t, token, av1, worker, expected, seconds, epoch }
   const cachedAt = new Map();       // token → when its first cached upload was taken (a cache hit)
   const hits = [];                  // { token, t, again }: every cache hit Home takes (home.js put, cached && !s.cached)
+  const dayEvents = [];             // { day, kind: 'start' | 'legit' | 'midnight' | 'recached' }, in order: what Home's day count sees
+  // The test's model of each session, from what it sent and saw only, by the rules home.js states (the top: building until
+  // a listed segment is here, then ready; ended once the playlist has ENDLIST and every segment it lists is here; failed by
+  // giveUp, a job failing while it builds, a closing playlist marked x-media-failed or cut back by SHORT_S or more, or a 410
+  // on a segment of a live session, the disk's half floor): token → { state, ended, reason, listed, endlist }.
+  const model = new Map();
   const mbByDay = new Map();        // day → MB of segments downloaded (not cached) that day
   const reach = {};
   const bump = (k) => { reach[k] = (reach[k] ?? 0) + 1; };
@@ -139,29 +158,44 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
   const name = (tok) => info.get(tok)?.name ?? tok.slice(0, 4);
   const real = () => starts.filter((x) => !cachedAt.has(x.token));
   const played = (tok, withStamp) => Math.max(fetched.get(tok) ?? -Infinity, withStamp ? stamped.get(tok) ?? -Infinity : -Infinity);
-  const liveBuild = (tok, s) => !s.ended && s.state !== 'failed' && now - (lastPut.get(tok) ?? info.get(tok).started) <= STALE_MS - (lagged.has(tok) ? META_LAG_MS : 0);
-  // home.js #expectedMb, written out (it is private; state() rounds it to whole MB, too coarse at these sizes). A drift point:
-  // the skill lists it. An unfinished session counts its expected final size.
-  const homeStale = (s) => !s.ended && now - (s.lastPutMs || s.startedMs) > STALE_MS;
-  const expectedOf = (s) => {
-    if (s.ended || s.state === 'failed' || homeStale(s)) return s.mb;
-    const est = s.stored.size && s.listed.length > s.stored.size ? s.mb * s.listed.length / s.stored.size : s.seconds * MB_PER_SECOND;
-    return Math.max(s.mb, est);
+  const sinceUpload = (tok) => now - (lastPut.get(tok) ?? info.get(tok).started);
+  const finished = (tok) => { const m = model.get(tok); return m.ended || m.state === 'failed'; };
+  const liveBuild = (tok) => !finished(tok) && sinceUpload(tok) <= STALE_MS - (lagged.has(tok) ? META_LAG_MS : 0);
+  // home.js #expectedMb, written out from the model (it is private; state() rounds it to whole MB, too coarse at these
+  // sizes). A drift point: the skill lists it. An unfinished session counts its expected final size. A session reloaded and
+  // not uploaded to since may look stale to Home up to META_LAG_MS early: it counts as stale then (Home's smaller sum).
+  const expectedOf = (tok) => {
+    const m = model.get(tok), mb = (bytes.get(tok) ?? 0) / 1e6, stored = segs.get(tok).size;
+    if (finished(tok) || sinceUpload(tok) > STALE_MS - (lagged.has(tok) ? META_LAG_MS : 0)) return mb;
+    const est = stored && m.listed > stored ? mb * m.listed / stored : info.get(tok).v.seconds * MB_PER_SECOND;
+    return Math.max(mb, est);
+  };
+  // The model's rules, applied as the test sends.
+  const ended = (tok) => { const m = model.get(tok); if (!m.ended && m.endlist && [...Array(m.listed).keys()].every((i) => segs.get(tok).has(i))) m.ended = true; }; // #checkEnded
+  const failModel = (tok, reason) => { const m = model.get(tok); if (m.state !== 'failed') Object.assign(m, { state: 'failed', reason }); };
+  // A cache hit Home takes (home.js put: cached && !s.cached), by kind: a repeat after a restart (recached), the first one on a
+  // later day than its build started (midnight), or the first one on its build's day.
+  const hit = (tok) => {
+    const again = cachedAt.has(tok), day = dayOf(now, TZ), later = day !== dayOf(info.get(tok).started, TZ);
+    hits.push({ token: tok, t: now, again });
+    if (!again) { cachedAt.set(tok, now); if (later) bump('hit_next_day'); }
+    dayEvents.push({ day, kind: again ? 'recached' : later ? 'midnight' : 'legit' });
   };
   const fail = (prop, message) => { throw Object.assign(new Error(message), { prop }); };
 
   // A1 and A2, after every step but a restart.
-  const snapshot = () => new Map([...home.byToken].map(([tok, s]) => [tok, { live: liveBuild(tok, s), state: s.state, ended: s.ended, reason: s.reason, stored: s.stored.size, listed: s.listed.length }]));
+  const snapshot = () => new Map([...home.byToken.keys()].map((tok) => { const m = model.get(tok); return [tok, { live: liveBuild(tok), state: m.state, ended: m.ended, reason: m.reason, stored: segs.get(tok).size, listed: m.listed }]; }));
   function checkAfter(before, op) {
     for (const [tok, was] of before) {
       if (home.byToken.has(tok)) continue;
+      if (was.live) fail('A1', `${name(tok)} (${was.state}, building or uploading, not stale) was removed by ${op}`);
       const f = now - played(tok, false);
-      // KNOWN reload (finding of 2026-11-22, seeds 1013 and 1014): #load rebuilds a session with lastGetMs 0 (home.js
-      // #session; only a cut_short one is stamped), so a sweep before the player's next fetch takes it for unplayed.
-      // Excused only for a session the latest restart reloaded and no player fetched since.
+      // KNOWN reload (Everything-is-OK#1011; strict seeds 1105, 1116): #load rebuilds a session with lastGetMs 0 (home.js
+      // #session; only a cut_short one is stamped), so a sweep before the player's next fetch takes it for unplayed. Excused
+      // only for the played check (not the live one above), and only for a session the latest restart reloaded and no
+      // player fetched since.
       if (f < PLAYING_MS && known.has('reload') && reloaded.has(tok) && !fetchedSince.has(tok)) { bump('known_reload'); continue; }
       if (f < PLAYING_MS) fail('A1', `${name(tok)} (${was.state}${was.ended ? ', ended' : ''}) was removed by ${op} while a player fetched it ${ago(f)} ago`);
-      if (was.live) fail('A1', `${name(tok)} (${was.state}, building or uploading, not stale) was removed by ${op}`);
     }
     for (const [key, s] of home.sessions) {
       if (key !== `${s.id}@${s.quality}`) fail('A2', `sessions holds ${name(s.token)} under ${key}`);
@@ -170,7 +204,13 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
     const folders = readdirSync(dir).filter((f) => TOKEN.test(f)).sort();
     const tokens = [...home.byToken.keys()].sort();
     if (folders.join() !== tokens.join()) fail('A2', `folders on disk [${folders.map(name)}] are not byToken's [${tokens.map(name)}]`);
-    for (const [tok, s] of home.byToken) if (Math.abs(s.mb - (bytes.get(tok) ?? 0) / 1e6) > EPS) fail('A2', `${name(tok)} counts ${s.mb} MB, the test put ${(bytes.get(tok) ?? 0) / 1e6}`);
+    for (const [tok, s] of home.byToken) {
+      if (Math.abs(s.mb - (bytes.get(tok) ?? 0) / 1e6) > EPS) fail('A2', `${name(tok)} counts ${s.mb} MB, the test put ${(bytes.get(tok) ?? 0) / 1e6}`);
+      // Home's state agrees with what the worker sent (the model). Ended is compared only while not failed: a failed session
+      // is "failed, not done" (home.js #playlist), whether or not #load later finds its closing playlist complete.
+      const m = model.get(tok);
+      if (s.state !== m.state || (m.state !== 'failed' && s.ended !== m.ended)) fail('A2', `${name(tok)} is ${s.state}${s.ended ? ', ended' : ''} in Home, ${m.state}${m.ended ? ', ended' : ''} by what its worker sent`);
+    }
   }
 
   // A3 and A4 at a start that made a new session.
@@ -178,13 +218,21 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
     const today = dayOf(now, TZ);
     const realToday = real().filter((x) => dayOf(x.t, TZ) === today).length;
     if (realToday + 1 > cfg.dailyBuilds) {
-      // KNOWN midnight: a cache hit is taken off the day it is marked (home.js put: d.builds - 1 on #today()), so a build
-      // started on an earlier day and marked cached today gives today one more real build.
-      const crossed = known.has('midnight') ? starts.filter((x) => cachedAt.has(x.token) && dayOf(x.t, TZ) !== today && dayOf(cachedAt.get(x.token), TZ) === today).length : 0;
-      // KNOWN recached: a session's cached flag is not saved in meta.json (home.js #saveMeta) or set by #load, so after a
-      // restart the next cached upload of a session already counted as a cache hit takes the day's builds down again.
-      const again = known.has('recached') ? hits.filter((h) => h.again && dayOf(h.t, TZ) === today).length : 0;
-      if (crossed + again > 0 && realToday + 1 <= cfg.dailyBuilds + crossed + again) bump(again ? 'known_recached' : 'known_midnight');
+      // Over the day's real builds. Excused only if Home's day count, as the KNOWN findings alone would make it, was under
+      // dailyBuilds: the day's starts less its cache hits, each finding's kind of hit counted only if that finding is known,
+      // floored at 0 as home.js put does. So neither exclusion can pay for the other's case (verifier M3, 2026-11-23).
+      // KNOWN midnight (Everything-is-OK#1018): a cache hit is taken off the day it is marked (home.js put, d.builds - 1 on
+      // #today()), so a build started on an earlier day and marked cached today gives today one more real build.
+      // KNOWN recached (Everything-is-OK#1013): s.cached is not saved in meta.json (#saveMeta) or set by #load, so after a
+      // restart a cache upload already counted as a cache hit takes the day's builds down again.
+      let count = 0;
+      const used = new Set();
+      for (const e of dayEvents) {
+        if (e.day !== today) continue;
+        if (e.kind === 'start') count++;
+        else if (e.kind === 'legit' || known.has(e.kind)) { if (e.kind !== 'legit') used.add(e.kind); count = Math.max(0, count - 1); }
+      }
+      if (count < cfg.dailyBuilds && used.size) for (const k of used) bump(`known_${k}`);
       else fail('A3', `start ${name(rec.token)} is real build ${realToday + 1} of ${today}, over dailyBuilds ${cfg.dailyBuilds}`);
     }
     if ((mbByDay.get(today) ?? 0) >= cfg.dailyMb - EPS) fail('A3', `start ${name(rec.token)} with ${(mbByDay.get(today)).toFixed(3)} MB downloaded today, dailyMb ${cfg.dailyMb.toFixed(3)}`);
@@ -204,10 +252,10 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
       }
     }
     if (!online[rec.worker]) fail('A3', `start ${name(rec.token)} went to ${rec.worker}, which is offline`);
-    const streams = [...home.byToken].filter(([tok, s]) => s.worker === rec.worker && liveBuild(tok, s)).length;
+    const streams = [...home.byToken.keys()].filter((tok) => info.get(tok).worker === rec.worker && liveBuild(tok)).length;
     if (streams > cfg.mediaMax[rec.worker]) fail('A3', `${rec.worker} runs ${streams} streams after start ${name(rec.token)}, mediaMax ${cfg.mediaMax[rec.worker]}`);
     if (cfg.freeFloorGb > 0) {
-      const growth = [...home.byToken.values()].reduce((n, s) => n + Math.max(0, expectedOf(s) - s.mb), 0);
+      const growth = [...home.byToken.keys()].reduce((n, tok) => n + Math.max(0, expectedOf(tok) - (bytes.get(tok) ?? 0) / 1e6), 0);
       if (freeMb() - growth < cfg.freeFloorGb * 1000 - EPS) fail('A4', `after start ${name(rec.token)}: ${freeMb().toFixed(3)} MB free, ${growth.toFixed(3)} MB still to grow, floor ${cfg.freeFloorGb * 1000} MB`);
     }
   }
@@ -217,24 +265,24 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
       bump('orphan_kept');
       if (now - played(tok, true) >= PLAYING_MS) fail('A2', `${name(tok)}, set aside (not in sessions), outlived a sweep with no player for ${ago(now - played(tok, true))}`);
     }
-    const total = [...home.byToken.values()].reduce((n, s) => n + expectedOf(s), 0);
+    const total = [...home.byToken.keys()].reduce((n, tok) => n + expectedOf(tok), 0);
     if (total > cfg.maxGb * 1000 + EPS) {
       bump('over_cap_after_sweep');
-      for (const [tok, s] of home.byToken) if ((s.ended || s.state === 'failed') && now - played(tok, true) >= PLAYING_MS) fail('A4', `after a sweep the sessions expect ${total.toFixed(3)} MB > maxGb, and ${name(tok)} (finished, unplayed) is still there`);
+      for (const tok of home.byToken.keys()) if (finished(tok) && now - played(tok, true) >= PLAYING_MS) fail('A4', `after a sweep the sessions expect ${total.toFixed(3)} MB > maxGb, and ${name(tok)} (finished, unplayed) is still there`);
     }
   }
   // A1, the restart: #load keeps the ready, not-stale sessions and the cut_short failures with files, and nothing else.
   function checkRestart(before) {
     for (const [tok, was] of before) {
       const kept = home.byToken.has(tok);
-      const sinceUpload = now - (lastPut.get(tok) ?? info.get(tok).started);
+      const since = sinceUpload(tok);
       // Ready as #load reads it from disk: a playlist that lists a segment, and a segment here (home.js #playlist). An ended
       // session whose closing playlist was cut back to no segment at all (a video under SHORT_S, taken as done) has nothing
       // to play, so #load dropping it as never ready cuts no play off.
-      const mustKeep = (was.state === 'ready' && was.listed > 0 && (was.ended || sinceUpload <= STALE_MS - META_LAG_MS)) || (was.state === 'failed' && was.reason === 'cut_short' && was.stored > 0);
-      const mustDrop = was.state === 'building' || (was.state === 'failed' && !(was.reason === 'cut_short' && was.stored > 0)) || (was.state === 'ready' && !was.ended && sinceUpload > STALE_MS);
+      const mustKeep = (was.state === 'ready' && was.listed > 0 && (was.ended || since <= STALE_MS - META_LAG_MS)) || (was.state === 'failed' && was.reason === 'cut_short' && was.stored > 0);
+      const mustDrop = was.state === 'building' || (was.state === 'failed' && !(was.reason === 'cut_short' && was.stored > 0)) || (was.state === 'ready' && !was.ended && since > STALE_MS);
       if (mustKeep && !kept) fail('A1', `restart dropped ${name(tok)} (${was.state}${was.ended ? ', ended' : ''}${was.reason ? `, ${was.reason}` : ''})`);
-      if (mustDrop && kept) fail('A1', `restart kept ${name(tok)} (${was.state}${was.reason ? `, ${was.reason}` : ''}${was.state === 'ready' ? `, no upload for ${ago(sinceUpload)}` : ''})`);
+      if (mustDrop && kept) fail('A1', `restart kept ${name(tok)} (${was.state}${was.reason ? `, ${was.reason}` : ''}${was.state === 'ready' ? `, no upload for ${ago(since)}` : ''})`);
     }
   }
 
@@ -255,14 +303,16 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
           if (events.includes('start')) {
             const tok = s.token;
             issued.push(tok);
-            info.set(tok, { name: `t${issued.length - 1}`, v, q, cached: op.d < 0.25, ti: issued.length - 1, started: now });
+            info.set(tok, { name: `t${issued.length - 1}`, v, q, cached: op.d < 0.25, ti: issued.length - 1, started: now, worker: s.worker });
             segs.set(tok, new Set());
+            model.set(tok, { state: 'building', ended: false, reason: null, listed: 0, endlist: false });
             const rec = { t: now, token: tok, av1, worker: s.worker, expected: v.seconds * mbPerSecond(q), seconds: v.seconds, epoch };
             line += ` → new ${name(tok)} on ${s.worker}${info.get(tok).cached ? ' (its worker uploads from cache)' : ''}`;
             trace.push(`${step}: ${line}`);
             checkAfter(before, line);
             checkStart(rec, v);
             starts.push(rec);
+            dayEvents.push({ day: dayOf(rec.t, TZ), kind: 'start' }); // after the check: Home checks the cap before it counts the build
             after = false;
           } else line += s ? ` → ${name(s.token)} again` : ` → none (${events.join(',') || home.refusal || 'no worker'})`;
           break;
@@ -293,9 +343,16 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
               closed.add(tok);
             }
             const s0 = home.byToken.get(tok);
-            if (cached && s0 && s0.state !== 'failed' && !s0.cached) { hits.push({ token: tok, t: now, again: cachedAt.has(tok) }); if (!cachedAt.has(tok)) { cachedAt.set(tok, now); if (dayOf(now, TZ) !== dayOf(info.get(tok).started, TZ)) bump('hit_next_day'); } }
+            if (cached && s0 && s0.state !== 'failed' && !s0.cached) hit(tok);
             status = home.put(tok, 'index.m3u8', Buffer.from(text), { cached, failed });
             line = `put(${name(tok)}, index.m3u8 ${what}${failed ? ', x-media-failed' : ''}${cached ? ', cached' : ''}) → ${status}`;
+            if (status === 204) {
+              const m = model.get(tok), k = (text.match(/^seg\d+\.ts$/gm) ?? []).length, end = text.includes('#EXT-X-ENDLIST'), before = m.listed;
+              Object.assign(m, { listed: k, endlist: end });
+              if (m.state === 'building' && k > 0 && have.size > 0) m.state = 'ready';
+              // A closing playlist marked failed, or with fewer segments and SHORT_S (10 s) or more shorter (4 s each here): failed.
+              if (end && (failed || (k < before && 4 * k < 4 * before - 10)) && m.state !== 'failed') failModel(tok, 'cut_short'); else ended(tok);
+            }
           } else {
             const have = segs.get(tok);
             const i = op.b < 0.6 ? Math.min(n - 1, (have.size ? Math.max(...have) : -1) + 1) : Math.floor(op.c * n);
@@ -303,14 +360,20 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
             const s = home.byToken.get(tok);
             const wasCached = Boolean(s?.cached);
             // home.js put takes the cache hit before the segment checks, so a 410 for the disk still counts it.
-            if (cached && s && s.state !== 'failed' && !s.cached) { hits.push({ token: tok, t: now, again: cachedAt.has(tok) }); if (!cachedAt.has(tok)) { cachedAt.set(tok, now); if (dayOf(now, TZ) !== dayOf(info.get(tok).started, TZ)) bump('hit_next_day'); } }
+            if (cached && s && s.state !== 'failed' && !s.cached) hit(tok);
             status = home.put(tok, `seg${i}.ts`, Buffer.alloc(size), { cached });
             line = `put(${name(tok)}, seg${i}.ts${cached ? ', cached' : ''}) → ${status}`;
-            if (status === 204 && !have.has(i)) {
-              have.add(i);
-              bytes.set(tok, (bytes.get(tok) ?? 0) + size);
-              // home.js put: a segment counts against the day's MB unless its session is cached by now.
-              if (!(cached || wasCached)) { const d = dayOf(now, TZ); mbByDay.set(d, (mbByDay.get(d) ?? 0) + size / 1e6); }
+            if (status === 410 && s && model.get(tok).state !== 'failed') failModel(tok, 'no_room'); // put: the disk's half floor
+            if (status === 204) {
+              if (!have.has(i)) {
+                have.add(i);
+                bytes.set(tok, (bytes.get(tok) ?? 0) + size);
+                // home.js put: a segment counts against the day's MB unless its session is cached by now.
+                if (!(cached || wasCached)) { const d = dayOf(now, TZ); mbByDay.set(d, (mbByDay.get(d) ?? 0) + size / 1e6); }
+              }
+              const m = model.get(tok);
+              if (m.state === 'building' && m.listed > 0) m.state = 'ready';
+              ended(tok);
             }
           }
           if (status === 204) { lastPut.set(tok, now); lagged.delete(tok); }
@@ -331,10 +394,10 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
           now += dt; line = `clock +${ago(dt)}`; break;
         }
         case 'giveUp': {
-          const live = [...home.byToken.values()].filter((s) => s.state !== 'failed');
+          const live = [...home.byToken.keys()].filter((tok) => model.get(tok).state !== 'failed');
           if (!live.length) { line = 'giveUp: none'; break; }
-          const s = live[Math.floor(op.a * live.length)];
-          home.giveUp(s); line = `giveUp(${name(s.token)})`; break;
+          const tok = live[Math.floor(op.a * live.length)];
+          home.giveUp(home.byToken.get(tok)); failModel(tok, 'uneven'); line = `giveUp(${name(tok)})`; break;
         }
         case 'reject': {
           const open = jobs.filter((j) => j.epoch === epoch && !j.settled);
@@ -343,6 +406,7 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
           j.settled = true;
           j.reject(Object.assign(new Error('worker failed'), { code: 'worker_failed' }));
           await new Promise((r) => setImmediate(r));
+          if (home.byToken.has(j.token) && model.get(j.token).state === 'building') failModel(j.token, 'worker_failed'); // start's .catch
           line = `the worker fails ${name(j.token)}'s job`; break;
         }
         case 'worker': { const w = op.a < 0.5 ? 'w1' : 'w2'; online[w] = !online[w]; line = `${w} ${online[w] ? 'online' : 'offline'}`; break; }
@@ -381,7 +445,7 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
 }
 
 // The open findings: each is excused only where its own check names it, and is listed in the skill with its seed.
-export const KNOWN = new Set(process.env.FUZZ_STRICT ? [] : (process.env.FUZZ_KNOWN ?? 'reload,recached').split(',').filter(Boolean));
+export const KNOWN = new Set(process.env.FUZZ_STRICT ? [] : (process.env.FUZZ_KNOWN ?? 'reload,recached,midnight').split(',').filter(Boolean));
 
 // Deletes ops while the same property still fails: the shortest sequence this finds, for the report.
 export async function shrink(seed, ops, prop) {
@@ -397,17 +461,16 @@ export async function shrink(seed, ops, prop) {
 }
 
 // The open findings, until their fixes land. Each fix drops its name from KNOWN and its todo here (the skill says how).
-// FUZZ_STRICT=1 runs with no exclusion; FUZZ_KNOWN=reload (say) keeps only the named ones. 'midnight' (a cache hit taken off
-// the day it is marked, not the day the build started) is an exclusion ready for Q1 of the plan, off by default: no seed
-// has shown it (2,000 seeds, 2026-11-22).
-test.todo('home props finding "reload forgets players" (Everything-is-OK#1011; 2026-11-22, seeds 1013, 1014): a restart gives every reloaded session lastGetMs 0 (home.js #load, #session), so the next sweep can evict a finished one a player is on');
-test.todo('home props finding "recached" (Everything-is-OK#1013; 2026-11-22, seed 1116): s.cached is not saved in meta.json, so after a restart a cache upload takes its cache hit again (home.js put), and the day lets one more real build through than dailyBuilds');
+// FUZZ_STRICT=1 runs with no exclusion; FUZZ_KNOWN=reload,recached (say) keeps only the named ones.
+test.todo('home props finding "reload forgets players" (Everything-is-OK#1011; strict seeds 1105, 1116): a restart gives every reloaded session lastGetMs 0 (home.js #load, #session), so the next sweep can evict a finished one a player is on');
+test.todo('home props finding "recached" (Everything-is-OK#1013; strict seed 1026): s.cached is not saved in meta.json, so after a restart a cache upload takes its cache hit again (home.js put), and the day lets one more real build through than dailyBuilds');
+test.todo('home props finding "midnight" (Everything-is-OK#1018; strict seed 2925): a cache hit is taken off the day it is marked, not the day its build started (home.js put), so a build started before midnight and marked cached after it gives the new day one more real build');
 
 async function report(seed, ops, fail) {
   const small = await shrink(seed, ops.slice(0, fail.step + 1), fail.prop);
   const r = await runOne(seed, small);
   return `${fail.prop} on seed ${seed}: ${r.fail?.message ?? fail.message}\nsettings: ${JSON.stringify(settings(seed))}\n` +
-    `shrunk to ${small.length} ops:\n  ${r.trace.join('\n  ')}\nrerun: FUZZ_SEED=${seed} node --test test/home.props.test.js`;
+    `shrunk to ${small.length} ops:\n  ${r.trace.join('\n  ')}\nrerun: ${process.env.FUZZ_STRICT ? 'FUZZ_STRICT=1 ' : process.env.FUZZ_KNOWN != null ? `FUZZ_KNOWN=${process.env.FUZZ_KNOWN} ` : ''}FUZZ_SEED=${seed} node --test test/home.props.test.js`;
 }
 
 test(`home props (#1009): ${SEEDS} seeds from ${SEED}, ${STEPS} steps each, keep A1-A4`, async (t) => {

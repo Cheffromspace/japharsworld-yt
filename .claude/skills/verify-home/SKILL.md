@@ -19,8 +19,8 @@ commit". A change elsewhere in the service (server.js routing, the relay worker)
 ## Run it
 
 ```sh
-node --test test/home.props.test.js                    # 100 seeds x 150 steps, about 3 s; part of npm test and CI
-FUZZ_SEEDS=2000 node --test test/home.props.test.js    # the sweep: one process, about 1 min, prints reach counts
+node --test test/home.props.test.js                    # 100 seeds x 150 steps, about 5-9 s; part of npm test and CI
+FUZZ_SEEDS=2000 node --test test/home.props.test.js    # the sweep: one process, about 1.5-3.5 min, prints reach counts
 FUZZ_SEED=1234 node --test test/home.props.test.js     # one seed; a failure prints its shrunk ops and this command
 FUZZ_STRICT=1 node --test test/home.props.test.js      # no exclusions: the open findings below fail again
 FUZZ_STEPS=400 FUZZ_SEEDS=500 node --test test/home.props.test.js   # longer sequences
@@ -69,7 +69,9 @@ in `src/home.js`.
   finished, unplayed session is left.
 - **Not covered:** the half-floor stop in `put` (free space under `freeFloorGb` x 500 while building); segment holds,
   `want()` and `#far`; the playlist text `file()` serves (absolute links, START, EVENT to VOD); `eta`, `settle`, `wait`;
-  `other`, `isUneven`, `markUneven`; `load()` and `state()`; the HTTP routes in `src/server.js` that call `Home`.
+  `other`, `isUneven`, `markUneven`; `load()` and `state()`; the HTTP routes in `src/server.js` that call `Home`; the
+  `#load` stamp of a meta.json without `lastGetMs` (one written before Everything-is-OK#1011): every meta.json the test
+  writes has the field, so no seed reaches it, and the example tests in `test/home.test.js` cover it.
 
 Bounds: 150 steps per sequence, 100 seeds in `npm test`, 2,000 in a sweep. Sizes are scaled down so the limits bite in a
 few steps: segments 20-150 KB, videos 1-5 s with 2-6 segments of 4 s, `maxGb` 1.5-3 MB, `freeFloorGb` 0-2 MB, a disk
@@ -148,7 +150,10 @@ Put `src/home.js` back with `git diff --quiet src/home.js` confirming it.
 
 The default 100 seeds are a smoke run: the weakest broken variants (A1's, set-aside and restart, caught by 4-5 of 100
 seeds on 2026-11-23) slip past about 1 run in 50. So any change to `src/home.js` also gets the 2,000-seed sweep, which
-none of the 13 variants has slipped past.
+none of the 13 variants of 2026-11-22 slipped past. Everything-is-OK#1011's 11 (V1-V10 and V17, rerun by its verifier
+on 2026-11-23): the sweep catches V1-V10; V17 (the `#load` stamp's write left out) only the example tests catch, since no
+seed reaches that stamp (under "Not covered"). The default 100 seeds catch none of V1, V6 (`flush` skipping the fetches)
+and V17, so each has an example test that `npm test` runs.
 
 ## Moving the coverage commit
 
@@ -158,6 +163,10 @@ properties and the drift points still describe them, (2) `FUZZ_SEEDS=2000 node -
 change. A diff that changes `src/home.js` and leaves this unchanged says why in its message.
 
 **Coverage commit:** `9259b0b` (src/home.js blob `fbdd29791325e3a35608f5655d9352cc81ce5039`), confirmed 2026-11-22.
+It stays there while the commits of Everything-is-OK#1011, #1013 and #1018, which change src/home.js, are unpushed: the
+owner may ship #1011 alone, which rebuilds them under new hashes, so a hash named now might name no commit on the branch
+that ships. It moves in one commit once that branch is on staging, after the three steps above (its verifier's L-1,
+2026-11-23).
 
 ## Pilot B: captions around a held play (test/captions-hold.props.test.js)
 

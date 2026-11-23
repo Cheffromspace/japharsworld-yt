@@ -16,7 +16,9 @@
 //   FUZZ_SEED=n node --test test/home.props.test.js          one seed (prints the shrunk failing ops, if any)
 //   FUZZ_SEEDS=2000 node --test test/home.props.test.js      a sweep, in this one process, with reach counts
 // Not covered: the half-floor stop in put (home.js put, the freeFloorGb x 500 check), segment holds and want(), the
-// playlist text players get, eta/settle. The skill .claude/skills/verify-home/SKILL.md says how to read a failure.
+// playlist text players get, eta/settle, and #load's stamp of a meta.json without lastGetMs (written before
+// Everything-is-OK#1011; every meta.json this test writes has the field, so no seed reaches it: home.test.js's examples
+// cover it). The skill .claude/skills/verify-home/SKILL.md says how to read a failure.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readdirSync, existsSync } from 'node:fs';

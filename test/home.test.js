@@ -241,6 +241,24 @@ test('home: after a crash (no flush) the fetch saved while playing keeps the cop
   assert.ok(!logs.some((l) => l.event === 'home_evict'), 'kept: played under PLAYING_MS ago by what was written');
 });
 
+test('home: flush() (SIGTERM, every deploy) writes the last fetch the 30 s rule held back, so the restart reads it exactly (Everything-is-OK#1011)', async (t) => {
+  // A fetch 10 s after one written is held back by file()'s 30 s rule, so only flush() can write it: a plain "fetch, then
+  // flush" cannot fail, because that first fetch is written at once (verifier M-2, 2026-11-23).
+  const { clock, opts, first, a, meta } = pausedCopy(t);
+  clock.ms += 60_000;
+  const written = clock.ms;
+  await first.file(a.token, 'seg0.ts');
+  assert.equal(meta().lastGetMs, written, 'the first fetch is written at once');
+  clock.ms += 10_000;
+  const last = clock.ms;
+  await first.file(a.token, 'seg1.ts'); // the player's last fetch; then it pauses
+  assert.equal(meta().lastGetMs, written, '10 s later: held back by the 30 s rule');
+  clock.ms += 5_000;
+  first.flush(); // SIGTERM (server.js shutdown)
+  assert.equal(meta().lastGetMs, last, 'flush writes the held-back fetch');
+  assert.equal(new Home(opts).byToken.get(a.token).lastGetMs, last, 'and the restart reads it back, not 10 s behind');
+});
+
 test('home: a reloaded copy nobody fetched is not counted as played; its meta.json says lastGetMs 0 (Everything-is-OK#1011)', async (t) => {
   const { clock, logs, opts, first, a, meta } = pausedCopy(t);
   clock.ms += 60_000;

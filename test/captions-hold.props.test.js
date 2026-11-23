@@ -411,7 +411,9 @@ export async function runOne(seed, ops, variant = WORLD, { faults = FAULTS, pin 
           // sources held the list is NOT excused. (The answer must also not be a usable one; that only narrows.) The answer's
           // kind is kept for the split. (a): that ask came before the play was counted (during the hold); (b): after it.
           const last = asks.at(-1);
-          if (world.ccTicket === world.ticket && !world.ccListLoaded && !world.ccNone && world.ccUnavailable && last && last.asked === world.ticket && !last.usable && last.srcDown) {
+          const shape = world.ccTicket === world.ticket && !world.ccListLoaded && !world.ccNone && world.ccUnavailable && Boolean(last) && last.asked === world.ticket;
+          b3.last = last ? { ...last } : null; b3.shape = shape; // returned for the sweeps' split of B3 failures (records only; they decide nothing)
+          if (shape && !last.usable && last.srcDown) {
             b3.excused = last.afterCount ? 'b' : 'a'; b3.excusedKind = last.kind;
           }
         }

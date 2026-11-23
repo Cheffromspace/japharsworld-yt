@@ -220,27 +220,34 @@ is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can
     - today, opt1, opt1x, opt2, opt2x: no budget. Highest honest share 31.3 % (svcNotReady2, stragglers off; 10 of 32 at
       60). Every variant tried that moves these options' excused share is caught by B3 itself (VSFirstListNotReady,
       VSTwoListsNotReady, droplist), so a budget there would guard nothing seen.
-- **Today B1, B2 and B3 fail** (B4 holds), each path a recorded seed in `FAILS_TODAY`, run with explicit options so no
-  switch moves them:
-  - three answers for another ticket (#996; 1010);
-  - a list asked with CC on whose lookup found nothing yet (#996's item 4; 1069);
-  - a 404 `nothing_playing` with CC on in a fresh shard (1042);
+- **#996's service half is in** (2026-11-23, service-cap1; `src/server.js` `playerAsked`): a caption ask is answered about
+  the video ticket the asking client's player asked for last in the shard, held or counted (the svcHeld option, per
+  client). Against it, today's copy (= the released world, v2026.11.22) still fails B1, B2 and B3 by WORLD paths only,
+  each a recorded seed in `FAILS_TODAY`, run with explicit options so no switch moves them:
+  - a list asked with CC on whose lookup found nothing (#996's item 4, NoCaptions at cs:3656; 1069);
   - a track that keeps failing, LoadNative after its waits (cs:3675-3678; 1170);
-  - a list ask whose caption fetch fails three times, 502 (cs:2264-2266; 1027);
-  - B1 by #996's path (1016);
-  - B3 strict, "nopicker" (999).
+  - a list ask whose caption fetch fails three times, 502 (cs:2264-2266; 1120, which replaced 1027: the service half
+    moved 1027 off that path);
+  - B3 strict, "nopicker" (999: now a not-ready answer for the held ticket, before a 404).
+  The seeds that failed by a SERVICE path before it (on staging a4b15cd) are asserted to pass (`FIXED_BY_SERVICE`):
+  three answers for another ticket (#996; 1010), a 404 `nothing_playing` with CC on in a fresh shard (1042), B1 by
+  another ticket's answers after a straggler's play (1016). In 2,000 seeds of today's copy (stragglers on) no check
+  fails by another ticket's answer or a 404 any more.
   So B1-B3 are `test.todo`, and a plain test asserts that the recorded seeds still fail: the file goes red when the
   code under it changes. The orderings printed with a failure (and the ones for the world's replay) come from a
   shrink that keeps the failure's PATH, not only the failing check (verifier round 2, L-b: before, seed 1027's three
-  502s shrank to a 404). Shrunk: 1010 3 ops, 1069 3, 1042 2, 1170 2, 1027 5, 1016 3, 999 1.
-- **When #996's fix lands**, its fixer drops the `FAILS_TODAY` test and turns the todos into plain tests (today's
-  `FUZZ_PROMISES=1` run, with `nopicker` kept as long as the #166 design stays). For a world-side fix they change the
-  copy (or make the matching `VARIANTS` entry the default) in the same batch as the C#, and the world's own replay
-  scenario must then pass in the test editor.
+  502s shrank to a 404).
+- **A straggler is another visitor's player** (since 2026-11-23): its requests carry an `x-forwarded-for` from
+  loopback, so the service sees another client. `FUZZ_STRAGGLER_SAME=1` sends it as the room's own client, as before;
+  today's service and the shard-level svcHeld option read no client, so their cells do not move with it.
+- **When #996's world half lands**, its fixer drops the `FAILS_TODAY` test and turns the todos into plain tests (today's
+  `FUZZ_PROMISES=1` run, with `nopicker` kept as long as the #166 design stays). They change the copy (or make the
+  matching `VARIANTS` entry the default) in the same batch as the C#, and the world's own replay scenario must then pass
+  in the test editor.
 
 | Switch | What it does | In the default `npm test` run? |
 |---|---|---|
-| (none) | the `FAILS_TODAY` seeds, then a 60-seed sweep of today's copy that must keep B4 and still fail B1 and B2 somewhere (diagnostic counts for B3); "fail somewhere" is asserted only from 20 seeds, so `FUZZ_SEED=n` alone is green | yes, the only test that runs |
+| (none) | the `FAILS_TODAY` seeds and the `FIXED_BY_SERVICE` seeds, then a 60-seed sweep of today's copy that must keep B4 and still fail B1 and B2 somewhere (diagnostic counts for B3); "fail somewhere" is asserted only from 20 seeds, so `FUZZ_SEED=n` alone is green | yes, the only test that runs |
 | `FUZZ_PROMISES=1` | runs B1-B4 as plain tests with the known exclusions, plus the `nopicker` budget | no |
 | `FUZZ_STRICT=1` | the same with no exclusion: B3 counts every judged seed | no |
 | `FUZZ_KNOWN=a,b` | the exclusions to keep (default `nopicker`; empty keeps none) | default `nopicker` |
@@ -248,9 +255,10 @@ is a hand-written COPY of the world's caption-ask rule, so unlike pilot A it can
 | `FUZZ_OTHER=0` | no stragglers | stragglers on |
 | `FUZZ_FAULTS=0` | no faults (no 502 lookups, no failing track fetches) | faults on |
 | `FUZZ_TICKET_PIN=1` | TICKET_PIN on; the fake's `peek` answers a ready build, so a played ticket picked again is answered from its pin | off |
+| `FUZZ_STRAGGLER_SAME=1` | a straggler asks as the room's own client (no `x-forwarded-for`), as before 2026-11-23 | another client |
 | `FUZZ_SEED`, `FUZZ_SEEDS`, `FUZZ_STEPS` | the seed range and length | 996, 60 seeds, 16 steps |
 
-  Only the value `1` turns `FUZZ_PROMISES`, `FUZZ_STRICT` and `FUZZ_TICKET_PIN` on; `0` or anything else is off. Only
+  Only the value `1` turns `FUZZ_PROMISES`, `FUZZ_STRICT`, `FUZZ_TICKET_PIN` and `FUZZ_STRAGGLER_SAME` on; `0` or anything else is off. Only
   `0` turns `FUZZ_OTHER` and `FUZZ_FAULTS` off. (Until 2026-11-23 any value turned the first three on, so
   `FUZZ_TICKET_PIN=0` ran with the pin: verifier round 2, L-a.)
 

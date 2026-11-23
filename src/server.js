@@ -5,7 +5,8 @@
 //                                                      that video's ticket answer instead (s.m3u8: as a .m3u8 ticket)
 //   GET /v1/<shard>/<n>                                ticket: 302 to the video (Tunelio HD link, or YouTube), JPEG (thumbnail sheet),
 //                                                      JSON (next page)
-//   GET /v1/<shard>/cc/<lang>                          captions for the video last played in this shard (lang: VRChat code or
+//   GET /v1/<shard>/cc/<lang>                          captions for the video the asking client's player asked for last here,
+//                                                      held or played (#996), else the one last played in this shard (lang: VRChat code or
 //                                                      "native"), with the list of the video's caption tracks (names in <lang>);
 //                                                      `lines` (cue timing) and `chunks` (readable lines with word timing,
 //                                                      src/blocks.js), from the first source in src/captionchain.js that answers
@@ -286,6 +287,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     // pcYoutube's marks hold a client code (Everything-is-OK#782): gone when their window ends, and at the day's key
     // change at the latest (a new day's code never matches one, so nothing changes for anyone).
     for (const [k, v] of pcYoutube) if (v.until <= now || v.day !== ipKeys.day) pcYoutube.delete(k);
+    for (const [k, v] of playerAsked) if (now - v.at >= CAPTION_ASKED_MS || v.day !== ipKeys.day) playerAsked.delete(k); // #996
     pruneCaptions(now);
   }
   setInterval(sweep, 60_000).unref();
@@ -816,6 +818,26 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
   // UA, then gets youtube.com too. The minute sweep drops a mark when its window ends or the day's key changes, whichever
   // comes first (Everything-is-OK#782): it holds a client code, and the privacy page lists how long.
   const pcYoutube = new Map();
+  // Everything-is-OK#996: the video ticket each client's player asked for last in a shard ("shard:code" → { n, id, at,
+  // day }), so a caption ask from that client is answered about it while its play is still held. The world asks for the
+  // list as soon as its player starts loading (cs:3373) and gives up on the third answer for another ticket (cs:3645);
+  // the shard's lastPlayed is only set when a play's answer goes out, after a hold of up to 90 s (2026-11-22 on staging:
+  // held 30 s, three asks answered about the previous video, a false "No captions"). Per client, not per shard: the
+  // world's caption ask is about the ticket its OWN player loaded (cs:3343, cs:3362), and another visitor's player
+  // asking an older ticket (a straggler) must not move it (the captions test's seed 1016). Replaced only by that
+  // client's next player request: a dropped hold counted late (#1029) does not move it. Memory only; the minute sweep
+  // drops a record after CAPTION_ASKED_MS, or when the day's key changes (it holds a client code, as pcYoutube does).
+  const playerAsked = new Map();
+  const CAPTION_ASKED_MS = 3 * 3600_000;
+  const CAPTION_ASKED_MAX = 5000;
+  function notePlayerAsked(req, shard, n, id) {
+    const code = clientKey(req);
+    if (!code) return;
+    const k = `${shard}:${code}`;
+    playerAsked.delete(k); // re-inserted last, so the oldest come first when the cap trims
+    playerAsked.set(k, { n, id, at: Date.now(), day: ipKeys.day });
+    if (playerAsked.size > CAPTION_ASKED_MAX) for (const old of playerAsked.keys()) { playerAsked.delete(old); if (playerAsked.size <= CAPTION_ASKED_MAX) break; }
+  }
   function pinned(key, data, { touch = true } = {}) {
     if (!config.ticketPin) return null;
     const p = pins.get(key);
@@ -1327,6 +1349,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         if (hlsTicket && body?.state === 'youtube' && overOwnLimit(body.reason)) return dailyLimitAnswer(res, kind, shard, n, t, body.reason);
         return json(res, 200, body);
       }
+      // #996: whatever this player is answered below, a caption ask from its client is about this ticket from now on.
+      notePlayerAsked(req, shard, n, t.data.id);
       // A player (VRChat's resolver, then AVPro). The resolver gives up after 20 s, so it is held only briefly and
       // then told "this is not a video" (a plain page), which makes VRChat hand the URL straight to AVPro.
       const resolver = kind === 'ytdlp';
@@ -1824,16 +1848,28 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     else { metrics.inc('cc_list'); metrics.inc('cc_list_lang', raw === 'native' ? 'native' : normalizeLang(raw)); }
     if ((byTrack && typeof captions.track !== 'function') || (listOnly && typeof captions.tracks !== 'function')) { metrics.inc('cc_unavailable', 'no_tracks'); return fail(res, 404, 'no_tracks', 'Caption tracks are not available.'); }
     const lang = byTrack || listOnly ? normalizeLang(url.searchParams.get('l')) : raw === 'native' ? 'native' : (Object.hasOwn(LANGS, raw) ? raw : normalizeLang(raw));
-    const last = store.lastPlayed(shard);
+    // #996: the ticket this client's player asked for last (held or counted), while its ticket still names that video
+    // (tickets are bound again by later searches); else the shard's last counted play, as before.
+    const mine = playerAsked.get(`${shard}:${clientKey(req)}`);
+    const minesTicket = mine ? store.get(shard, mine.n) : null;
+    const asked = minesTicket?.kind === 'video' && minesTicket.data.id === mine.id ? mine : null;
+    const played = store.lastPlayed(shard);
+    const last = asked ? { n: asked.n, videoId: asked.id } : played;
     if (!last) { metrics.inc('cc_unavailable', 'nothing_playing'); return fail(res, 404, 'nothing_playing', 'Nothing from search has played here yet.'); }
+    // Logged only when the answer is about another ticket than the last counted play (the tester's line beside a held play).
+    const held = asked && (asked.n !== played?.n || asked.id !== played?.videoId)
+      ? (reason) => logJson({ event: 'captions_held', shard, n: asked.n, id: asked.id, kind: byTrack ? 'track' : listOnly ? 'tracks' : raw === 'native' ? 'native' : 'list', held: Date.now() - asked.at, reason })
+      : null;
     try {
       const c = byTrack ? await captions.track(last.videoId, Number(raw), lang) : listOnly ? await captions.tracks(last.videoId, lang) : await captions.get(last.videoId, lang);
+      held?.(c.available ? null : c.reason ?? 'none');
       if (!c.available) metrics.inc('cc_unavailable', c.reason ?? 'none');
       else if (byTrack) metrics.inc('cc_track_lang', String(c.key ?? '').replace(/-orig$/, ''));
       if (!c.available && c.reason === 'temporarily_unavailable') videoFails.count('captions', last.videoId);
       return json(res, 200, { v: API, shard, t: last.n, ...c });
     } catch (err) {
       log(JSON.stringify({ at: new Date().toISOString(), event: 'captions_error', id: last.videoId, lang, message: errorLine(err) }));
+      held?.('failed');
       metrics.inc('cc_unavailable', 'failed');
       videoFails.count('captions', last.videoId);
       return fail(res, 502, 'captions_failed', 'Captions are not available right now.');
@@ -2034,7 +2070,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     }
   }
   // kept(): everything that remembers a visitor past the request, for the tests that check no raw IP is in it.
-  const kept = () => ({ hits, ticketHits, playerHits, lookupWarms, outcomeHits, allowance, spend, adaptive, playback, pcYoutube });
+  const kept = () => ({ hits, ticketHits, playerHits, lookupWarms, outcomeHits, allowance, spend, adaptive, playback, pcYoutube, playerAsked });
   return Object.assign(handler, { relay, checkWorkers, sweep, metrics, probe, refusals, home, kept, logJson });
 }
 

@@ -34,13 +34,16 @@ This service works within that rule:
 - **Shards.** Each instance picks a shard at random (synced), so instances rarely share tickets.
 - **Pinning.** A video ticket that has been played is pinned for `PIN_HOURS` and skipped when tickets are
   handed out, so late joiners loading the synced ticket get the same video.
-- **Captions.** `GET /v1/<shard>/cc/<lang>` returns captions for the video last played in that shard, in the
-  visitor's language, plus `tracks`: every caption track the video has (uploader tracks first, then auto
-  captions), named in `<lang>`. `GET /v1/<shard>/cc/<i>` returns track *i* of that list (the tablet's picker).
-  `lang` is a VRChat client language or `native`. The response carries the ticket `t` so the world can check
-  it matches what's on the screen. Captions come from the first source in a chain that answers
-  (`src/captionchain.js`): a relay worker's yt-dlp on a residential connection (free, and YouTube's json3 carries
-  the start of every word in auto-generated tracks), yt-dlp on this server when `CAPTION_LOCAL_YTDLP=on` (or
+- **Captions.** `GET /v1/<shard>/cc/<lang>` returns captions for the video the asking visitor's own video player asked
+  for last in that shard, while it is still being prepared too (Everything-is-OK#996: the world asks as soon as its
+  player starts loading, and a play can be held for up to 90 s), or, when that visitor's player has asked nothing (or
+  the ticket now holds another video), for the video last played in that shard; in the visitor's language, plus
+  `tracks`: every caption track the video has (uploader tracks first, then auto captions), named in `<lang>`.
+  `GET /v1/<shard>/cc/<i>` returns track *i* of that list (the tablet's picker). `lang` is a VRChat client language
+  or `native`. The response carries the ticket `t` so the world can check it matches what's on the screen.
+  Captions come from the first source in a chain that answers (`src/captionchain.js`): a relay worker's yt-dlp on a
+  residential connection (free, and YouTube's json3 carries the start of every word in auto-generated tracks),
+  yt-dlp on this server when `CAPTION_LOCAL_YTDLP=on` (or
   without a Tunelio key), then Tunelio's `/transcript` (6 credits per track, segment timing only). Every answer
   has the same shape: `lines` (cue timing, as before) and `chunks` (readable lines of about 42 characters, broken
   at sentences, clauses and pauses, each with the time and position of every word; `src/blocks.js`), plus

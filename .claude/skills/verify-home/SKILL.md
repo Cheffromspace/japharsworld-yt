@@ -1,0 +1,109 @@
+---
+name: verify-home
+description: Check a change to the home relay's session bookkeeping (src/home.js, the Home class) against its stated promises with the seeded property test test/home.props.test.js. Use whenever a diff touches src/home.js, the home parts of src/server.js that call Home (start, put, file, giveUp, sweep, flush), or test/home.props.test.js itself, and before moving this skill's coverage commit.
+---
+
+# verify-home
+
+`test/home.props.test.js` drives the REAL `Home` class (`src/home.js`) with seeded random sequences of operations and,
+after every step, checks four promises the code's own comments make. It complements `test/home.test.js` (example tests):
+a property test checks every sequence it draws, within the bounds below, not only the cases someone thought of. A pass
+covers those sequences at those sizes, not the whole service.
+
+## Does my change touch the verified code?
+
+Run `git log --oneline <coverage commit>..HEAD -- src/home.js test/home.props.test.js` with the coverage commit below.
+Any commit listed means this check needs a run and, if the change was intended, the re-read in "Moving the coverage
+commit". A change elsewhere in the service (server.js routing, the relay worker) is not covered by it.
+
+## Run it
+
+```sh
+node --test test/home.props.test.js                    # 100 seeds x 150 steps, about 3 s; part of npm test and CI
+FUZZ_SEEDS=2000 node --test test/home.props.test.js    # the sweep: one process, about 1 min, prints reach counts
+FUZZ_SEED=1234 node --test test/home.props.test.js     # one seed; a failure prints its shrunk ops and this command
+FUZZ_STRICT=1 node --test test/home.props.test.js      # no exclusions: the open findings below fail again
+FUZZ_STEPS=400 FUZZ_SEEDS=500 node --test test/home.props.test.js   # longer sequences
+```
+
+Seeds start at 1009 (FUZZ_SEED moves the start). A run is reproducible per platform: the session tokens are seeded in the
+test, and the order `#load` reads folders in is the file system's (sorted on Windows, hashed on Linux).
+
+## What it checks (the coverage)
+
+Every check reads the test's own records (when it fetched each token, the starts it saw, the bytes it put), not Home's
+fields. The functions named are `Home`'s in `src/home.js`.
+
+- **A1 no delete under a player or a live build.** `start`, `sweep` and `#evictFor` (through `start` and `put`) never
+  remove a session a player fetched in the last 5 min (PLAYING_MS) or one building or uploading and not stale
+  (STALE_MS). A restart (`flush`, then a new `Home` on the same dir: `#load`) keeps exactly the ready, not-stale
+  sessions (ready as `#playlist` reads it from disk: a listed segment and a stored one) and the `cut_short` failures
+  with files, and drops the rest (allowing for the 30 s by which `#write` may lag `lastPutMs` in meta.json).
+- **A2 the maps agree.** Every `sessions` entry sits under its own `id@quality` and is in `byToken`. An entry only in
+  `byToken` (set aside by `start`, or a reloaded `cut_short`) is gone at the first `sweep` once nobody fetched it for 5
+  min. The token folders on disk are exactly `byToken`'s. Each session's `mb` equals the bytes the test put.
+- **A3 the limits, at every start.** Real (not cached) builds per Chicago day <= `dailyBuilds` and the day's downloaded
+  MB under `dailyMb` (`capped`, `limit`); real builds in the rolling hour <= `hourBuilds`; the hour's expected MB within
+  `hourMb` unless the hour is empty or the video is `hourMbExemptSeconds` or longer (`blocks`); nothing over
+  `itemMaxMb`; at least `startGapMs` since the last real build, except an AV1 play while not `hammering`; a worker
+  online and its live streams <= its `mediaMax` (`worker`, `#active`). Stated exceptions it allows: a cache upload
+  leaves the day, the hour and the gap (`put`); a restart forgets the hour and the gap (`recent`, `lastStartMs`).
+- **A4 the disk.** After a start that makes a session, free MB minus what the unfinished builds will still grow is at
+  least `freeFloorGb` (`#room`, `#expectedMb`); after any `sweep`, either the expected total is within `maxGb` or no
+  finished, unplayed session is left.
+- **Not covered:** the half-floor stop in `put` (free space under `freeFloorGb` x 500 while building); segment holds,
+  `want()` and `#far`; the playlist text `file()` serves (absolute links, START, EVENT to VOD); `eta`, `settle`, `wait`;
+  `other`, `isUneven`, `markUneven`; `load()` and `state()`; the HTTP routes in `src/server.js` that call `Home`.
+
+Bounds: 150 steps per sequence, 100 seeds in `npm test`, 2,000 in a sweep. Sizes are scaled down so the limits bite in a
+few steps: segments 20-150 KB, videos 1-5 s with 2-6 segments of 4 s, `maxGb` 1.5-3 MB, `freeFloorGb` 0-2 MB, a disk
+of 4-10 MB, two media workers taking 1-3 streams. The fake worker sends only what `relay/media.js` sends: the whole
+predicted playlist or a growing one that only grows, never both, then one closing playlist (every segment, or cut back
+to those sent in order, `closedAt`), after which its stream uploads nothing more.
+
+**Drift points** (hand copies in the test that must follow the code): `expectedOf` is `#expectedMb` written out (it is
+private, and `state()` rounds it to whole MB); the constants PLAYING_MS, STALE_MS and the 30 s meta save are copied by
+name. A change to any of them in `src/home.js` means changing the test in the same commit.
+
+## Reading a failure
+
+A failure prints the property, the message in the code's words (`t0`, `t1` are sessions in the order they were made),
+the seed's settings, the sequence shrunk to the fewest ops that still fail that property, and the command to rerun it.
+Read the shrunk ops as a story: each line is one call on `Home` (`start`, `put`, `get` = `file`, `sweep`, `giveUp`), a
+worker event, the clock, or a restart.
+
+**A real bug or a wrong property?** Re-read the comment or decision the property cites (in `src/home.js`, at the
+function named). If the code does what its comment says and the property says something else, the property is wrong:
+change it only together with the comment or decision that shows the intent, and say so in the commit. If the code
+breaks what its comment promises, it is a finding: report it with the seed and the shrunk ops, never weaken the
+property or add an exclusion to make it pass. If the failing ops are something the real worker or server never does
+(read `relay/media.js` and `src/server.js`), the generator is wrong: hold it to what they do, and say so.
+
+**Open findings** (each excused by one narrow, named exclusion in `KNOWN`, with a `test.todo` naming it; `FUZZ_STRICT=1`
+shows them failing):
+- `reload`, Everything-is-OK#1011: `#load` rebuilds sessions with `lastGetMs` 0 (`#session`; only a `cut_short` one is
+  stamped), so a sweep after a restart can evict a finished session a player is on. Excused only for a session the
+  latest restart reloaded and no player fetched since. Strict seeds: 1027, 1105.
+- `recached`, Everything-is-OK#1013: `s.cached` is not saved in meta.json, so after a restart a cache upload takes its
+  cache hit again (`put`) and the day lets one more real build through. Excused only up to the number of repeated cache
+  hits taken that day. Strict seed: 1116.
+
+When a fix for one lands: remove its name from `KNOWN` (and its branch in the check), turn its `test.todo` into a plain
+test or delete it, run the sweep with `FUZZ_STRICT=1`, and update this list. The `midnight` exclusion in the code (a
+cache hit taken off the day it is marked) is off by default: no seed has shown it.
+
+## Checking the check
+
+Each property has been seen failing on a deliberately broken `src/home.js` (verifier rule "a new test fails on the old
+code"); after a change to the test, break one property on purpose and confirm the run fails, for example
+`start` setting aside a played session (`if (old && this.#playing(old))` → `if (old && false)`) must fail A1.
+Put `src/home.js` back with `git diff --quiet src/home.js` confirming it.
+
+## Moving the coverage commit
+
+Move it only after (1) re-reading every function listed under the coverage at the new commit and confirming the
+properties and the drift points still describe them, (2) `FUZZ_SEEDS=2000 node --test test/home.props.test.js` passing
+(or failing only on the open findings above), and (3) recording the new commit here in the same commit as any test
+change. A diff that changes `src/home.js` and leaves this unchanged says why in its message.
+
+**Coverage commit:** `9259b0b` (src/home.js blob `fbdd29791325e3a35608f5655d9352cc81ce5039`), confirmed 2026-11-22.

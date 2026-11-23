@@ -170,6 +170,12 @@ that ships. It moves in one commit once that branch is on staging, after the thr
 
 ## Pilot B: captions around a held play (test/captions-hold.props.test.js)
 
+**The numbers in this section** (the budgets, the reach list, the variants' and B4's counts) were measured against the
+service BEFORE #996's service half (f216ef5, 2026-11-23): "today's service" there means a4b15cd / 9259b0b. They were not
+re-run against the change, so they do not all reproduce from this tree; only the FAILS_TODAY / FIXED_BY_SERVICE seeds
+below are. The batch report of #996's service half has the option table's cells for the change; #996's phase 3
+re-measures the rest with the world's rule as built.
+
 A second seeded test, for Everything-is-OK#996. The service is the real `createApp` with a real `Store`. `playback` is
 faked so a player's ticket request is held until the test lets it go. `captions` answers as a failed lookup does
 (`temporarily_unavailable`, no tracks) until the test lets its sources succeed. The real lookup awaits its sources and

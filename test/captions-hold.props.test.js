@@ -61,7 +61,8 @@ const PROMISES = process.env.FUZZ_PROMISES === '1';
 export const KNOWN = new Set(STRICT ? [] : (process.env.FUZZ_KNOWN ?? 'nopicker').split(',').filter(Boolean));
 // The nopicker exclusion's budget, per world option: at most this share of the B3-judged seeds whose video has captions
 // (the only seeds it can excuse) may be excused by it in one sweep. Set from the honest cells (2026-11-23, at the test of
-// this commit; 500 seeds and the default 60; today's service, svcHeld and svcNotReady2; stragglers off and on):
+// this commit; 500 seeds and the default 60; today's service, svcHeld and svcNotReady2; stragglers off and on; "today's
+// service" in this file's numbers is the service BEFORE #996's service half, f216ef5, and none were re-run since):
 //   opt2xs  highest honest share 18.1 % at 500 seeds, 6 of 32 (18.8 %) at the default 60, 16.1 % at 2,000 (svcHeld):
 //           budget 25 %. It sees opt2xs losing its start ask with svcHeld and no stragglers (26.5 % at 500, 10 of 32 at
 //           60), which no check sees: every seed it moves is excused. It MISSES that variant with stragglers on (21.3 %,

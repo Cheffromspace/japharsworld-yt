@@ -45,7 +45,7 @@ Before any push:
    branches drift apart again).
 
 What a deploy does (`deploy/update.sh`): it decides what to restart from the changed paths. Commits touching only
-`docs/`, `monitor/`, `relay/`, `metrics/`, `public/`, `test/`, `tools/`, `claude/`, `grafana/`, `infra-check/`,
+`docs/`, `monitor/`, `relay/`, `metrics/`, `public/`, `test/`, `tools/`, `claude/`, `.claude/`, `grafana/`, `infra-check/`,
 `README.md`, `CLAUDE.md`, `.gitignore`, `.github/` or the related `deploy/` files don't restart the search service; anything else
 does (`src/`, the packages, the env example, a new file at the root). A restart drops held players and builds in
 flight, so it waits while the service is busy (up to 30 minutes); then `/healthz` is checked for 20 s, and a failure

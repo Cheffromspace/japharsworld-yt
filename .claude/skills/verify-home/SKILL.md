@@ -1,6 +1,6 @@
 ---
 name: verify-home
-description: Check a change to the home relay's session bookkeeping (src/home.js, the Home class) against its stated promises with the seeded property test test/home.props.test.js. Use whenever a diff touches src/home.js, the home parts of src/server.js that call Home (start, put, file, giveUp, sweep, flush), or test/home.props.test.js itself, and before moving this skill's coverage commit.
+description: Check a change to the home relay's session bookkeeping (src/home.js, the Home class) against its stated promises with the seeded property test test/home.props.test.js, and a change to the captions exchange around a held play with test/captions-hold.props.test.js. Use whenever a diff touches src/home.js, the home parts of src/server.js that call Home (start, put, file, giveUp, sweep, flush), the captions route or the ticket route's markPlayed in src/server.js, either test file, or the world's caption-ask lines the captions test copies, and before moving this skill's coverage commit.
 ---
 
 # verify-home
@@ -133,3 +133,29 @@ properties and the drift points still describe them, (2) `FUZZ_SEEDS=2000 node -
 change. A diff that changes `src/home.js` and leaves this unchanged says why in its message.
 
 **Coverage commit:** `9259b0b` (src/home.js blob `fbdd29791325e3a35608f5655d9352cc81ce5039`), confirmed 2026-11-22.
+
+## Pilot B: captions around a held play (test/captions-hold.props.test.js)
+
+A second seeded test, for Everything-is-OK#996. The service is the real `createApp` with a real `Store`; `playback` is
+faked so a player's ticket request is held until the test lets it go, and `captions` answers "not ready"
+(`temporarily_unavailable`) until its sources answer. The world side is a hand-written COPY of the world's caption-ask
+rule, so unlike pilot A it can drift from the code it stands for.
+
+- **Promises.** B1: if the visitor stayed and the video has captions, the world ends holding the playing ticket's list
+  (and lines, CC on). B2: "No captions" only follows an answer for that ticket that says `no_captions`.
+- **Today both fail**, by three paths (each a recorded seed in `FAILS_TODAY`): three answers for another ticket (#996),
+  a list asked with CC on before the sources answered (#996's item 4), and a 404 `nothing_playing` with CC on in a fresh
+  shard. So the promises are `test.todo`, and a plain test asserts that the recorded seeds still fail: the file goes red
+  when the code under it changes. `FUZZ_STRICT=1` runs the promises as plain tests.
+- **When #996's fix lands**, its fixer: drops the `FAILS_TODAY` test, turns the two todos into plain tests (the strict
+  test), and for a world-side fix changes the copy (or makes the matching `VARIANTS` entry the default) in the same batch
+  as the C#; the world's own replay scenario must then pass in the test editor.
+- **The copy and its drift.** It mirrors `Assets/EverythingIsOK/Scripts/EverythingIsOKYouTubeSearch.cs` in the world repo
+  as read at world commit `eddf7f5a` (2026-11-22): lines 39 and 1405-1414 (only spacing, so not modelled), 390, 2079-2088,
+  2258-2267, 3145-3150, 3329-3335, 3338-3388, 3544-3548, 3571-3575, 3635-3700, 3719-3723; each line of the copy names
+  its `cs:N`. Before trusting a pass, check those lines are unchanged (`git log eddf7f5a..HEAD --` that file in the world
+  repo); if they changed, re-read the copy against the new C#, line by line, and move the commit named here.
+- **Service side covered:** `captionIn` in `src/server.js` (it answers for `store.lastPlayed`), the ticket route's
+  `markPlayed` after the hold, and the store. A change there means a run of this file and of its strict form.
+- **Run:** `node --test test/captions-hold.props.test.js` (60 seeds, about 3 s); `FUZZ_STRICT=1 FUZZ_SEEDS=2000` for the
+  promises; `FUZZ_WORLD=opt2x` (say) for one of #996's options in the copy; `FUZZ_OTHER=0` without stragglers.

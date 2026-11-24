@@ -1,6 +1,9 @@
 {
  "notice": "",
  "slots": {
+  "baker-wow": {
+   "hidden": true
+  },
   "borneo-jungle-night": {
    "title": "Lonely Lakeside Campfire"
   },

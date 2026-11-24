@@ -86,6 +86,15 @@ test('privacy page: the owner\'s sentence for these counts is on the page as giv
   assert.match(page, /updated 2026-11-21</);
 });
 
+test('privacy page: the owner\'s two sentences for the captions record (Everything-is-OK#996, approved 2026-11-24) are on the page as given, in their places', () => {
+  const page = readFileSync(new URL('../public/privacy.html', import.meta.url), 'utf8');
+  // The approved strings, word for word; the text around each pins where it goes in "IP addresses and limits".
+  const kept = 'after your video player asks for a video, with that room\'s ticket number and the video, for 3 hours or until the end of the day, whichever comes first (so the captions your world asks for are about the video your own player is loading, even while it is still being prepared);';
+  const use = 'The same code also lets captions follow the video your own player is loading.';
+  assert.ok(page.includes(`(so your PC's other player is sent there too); ${kept} and, for a code made from your address`), 'the kept-for clause, before the last one');
+  assert.ok(page.includes(`a daily code made from your address with a secret key. ${use} The key is random`), 'the use, after the code is named');
+});
+
 test('http_5xx: the routes are the server\'s own names, and the by-design 5xx answers are the four the code gives on purpose', () => {
   const src = readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
   const named = [...new Set([...src.matchAll(/\broute = '([a-z-]+)'/g)].map((m) => m[1]))].sort();

@@ -254,13 +254,16 @@ pick). The copy's clock moves only by LoadGap (5.2 s) per slot; the self re-asks
 | `FUZZ_OTHER=0` | no stragglers | stragglers on |
 | `FUZZ_FAULTS=0` | no faults (no 502 lookups, no failing track fetches) | faults on |
 | `FUZZ_TICKET_PIN=1` | TICKET_PIN on; the fake's `peek` answers a ready build, so a played ticket picked again is answered from its pin | off |
-| `FUZZ_STRAGGLER_SAME=1` | a straggler asks as the room's own client, as before 2026-11-23 | another client |
+| `FUZZ_STRAGGLER_SAME=1` | a straggler asks as the room's own client, as before 2026-11-23: B1 and B3 red by design (it moves that client's record to the old ticket: 10 and 7 of the default 60); the released check is skipped | another client |
 | `FUZZ_SEED`, `FUZZ_SEEDS`, `FUZZ_STEPS` | the seed range and length | 996, 60 seeds, 16 steps |
 
   Only the value `1` turns `FUZZ_STRICT`, `FUZZ_TICKET_PIN` and `FUZZ_STRAGGLER_SAME` on; only `0` turns `FUZZ_OTHER`
   and `FUZZ_FAULTS` off. `FUZZ_PROMISES` and `FAILS_TODAY` are gone (2026-11-23): the promises are plain tests.
 
-- **Run:** `node --import ./test/netguard.mjs --test test/captions-hold.props.test.js` (about 5 s). The default 60 seeds
+- **Run:** `node --import ./test/netguard.mjs --test test/captions-hold.props.test.js` (about 5 s). Smoke of each switch
+  on 2026-11-23: `FUZZ_WORLD=released` red on B1-B3 only; `FUZZ_STRICT=1` and `FUZZ_KNOWN=` red on B3 only;
+  `FUZZ_TICKET_PIN=1`, `FUZZ_FAULTS=0`, `FUZZ_OTHER=0` green; `FUZZ_DROP=startReask` red on 8 replays, the directed case
+  and B3. The default 60 seeds
   are a smoke run. A change to the captions route, the ticket route or the copy also gets the longer gate, which is
   also B4's and B5's: `FUZZ_SEEDS=2000 node --import ./test/netguard.mjs --test test/captions-hold.props.test.js`, with
   and without `FUZZ_OTHER=0` (verifier-props-b3, L-4). Measured 2026-11-23 on this tree: every check 0 at 2,000 seeds

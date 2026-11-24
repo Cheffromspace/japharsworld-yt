@@ -369,7 +369,9 @@ export async function runOne(seed, ops, variant = WORLD, { faults = FAULTS, pin 
   const idle = rng(seed ^ 0x1d1e)() < 0.5;
   const asks = [];
   // The play starts (core.IsPlaying; cs:3361): Captions() runs at once.
-  const start = () => { if (countedAt == null) countedAt = step; world.loading = false; world.playing = true; world.update(); };
+  // An ask Captions() decided before the count but not sent yet (a picker opened during the hold, say) is not the world's
+  // own after the count: preCount marks it for the allowance's records (count() below).
+  const start = () => { if (countedAt == null) { countedAt = step; preCount = world.want ? world.ticket : null; } world.loading = false; world.playing = true; world.update(); };
   const reached = async (p, before) => {
     let answered = false;
     p.then(() => { answered = true; });
@@ -401,10 +403,11 @@ export async function runOne(seed, ops, variant = WORLD, { faults = FAULTS, pin 
   // The allowance's records (the coordinator's call on seed 1978, 2026-11-23), from what this test sent and saw, never from
   // the copy's own counters: an EPISODE is a list ask (LoadList or LoadTracks) that starts afresh: not the world's retry of
   // the same load after a failed fetch or another ticket's answer (cs:3689, cs:2279: at most two in a row). An episode after
-  // the count is the world's own unless it is the stint's first ask or the first after a CC press (ccAskAgain, cs:3163).
+  // the count is the world's own unless it is the stint's first ask, the first after a CC press (ccAskAgain, cs:3163), or
+  // one Captions() decided before the count and sent after it (preCount).
   // listBefore: a list with tracks came before the first such episode (the start re-ask is then spent by it, cs:3704).
   let ep = { ticket: null, runFails: 0, prev: null, own: 0, listBefore: false, first: true };
-  let pressT = null, ccPressedSincePick = false; // a CC press with no list shown (it asks once more) and for which ticket; CC on for the playing ticket
+  let preCount = null, pressT = null, ccPressedSincePick = false; // a CC press with no list shown (it asks once more) and for which ticket; CC on for the playing ticket
   const pressed = () => { ccPressedSincePick = true; if (!world.ccListLoaded) pressT = world.ticket; };
   const count = (a, threw = false) => {
     if (!a) return;
@@ -419,10 +422,11 @@ export async function runOne(seed, ops, variant = WORLD, { faults = FAULTS, pin 
     if (ep.ticket !== a.asked) ep = { ticket: a.asked, runFails: 0, prev: null, own: 0, listBefore: false, first: true };
     const retryable = (k) => k === '502' || k === 'other' || k === 'other_ticket';
     const listAsk = a.load === LIST || a.load === TRACKS;
+    const pre = preCount === a.asked; preCount = null;
     const retry = ep.prev && ep.prev.load === a.load && retryable(ep.prev.kind) && ep.runFails < 3;
     let episode = null;
     if (listAsk && !retry) {
-      episode = ep.first ? 'first' : pressT === a.asked ? 'pressed' : countedAt != null ? 'own' : 'before';
+      episode = ep.first ? 'first' : pressT === a.asked ? 'pressed' : countedAt != null && !pre ? 'own' : 'before';
       if (episode === 'own') ep.own++;
       if (episode === 'pressed') pressT = null;
       ep.first = false; ep.runFails = 0;
@@ -798,7 +802,9 @@ test(`captions hold B4 (#996, ${what}): a video with no captions ends with no li
 test(`captions hold B5 (#996, ${what}): the world's asks for one ticket stay within its bound`, (t) => checkProp(t, 'B5'));
 // The released world against this service, in the plain run only: it keeps B4 and B5, and its remaining false "No
 // captions" come by world paths only (#996's service half took away those by another ticket's answer and by a 404).
-if (WORLD === 'new' && !DROP.size) {
+// Not under FUZZ_STRAGGLER_SAME=1: a straggler on the room's own client moves that client's record, so another ticket's
+// answers come back by design (service-cap1, claim 9).
+if (WORLD === 'new' && !DROP.size && !STRAGGLER_SAME) {
   test('captions hold (#996): the released world (v2026.11.22) against this service keeps B4 and B5, and no "No captions" comes from another ticket\'s answers or a 404', async (t) => {
     const s = { B2: [], B4: [], B5: [] }, paths = {};
     for (let seed = SEED; seed < SEED + SEEDS; seed++) {

@@ -86,7 +86,7 @@ const FREE_CHECK_MS = 5_000; // a build's uploads look at the disk's free space 
 // fetching from it. So a session a PC was moved off, that no player has fetched anything from (not one playlist or
 // segment: one fetch exempts it for good, so a paused player or a long buffer never looks idle), still uploading and
 // not held for (settle), is dropped idleMs after the later of the move, its ready time and the last time it was handed
-// to anyone (a player's answer or pin, a tablet's status: used()). Decided at the worker's next upload, which gets 410:
+// to anyone (a home answer or pin sent to a player, a tablet status that returned it: used()). Decided at the worker's next upload, which gets 410:
 // the worker kills ffmpeg (its YouTube download stops with it), keeps no half copy in its cache and frees its stream.
 // 30 s (HOME_IDLE_SECONDS' default; coordinator, 2026-11-27): a Quest handed the playlist fetched it 24 ms later
 // (staging 2026-11-27 18:25:26Z), a settle hold keeps the session (endWaiters), and every hand-out starts the window
@@ -362,7 +362,7 @@ export class Home {
     return Boolean(until && until >= this.now());
   }
 
-  // The session was just handed to someone (a player's answer or pin, a tablet's status): its idle time starts again.
+  // The session was just handed to someone (a home answer or pin sent to a player, a tablet status that returned it): its idle time starts again.
   used(s) { if (s) s.handedMs = this.now(); }
 
   // A session a PC was moved off that nobody has used (see the top): → true when idleMs has passed.
@@ -370,9 +370,12 @@ export class Home {
     if (!(this.idleMs > 0) || !s.leftMs || s.lastGetMs > 0 || s.ended || s.state !== 'ready' || s.endWaiters.length || s.waiters.length) return false;
     return this.now() - Math.max(s.leftMs, s.readyMs, s.handedMs) >= this.idleMs;
   }
-  // Dropped (see the top). The day counts what it expected the whole build to download (as a whole build counted it
-  // before #1069), since the worker's download runs ahead of its upload (up to ~80 MB/s down against ~12 up, the dev PC,
-  // 2026-11-27) and the server only sees the upload; the hour keeps the build and its expected MB, as before.
+  // Dropped (see the top). The day counts the build's EXPECTED MB (#expectedMb: its length at the quality's high-end
+  // rate, or its listed segments at the rate of those here), not what it really downloaded, which the server can't see:
+  // the worker's download runs ahead of its upload (40-70 MB/s down against ~12 up, the dev PC, 2026-11-27). That is a
+  // deliberate safe-side overcount (coordinator, 2026-11-27: the cap protects the home address): staging's two 60 s
+  // stops counted 1776 and 4129 MB where the real copies were ~842 and ~2565 MB, 1.6-2.1x (a whole build counts its real
+  // stored MB). The hour keeps the build and its expected MB, as before.
   #dropUnused(s) {
     const t = this.now();
     const expected = this.#expectedMb(s);

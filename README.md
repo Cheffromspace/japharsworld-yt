@@ -369,11 +369,11 @@ player started). A video of `HOME_STAY_HOURS` (3) or longer keeps a PC player on
 sending it to Tunelio for a seek bar (`home`/`stayed`; a Quest's `.m3u8` ticket follows `HOME_ANDROID_GROWING`; Everything-is-OK#577,
 2026-11-06: players of 10-12 h videos were held 72-90 s for Tunelio builds that then failed). A growing session a PC
 player was moved off (to Tunelio, kept for a Quest with `HOME_ANDROID_GROWING`) that no player has fetched anything from
-is dropped `HOME_IDLE_SECONDS` (30; 0 = off) after it was last handed to anyone (a player's answer or pin, a tablet's
-status): the worker's next upload gets 410, so it kills ffmpeg, stops downloading and uploading, and keeps no half copy;
+is dropped `HOME_IDLE_SECONDS` (30; 0 = off) after it was last handed to a player (a home answer or pin) or shown on a tablet's
+status: the worker's next upload gets 410, so it kills ffmpeg, stops downloading and uploading, and keeps no half copy;
 its stream slot frees at once and its files go (`home_idle`, `home`/`idle`; Everything-is-OK#1069, staging 2026-11-27: a
 2 h 19 min build uploaded for minutes with no fetch at all). One fetch exempts a session for good, so a paused player is
-never cut off. The day's MB count the build's expected size, as a whole build did; a Quest's next ask builds the video
+never cut off. A stopped build counts its EXPECTED MB against the day (length × the quality's rate; on staging 1.6-2.1× its real size, a deliberate safe-side count) and stays in the hour; a Quest's next ask builds the video
 at home again, a PC's still goes to Tunelio. Sessions are saved
 next to their files and reloaded on restart (a deploy doesn't cut plays off, and the worker retries its uploads through
 it); the day's use is saved too. Files are kept `HOME_KEEP_HOURS`, oldest finished first out above `HOME_MAX_GB`

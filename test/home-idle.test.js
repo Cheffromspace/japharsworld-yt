@@ -112,13 +112,13 @@ test('#1069: never dropped: no PC moved off it (a Quest-only build, a warm), a s
   assert.equal(setup(t).home.state().idleS, 60, '/ops/state shows the setting');
 });
 
-test('#1069: the day counts the expected MB of a dropped build (the download runs ahead of the upload), the hour keeps the build', (t) => {
+test('#1069: the day counts a dropped build at its EXPECTED MB (length x the quality rate; a deliberate overcount, 1.6-2.1x the real size on staging), the hour keeps the build', (t) => {
   const { home, clock, seg } = setup(t);
   const expected = VIDEO.seconds * 0.57;
   assert.ok(home.state().today.mb < 1, 'before: only what was uploaded');
   clock.now += IDLE + 1000;
   seg(1);
-  assert.equal(home.state().today.mb, Math.round(expected), 'as a whole build counted it before #1069');
+  assert.equal(home.state().today.mb, Math.round(expected), 'the expected MB, not the real download (which the server cannot see)');
   assert.equal(home.state().today.builds, 1);
   assert.equal(home.state().hour.builds, 1);
   assert.equal(home.state().hour.mb, Math.round(expected));
@@ -273,4 +273,17 @@ test('#1069: HOME_IDLE_SECONDS defaults to 30 s (coordinator, 2026-11-27: 60 s s
   assert.equal(base.homeIdleMs, 30_000);
   const relay = { enabled: true, capable: () => [], mediaMax: () => ({}), run: () => new Promise(() => {}) };
   assert.equal(new Home({ relay, enabled: true, idleMs: base.homeIdleMs }).state().idleS, 30);
+});
+
+test('#1069 ticket → home: a PC ask that is moved to Tunelio does not restart the window: two PC asks apart, the stop still comes from the first move', async (t) => {
+  const s = await app(t, { idleMs: 400 });
+  assert.equal((await s.play(PC, '')).headers.get('location'), s.tunelio, 'room 1\'s PC: Tunelio, the session marked');
+  const t0 = Date.now();
+  const token = s.jobs[0].token;
+  await sleep(200);
+  assert.equal((await s.play(PC, '', 1, s.n2)).headers.get('location'), s.tunelio, 'room 2\'s PC, 200 ms on: reuse, then moved to Tunelio too');
+  assert.equal(s.jobs.length, 1);
+  await sleep(Math.max(0, t0 + 480 - Date.now()));
+  assert.equal((await s.put(token, 'seg1.ts', 'ts1')).status, 410, '480 ms after the first move: stopped, although the second PC ask was 280 ms ago');
+  assert.equal(s.logs.filter((l) => l.event === 'home_idle').length, 1);
 });

@@ -67,9 +67,16 @@ in `src/home.js`.
 - **A4 the disk.** After a start that makes a session, free MB minus what the unfinished builds will still grow is at
   least `freeFloorGb` (`#room`, `#expectedMb`); after any `sweep`, either the expected total is within `maxGb` or no
   finished, unplayed session is left.
+- **Unused builds (Everything-is-OK#1069, since 2026-11-27).** With `idleMs` on (20 s or 60 s on two thirds of the seeds,
+  from the seed alone; 0 on the rest), half of the `giveUp` ops are a PC moved off instead (`markUneven`; reach
+  `mark_uneven`). At every upload the test predicts `#unused` from its own records (moved off, never fetched, ready and
+  not ended, `idleMs` since the later of the move, ready, and the start or restart) and checks that Home drops that
+  session with a 410 exactly then, and never another one (A2; reach `idle_drop`). A1 allows that one removal only.
 - **Not covered:** the half-floor stop in `put` (free space under `freeFloorGb` x 500 while building); segment holds,
   `want()` and `#far`; the playlist text `file()` serves (absolute links, START, EVENT to VOD); `eta`, `settle`, `wait`;
-  `other`, `isUneven`, `markUneven`; `load()` and `state()`; the HTTP routes in `src/server.js` that call `Home`; the
+  `other`, `isUneven`; hand-outs (`used()`, stamped by `src/server.js`: in the sweep a session's last hand-out is its
+  start or restart, so a Home that ignored hand-outs passes it; `test/home-idle.test.js` covers them); `load()` and
+  `state()`; the HTTP routes in `src/server.js` that call `Home`; the
   `#load` stamp of a meta.json without `lastGetMs` (one written before Everything-is-OK#1011): every meta.json the test
   writes has the field, so no seed reaches it, and the example tests in `test/home.test.js` cover it.
 
@@ -90,7 +97,7 @@ named "seed N (directed)"; `FUZZ_SEED=N` reruns both sequences of that seed.
 
 **Drift points** (hand copies in the test that must follow the code): `expectedOf` is `#expectedMb` written out (it is
 private, and `state()` rounds it to whole MB); the session model follows the rules of `#playlist`, `#checkEnded`, `put`
-and `start`'s `.catch` (including SHORT_S); the constants PLAYING_MS, STALE_MS, GET_SAVE_MS, DAY_SAVE_MS and the 30 s
+and `start`'s `.catch` (including SHORT_S); `unused` is `#unused` written out (#1069); the constants PLAYING_MS, STALE_MS, GET_SAVE_MS, DAY_SAVE_MS and the 30 s
 meta save are copied by name; when `#saveDaySoon` and its callers write day.json (a start that makes a session, a
 playlist upload, `flush`, the first new segment DAY_SAVE_MS after the last write) is written out as `daySave` in the
 test.
@@ -147,6 +154,9 @@ Each property has been seen failing on a deliberately broken `src/home.js` (veri
 code"); after a change to the test, break one property on purpose and confirm the run fails, for example
 `start` setting aside a played session (`if (old && this.#playing(old))` → `if (old && false)`) must fail A1.
 Put `src/home.js` back with `git diff --quiet src/home.js` confirming it.
+For #1069's drop (2026-11-27, 300 seeds each, on a copy outside the repo): dropping fetched sessions too (`s.lastGetMs > 0 ||`
+removed from `#unused`) failed A2 on 20 seeds; no drop at all (`if (false && this.#unused(s))`) failed A2 on 5; a window
+that ignores hand-outs passed (see "Not covered").
 
 The default 100 seeds are a smoke run: the weakest broken variants (A1's, set-aside and restart, caught by 4-5 of 100
 seeds on 2026-11-23) slip past about 1 run in 50. So any change to `src/home.js` also gets the 2,000-seed sweep, which

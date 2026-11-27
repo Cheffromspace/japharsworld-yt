@@ -93,6 +93,8 @@ function settings(seed) {
     itemMaxMb: pick([0, 0, 2]), keepHours: pick([1, 3, 12]), maxGb: pick([0.0015, 0.003]), freeFloorGb: pick([0, 0.001, 0.002]),
     capacityMb: 4 + r() * 6, mediaMax: { w1: 1 + Math.floor(r() * 3), w2: 1 + Math.floor(r() * 3) },
     videos: ids.map((id) => ({ id, seconds: 1 + Math.floor(r() * 5), segs: 2 + Math.floor(r() * 5) })),
+    // Unused builds (Everything-is-OK#1069): off on a third of the seeds. From the seed, not r(), so no other setting moves.
+    idleMs: [0, 20_000, 60_000][seed % 3],
   };
 }
 
@@ -200,6 +202,11 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
   const hits = [];                  // { token, t, again }: every cache hit the test expects Home to take
   const hitEpoch = new Map();       // token → the restart epoch of its last cache hit: s.cached lives in memory only
   const dayEvents = [];             // { day, kind: 'start' | 'legit' | 'midnight' | 'recached' }, in order: what Home's day count sees
+  // Unused builds (#1069, home.js #unused): when markUneven first stamped a session (meta.json keeps it), when the model saw
+  // it go ready and when it was last handed out (start; a restart reloads both as the restart's time), and the one the
+  // current op dropped (A1 allows that removal, and only that one).
+  const left = new Map(), readyAt = new Map(), handedAt = new Map();
+  let justDropped = null;
   // The test's model of each session, from what it sent and saw only, by the rules home.js states (the top: building until
   // a listed segment is here, then ready; ended once the playlist has ENDLIST and every segment it lists is here; failed by
   // giveUp, a job failing while it builds, a closing playlist marked x-media-failed or cut back by SHORT_S or more, or a 410
@@ -220,7 +227,7 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
   const opts = () => ({ relay, dir, enabled: true, dailyBuilds: cfg.dailyBuilds, dailyMb: cfg.dailyMb, hourBuilds: cfg.hourBuilds, hourMb: cfg.hourMb,
     hourMbExemptSeconds: cfg.hourMbExemptSeconds, startGapMs: cfg.startGapMs, av1GapMs: cfg.av1GapMs, av1HourBuilds: cfg.av1HourBuilds,
     refusedRecently: () => refused, itemMaxMb: cfg.itemMaxMb, keepHours: cfg.keepHours, maxGb: cfg.maxGb, freeFloorGb: cfg.freeFloorGb, freeMb,
-    segmentHoldMs: 1, tz: TZ, now: () => now,
+    segmentHoldMs: 1, idleMs: cfg.idleMs, tz: TZ, now: () => now,
     log: (l) => { if (l.event === 'home_evict') bump(`evict_${l.why}`); else if (l.event === 'home_failed') bump(`failed_${l.reason}`); else if (['home_set_aside', 'home_av1_gap', 'home_over_cap', 'home_no_room'].includes(l.event)) bump(l.event); else if (l.event === 'home_loaded' && l.dropped) bump('load_dropped'); },
     onEvent: (k) => { events.push(k); if (['capped', 'capped_hour', 'spaced', 'cache_hit', 'no_room'].includes(k)) bump(k); } });
   let home = new Home(opts());
@@ -243,6 +250,19 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
   // The model's rules, applied as the test sends.
   const ended = (tok) => { const m = model.get(tok); if (!m.ended && m.endlist && [...Array(m.listed).keys()].every((i) => segs.get(tok).has(i))) m.ended = true; }; // #checkEnded
   const failModel = (tok, reason) => { const m = model.get(tok); if (m.state !== 'failed') Object.assign(m, { state: 'failed', reason }); };
+  // home.js #unused, written out from the test's records (a drift point): a PC moved off it, never fetched (Home's first
+  // fetch is saved at once, so a crash keeps it), ready and not ended, and idleMs since the move, ready and last hand-out.
+  const unused = (tok) => { const m = model.get(tok); return cfg.idleMs > 0 && left.has(tok) && !fetched.has(tok) && m.state === 'ready' && !m.ended &&
+    now - Math.max(left.get(tok), readyAt.get(tok) ?? -Infinity, handedAt.get(tok)) >= cfg.idleMs; };
+  // After an upload: Home dropped the session exactly when the model says it is unused, with a 410 (#1069).
+  const afterUpload = (tok, had, drop, status) => {
+    const gone = had && !home.byToken.has(tok);
+    if (drop && !(status === 410 && gone)) fail('A2', `${name(tok)} is unused (a PC moved off it ${ago(now - left.get(tok))} ago, never fetched), but an upload was answered ${status}${gone ? '' : ' and it is still there'}`);
+    if (!drop && gone) fail('A2', `${name(tok)} was dropped by an upload, but it is not unused (fetched, not moved off, not ready, or inside idleMs)`);
+    if (drop) { justDropped = tok; closed.add(tok); bump('idle_drop'); }
+    return drop;
+  };
+  const becameReady = (tok) => { const m = model.get(tok); if (m.state === 'ready' && !readyAt.has(tok)) readyAt.set(tok, now); };
   // A cache upload reaching a session Home has and the model says is not failed (home.js put takes the hit before any other
   // check but the 410): the test expects a cache hit on the first one in each restart epoch (put sets s.cached, which a
   // restart forgets), by kind: a repeat in a later epoch than the token's last hit (recached, #1013), the first one on a
@@ -263,6 +283,7 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
   function checkAfter(before, op) {
     for (const [tok, was] of before) {
       if (home.byToken.has(tok)) continue;
+      if (tok === justDropped) continue; // dropped unused (#1069): checked where the upload was made
       if (was.live) fail('A1', `${name(tok)} (${was.state}, building or uploading, not stale) was removed by ${op}`);
       const f = now - played(tok, false);
       // A restart keeps who is watching (Everything-is-OK#1011: meta.json carries the last fetch, home.js #saveMeta, #load).
@@ -375,6 +396,7 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
     for (const op of ops) {
       const before = snapshot();
       events = [];
+      justDropped = null;
       const pickTok = (x) => (issued.length ? issued[Math.floor(x * issued.length)] : null);
       let line = op.k, after = true;
       switch (op.k) {
@@ -390,6 +412,7 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
             issued.push(tok);
             info.set(tok, { name: `t${issued.length - 1}`, v, q, cached: op.d < 0.25, ti: issued.length - 1, started: now, worker: s.worker });
             segs.set(tok, new Set());
+            handedAt.set(tok, now);
             model.set(tok, { state: 'building', ended: false, reason: null, listed: 0, endlist: false });
             const rec = { t: now, token: tok, av1, worker: s.worker, expected: v.seconds * mbPerSecond(q), seconds: v.seconds, epoch };
             line += ` → new ${name(tok)} on ${s.worker}${info.get(tok).cached ? ' (its worker uploads from cache)' : ''}`;
@@ -428,14 +451,17 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
               closed.add(tok);
             }
             const s0 = home.byToken.get(tok);
-            if (cached && s0 && model.get(tok).state !== 'failed') hit(tok);
+            const drop = Boolean(s0) && unused(tok); // home.js put: checked before the cache hit
+            if (!drop && cached && s0 && model.get(tok).state !== 'failed') hit(tok);
             status = home.put(tok, 'index.m3u8', Buffer.from(text), { cached, failed });
             line = `put(${name(tok)}, index.m3u8 ${what}${failed ? ', x-media-failed' : ''}${cached ? ', cached' : ''}) → ${status}`;
+            if (afterUpload(tok, Boolean(s0), drop, status)) { line += ' (dropped unused, #1069)'; break; }
             if (status === 204) {
               daySave(); // home.js #write: a playlist upload writes day.json
               const m = model.get(tok), k = (text.match(/^seg\d+\.ts$/gm) ?? []).length, end = text.includes('#EXT-X-ENDLIST'), before = m.listed;
               Object.assign(m, { listed: k, endlist: end });
               if (m.state === 'building' && k > 0 && have.size > 0) m.state = 'ready';
+              becameReady(tok);
               // A closing playlist marked failed, or with fewer segments and SHORT_S (10 s) or more shorter (4 s each here): failed.
               if (end && (failed || (k < before && 4 * k < 4 * before - 10)) && m.state !== 'failed') failModel(tok, 'cut_short'); else ended(tok);
             }
@@ -444,10 +470,12 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
             const i = op.b < 0.6 ? Math.min(n - 1, (have.size ? Math.max(...have) : -1) + 1) : Math.floor(op.c * n);
             const size = segSize(ti, i);
             const s = home.byToken.get(tok);
+            const drop = Boolean(s) && unused(tok); // home.js put: checked before the cache hit
             // home.js put takes the cache hit before the segment checks, so a 410 for the disk still counts it.
-            if (cached && s && model.get(tok).state !== 'failed') hit(tok);
+            if (!drop && cached && s && model.get(tok).state !== 'failed') hit(tok);
             status = home.put(tok, `seg${i}.ts`, Buffer.alloc(size), { cached });
             line = `put(${name(tok)}, seg${i}.ts${cached ? ', cached' : ''}) → ${status}`;
+            if (afterUpload(tok, Boolean(s), drop, status)) { line += ' (dropped unused, #1069)'; break; }
             if (status === 410 && s && model.get(tok).state !== 'failed') failModel(tok, 'no_room'); // put: the disk's half floor
             if (status === 204) {
               if (!have.has(i)) {
@@ -460,6 +488,7 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
               }
               const m = model.get(tok);
               if (m.state === 'building' && m.listed > 0) m.state = 'ready';
+              becameReady(tok);
               ended(tok);
             }
           }
@@ -484,6 +513,13 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
           const live = [...home.byToken.keys()].filter((tok) => model.get(tok).state !== 'failed');
           if (!live.length) { line = 'giveUp: none'; break; }
           const tok = live[Math.floor(op.a * live.length)];
+          // With idleMs on, half of these are a PC moved off instead (server.js leaveHome with HOME_ANDROID_GROWING: markUneven,
+          // #1069); seeds with it off keep every op as before.
+          if (cfg.idleMs > 0 && op.b >= 0.5) {
+            home.markUneven(home.byToken.get(tok));
+            if (!left.has(tok)) left.set(tok, now); // home.js markUneven stamps leftMs once
+            bump('mark_uneven'); line = `markUneven(${name(tok)})`; break;
+          }
           home.giveUp(home.byToken.get(tok)); failModel(tok, 'uneven'); line = `giveUp(${name(tok)})`; break;
         }
         case 'reject': {
@@ -513,6 +549,7 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
           for (const [tok, s] of home.byToken) {
             if (crash && fetched.has(tok)) fetchLost.add(tok);
             lagged.add(tok);
+            readyAt.set(tok, now); handedAt.set(tok, now); // home.js #load: readyMs and handedMs are the restart's time
             if (s.state === 'failed') stamped.set(tok, now); // home.js #load: a cut_short one counts as played from the restart
           }
           bump(crash ? 'crash' : 'restart');

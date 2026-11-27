@@ -789,7 +789,6 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (s.state !== 'ready') return null;
     holding++;
     try { await home.settle?.(s, config.homeSettleMs); } finally { holding--; }
-    home.used?.(s); // handed to a player: its idle time starts again (#1069)
     return { location: home.url(s), via: 'home', reason: s.why, ready: true, session: s };
   }
   // One source per ticket once playing (TICKET_PIN, #293). Each request used to decide again from the sessions' state,
@@ -1805,6 +1804,10 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         } else if (via !== 'youtube') pcYoutube.delete(`${shard}:${n}:${clientKey(req)}`);
       }
       countPlay(shard, t.data, { via, reason, location }, playPlatform(req.headers['user-agent'], hlsTicket));
+      // Handed to a player: its idle time starts again (#1069). Here, where the answer goes out, not in homeWhere: a PC
+      // ask that leaveHome then sends to Tunelio got nothing from the session and must not keep it alive (the review
+      // before the verifier, 2026-11-27: each new PC ask of the video extended an unused build by the whole window).
+      if (via === 'home' && where.session) home.used?.(where.session);
       lastAnswer.set(shard, { n, via, reason, quality: where.session?.quality ?? c?.quality, hls: where.session ? true : c?.hls, mode: c?.mode });
       if (warmed.delete(`${shard}:${t.data.id}`)) metrics.inc('warm_played');
       if (config.ticketPin && via !== 'youtube' && !codecUnread && !rungPending) {

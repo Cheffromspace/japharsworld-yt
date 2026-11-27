@@ -81,19 +81,24 @@ const FREE_CHECK_MS = 5_000; // a build's uploads look at the disk's free space 
 
 // Unused builds (idleMs, HOME_IDLE_SECONDS; Everything-is-OK#1069, coordinator's call 2026-11-27): with
 // HOME_ANDROID_GROWING a PC player moved off a growing session to Tunelio (markUneven) leaves the session building for a
-// Quest that may be on it, and nothing stopped it when there was none. Staging 2026-11-27 19:23Z: a 2 h 19 min 1080p
+// Quest that may be on it, and nothing stopped it when there was none (a PC visitor's tablet status marks it too: below). Staging 2026-11-27 19:23Z: a 2 h 19 min 1080p
 // build kept downloading and uploading the whole video, holding the home line's upload (~12 MB/s), with no player ever
-// fetching from it. So a session a PC was moved off, that no player has fetched anything from (not one playlist or
+// fetching from it. "Moved off" is wider than a play: a PC visitor's tablet status of a long video starts the home build
+// and, once it is ready, marks it the same way (src/server.js tabletStatus → leaveHome with count:false → markUneven), so
+// a PC visitor who only looked at the video on the tablet leaves a build that is dropped too (verifier-unused1, M3:
+// two PC tablet polls and no play → 410, home_idle). So a session a PC was moved off, that no player has fetched anything from (not one playlist or
 // segment: one fetch exempts it for good, so a paused player or a long buffer never looks idle), still uploading and
 // not held for (settle), is dropped idleMs after the later of the move, its ready time and the last time it was handed
 // to anyone (a home answer or pin sent to a player, a tablet status that returned it: used()). Decided at the worker's next upload, which gets 410:
 // the worker kills ffmpeg (its YouTube download stops with it), keeps no half copy in its cache and frees its stream.
 // 30 s (HOME_IDLE_SECONDS' default; coordinator, 2026-11-27): a Quest handed the playlist fetched it 24 ms later
-// (staging 2026-11-27 18:25:26Z), a settle hold keeps the session (endWaiters), and every hand-out starts the window
+// (staging 2026-11-27 18:25:26Z), a settle hold keeps the session (endWaiters; a settle that timed out leaves its
+// endWaiter behind, older than #1069, so such a session is never dropped: the safe side, verifier-unused1 L1), and every hand-out starts the window
 // again. Shorter saves more of the YouTube download, which runs ahead of the upload: on the dev PC (40-70 MB/s down,
 // ~12 up) both 60 s stops on staging came after ffmpeg had already finished (a 52 min and a 2 h 1080p video, 20:09Z and
 // 20:13Z), so they saved only upload (~0.25 and ~2 GB), while two 15 s stops ended the download part way (~0.8 GB of
-// ~3.8 GB, 20:24Z and 20:25Z). Too early costs at most a rebuild: the Quest's next ask builds it again (wasIdle).
+// ~3.8 GB, 20:24Z and 20:25Z). At 30 s, 1 of 3 stops ended it part way (20:36Z); the other two, 1 h 28-1 h 31 videos of
+// ~1.5-1.7 GB, came after it had finished (22:55Z, 23:01Z), so on this line a 30 s stop mostly saves upload. Too early costs at most a rebuild: the Quest's next ask builds it again (wasIdle).
 // Dropped, not failed: nothing is wrong with the video or the worker, so the next play may build it again at once
 // (a failed session blocks that for RETRY_MS), and its files go. The video is remembered as dropped this way
 // (wasIdle) for keepHours, so a Quest's next ask builds it at home again although it is marked uneven (src/server.js
@@ -176,7 +181,7 @@ export class Home {
       startedMs: f.startedMs ?? this.now(), readyMs: 0, endedMs: 0, lastPutMs: f.lastPutMs ?? 0, ended: false, mb: 0, segments: 0,
       listed: [], listedSeconds: 0, stored: new Set(), reason: null, waiters: [], endWaiters: [], segmentWaiters: new Map(),
       firstSegmentMs: 0, firstServed: null, lastGetMs: f.lastGetMs ?? 0, why: f.why ?? null, want: null, last: -1,
-      // #1069: when a PC player was moved off it (markUneven; saved, so a restart keeps it), and when it was last handed
+      // #1069: when a PC player (or a PC visitor's tablet status) was moved off it (markUneven; saved, so a restart keeps it), and when it was last handed
       // to anyone (used(); not saved: a reloaded session gets a whole idleMs from the restart).
       leftMs: f.leftMs ?? 0, handedMs: this.now(),
       // What meta.json holds now (#saveMeta), so each throttle compares with what a restart would read back.
@@ -346,7 +351,8 @@ export class Home {
   // PC player of the video leaves for Tunelio (src/server.js leaveHome), so the session keeps going for it (world #250,
   // 2026-10-27: three plays given up that way within 21 minutes on prod; the worker's next upload got 410 and the
   // Quest froze at the last segment it had, 45 s of seg1 404s the last time).
-  // Each session a PC was moved off is stamped (leftMs, #1069), also when its video was already known uneven: a Quest's
+  // Each session a PC was moved off (a play, or a PC visitor's tablet status: leaveHome count:false) is stamped (leftMs,
+  // #1069), also when its video was already known uneven: a Quest's
   // new build of such a video (wasIdle) meets PC players too.
   markUneven(s) {
     if (!s.leftMs) { s.leftMs = this.now(); this.#saveMeta(s); }
@@ -377,14 +383,17 @@ export class Home {
     if (!(this.idleMs > 0) || !s.leftMs || s.lastGetMs > 0 || s.ended || s.state !== 'ready' || s.endWaiters.length || s.waiters.length) return false;
     return this.now() - Math.max(s.leftMs, s.readyMs, s.handedMs) >= this.idleMs;
   }
-  // Dropped (see the top). The day counts the build's EXPECTED MB (#expectedMb: its length at the quality's high-end
-  // rate, or its listed segments at the rate of those here), not what it really downloaded, which the server can't see:
+  // Dropped (see the top). The day counts the build's EXPECTED MB (#expectedMb: its length at MB_PER_SECOND, 0.57 MB/s,
+  // the 1080p rate, at EVERY quality, so a 720p build counts 1.5x its own rate's estimate, 4104 MB for 2 h where its hour
+  // entry is 2736 (verifier-unused1, M2: kept, the safe side); or its listed segments at the rate of those here), not what it really downloaded, which the server can't see:
   // the worker's download runs ahead of its upload (40-70 MB/s down against ~12 up, the dev PC, 2026-11-27). That is a
   // deliberate safe-side overcount (coordinator, 2026-11-27: the cap protects the home address): staging's two 60 s
   // stops counted 1776 and 4129 MB where the real copies were ~842 and ~2565 MB, 1.6-2.1x (a whole build counts its real
   // stored MB). A rebuild then adds its own real MB to the day: the day counts both, on the same safe side. The hour
   // keeps the build and its expected MB, as before, but a rebuild of the same video and quality inside that hour takes
   // those MB over rather than adding its own (blocks, start), so the hour never holds two expected builds of one video.
+  // Two real downloads then hold one expected build of MB: repeated drop/rebuild cycles are bounded by hourBuilds, the
+  // start gap and the day caps (which count both), not by the hour's MB.
   #dropUnused(s) {
     const t = this.now();
     const expected = this.#expectedMb(s);

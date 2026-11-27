@@ -97,7 +97,7 @@ test('#1069: a hand-out (a player answer, a pin, a tablet status) starts the win
   assert.equal(seg(2), 410);
 });
 
-test('#1069: never dropped: no PC moved off it (a Quest-only build, a warm), a settle hold on it, HOME_IDLE_SECONDS=0', (t) => {
+test('#1069: never dropped: no PC moved off it (a Quest-only build, a warm no PC tablet status marked), a settle hold on it, HOME_IDLE_SECONDS=0', (t) => {
   const quest = setup(t, { mark: false });
   quest.clock.now += 30 * 60_000;
   assert.equal(quest.seg(1), 204, 'not marked: as before #1069');
@@ -112,7 +112,7 @@ test('#1069: never dropped: no PC moved off it (a Quest-only build, a warm), a s
   assert.equal(setup(t).home.state().idleS, 60, '/ops/state shows the setting');
 });
 
-test('#1069: the day counts a dropped build at its EXPECTED MB (length x the quality rate; a deliberate overcount, 1.6-2.1x the real size on staging), the hour keeps the build', (t) => {
+test('#1069: the day counts a dropped build at its EXPECTED MB (length x 0.57 MB/s, the 1080p rate, at every quality; a deliberate overcount, 1.6-2.1x the real size on staging), the hour keeps the build', (t) => {
   const { home, clock, seg } = setup(t);
   const expected = VIDEO.seconds * 0.57;
   assert.ok(home.state().today.mb < 1, 'before: only what was uploaded');

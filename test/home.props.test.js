@@ -276,6 +276,7 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
     if (hitEpoch.get(tok) === epoch) return;
     const again = cachedAt.has(tok), day = dayOf(now, TZ), later = day !== dayOf(info.get(tok).started, TZ);
     hitEpoch.set(tok, epoch);
+    for (const x of starts) if (x.movedTo === tok) { delete x.hourMb; delete x.movedTo; } // a cache upload gives a dropped build's hour MB back
     hits.push({ token: tok, t: now, again });
     if (!again) { cachedAt.set(tok, now); if (later) bump('hit_next_day'); }
     dayEvents.push({ day, kind: again ? 'recached' : later ? 'midnight' : 'legit' });
@@ -426,7 +427,7 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
             trace.push(`${step}: ${line}`);
             checkAfter(before, line);
             checkStart(rec, v);
-            for (const x of starts) if (x.dropped === rec.key) { x.hourMb = 0; delete x.dropped; }
+            for (const x of starts) if (x.dropped === rec.key && !x.movedTo) { x.hourMb = 0; x.movedTo = rec.token; }
             starts.push(rec);
             dayEvents.push({ day: dayOf(rec.t, TZ), kind: 'start' }); // after the check: Home checks the cap before it counts the build
             after = false;

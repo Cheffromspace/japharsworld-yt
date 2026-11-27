@@ -146,6 +146,19 @@ test('#1069: a rebuild of a dropped build takes over its hour MB instead of bein
   assert.equal(home.state().hour.builds, 1);
 });
 
+test("#1069: a rebuild that turns out a cache upload gives the dropped build's hour MB back (that build did download)", (t) => {
+  const expected = VIDEO.seconds * 0.57;
+  const { home, clock, seg } = setup(t, { opts: { hourMb: 6000 } });
+  clock.now += IDLE + 1000;
+  assert.equal(seg(1), 410);
+  const s2 = home.start(VIDEO, '1080p');
+  assert.equal(home.state().hour.mb, Math.round(expected));
+  assert.equal(home.put(s2.token, 'seg0.ts', Buffer.from('x'), { cached: true }), 204, "from the worker's cache");
+  assert.equal(home.state().hour.builds, 1, 'the cache upload leaves the hour (as before #1069)');
+  assert.equal(home.state().hour.mb, Math.round(expected), "the dropped build's MB are back, not lost with it");
+  assert.equal(home.blocks(VIDEO, '1080p'), null, 'and a next real rebuild can take them over again');
+});
+
 test('#1069: a restart keeps the PC move and the dropped mark, and gives a reloaded session a whole window from the restart', (t) => {
   const dir = tmp(t);
   const { s, clock } = setup(t, { dir });

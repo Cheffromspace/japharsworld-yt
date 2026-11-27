@@ -460,8 +460,11 @@ export class Home {
     // An AV1 build let through the start gap (#764): logged with how long after the last real download it started.
     if (av1 && this.startGapMs > 0 && this.now() - this.lastStartMs < this.startGapMs) this.log({ event: 'home_av1_gap', id: s.id, quality, afterMs: this.now() - this.lastStartMs });
     // A rebuild of a build dropped unused (#1069): the dropped build's MB move to this one, so the hour holds one expected
-    // build of the video, counted from now; the dropped entry stays a build (0 MB) for hourBuilds, the gap and av1.
-    for (const r of this.recent) if (r.dropped === `${s.id}@${quality}`) { r.mb = 0; delete r.dropped; }
+    // build of the video, counted from now; the dropped entry stays a build (0 MB) for hourBuilds, the gap and av1. If
+    // this build turns out a cache upload (put), they go back to the dropped entry, which did download from YouTube.
+    for (const r of this.recent) {
+      if (r.dropped === `${s.id}@${quality}` && !r.movedTo) Object.assign(r, { movedTo: s.token, movedMb: r.mb, mb: 0 });
+    }
     this.recent.push({ t: this.now(), mb: expected, token: s.token });
     this.lastStartMs = this.now();
     this.onEvent('start');
@@ -595,7 +598,9 @@ export class Home {
       const d = this.#today();
       d.builds = Math.max(0, d.builds - 1);
       d.cacheHits = (d.cacheHits ?? 0) + 1;
-      // From the worker's own cache: nothing asked of YouTube, so it leaves the hour's count too.
+      // From the worker's own cache: nothing asked of YouTube, so it leaves the hour's count too. A dropped build's MB it
+      // took over (start, #1069) go back to that build.
+      for (const r of this.recent) if (r.movedTo === s.token) { r.mb = r.movedMb; delete r.movedTo; delete r.movedMb; }
       this.recent = this.recent.filter((r) => r.token !== s.token);
       // ...and gives the start gap back (Everything-is-OK#764): the gap spaces YouTube downloads from the home IP, and this
       // one asked nothing of YouTube. It runs from the last real download still in the hour instead. Staging 2026-11-13

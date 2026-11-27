@@ -88,7 +88,12 @@ const FREE_CHECK_MS = 5_000; // a build's uploads look at the disk's free space 
 // not held for (settle), is dropped idleMs after the later of the move, its ready time and the last time it was handed
 // to anyone (a player's answer or pin, a tablet's status: used()). Decided at the worker's next upload, which gets 410:
 // the worker kills ffmpeg (its YouTube download stops with it), keeps no half copy in its cache and frees its stream.
-// 60 s: a Quest handed the playlist fetched it 24 ms later (staging 2026-11-27 18:25:26Z), the settle hold is 10 s.
+// 30 s (HOME_IDLE_SECONDS' default; coordinator, 2026-11-27): a Quest handed the playlist fetched it 24 ms later
+// (staging 2026-11-27 18:25:26Z), a settle hold keeps the session (endWaiters), and every hand-out starts the window
+// again. Shorter saves more of the YouTube download, which runs ahead of the upload: on the dev PC (40-70 MB/s down,
+// ~12 up) both 60 s stops on staging came after ffmpeg had already finished (a 52 min and a 2 h 1080p video, 20:09Z and
+// 20:13Z), so they saved only upload (~0.25 and ~2 GB), while two 15 s stops ended the download part way (~0.8 GB of
+// ~3.8 GB, 20:24Z and 20:25Z). Too early costs at most a rebuild: the Quest's next ask builds it again (wasIdle).
 // Dropped, not failed: nothing is wrong with the video or the worker, so the next play may build it again at once
 // (a failed session blocks that for RETRY_MS), and its files go. The video is remembered as dropped this way
 // (wasIdle) for keepHours, so a Quest's next ask builds it at home again although it is marked uneven (src/server.js

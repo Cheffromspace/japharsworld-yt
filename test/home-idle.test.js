@@ -268,3 +268,9 @@ test('#1069 worker: a 410 for a growing build kills ffmpeg and keeps no half cop
   assert.equal(cachePuts.length, 0, 'no half copy in the cache (#781)');
   assert.equal(existsSync(join(dir, 'stage')), false, 'its folder is removed');
 });
+
+test('#1069: HOME_IDLE_SECONDS defaults to 30 s (coordinator, 2026-11-27: 60 s stops came after the download had finished)', { skip: process.env.HOME_IDLE_SECONDS != null }, () => {
+  assert.equal(base.homeIdleMs, 30_000);
+  const relay = { enabled: true, capable: () => [], mediaMax: () => ({}), run: () => new Promise(() => {}) };
+  assert.equal(new Home({ relay, enabled: true, idleMs: base.homeIdleMs }).state().idleS, 30);
+});

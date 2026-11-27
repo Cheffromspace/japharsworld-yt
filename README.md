@@ -369,7 +369,7 @@ player started). A video of `HOME_STAY_HOURS` (3) or longer keeps a PC player on
 sending it to Tunelio for a seek bar (`home`/`stayed`; a Quest's `.m3u8` ticket follows `HOME_ANDROID_GROWING`; Everything-is-OK#577,
 2026-11-06: players of 10-12 h videos were held 72-90 s for Tunelio builds that then failed). A growing session a PC
 player was moved off (to Tunelio, kept for a Quest with `HOME_ANDROID_GROWING`) that no player has fetched anything from
-is dropped `HOME_IDLE_SECONDS` (60; 0 = off) after it was last handed to anyone (a player's answer or pin, a tablet's
+is dropped `HOME_IDLE_SECONDS` (30; 0 = off) after it was last handed to anyone (a player's answer or pin, a tablet's
 status): the worker's next upload gets 410, so it kills ffmpeg, stops downloading and uploading, and keeps no half copy;
 its stream slot frees at once and its files go (`home_idle`, `home`/`idle`; Everything-is-OK#1069, staging 2026-11-27: a
 2 h 19 min build uploaded for minutes with no fetch at all). One fetch exempts a session for good, so a paused player is

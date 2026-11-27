@@ -72,6 +72,9 @@ in `src/home.js`.
   `mark_uneven`). At every upload the test predicts `#unused` from its own records (moved off, never fetched, ready and
   not ended, `idleMs` since the later of the move, ready, and the start or restart) and checks that Home drops that
   session with a 410 exactly then, and never another one (A2; reach `idle_drop`). A1 allows that one removal only.
+  A3's hour MB gives a dropped build's MB to a rebuild of the same video and quality, which then holds them (home.js
+  `#droppedHourMb`; reach `hour_mb_moved`). The sweep does not reach that move (0 of 2000 seeds, 2026-11-27):
+  test/home-idle.test.js covers it.
 - **Not covered:** the half-floor stop in `put` (free space under `freeFloorGb` x 500 while building); segment holds,
   `want()` and `#far`; the playlist text `file()` serves (absolute links, START, EVENT to VOD); `eta`, `settle`, `wait`;
   `other`, `isUneven`; hand-outs (`used()`, stamped by `src/server.js`: in the sweep a session's last hand-out is its

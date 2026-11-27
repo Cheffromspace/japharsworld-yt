@@ -24,11 +24,11 @@ const VIDEO = { id: 'aaaaaaaaaaa', seconds: 7200 };
 const IDLE = 60_000;
 
 // A Home on a fake clock with one media worker of 2 streams, and a ready growing session a PC was moved off.
-function setup(t, { idleMs = IDLE, mark = true, dir = tmp(t) } = {}) {
+function setup(t, { idleMs = IDLE, mark = true, dir = tmp(t), opts = {} } = {}) {
   const clock = { now: 1_000_000 };
   const logs = [], events = [];
   const relay = { enabled: true, capable: () => ['home'], mediaMax: () => ({ home: 2 }), run: () => new Promise(() => {}) };
-  const home = new Home({ relay, dir, enabled: true, idleMs, now: () => clock.now, log: (l) => logs.push(l), onEvent: (k) => events.push(k) });
+  const home = new Home({ relay, dir, enabled: true, idleMs, now: () => clock.now, log: (l) => logs.push(l), onEvent: (k) => events.push(k), ...opts });
   const s = home.start(VIDEO, '1080p');
   assert.equal(home.put(s.token, 'seg0.ts', Buffer.from('x'.repeat(1000))), 204);
   assert.equal(home.put(s.token, 'index.m3u8', Buffer.from(GROWING)), 204);
@@ -124,6 +124,28 @@ test('#1069: the day counts a dropped build at its EXPECTED MB (length x the qua
   assert.equal(home.state().hour.mb, Math.round(expected));
 });
 
+test('#1069: a rebuild of a dropped build takes over its hour MB instead of being charged twice; another video is still held by the hour', (t) => {
+  // Staging 2026-11-27 23:04Z: a late Quest ask after a drop met the hour at 13193 of 15000 MB, 2999 of it the dropped
+  // build's own expected MB, and went to Tunelio (coordinator: the rebuild must not be charged to the hour again).
+  const expected = VIDEO.seconds * 0.57; // 4104 MB
+  const { home, clock, seg } = setup(t, { opts: { hourMb: 6000 } });
+  clock.now += IDLE + 1000;
+  assert.equal(seg(1), 410, 'dropped unused');
+  assert.equal(home.state().hour.mb, Math.round(expected), 'the hour keeps the dropped build at its expected MB (safe side)');
+  const OTHER = { id: 'bbbbbbbbbbb', seconds: VIDEO.seconds };
+  assert.equal(home.blocks(OTHER, '1080p'), 'hour', 'a DIFFERENT video of the same size: still held by the hour');
+  assert.equal(home.blocks(VIDEO, '720p'), 'hour', 'the same video at another quality is another build: held too');
+  assert.equal(home.blocks(VIDEO, '1080p'), null, 'the same video and quality: its dropped MB are not charged again');
+  const s2 = home.start(VIDEO, '1080p');
+  assert.ok(s2, 'the rebuild starts at home');
+  assert.equal(home.state().hour.builds, 2, 'both builds stay in the hour count (hourBuilds, the gap)');
+  assert.equal(home.state().hour.mb, Math.round(expected), 'the hour holds one expected build of the video, not two');
+  assert.equal(home.blocks(VIDEO, '1080p'), 'hour', 'the MB moved once: a third build of it is charged in full');
+  clock.now = 1_000_000 + 3600_000 + 30_000; // the dropped build started at 1_000_000, the rebuild 61 s later
+  assert.equal(home.state().hour.mb, Math.round(expected), 'the rebuild carries the MB, so they stay for its own hour after the dropped entry leaves');
+  assert.equal(home.state().hour.builds, 1);
+});
+
 test('#1069: a restart keeps the PC move and the dropped mark, and gives a reloaded session a whole window from the restart', (t) => {
   const dir = tmp(t);
   const { s, clock } = setup(t, { dir });
@@ -143,7 +165,7 @@ test('#1069: a restart keeps the PC move and the dropped mark, and gives a reloa
 });
 
 // The search service with a worker whose uploads the test makes, Tunelio ready, HOME_ANDROID(_GROWING) on.
-async function app(t, { idleMs = 300, logs = [] } = {}) {
+async function app(t, { idleMs = 300, logs = [], hourMb = 0 } = {}) {
   const dir = tmp(t);
   const { Adaptive } = await import('../src/adaptive.js');
   const job = { id: 'aaaaaaaaaaa', quality: '1080p', state: 'ready', url: 'https://tunelio.dev/t?id=x' };
@@ -151,7 +173,7 @@ async function app(t, { idleMs = 300, logs = [] } = {}) {
     async location() { return { location: job.url, via: 'tunelio', ready: true }; } };
   const adaptive = new Adaptive({ playback, fetcher: codecFetch(), base: 'http://pub/hls' });
   adaptive.pacer = { check: () => ({ ok: true }) };
-  const config = { ...base, shards: 2, pool: 50, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, homeStartGapMs: 0, homeHourBuilds: 0, homeHourMb: 0,
+  const config = { ...base, shards: 2, pool: 50, relayToken: TOKEN, homeRelay: true, homeReadyMs: 5000, homeStartGapMs: 0, homeHourBuilds: 0, homeHourMb: hourMb,
     dbPath: join(dir, 'tickets.db'), publicUrl: 'http://pub', metricsPath: '', homeLongMinutes: 5, homeAndroid: true, homeAndroidGrowing: true, homeIdleMs: idleMs, ticketPin: true };
   const store = new Store({ path: ':memory:', shards: 2, pool: 50, pinHours: 24 });
   const relay = new Relay({ token: TOKEN, pollMs: 200 });
@@ -201,6 +223,20 @@ test('#1069 ticket → home: the PC moved to Tunelio leaves a build nobody fetch
   assert.match(loc, /\/home\/[a-f0-9]{18}\/index\.m3u8$/, 'late Quest ask: home again');
   assert.equal(s.jobs.length, 2);
   assert.notEqual(s.jobs[1].token, token);
+});
+
+test('#1069 ticket → home: a late Quest ask after a drop gets home although the hour is nearly full with that drop\'s own MB', async (t) => {
+  // 7200 s at 1080p is 4104 expected MB; HOME_HOUR_MB 6000 has room for one, as staging's hour had at 23:04Z.
+  const s = await app(t, { hourMb: 6000 });
+  assert.equal((await s.play(PC, '')).headers.get('location'), s.tunelio, 'the PC goes to Tunelio');
+  const token = s.jobs[0].token;
+  await sleep(450);
+  assert.equal((await s.put(token, 'seg1.ts', 'ts1')).status, 410, 'dropped unused');
+  assert.equal(s.home.state().hour.mb, 4104);
+  const loc = (await s.play(QUEST)).headers.get('location');
+  assert.match(loc, /\/home\/[a-f0-9]{18}\/index\.m3u8$/, 'late Quest ask: home, not held off by the hour');
+  assert.equal(s.jobs.length, 2);
+  assert.equal(s.home.state().hour.mb, 4104, 'one expected build in the hour');
 });
 
 test('#1069 ticket → home: a PC moved off and a Quest in the same room inside the window: the Quest\'s fetch keeps the build going', async (t) => {

@@ -259,7 +259,11 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
     const gone = had && !home.byToken.has(tok);
     if (drop && !(status === 410 && gone)) fail('A2', `${name(tok)} is unused (a PC moved off it ${ago(now - left.get(tok))} ago, never fetched), but an upload was answered ${status}${gone ? '' : ' and it is still there'}`);
     if (!drop && gone) fail('A2', `${name(tok)} was dropped by an upload, but it is not unused (fetched, not moved off, not ready, or inside idleMs)`);
-    if (drop) { justDropped = tok; closed.add(tok); bump('idle_drop'); }
+    if (drop) {
+      justDropped = tok; closed.add(tok); bump('idle_drop');
+      // Its hour MB pass to a rebuild of the same video and quality (home.js #droppedHourMb).
+      const r = starts.find((x) => x.token === tok); if (r) r.dropped = `${info.get(tok).v.id}@${info.get(tok).q}`;
+    }
     return drop;
   };
   const becameReady = (tok) => { const m = model.get(tok); if (m.state === 'ready' && !readyAt.has(tok)) readyAt.set(tok, now); };
@@ -345,8 +349,11 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
     const hour = epochReal.filter((x) => now - x.t < HOUR);
     if (cfg.hourBuilds > 0 && hour.length + 1 > cfg.hourBuilds) fail('A3', `start ${name(rec.token)} is build ${hour.length + 1} in the hour, hourBuilds ${cfg.hourBuilds}`);
     const exempt = cfg.hourMbExemptSeconds > 0 && v.seconds >= cfg.hourMbExemptSeconds;
-    const hourMb = hour.reduce((n, x) => n + x.expected, 0);
-    if (cfg.hourMb > 0 && !exempt && hour.length > 0 && hourMb + rec.expected > cfg.hourMb + EPS) fail('A3', `start ${name(rec.token)} takes the hour to ${(hourMb + rec.expected).toFixed(3)} MB, hourMb ${cfg.hourMb}`);
+    // A build dropped unused (#1069) gives its hour MB to a rebuild of the same video and quality, which then holds them.
+    const hourMb = hour.reduce((n, x) => n + (x.hourMb ?? x.expected), 0);
+    const back = hour.reduce((n, x) => n + (x.dropped === rec.key ? (x.hourMb ?? x.expected) : 0), 0);
+    if (back > 0) bump('hour_mb_moved');
+    if (cfg.hourMb > 0 && !exempt && hour.length > 0 && hourMb - back + rec.expected > cfg.hourMb + EPS) fail('A3', `start ${name(rec.token)} takes the hour to ${(hourMb + rec.expected).toFixed(3)} MB, hourMb ${cfg.hourMb}`);
     if (cfg.itemMaxMb > 0 && rec.expected > cfg.itemMaxMb + EPS) fail('A3', `start ${name(rec.token)} expects ${rec.expected.toFixed(3)} MB, itemMaxMb ${cfg.itemMaxMb}`);
     if (cfg.startGapMs > 0 && epochReal.length) {
       const gap = now - Math.max(...epochReal.map((x) => x.t));
@@ -414,11 +421,12 @@ export async function runOne(seed, ops, { known = KNOWN } = {}) {
             segs.set(tok, new Set());
             handedAt.set(tok, now);
             model.set(tok, { state: 'building', ended: false, reason: null, listed: 0, endlist: false });
-            const rec = { t: now, token: tok, av1, worker: s.worker, expected: v.seconds * mbPerSecond(q), seconds: v.seconds, epoch };
+            const rec = { t: now, token: tok, av1, worker: s.worker, expected: v.seconds * mbPerSecond(q), seconds: v.seconds, epoch, key: `${v.id}@${q}` };
             line += ` → new ${name(tok)} on ${s.worker}${info.get(tok).cached ? ' (its worker uploads from cache)' : ''}`;
             trace.push(`${step}: ${line}`);
             checkAfter(before, line);
             checkStart(rec, v);
+            for (const x of starts) if (x.dropped === rec.key) { x.hourMb = 0; delete x.dropped; }
             starts.push(rec);
             dayEvents.push({ day: dayOf(rec.t, TZ), kind: 'start' }); // after the check: Home checks the cap before it counts the build
             after = false;

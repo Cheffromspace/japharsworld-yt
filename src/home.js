@@ -307,8 +307,15 @@ export class Home {
     if (this.itemMaxMb > 0 && this.expectedMb(data, quality) > this.itemMaxMb) return 'big';
     if (this.hourMbExemptSeconds > 0 && (data.seconds ?? 0) >= this.hourMbExemptSeconds) return null;
     const hour = this.#hour();
-    if (this.hourMb > 0 && hour.builds > 0 && hour.mb + this.expectedMb(data, quality) > this.hourMb) return 'hour';
+    if (this.hourMb > 0 && hour.builds > 0 && hour.mb - this.#droppedHourMb(data, quality) + this.expectedMb(data, quality) > this.hourMb) return 'hour';
     return null;
+  }
+  // The hour's MB of this video's build at this quality that was dropped unused (#1069) and is still in the hour: its
+  // rebuild takes that MB over (start) instead of being charged a second time (coordinator, 2026-11-27: staging's late
+  // Quest ask at 23:04Z was refused by the hour, 13193 of 15000 MB, with the dropped build's 2999 expected MB in it).
+  #droppedHourMb(data, quality) {
+    const key = `${data.id}@${quality}`;
+    return this.recent.reduce((n, r) => n + (r.dropped === key ? r.mb : 0), 0);
   }
 
   peek(data, quality) {
@@ -375,11 +382,15 @@ export class Home {
   // the worker's download runs ahead of its upload (40-70 MB/s down against ~12 up, the dev PC, 2026-11-27). That is a
   // deliberate safe-side overcount (coordinator, 2026-11-27: the cap protects the home address): staging's two 60 s
   // stops counted 1776 and 4129 MB where the real copies were ~842 and ~2565 MB, 1.6-2.1x (a whole build counts its real
-  // stored MB). The hour keeps the build and its expected MB, as before.
+  // stored MB). A rebuild then adds its own real MB to the day: the day counts both, on the same safe side. The hour
+  // keeps the build and its expected MB, as before, but a rebuild of the same video and quality inside that hour takes
+  // those MB over rather than adding its own (blocks, start), so the hour never holds two expected builds of one video.
   #dropUnused(s) {
     const t = this.now();
     const expected = this.#expectedMb(s);
     if (!s.cached) { const d = this.#today(); d.mb += Math.max(0, expected - s.mb); this.#saveDay(); }
+    const entry = this.recent.find((r) => r.token === s.token);
+    if (entry) entry.dropped = `${s.id}@${s.quality}`;
     this.idle.set(s.id, t + this.keepHours * 3600_000);
     this.#saveIdle();
     this.onEvent('idle');
@@ -448,6 +459,9 @@ export class Home {
     this.#saveDay();
     // An AV1 build let through the start gap (#764): logged with how long after the last real download it started.
     if (av1 && this.startGapMs > 0 && this.now() - this.lastStartMs < this.startGapMs) this.log({ event: 'home_av1_gap', id: s.id, quality, afterMs: this.now() - this.lastStartMs });
+    // A rebuild of a build dropped unused (#1069): the dropped build's MB move to this one, so the hour holds one expected
+    // build of the video, counted from now; the dropped entry stays a build (0 MB) for hourBuilds, the gap and av1.
+    for (const r of this.recent) if (r.dropped === `${s.id}@${quality}`) { r.mb = 0; delete r.dropped; }
     this.recent.push({ t: this.now(), mb: expected, token: s.token });
     this.lastStartMs = this.now();
     this.onEvent('start');

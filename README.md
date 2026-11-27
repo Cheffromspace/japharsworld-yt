@@ -374,7 +374,9 @@ status: the worker's next upload gets 410, so it kills ffmpeg, stops downloading
 its stream slot frees at once and its files go (`home_idle`, `home`/`idle`; Everything-is-OK#1069, staging 2026-11-27: a
 2 h 19 min build uploaded for minutes with no fetch at all). One fetch exempts a session for good, so a paused player is
 never cut off. A stopped build counts its EXPECTED MB against the day (length × the quality's rate; on staging 1.6-2.1× its real size, a deliberate safe-side count) and stays in the hour; a Quest's next ask builds the video
-at home again, a PC's still goes to Tunelio. Sessions are saved
+at home again, a PC's still goes to Tunelio. That rebuild takes the stopped build's MB over in the hour (one expected
+build of the video, counted from the rebuild, never two), while the day counts both, the stopped build at its expected
+MB and the rebuild at its real MB, on the same safe side. Sessions are saved
 next to their files and reloaded on restart (a deploy doesn't cut plays off, and the worker retries its uploads through
 it); the day's use is saved too. Files are kept `HOME_KEEP_HOURS`, oldest finished first out above `HOME_MAX_GB`
 (8 GB), never one that is building or was fetched by a player in the last 5 minutes (`home_evict` logs each one,

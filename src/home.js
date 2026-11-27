@@ -79,11 +79,26 @@ export const MB_PER_SECOND_AT = { '1080p': MB_PER_SECOND, '720p': 0.38 };
 export const mbPerSecond = (quality) => MB_PER_SECOND_AT[quality] ?? MB_PER_SECOND;
 const FREE_CHECK_MS = 5_000; // a build's uploads look at the disk's free space at most this often
 
+// Unused builds (idleMs, HOME_IDLE_SECONDS; Everything-is-OK#1069, coordinator's call 2026-11-27): with
+// HOME_ANDROID_GROWING a PC player moved off a growing session to Tunelio (markUneven) leaves the session building for a
+// Quest that may be on it, and nothing stopped it when there was none. Staging 2026-11-27 19:23Z: a 2 h 19 min 1080p
+// build kept downloading and uploading the whole video, holding the home line's upload (~12 MB/s), with no player ever
+// fetching from it. So a session a PC was moved off, that no player has fetched anything from (not one playlist or
+// segment: one fetch exempts it for good, so a paused player or a long buffer never looks idle), still uploading and
+// not held for (settle), is dropped idleMs after the later of the move, its ready time and the last time it was handed
+// to anyone (a player's answer or pin, a tablet's status: used()). Decided at the worker's next upload, which gets 410:
+// the worker kills ffmpeg (its YouTube download stops with it), keeps no half copy in its cache and frees its stream.
+// 60 s: a Quest handed the playlist fetched it 24 ms later (staging 2026-11-27 18:25:26Z), the settle hold is 10 s.
+// Dropped, not failed: nothing is wrong with the video or the worker, so the next play may build it again at once
+// (a failed session blocks that for RETRY_MS), and its files go. The video is remembered as dropped this way
+// (wasIdle) for keepHours, so a Quest's next ask builds it at home again although it is marked uneven (src/server.js
+// homeWhy); a PC's still goes to Tunelio, so there is no loop.
+
 export class Home {
   constructor({ relay, dir, base = 'https://yt.japharsworld.com/home', enabled = false, dailyBuilds = 40, dailyMb = 10_000,
-    hourBuilds = 0, hourMb = 0, hourMbExemptSeconds = 0, startGapMs = 0, av1GapMs = 0, av1HourBuilds = 4, refusedRecently = () => false, itemMaxMb = 0, keepHours = 12, maxGb = 8, freeFloorGb = 0, freeMb = null, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, seekWant = false, tz = 'America/Chicago',
+    hourBuilds = 0, hourMb = 0, hourMbExemptSeconds = 0, startGapMs = 0, av1GapMs = 0, av1HourBuilds = 4, refusedRecently = () => false, itemMaxMb = 0, keepHours = 12, maxGb = 8, freeFloorGb = 0, freeMb = null, readyMs = 30_000, segmentHoldMs = 20_000, startPrecise = false, seekWant = false, idleMs = 0, tz = 'America/Chicago',
     now = () => Date.now(), log = () => {}, onEvent = () => {} }) {
-    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, hourBuilds, hourMb, hourMbExemptSeconds, startGapMs, av1GapMs, av1HourBuilds, refusedRecently, itemMaxMb, keepHours, maxGb, freeFloorGb, readyMs, segmentHoldMs, startPrecise, seekWant, tz, now, log, onEvent });
+    Object.assign(this, { relay, dir, base, enabled, dailyBuilds, dailyMb, hourBuilds, hourMb, hourMbExemptSeconds, startGapMs, av1GapMs, av1HourBuilds, refusedRecently, itemMaxMb, keepHours, maxGb, freeFloorGb, readyMs, segmentHoldMs, startPrecise, seekWant, idleMs, tz, now, log, onEvent });
     // The disk's free MB where the sessions are (injectable for tests); Infinity when it can't be read.
     this.freeMb = freeMb ?? (() => { try { const f = statfsSync(this.dir); return (f.bavail * f.bsize) / 1e6; } catch { return Infinity; } });
     this.freeCheckedMs = 0;
@@ -96,6 +111,7 @@ export class Home {
     this.recent = [];
     this.lastStartMs = -Infinity;
     this.uneven = new Map(); // video id → until (ms): its home playlist grew, so long plays of it go to Tunelio (giveUp)
+    this.idle = new Map(); // video id → until (ms): its session was dropped unused (#1069), see wasIdle
     if (dir && enabled) { this.loading = true; this.#load(); this.loading = false; }
   }
 
@@ -109,6 +125,11 @@ export class Home {
     try {
       for (const [id, until] of Object.entries(JSON.parse(readFileSync(join(this.dir, 'uneven.json'), 'utf8')))) {
         if (until > this.now()) this.uneven.set(id, until);
+      }
+    } catch { /* none */ }
+    try {
+      for (const [id, until] of Object.entries(JSON.parse(readFileSync(join(this.dir, 'idle.json'), 'utf8')))) {
+        if (until > this.now()) this.idle.set(id, until);
       }
     } catch { /* none */ }
     let dropped = 0;
@@ -150,6 +171,9 @@ export class Home {
       startedMs: f.startedMs ?? this.now(), readyMs: 0, endedMs: 0, lastPutMs: f.lastPutMs ?? 0, ended: false, mb: 0, segments: 0,
       listed: [], listedSeconds: 0, stored: new Set(), reason: null, waiters: [], endWaiters: [], segmentWaiters: new Map(),
       firstSegmentMs: 0, firstServed: null, lastGetMs: f.lastGetMs ?? 0, why: f.why ?? null, want: null, last: -1,
+      // #1069: when a PC player was moved off it (markUneven; saved, so a restart keeps it), and when it was last handed
+      // to anyone (used(); not saved: a reloaded session gets a whole idleMs from the restart).
+      leftMs: f.leftMs ?? 0, handedMs: this.now(),
       // What meta.json holds now (#saveMeta), so each throttle compares with what a restart would read back.
       putSavedMs: f.lastPutMs ?? 0, getSavedMs: f.lastGetMs ?? 0 };
   }
@@ -165,7 +189,7 @@ export class Home {
   // caught: a failed write (the folder gone) never fails the upload or the player's fetch that caused it.
   #saveMeta(s) {
     const meta = { id: s.id, quality: s.quality, seconds: s.seconds, worker: s.worker, startedMs: s.startedMs, lastPutMs: s.lastPutMs,
-      lastGetMs: s.lastGetMs, why: s.why ?? null, ...(s.state === 'failed' ? { state: 'failed', reason: s.reason, endedMs: s.endedMs } : {}) };
+      lastGetMs: s.lastGetMs, why: s.why ?? null, ...(s.leftMs ? { leftMs: s.leftMs } : {}), ...(s.state === 'failed' ? { state: 'failed', reason: s.reason, endedMs: s.endedMs } : {}) };
     const path = join(this.dir, s.token, 'meta.json');
     try {
       writeFileSync(`${path}.tmp`, JSON.stringify(meta));
@@ -175,6 +199,7 @@ export class Home {
     } catch { /* folder gone */ }
   }
   #saveUneven() { try { writeFileSync(join(this.dir, 'uneven.json'), JSON.stringify(Object.fromEntries(this.uneven))); } catch { /* no dir */ } }
+  #saveIdle() { try { writeFileSync(join(this.dir, 'idle.json'), JSON.stringify(Object.fromEntries(this.idle))); } catch { /* no dir */ } }
   #saveDay() { this.daySavedMs = this.now(); try { writeFileSync(join(this.dir, 'day.json'), JSON.stringify(this.day)); } catch { /* no dir */ } }
   // Today's use as it grows: at most every DAY_SAVE_MS while segments arrive. A predicted playlist goes up once at the
   // start, so its MB were saved only when the next session started, and a deploy mid-build lost them (up to ~7 GB for
@@ -309,7 +334,10 @@ export class Home {
   // PC player of the video leaves for Tunelio (src/server.js leaveHome), so the session keeps going for it (world #250,
   // 2026-10-27: three plays given up that way within 21 minutes on prod; the worker's next upload got 410 and the
   // Quest froze at the last segment it had, 45 s of seg1 404s the last time).
+  // Each session a PC was moved off is stamped (leftMs, #1069), also when its video was already known uneven: a Quest's
+  // new build of such a video (wasIdle) meets PC players too.
   markUneven(s) {
+    if (!s.leftMs) { s.leftMs = this.now(); this.#saveMeta(s); }
     if (this.isUneven(s)) return;
     this.uneven.set(s.id, this.now() + this.keepHours * 3600_000);
     this.#saveUneven();
@@ -320,6 +348,43 @@ export class Home {
     const until = this.uneven.get(data.id);
     if (until && until < this.now()) { this.uneven.delete(data.id); this.#saveUneven(); }
     return Boolean(until && until >= this.now());
+  }
+  // The video's last session was dropped unused (#1069) in the last keepHours: not unplayable, so a client that may play
+  // a growing home build (a Quest's .m3u8 ticket with HOME_ANDROID_GROWING) gets a home build again (src/server.js homeWhy).
+  wasIdle(data) {
+    const until = this.idle.get(data.id);
+    if (until && until < this.now()) { this.idle.delete(data.id); this.#saveIdle(); }
+    return Boolean(until && until >= this.now());
+  }
+
+  // The session was just handed to someone (a player's answer or pin, a tablet's status): its idle time starts again.
+  used(s) { if (s) s.handedMs = this.now(); }
+
+  // A session a PC was moved off that nobody has used (see the top): → true when idleMs has passed.
+  #unused(s) {
+    if (!(this.idleMs > 0) || !s.leftMs || s.lastGetMs > 0 || s.ended || s.state !== 'ready' || s.endWaiters.length || s.waiters.length) return false;
+    return this.now() - Math.max(s.leftMs, s.readyMs, s.handedMs) >= this.idleMs;
+  }
+  // Dropped (see the top). The day counts what it expected the whole build to download (as a whole build counted it
+  // before #1069), since the worker's download runs ahead of its upload (up to ~80 MB/s down against ~12 up, the dev PC,
+  // 2026-11-27) and the server only sees the upload; the hour keeps the build and its expected MB, as before.
+  #dropUnused(s) {
+    const t = this.now();
+    const expected = this.#expectedMb(s);
+    if (!s.cached) { const d = this.#today(); d.mb += Math.max(0, expected - s.mb); this.#saveDay(); }
+    this.idle.set(s.id, t + this.keepHours * 3600_000);
+    this.#saveIdle();
+    this.onEvent('idle');
+    this.log({ event: 'home_idle', id: s.id, quality: s.quality, why: s.why ?? undefined, idleS: Math.round((t - Math.max(s.leftMs, s.readyMs, s.handedMs)) / 1000),
+      ms: t - s.startedMs, mb: Math.round(s.mb), expectedMb: Math.round(expected), segments: s.stored.size, listed: s.segments });
+    // Anyone still holding the object (a pin, a hold) sees it gone: pinned() and peek() then decide afresh.
+    s.state = 'failed';
+    s.reason = 'idle';
+    s.endedMs = t;
+    for (const [, ws] of s.segmentWaiters) for (const w of ws) w();
+    s.segmentWaiters.clear();
+    this.#wake(s);
+    this.#drop(s);
   }
 
   // A usable session for the same video at another quality, ready ones first: what a play keeps when the room's new
@@ -495,13 +560,14 @@ export class Home {
     for (const [file, ws] of s.segmentWaiters) if (!s.stored.has(file)) { for (const w of ws) w(); s.segmentWaiters.delete(file); }
   }
 
-  // A worker's upload. → HTTP status: 204 stored, 400 bad name or playlist, 410 no such session any more (the worker
-  // stops), 413 too large. cached: uploaded from the worker's own cache (relay/cache.js), not downloaded from YouTube,
+  // A worker's upload. → HTTP status: 204 stored, 400 bad name or playlist, 410 no such session any more, or one nobody
+  // uses (#1069; the worker stops), 413 too large. cached: uploaded from the worker's own cache (relay/cache.js), not downloaded from YouTube,
   // so it counts as a cache hit and its MB as cacheMb, not against dailyBuilds / dailyMb.
   // failed: the worker's closing playlist of a copy that isn't whole (x-media-failed, Everything-is-OK#781).
   put(token, file, body, { cached = false, failed = false } = {}) {
     const s = this.byToken.get(token);
     if (!s || s.state === 'failed') return 410;
+    if (this.#unused(s)) { this.#dropUnused(s); return 410; } // nobody uses it: the worker stops (#1069)
     if (cached && !s.cached) {
       s.cached = true;
       const d = this.#today();
@@ -697,7 +763,7 @@ export class Home {
       today: { builds: d.builds, mb: Math.round(d.mb), cacheHits: d.cacheHits ?? 0, cacheMb: Math.round(d.cacheMb ?? 0) },
       cap: { builds: this.dailyBuilds, mb: this.dailyMb, storedGb: this.maxGb },
       hour: (() => { const h = this.#hour(); return { builds: h.builds, mb: Math.round(h.mb), capBuilds: this.hourBuilds, capMb: this.hourMb }; })(),
-      limit: this.enabled ? this.limit() : null, startGapS: Math.round(this.startGapMs / 1000), av1GapS: this.av1GapMs / 1000, hammering: this.enabled ? this.hammering() : null, hourMbExemptS: this.hourMbExemptSeconds, itemMaxMb: this.itemMaxMb,
+      limit: this.enabled ? this.limit() : null, startGapS: Math.round(this.startGapMs / 1000), idleS: this.idleMs / 1000, av1GapS: this.av1GapMs / 1000, hammering: this.enabled ? this.hammering() : null, hourMbExemptS: this.hourMbExemptSeconds, itemMaxMb: this.itemMaxMb,
       building: all.filter((s) => s.state === 'building').length, ready: all.filter((s) => s.state === 'ready' && !s.ended).length,
       // A session ended as done and then failed (an old worker's late failure mark) counts once, as failed (verifier L6).
       ended: all.filter((s) => s.ended && s.state !== 'failed').length, failed: all.filter((s) => s.state === 'failed').length,

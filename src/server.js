@@ -191,7 +191,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     dailyBuilds: config.homeDailyBuilds, dailyMb: config.homeDailyMb, hourBuilds: config.homeHourBuilds, hourMb: config.homeHourMb,
     hourMbExemptSeconds: config.homeHourMbExemptHours * 3600, startGapMs: config.homeStartGapMs, av1GapMs: config.homeAv1GapMs,
     itemMaxMb: config.homeItemTooBig === 'tunelio' ? config.homeItemMaxGb * 1000 : 0, keepHours: config.homeKeepHours, maxGb: config.homeMaxGb, freeFloorGb: config.homeFreeFloorGb, readyMs: config.homeReadyMs,
-    segmentHoldMs: config.homeSegmentHoldMs,
+    segmentHoldMs: config.homeSegmentHoldMs, idleMs: config.homeIdleMs ?? 0,
     startPrecise: config.homeAndroidGrowing, seekWant: config.homeSeekWant, tz: config.metricsTz, log: logJson, onEvent: (k, d) => { metrics.inc('home', k); if (k === 'ready') metrics.inc('home_start_s', secondsBucket(d.ms)); if (k === 'failed') videoFails.count('home', d?.id); } });
   if (home.enabled) setInterval(() => home.sweep(), 10 * 60_000).unref();
   channels ??= new ChannelSlots({ monitorDb: config.monitorDb, baked: new URL('../monitor/channels.json', import.meta.url),
@@ -763,7 +763,11 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     // "load balance home and tunelio ... while not blowing up either").
     if (config.tunelioBusyBuilds > 0 && (playback.building?.() ?? 0) >= config.tunelioBusyBuilds) return 'tunelio_busy';
     // Long, unless home already found its keyframes uneven (src/home.js giveUp): then Tunelio while the pacer allows.
-    if ((data.seconds ?? 0) >= config.homeLongMinutes * 60 && !home.isUneven?.(data)) return 'long';
+    // A Quest's ask (a .m3u8 ticket that stays on a growing home playlist, HOME_ANDROID_GROWING) still goes home when the
+    // video's last session was dropped only because nobody used it (src/home.js wasIdle, Everything-is-OK#1069): before
+    // that drop the Quest would have had the kept copy. A PC's ask still skips 'long', so it doesn't build again.
+    const growingOk = hlsTicket && config.homeAndroid && config.homeAndroidGrowing && home.wasIdle?.(data);
+    if ((data.seconds ?? 0) >= config.homeLongMinutes * 60 && (!home.isUneven?.(data) || growingOk)) return 'long';
     const p = adaptive.pacer?.check?.();
     if (p && !p.ok) return 'pacer';
     // Over a spend limit (src/spend.js): home instead of a new paid build. A Tunelio build already there is still used.
@@ -785,6 +789,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (s.state !== 'ready') return null;
     holding++;
     try { await home.settle?.(s, config.homeSettleMs); } finally { holding--; }
+    home.used?.(s); // handed to a player: its idle time starts again (#1069)
     return { location: home.url(s), via: 'home', reason: s.why, ready: true, session: s };
   }
   // One source per ticket once playing (TICKET_PIN, #293). Each request used to decide again from the sessions' state,
@@ -1253,7 +1258,8 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     if (refused?.id === t.data.id && refused.until > Date.now()) return 'too_long';
     // A ticket being played reports the source its players were given (TICKET_PIN), not a new decision.
     const pin = pinned(pinKey(shard, n, hlsTicket, 'avpro'), t.data, { touch: false });
-    if (pin?.session) return { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(pin.session), ...meta(t.data) };
+    // A tablet shown a home session counts as using it (#1069): its Play may come next.
+    if (pin?.session) { home.used?.(pin.session); return { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(pin.session), ...meta(t.data) }; }
     if (pin) {
       const st = playback.status(t.data, { warm: false, quality: pin.quality, hls: pin.hls });
       if (pin.mode) st.plan = pin.mode;
@@ -1265,7 +1271,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
     const hq = homeQuality(shard, t.data);
     const hw = hlsTicket && !config.homeAndroid ? null : homeWhy(t.data, hq, hlsTicket);
     const hs = hw ? homeKeep(t.data, hq, startHome(shard, t.data, hq, hw)) : null;
-    if (hs && hs.state !== 'failed' && !leaveHome(hs, hlsTicket, { count: false })) return { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(hs), ...meta(t.data) };
+    if (hs && hs.state !== 'failed' && !leaveHome(hs, hlsTicket, { count: false })) { home.used?.(hs); return { v: API, shard, t: n, room: roomQuality(shard), ...homeStatus(hs), ...meta(t.data) }; }
     if (hlsTicket && playback.tooLong?.(t.data.id)) return 'too_long';
     let c = await choice(shard, t.data);
     if (hlsTicket && !t.data.live) c = hlsChoice(c); // live: the watch link, as on a plain ticket (world #270)
@@ -1377,6 +1383,7 @@ export function createApp({ config = defaults, store, youtube = defaultYoutube, 
         }
         store.markPlayed(shard, n, t.data.id);
         captions.warm?.(t.data.id);
+        if (pin.session) home.used?.(pin.session); // a player sent to a home session again (#1069)
         logJson({ event: 'play', shard, n, id: t.data.id, via: pin.via, reason: pin.reason, client: kind, held, pinned: true, ua: String(req.headers['user-agent'] ?? '').slice(0, 80) });
         countPlay(shard, t.data, { via: pin.via, reason: pin.reason, location: pin.location }, playPlatform(req.headers['user-agent'], hlsTicket));
         res.writeHead(302, { location: pin.location, 'cache-control': 'no-store' });

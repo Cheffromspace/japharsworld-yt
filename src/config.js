@@ -199,6 +199,10 @@ export const config = {
   // segment a player waits for in its upload answers (x-media-want), so the worker sends it next. Off (the default) is the
   // in-order upload production had before it; on for staging while #727 (a black screen after far seeks) is open.
   homeSeekWant: (process.env.HOME_SEEK_WANT ?? 'off') === 'on',
+  // A home build a PC player was moved off and no player has fetched from is dropped this long after it was last
+  // handed to anyone, so the worker stops downloading and uploading it (src/home.js "Unused builds", Everything-is-OK#1069).
+  // 0 = off. On by default, production and staging alike (coordinator, 2026-11-27): a visitor watching notices nothing.
+  homeIdleMs: Math.max(0, int('HOME_IDLE_SECONDS', 60)) * 1000,
   // One source per ticket once playing (#293): a ticket's answer is kept per ticket and client kind while it is played
   // (until the video's length plus TICKET_PIN_MARGIN_MINUTES after its last play) instead of decided again on every
   // request, which sent one PC ticket home → Tunelio → home within a minute and its players reloaded from 0 (prod

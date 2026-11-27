@@ -191,7 +191,7 @@ export const KEYS = {
   adaptive: ['plan_lower', 'plan_direct', 'plan_adaptive', 'plan_start', 'master', 'upgrade', 'upgrade_served', 'upgrade_failed', 'paced_off', 'defer', 'android_progressive', 'hls_ticket', 'quest_mp4', 'quest_skip',
     'reload_before_upgrade', 'reload_after_upgrade', 'android_av1', 'android_av1_rung', 'pc_av1', 'quest_av1', 'start_one_step', 'start_mid'],
   ticket_client: ['string', 'ytdlp', 'avpro', 'other'],
-  home: ['start', 'ready', 'failed', 'capped', 'defer', 'timeout', 'cache_hit', 'settled', 'settle_timeout', 'other_quality', 'uneven', 'stepdown', 'no_room', 'race_won', 'capped_hour', 'spaced', 'too_big', 'stayed'],
+  home: ['start', 'ready', 'failed', 'capped', 'defer', 'timeout', 'cache_hit', 'settled', 'settle_timeout', 'other_quality', 'uneven', 'stepdown', 'no_room', 'race_won', 'capped_hour', 'spaced', 'too_big', 'stayed', 'idle'],
   home_why: ['tunelio_off', 'long', 'pacer', 'tunelio_failed', 'av1', 'tunelio_slow', 'slow_build', 'budget', 'cap', 'near_budget', 'tunelio_busy'],
   credits: ['playback', 'captions', 'probe', 'test'],
   build_route: ['home', 'tunelio', 'youtube'],

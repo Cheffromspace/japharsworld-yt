@@ -201,7 +201,6 @@ export const config = {
   homeSeekWant: (process.env.HOME_SEEK_WANT ?? 'off') === 'on',
   // A home build a PC player was moved off and no player has fetched from is dropped this long after it was last
   // handed to anyone, so the worker stops downloading and uploading it (src/home.js "Unused builds", Everything-is-OK#1069).
-  // 0 = off. On by default, production and staging alike (coordinator, 2026-11-27): a visitor watching notices nothing.
   // Off unless a box sets it (coordinator, 2026-11-28, after the owner's "I really don't like someone having an out of
   // sync video": a late Quest's rebuild after a drop is growing, from 0); staging sets 30 (src/home.js "Unused builds").
   homeIdleMs: Math.max(0, int('HOME_IDLE_SECONDS', 0)) * 1000,

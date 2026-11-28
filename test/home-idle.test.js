@@ -318,10 +318,35 @@ test('#1069 worker: a 410 for a growing build kills ffmpeg and keeps no half cop
   assert.equal(existsSync(join(dir, 'stage')), false, 'its folder is removed');
 });
 
-test('#1069: HOME_IDLE_SECONDS defaults to 30 s (coordinator, 2026-11-27: 60 s stops came after the download had finished)', { skip: process.env.HOME_IDLE_SECONDS != null }, () => {
-  assert.equal(base.homeIdleMs, 30_000);
+test('#1069: HOME_IDLE_SECONDS defaults to 0, off (coordinator, 2026-11-28: a late Quest rebuild is out of sync; staging sets 30)', { skip: process.env.HOME_IDLE_SECONDS != null }, () => {
+  assert.equal(base.homeIdleMs, 0);
   const relay = { enabled: true, capable: () => [], mediaMax: () => ({}), run: () => new Promise(() => {}) };
-  assert.equal(new Home({ relay, enabled: true, idleMs: base.homeIdleMs }).state().idleS, 30);
+  assert.equal(new Home({ relay, enabled: true, idleMs: base.homeIdleMs }).state().idleS, 0);
+});
+
+test('#1069 default off: a build a PC was moved off and nobody fetches keeps going past 30 s and 10 min, nothing is marked dropped, and a late Quest gets the kept session (as before #1069)', { skip: process.env.HOME_IDLE_SECONDS != null }, async (t) => {
+  // Home with the default config's idleMs, on a fake clock.
+  const { home, s, clock, logs, events, seg, dir } = setup(t, { idleMs: base.homeIdleMs, opts: { hourMb: 6000 } });
+  for (const step of [31_000, 60_000, 600_000]) {
+    clock.now += step;
+    assert.equal(seg(Math.round(clock.now / 1000)), 204, `still building ${step / 1000} s on`);
+  }
+  assert.equal(logs.filter((l) => l.event === 'home_idle').length, 0, 'no home_idle');
+  assert.ok(!events.includes('idle'), 'no idle event');
+  assert.equal(home.wasIdle(VIDEO), false, 'not marked dropped');
+  assert.equal(home.idle.size, 0);
+  assert.equal(existsSync(join(dir, 'idle.json')), false, 'no idle.json written');
+  assert.ok(home.recent.every((r) => !r.dropped && !r.movedTo), 'no hour entry tagged');
+  assert.equal(home.peek(VIDEO, '1080p'), s, 'a late ask finds the kept session');
+  // Ticket level: the PC moved off, a pause, then a Quest: the same build (no second job, the first token).
+  const a = await app(t, { idleMs: base.homeIdleMs });
+  assert.equal((await a.play(PC, '')).headers.get('location'), a.tunelio);
+  const token = a.jobs[0].token;
+  await sleep(450);
+  assert.equal((await a.put(token, 'seg1.ts', 'ts1')).status, 204, 'not stopped');
+  const loc = (await a.play(QUEST)).headers.get('location');
+  assert.match(loc, new RegExp(`/home/${token}/index\\.m3u8$`), 'the late Quest gets the kept session');
+  assert.equal(a.jobs.length, 1, 'no rebuild');
 });
 
 test('#1069 ticket → home: a PC ask that is moved to Tunelio does not restart the window: two PC asks apart, the stop still comes from the first move', async (t) => {

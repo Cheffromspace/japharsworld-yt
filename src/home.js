@@ -79,7 +79,11 @@ export const MB_PER_SECOND_AT = { '1080p': MB_PER_SECOND, '720p': 0.38 };
 export const mbPerSecond = (quality) => MB_PER_SECOND_AT[quality] ?? MB_PER_SECOND;
 const FREE_CHECK_MS = 5_000; // a build's uploads look at the disk's free space at most this often
 
-// Unused builds (idleMs, HOME_IDLE_SECONDS; Everything-is-OK#1069, coordinator's call 2026-11-27): with
+// Unused builds (idleMs, HOME_IDLE_SECONDS; Everything-is-OK#1069, coordinator's call 2026-11-27). OFF by default (0)
+// since 2026-11-28: the coordinator's call after the owner's "I really don't like someone having an out of sync video"
+// (a Quest asking after a drop gets a fresh growing build, from 0, not in step with the room; the choice is the owner's,
+// card Everything-is-OK#1074); staging sets 30 to keep collecting data. With idleMs 0, #unused is always false, so
+// nothing below happens (no 410, no idle mark, no hour tag). With it set: with
 // HOME_ANDROID_GROWING a PC player moved off a growing session to Tunelio (markUneven) leaves the session building for a
 // Quest that may be on it, and nothing stopped it when there was none (a PC visitor's tablet status marks it too: below). Staging 2026-11-27 19:23Z: a 2 h 19 min 1080p
 // build kept downloading and uploading the whole video, holding the home line's upload (~12 MB/s), with no player ever
@@ -91,7 +95,7 @@ const FREE_CHECK_MS = 5_000; // a build's uploads look at the disk's free space 
 // not held for (settle), is dropped idleMs after the later of the move, its ready time and the last time it was handed
 // to anyone (a home answer or pin sent to a player, a tablet status that returned it: used()). Decided at the worker's next upload, which gets 410:
 // the worker kills ffmpeg (its YouTube download stops with it), keeps no half copy in its cache and frees its stream.
-// 30 s (HOME_IDLE_SECONDS' default; coordinator, 2026-11-27): a Quest handed the playlist fetched it 24 ms later
+// 30 s (staging's setting, and the default until 2026-11-28; coordinator, 2026-11-27): a Quest handed the playlist fetched it 24 ms later
 // (staging 2026-11-27 18:25:26Z), a settle hold keeps the session (endWaiters; a settle that timed out leaves its
 // endWaiter behind, older than #1069, so such a session is never dropped: the safe side, verifier-unused1 L1), and every hand-out starts the window
 // again. Shorter saves more of the YouTube download, which runs ahead of the upload: on the dev PC (40-70 MB/s down,

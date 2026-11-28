@@ -370,13 +370,15 @@ sending it to Tunelio for a seek bar (`home`/`stayed`; a Quest's `.m3u8` ticket 
 2026-11-06: players of 10-12 h videos were held 72-90 s for Tunelio builds that then failed). A growing session a PC
 player was moved off (to Tunelio, kept for a Quest with `HOME_ANDROID_GROWING`; a PC visitor's tablet status of the
 video starts and marks it the same way, with no play) that no player has fetched anything from
-is dropped `HOME_IDLE_SECONDS` (30; 0 = off) after it was last handed to a player (a home answer or pin) or shown on a tablet's
+is dropped, when `HOME_IDLE_SECONDS` is set (default 0 = off since 2026-11-28, while the owner decides the late-Quest
+trade-off below; staging sets 30), that many seconds after it was last handed to a player (a home answer or pin) or shown on a tablet's
 status: the worker's next upload gets 410, so it kills ffmpeg, stops downloading and uploading, and keeps no half copy;
 its stream slot frees at once and its files go (`home_idle`, `home`/`idle`; Everything-is-OK#1069, staging 2026-11-27: a
 2 h 19 min build uploaded for minutes with no fetch at all). One fetch exempts a session for good, so a paused player is
 never cut off. A stopped build counts its EXPECTED MB against the day (length × 0.57 MB/s, the 1080p rate, at every quality, so a
 720p build counts 1.5× its own estimate; on staging 1.6-2.1× its real size, a deliberate safe-side count) and stays in the hour (at its quality's rate); a Quest's next ask builds the video
-at home again, a PC's still goes to Tunelio. That rebuild takes the stopped build's MB over in the hour (one expected
+at home again, growing (from 0, no seek bar until it ends, not in step with the room: the trade-off the owner is
+deciding, Everything-is-OK#1074), a PC's still goes to Tunelio. That rebuild takes the stopped build's MB over in the hour (one expected
 build of the video, counted from the rebuild, never two), while the day counts both, the stopped build at its expected
 MB and the rebuild at its real MB, on the same safe side (two downloads, one expected build in the hour: repeated cycles
 are held by `HOME_HOUR_BUILDS`, the start gap and the day caps). Sessions are saved
